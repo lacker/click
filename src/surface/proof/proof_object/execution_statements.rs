@@ -1515,40 +1515,55 @@ impl<'a> Proof<'a> {
             if let Some(completed) = direct {
                 Ok(Some(completed))
             } else {
-                match crate::instrumentation::measure_operation(
-                    "surface",
-                    "close invariants",
-                    "close invariants: simp closure",
-                    || {
-                        let _named_premises =
-                            crate::surface::proof::smart_closures::NamedPremiseClosureScope::enter(
-                            );
-                        root.try_simp_closure()
-                    },
-                )? {
-                    Some(completed) => Ok(Some(completed)),
-                    None => {
-                        let (candidate, premises) = crate::instrumentation::measure_operation(
+                // A single atomic invariant retains the ordinary small-bundle
+                // simplifier. Compound and repeated declarations use selected
+                // members before any ambient arithmetic search.
+                let small = if bundle.declared_invariant_surfaces.len() == 1
+                    && !matches!(
+                        bundle.declared_invariant_surfaces.first(),
+                        Some(ClickProposition::And(_, _))
+                    ) {
+                    let _named =
+                        crate::surface::proof::smart_closures::NamedPremiseClosureScope::enter();
+                    root.try_simp_closure()?
+                } else {
+                    None
+                };
+                if let Some(completed) = small {
+                    Ok(Some(completed))
+                } else {
+                    // Prefer the loop's selected, named premises before generic
+                    // whole-bundle simplification. The member planner still offers
+                    // ordinary simplification at a leaf its arithmetic cannot close.
+                    let (candidate, premises) = crate::instrumentation::measure_operation(
+                        "surface",
+                        "close invariants",
+                        "close invariants: named premises",
+                        || {
+                            root.named_arithmetic_premises(
+                                bundle,
+                                context.function_block.requires(),
+                                &path_branch_premises,
+                            )
+                        },
+                    )?;
+                    match crate::instrumentation::measure_operation(
+                        "surface",
+                        "close invariants",
+                        "close invariants: member planner",
+                        || candidate.plan_invariant_bundle_closure(&premises, &named_loop_surfaces),
+                    )? {
+                        Some(completed) => Ok(Some(completed)),
+                        None => crate::instrumentation::measure_operation(
                             "surface",
                             "close invariants",
-                            "close invariants: named premises",
+                            "close invariants: simp closure",
                             || {
-                                root.named_arithmetic_premises(
-                                    bundle,
-                                    context.function_block.requires(),
-                                    &path_branch_premises,
-                                )
+                                let _named_premises =
+                                crate::surface::proof::smart_closures::NamedPremiseClosureScope::enter();
+                                root.try_simp_closure()
                             },
-                        )?;
-                        crate::instrumentation::measure_operation(
-                            "surface",
-                            "close invariants",
-                            "close invariants: member planner",
-                            || {
-                                candidate
-                                    .plan_invariant_bundle_closure(&premises, &named_loop_surfaces)
-                            },
-                        )
+                        ),
                     }
                 }
             }

@@ -65,7 +65,7 @@ pub use memory_state::CallKeptRanges;
 pub(crate) use memory_state::{
     BlockRegistriesState, block_is_never_address_taken_local, capture_block_registries,
     clear_block_alignment_registry, clear_never_address_taken_locals,
-    register_aggregate_argument_source, register_block_alignment,
+    never_address_taken_locals_key, register_aggregate_argument_source, register_block_alignment,
     registered_aggregate_argument_source, registered_block_alignment,
     registered_block_alignment_charged, restore_block_registries, set_never_address_taken_locals,
     withdraw_never_address_taken_locals,
@@ -4980,6 +4980,10 @@ pub struct CVerifiedFunctionRule {
     /// these applications are its call edges, written by the kernel from the
     /// checked traces, so the termination check may trust them.
     pub(super) applied_tactics: std::collections::BTreeSet<String>,
+    /// Complete conservative call dependencies from kernel-checked execution.
+    /// None retains source-call analysis; a present empty set proves no calls.
+    /// Shared across claims and certificate reuse, never copied per step.
+    pub(super) checked_callees: Option<Arc<BTreeSet<String>>>,
 }
 
 impl CVerifiedFunctionRule {
@@ -5358,6 +5362,10 @@ pub struct CVerifiedFunctionContractClaim {
     /// The user-defined tactics the certification this claim came from
     /// applied.
     pub(super) applied_tactics: std::collections::BTreeSet<String>,
+    /// Complete conservative call dependencies from kernel-checked execution.
+    /// None retains source-call analysis; a present empty set proves no calls.
+    /// Shared across claims and certificate reuse, never copied per step.
+    pub(super) checked_callees: Option<Arc<BTreeSet<String>>>,
 }
 
 /// Kernel-checked evidence that a checked proof discharged one proposition at
@@ -5525,6 +5533,14 @@ pub enum CRuntimeError {
     UnsupportedOpaqueFunctionContract(String),
     AbstractFunctionPointerCall(String),
     FunctionContract(String),
+    /// Exact operands retained at a rejected contract boundary. Diagnostic
+    /// only: these values never establish a fact or grant access.
+    ContractResourceDiagnostic {
+        reason: String,
+        held: Option<Box<CResourceFact>>,
+        required: Box<CResourceFact>,
+        memory: Option<Box<CMemory>>,
+    },
     /// Lock or destroy encountered no successful modeled initialization for
     /// this mutex on the current path.
     UninitializedMutex {
@@ -7589,6 +7605,8 @@ pub struct ResourceContext {
     /// Derived trusted-kernel index. It never supplies ownership evidence.
     memory_equalities: std::sync::Mutex<memory_equality_index::MemoryPairings>,
     pub(super) storage: std::sync::Arc<ResourceContextStorage>,
+    pub(super) observable_projection:
+        std::sync::Arc<std::sync::Mutex<Option<ObservableResourceProjection>>>,
     /// Checked dependency bundles for resource occurrences that are views of
     /// an active stable loan.  This is deliberately separate from the
     /// resource algebra's support graph: equal resource terms can have
@@ -7602,6 +7620,7 @@ impl Clone for ResourceContext {
         Self {
             instance_consumptions: self.instance_consumptions.clone(),
             storage: self.storage.clone(),
+            observable_projection: self.observable_projection.clone(),
             loan_dependencies: self.loan_dependencies.clone(),
             memory_equalities: std::sync::Mutex::new(
                 self.memory_equalities
@@ -7679,14 +7698,12 @@ impl ResourceContext {
                 }
                 return self;
             }
-            self.loan_dependencies =
-                std::sync::Arc::new(crate::kernel::loans::LoanViewBindingsState {
-                    identity: crate::kernel::loans::next_loan_binding_identity(),
-                    map: self
-                        .loan_dependencies
-                        .map
-                        .with_inserted(occurrence, dependency),
-                });
+            self.loan_dependencies = self.loan_dependencies.updated(
+                self.loan_dependencies
+                    .map
+                    .with_inserted(occurrence, dependency),
+                [occurrence],
+            );
         }
         self
     }
@@ -7745,6 +7762,13 @@ pub(super) struct ResourceMemoryIntervalNode {
     pub(super) start: u32,
 }
 
+#[derive(Clone)]
+pub(super) struct ObservableResourceProjection {
+    registry: std::sync::Arc<()>,
+    source: std::sync::Arc<ResourceContextStorage>,
+    projected: std::sync::Arc<ResourceContextStorage>,
+}
+
 #[derive(Clone, Default)]
 pub(super) struct ResourceContextStorage {
     /// Stable ordinals preserve insertion order without shifting surviving
@@ -7800,6 +7824,11 @@ pub(super) struct ResourceContextStorage {
     /// whose multiplicity or representation changed.
     pub(super) origin: std::sync::Arc<()>,
     pub(super) history: Option<std::sync::Arc<ResourceContextChange>>,
+    /// A scratch observable projection's unfiltered input and addressability
+    /// registry. Used only to compare admissions; the projection's live exact
+    /// index still decides which changed facts it actually supplies.
+    pub(super) observable_projection_source:
+        Option<(std::sync::Arc<()>, std::sync::Arc<ResourceContextStorage>)>,
     /// Legacy callers that explicitly enumerate every fact pay the
     /// output-sized materialization once per immutable snapshot.
     pub(super) materialized: std::sync::OnceLock<Vec<CResourceFact>>,
@@ -7819,6 +7848,8 @@ pub(super) struct ResourceContextChange {
     pub(super) depth: usize,
     /// Exact occurrence delta for derived indexes; metadata changes use None.
     pub(super) entry_delta: Option<(ResourceEntryId, bool)>,
+    /// An expansion-cache edit preserves entry ordinals and authority.
+    pub(super) metadata_only: bool,
     pub(super) fact: CResourceFact,
     pub(super) parent: Option<std::sync::Arc<ResourceContextChange>>,
 }
@@ -10780,6 +10811,36 @@ pub(super) struct AtomicConnectionFacts {
     pub propositions: crate::persistent::PersistentSet<SharedIndexFact<Proposition>>,
 }
 
+/// The representation and deferral choices a context reasons under, one bit
+/// each. The bits occupy the top byte of the context's content fingerprint.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(super) struct ReasoningPolicy(u8);
+
+impl ReasoningPolicy {
+    pub(super) const DEFER_NON_EXACT_LOADABILITY_OBLIGATIONS: Self = Self(1 << 0);
+    pub(super) const DEFER_NON_EXACT_CONDITION_REASONING: Self = Self(1 << 1);
+    pub(super) const PREFER_SYMBOLIC_EXTERNAL_LOADS: Self = Self(1 << 2);
+    pub(super) const FORCE_SYMBOLIC_EXTERNAL_LOADS: Self = Self(1 << 3);
+    pub(super) const ALLOW_SYMBOLIC_CONTRACT_LOADS: Self = Self(1 << 4);
+    pub(super) const TRANSPORT_MEMORY_LOAD_CONDITION_FACTS: Self = Self(1 << 5);
+    /// Select alias normalization for loads captured by pure functions.
+    /// This affects representation only, never validity obligations.
+    pub(super) const KEEP_SPEC_LOADS_SYMBOLIC: Self = Self(1 << 6);
+    pub(super) const REQUIRE_OWNED_EXPRESSION_LOADS: Self = Self(1 << 7);
+
+    pub(super) fn contains(self, choice: Self) -> bool {
+        self.0 & choice.0 != 0
+    }
+
+    pub(super) fn fingerprint(self) -> u64 {
+        u64::from(self.0) << 56
+    }
+
+    pub(super) fn toggle(&mut self, choice: Self) {
+        self.0 ^= choice.0;
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
     /// Shared ordered projection used when checked paths publish this context.
@@ -11079,16 +11140,7 @@ pub struct PureFactContext {
     /// linearly; memory-memory facts live in the index above instead.
     pub(super) nonmemory_separation_facts: std::sync::Arc<Vec<Proposition>>,
     pub(super) content_fingerprint: u64,
-    pub(super) defer_non_exact_loadability_obligations: bool,
-    pub(super) defer_non_exact_condition_reasoning: bool,
-    pub(super) prefer_symbolic_external_loads: bool,
-    pub(super) force_symbolic_external_loads: bool,
-    pub(super) allow_symbolic_contract_loads: bool,
-    pub(super) require_owned_expression_loads: bool,
-    pub(super) transport_memory_load_condition_facts: bool,
-    /// Select alias normalization for loads captured by pure functions.
-    /// This affects representation only, never validity obligations.
-    pub(super) keep_spec_loads_symbolic: bool,
+    pub(super) reasoning_policy: ReasoningPolicy,
 }
 
 impl PartialEq for PureFactContext {
@@ -11098,15 +11150,7 @@ impl PartialEq for PureFactContext {
             && self.typed_pointer_read_definitions == other.typed_pointer_read_definitions
             && self.prop_facts == other.prop_facts
             && self.resource_compositions == other.resource_compositions
-            && self.defer_non_exact_loadability_obligations
-                == other.defer_non_exact_loadability_obligations
-            && self.defer_non_exact_condition_reasoning == other.defer_non_exact_condition_reasoning
-            && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
-            && self.force_symbolic_external_loads == other.force_symbolic_external_loads
-            && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
-            && self.transport_memory_load_condition_facts
-                == other.transport_memory_load_condition_facts
-            && self.keep_spec_loads_symbolic == other.keep_spec_loads_symbolic
+            && self.reasoning_policy == other.reasoning_policy
     }
 }
 
@@ -11427,6 +11471,10 @@ pub struct CFunctionContractExecution {
     pub(super) loop_semantics: CLoopSemantics,
     /// The user-defined tactics the certified proofs applied.
     pub(super) applied_tactics: std::collections::BTreeSet<String>,
+    /// Complete conservative call dependencies from kernel-checked execution.
+    /// None retains source-call analysis; a present empty set proves no calls.
+    /// Shared across claims and certificate reuse, never copied per step.
+    pub(super) checked_callees: Option<Arc<BTreeSet<String>>>,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.
@@ -11470,6 +11518,10 @@ pub struct CCheckedFunctionExecution {
     pub(super) entry_representation_origin: Option<CState>,
     /// The user-defined tactics this execution's proof applied.
     pub(super) applied_tactics: std::collections::BTreeSet<String>,
+    /// Complete conservative call dependencies from kernel-checked execution.
+    /// None retains source-call analysis; a present empty set proves no calls.
+    /// Shared across claims and certificate reuse, never copied per step.
+    pub(super) checked_callees: Option<Arc<BTreeSet<String>>>,
     /// Original checked input selection; later certification must not rebuild it.
     pub(super) boundary_transfer: Option<Arc<super::functions::CheckedBoundaryResourceTransfer>>,
     pub(super) checked_call_events: super::proof::CheckedCallEvents,
@@ -11494,6 +11546,7 @@ impl CFunctionContractExecution {
             reuse_context_facts: Vec::new(),
             checked_call_events: Default::default(),
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         }
     }

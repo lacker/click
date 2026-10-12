@@ -544,6 +544,7 @@ mod tests {
             exceptional_ensures: Vec::new(),
             requirement_source_clauses: Vec::new(),
             ensure_source_clauses: Vec::new(),
+            ensure_claim_ids: Vec::new(),
             grouped_proof: None,
         }
     }

@@ -803,6 +803,7 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         CRuntimeError::PointerConversion(message) | CRuntimeError::FunctionContract(message) => {
             message.clone()
         }
+        CRuntimeError::ContractResourceDiagnostic { reason, .. } => reason.clone(),
         CRuntimeError::UnboundVariable(name) => format!("unbound variable `{name}`"),
         CRuntimeError::UnknownFunction(name) => format!("unknown function `{name}`"),
         CRuntimeError::MissingVerifiedFunctionRule(name) => {
@@ -2328,15 +2329,18 @@ pub(in crate::kernel) fn resource_contexts_definitionally_equal_with_definitions
             "resource context equality",
             "resource equality: same-memory definitions",
             || {
-                (definitionally_covers(left, right, left_memory)
+                // Check the requested fold/unfold relation before searching
+                // every combination of exposed composites. In particular an
+                // unfolded child cannot expose its folded parent: consumption
+                // checks that direction by the parent's definition directly.
+                resource_contexts_definitionally_equivalent_by_consumption(
+                    left,
+                    right,
+                    composite_resource_definitions,
+                    left_memory,
+                    assumptions,
+                ) || (definitionally_covers(left, right, left_memory)
                     && definitionally_covers(right, left, left_memory))
-                    || resource_contexts_definitionally_equivalent_by_consumption(
-                        left,
-                        right,
-                        composite_resource_definitions,
-                        left_memory,
-                        assumptions,
-                    )
             },
         )
     {

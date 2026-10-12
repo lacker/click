@@ -5,6 +5,13 @@ use crate::kernel::resource_tracker;
 use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition, CUpdateOperator};
 use crate::surface::validation::describe_click_type;
 
+mod cpp_model;
+mod rust_spelling;
+pub(in crate::surface) use cpp_model::ModelAccessorScope;
+use cpp_model::describe_model_accessor;
+use rust_spelling::rust_scalar_spelling;
+pub(crate) use rust_spelling::{enter_rust_spelling, rust_spelling, rust_variable_spelling};
+
 const MAX_DIAGNOSTIC_ITEMS: usize = 12;
 const TRUNCATION_SUFFIX: &str =
     "\n… <diagnostic truncated; set CLICK_FULL_DIAGNOSTICS=1 for full internal state>";
@@ -1002,36 +1009,19 @@ pub(super) fn describe_unverified_contract_claims(
                 format!("{function_name} effect clause {index}")
             }
             CFunctionContractClaimKey::Ensure(index) => {
-                function_block.ensures().get(*index).map_or_else(
-                    || format!("{function_name}.ensures_{index}"),
-                    |clause| {
-                        describe_clause(
-                            crate::surface::verification::function_claim_label(
-                                function_name,
-                                &crate::surface::proof::FunctionClaimRef::Ensure(*index, clause),
-                            ),
-                            clause,
-                        )
-                    },
-                )
+                let label = function_block.ensure_claim_label(*index);
+                match function_block.ensures().get(*index) {
+                    Some(clause) => describe_clause(label, clause),
+                    None => label,
+                }
             }
-            CFunctionContractClaimKey::ExceptionalEnsure(index) => function_block
-                .exceptional_ensures()
-                .get(*index)
-                .map_or_else(
-                    || format!("{function_name}.exceptional_ensures_{index}"),
-                    |clause| {
-                        describe_clause(
-                            crate::surface::verification::function_claim_label(
-                                function_name,
-                                &crate::surface::proof::FunctionClaimRef::ExceptionalEnsure(
-                                    *index, clause,
-                                ),
-                            ),
-                            clause,
-                        )
-                    },
-                ),
+            CFunctionContractClaimKey::ExceptionalEnsure(index) => {
+                let label = function_block.exceptional_ensure_claim_label(*index);
+                match function_block.exceptional_ensures().get(*index) {
+                    Some(clause) => describe_clause(label, clause),
+                    None => label,
+                }
+            }
         })
         .collect::<Vec<_>>();
     if keys.len() > item_limit {
@@ -1364,6 +1354,20 @@ pub(super) fn describe_runtime_error(
                     }
                 )
             }
+        }
+        crate::kernel::CRuntimeError::ContractResourceDiagnostic { reason, held, required, memory } => {
+            use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_resource_fact_labeled};
+            let mut labels = SnapshotLabels::naming(parameters, arguments);
+            let mut message = format!("function contract could not be applied: {reason}");
+            if let Some(memory) = memory {
+                message.push_str(&format!("\n  argument read snapshot: {}", labels.snapshot_name(memory)));
+            }
+            if let Some(held) = held {
+                message.push_str(&format!("\n  held: {}", render_resource_fact_labeled(held, &mut labels)));
+            }
+            message.push_str(&format!("\n  required: {}", render_resource_fact_labeled(required, &mut labels)));
+            message.push_str(&labels.trace_legend());
+            message
         }
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!(
@@ -4684,72 +4688,6 @@ thread_local! {
     static REFERENCE_RESULT_SOURCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-thread_local! {
-    /// The slice parameters of the function being checked when its
-    /// signature is written in Rust syntax; `None` for the C-shaped spelling.
-    static RUST_SPELLING: std::cell::RefCell<Option<std::rc::Rc<[String]>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Prints the places of a function whose signature is written in Rust
-/// syntax as its sidecar writes them: a slice's length `bytes.len()`, a cast
-/// `(value as u32)`, and a field through a reference `p.field`. Like the
-/// ambient naming, it stays set after the function's check, for a failure
-/// rendered later; the next declaration replaces it. The parser reads each
-/// form back in such a function, so `click expand` prints through it too.
-pub(crate) fn enter_rust_spelling(signature: Option<&super::FunctionSignature>) {
-    let spelling = signature
-        .and_then(super::FunctionSignature::rust_slice_parameters)
-        .map(std::rc::Rc::<[String]>::from);
-    RUST_SPELLING.with(|slot| *slot.borrow_mut() = spelling);
-}
-
-/// The slice parameters of the function whose places are printed, when its
-/// signature is written in Rust syntax: an expansion's own function, else
-/// the function last checked.
-fn rust_slice_parameters() -> Option<std::rc::Rc<[String]>> {
-    REFERENCE_CARRIERS
-        .with(|scopes| {
-            scopes
-                .borrow()
-                .iter()
-                .rev()
-                .find_map(|scope| scope.rust_spelling.clone())
-        })
-        .unwrap_or_else(|| RUST_SPELLING.with(|slot| slot.borrow().clone()))
-}
-
-pub(crate) fn rust_spelling() -> bool {
-    rust_slice_parameters().is_some()
-}
-
-/// The Rust spelling of the variable `name`: `bytes.len()` for the length
-/// of the slice parameter `bytes`.
-pub(crate) fn rust_variable_spelling(name: &str) -> Option<String> {
-    let slice = name.strip_suffix("_len")?;
-    rust_slice_parameters()?
-        .iter()
-        .any(|known| known == slice)
-        .then(|| format!("{slice}.len()"))
-}
-
-/// The Rust name of the scalar type `c_type`, `u32` for `uint32`.
-fn rust_scalar_spelling(c_type: &CType) -> Option<&'static str> {
-    Some(match c_type {
-        CType::Int8 => "i8",
-        CType::Int16 => "i16",
-        CType::Int32 => "i32",
-        CType::UInt8 => "u8",
-        CType::UInt16 => "u16",
-        CType::UInt32 => "u32",
-        CType::Int64 => "i64",
-        CType::UInt64 => "u64",
-        CType::Int128 => "i128",
-        CType::UInt128 => "u128",
-        _ => return None,
-    })
-}
-
 /// Kernel reference results carry addresses. Function-directed proof printing
 /// must spell that carrier as `&result`, and a load through it as `result`.
 pub(super) struct ReferenceResultSourceScope(bool);
@@ -5287,67 +5225,6 @@ fn describe_c_update_operator(operator: CUpdateOperator) -> &'static str {
     }
 }
 
-thread_local! {
-    /// The C++ model accessors bound for the program being verified or
-    /// expanded, each with its field path. Set for the lifetime of a prepared
-    /// program's source context, so a printed accessor is one its parse binds.
-    static MODEL_ACCESSORS: std::cell::RefCell<Vec<(&'static str, &'static [&'static str])>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Binds the model accessors a prepared program's layouts support for
-/// printing, restoring the previous binding when dropped.
-pub(in crate::surface) struct ModelAccessorScope {
-    previous: Vec<(&'static str, &'static [&'static str])>,
-}
-
-impl ModelAccessorScope {
-    pub(in crate::surface) fn enter(
-        layouts: &BTreeMap<String, syntax::C0StructLayout>,
-    ) -> Option<Self> {
-        let accessors = crate::languages::cpp::standard_library::model_accessors(layouts);
-        if accessors.is_empty() {
-            return None;
-        }
-        let previous =
-            MODEL_ACCESSORS.with(|bound| bound.replace(accessors.into_iter().collect::<Vec<_>>()));
-        Some(Self { previous })
-    }
-}
-
-impl Drop for ModelAccessorScope {
-    fn drop(&mut self) {
-        MODEL_ACCESSORS.with(|bound| *bound.borrow_mut() = std::mem::take(&mut self.previous));
-    }
-}
-
-/// `std_span_size(span)` for the field chain `span._M_extent._M_extent_value`
-/// when that chain is a bound accessor's path: a written proof names the
-/// standard type's model, and the parse rewrites it back to the same path.
-fn describe_model_accessor(expression: &ContractExpression) -> Option<String> {
-    MODEL_ACCESSORS.with(|bound| {
-        let bound = bound.borrow();
-        if bound.is_empty() {
-            return None;
-        }
-        let mut path = Vec::new();
-        let mut root = expression;
-        while let ContractExpression::Field { base, field, .. } = root {
-            path.push(field.as_str());
-            root = base;
-        }
-        path.reverse();
-        let (accessor, _) = bound
-            .iter()
-            .find(|(_, bound_path)| *bound_path == path.as_slice())?;
-        // A reference parameter's carrier prints as `&span`; the accessor
-        // takes the referent, as a written field access does.
-        let root = describe_contract_expression(root);
-        let root = object_at_address(&root).map_or(root.clone(), str::to_string);
-        Some(format!("{accessor}({root})"))
-    })
-}
-
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     if matches!(expression, ContractExpression::Add(_, _)) {
         return describe_add_contract_expression(expression);
@@ -5646,29 +5523,23 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
 }
 
 fn describe_add_contract_expression(expression: &ContractExpression) -> String {
-    enum Frame<'a> {
-        Visit(&'a ContractExpression),
-        Build,
+    // The parser already associates a flat sum to the left. Walk only that
+    // spine: reassociating the right operand could change C overflow or
+    // pointer arithmetic, even though it is harmless for mathematical Integers.
+    // Append once rather than copying every growing prefix of a long sum.
+    let mut left = expression;
+    let mut rights = Vec::new();
+    while let ContractExpression::Add(first, second) = left {
+        rights.push(second.as_ref());
+        left = first;
     }
-
-    let mut frames = vec![Frame::Visit(expression)];
-    let mut rendered = Vec::new();
-    while let Some(frame) = frames.pop() {
-        match frame {
-            Frame::Visit(ContractExpression::Add(left, right)) => {
-                frames.push(Frame::Build);
-                frames.push(Frame::Visit(right));
-                frames.push(Frame::Visit(left));
-            }
-            Frame::Visit(expression) => rendered.push(describe_contract_expression(expression)),
-            Frame::Build => {
-                let right = rendered.pop().expect("rendered addition right operand");
-                let left = rendered.pop().expect("rendered addition left operand");
-                rendered.push(format!("({left} + {right})"));
-            }
-        }
+    let mut output = format!("({}", describe_contract_expression(left));
+    for right in rights.into_iter().rev() {
+        output.push_str(" + ");
+        output.push_str(&describe_contract_expression(right));
     }
-    rendered.pop().expect("rendered addition expression")
+    output.push(')');
+    output
 }
 
 /// Keep generated let bindings source-printable for long left-associated

@@ -1,10 +1,24 @@
 use super::*;
 
 #[test]
+fn long_flat_integer_sum_expands_and_rechecks_without_parenthesis_growth() {
+    let sum = std::iter::repeat_n("a", 24).collect::<Vec<_>>().join(" + ");
+    let source = format!(
+        "theorem sum(a: Integer) {{ ensures {sum} == 24 * a by {{ have {sum} == 24 * a by {{ arithmetic(); }} assumption(); }} }}"
+    );
+    verify_click_theorems(&source).unwrap();
+    let position = expansion::position_at_offset(&source, source.find("arithmetic()").unwrap());
+    let expanded =
+        expand_c0_tactic_source_at(&source, &[], position.line, position.column).unwrap();
+    assert!(!expanded.contains("arithmetic()"), "{expanded}");
+    verify_click_theorems(&expanded).unwrap();
+}
+
+#[test]
 #[ignore = "nightly: rechecks vector tactic and whole-proof certificates"]
 fn vector_field_input_pointer_certificates_round_trip() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("mdtests/composite_resource_vector_fill_loop_snapshot.md");
+        .join("tests/fixtures/proof-expansion/vector-field-input.md");
     let markdown = std::fs::read_to_string(&path).unwrap();
     let fixture = crate::cli::parse_mdtest(&path, &markdown).unwrap();
     let name = "composite_resource_vector_fill_loop_snapshot";
@@ -1209,10 +1223,11 @@ fn multidimensional_local_array_field_expands_with_every_subscript() {
 }
 
 /// A `produces` clause naming a struct member is one ensure per field of
-/// that member, all sharing the proof the author wrote once. Every such
-/// claim resolves to that written clause: the locator used to count written
-/// clauses by claim index, so the later claims pointed past the last clause
-/// and `click audit` stopped with `could not locate source ensure 2`.
+/// that member, all sharing the proof the author wrote once. They are one
+/// claim, labelled by that written clause, and resolve to it: the locator
+/// used to count written clauses by claim index, so the later claims pointed
+/// past the last clause and `click audit` stopped with `could not locate
+/// source ensure 2`.
 #[test]
 fn flattened_aggregate_claims_resolve_to_their_written_clause() {
     let (click_source, c_sources) = mdtest_sources("mdtests/struct_aggregate_resources.md");
@@ -1220,29 +1235,39 @@ fn flattened_aggregate_claims_resolve_to_their_written_clause() {
         .iter()
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
+    let file = expansion::parse_source_with_c_layouts(&click_source, &c_sources).unwrap();
+    let write_inner = file
+        .function_blocks()
+        .iter()
+        .find(|block| block.signature().name() == "write_inner")
+        .unwrap();
+    let produced = (0..write_inner.ensures().len())
+        .filter(|index| write_inner.ensure_claim_label(*index) == "write_inner.produces_0")
+        .count();
+    assert!(produced >= 2, "the member should flatten to several claims");
+    assert_eq!(write_inner.ensure_claim_label(0), "write_inner.ensures_0");
     let sites = expansion::c0_smart_tactic_source_sites(&click_source, &c_sources).unwrap();
     let written = click_source
         .find("produces packet->inner by auto;")
         .expect("the fixture states the aggregate clause");
     let written = expansion::position_at_offset(&click_source, written);
-    let mut resolved = 0;
-    for site in sites
+    let produced_sites = sites
         .iter()
-        .filter(|site| site.claim_label.starts_with("write_inner.ensures_"))
-    {
-        let position = expansion::c0_tactic_source_position(
-            &click_source,
-            &c_sources,
-            &site.claim_label,
-            site.source_index,
-        )
-        .unwrap_or_else(|error| panic!("{}: {}", site.claim_label, error.message()));
-        if site.claim_label != "write_inner.ensures_0" {
-            assert_eq!(position.line, written.line, "{}", site.claim_label);
-            resolved += 1;
-        }
-    }
-    assert!(resolved >= 2, "the member should flatten to several claims");
+        .filter(|site| site.claim_label == "write_inner.produces_0")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        produced_sites.len(),
+        1,
+        "the written clause's one proof is one site"
+    );
+    let position = expansion::c0_tactic_source_position(
+        &click_source,
+        &c_sources,
+        "write_inner.produces_0",
+        produced_sites[0].source_index,
+    )
+    .unwrap_or_else(|error| panic!("{}", error.message()));
+    assert_eq!(position.line, written.line);
 }
 
 /// A `simp()` closing an `initialize` script that several invariants share
@@ -2263,6 +2288,44 @@ theorem default_have(x: int32) {
 /// address a proof's tactics through its block, so each of them must see the
 /// one-tactic form as that block: every smart tactic in the proof below
 /// expands and rechecks, wherever the one-tactic proofs stand.
+#[test]
+fn batch_expansion_wraps_one_tactic_arithmetic_proofs() {
+    let c = "int nested(int x) { return x; }";
+    let source = r#"
+verifying "short.c";
+int32 nested(int32 x) {
+    requires 0 <= to_integer(x);
+    ensures result == x;
+} by {
+    execute();
+    have 0 <= to_integer(x) + 1 by arithmetic() using { 0 <= to_integer(x); };
+    have 0 <= to_integer(x) + 2 by arithmetic() using { 0 <= to_integer(x); };
+    have x == x by normalize();
+    simp();
+}
+"#;
+    let sources = [("short.c", c)];
+    verify_c0_sources(source, &sources).expect("the short arithmetic proofs verify");
+    let positions = source
+        .match_indices("arithmetic()")
+        .map(|(offset, _)| expansion::position_at_offset(source, offset))
+        .collect::<Vec<_>>();
+    let expanded = expansion::expand_tactics_source_at(
+        source,
+        &ProgramInputs::Bundle(sources.to_vec()),
+        &positions,
+    )
+    .expect("the batch expands both arithmetic proofs");
+    assert!(
+        expanded.source.contains("arithmetic_certificate"),
+        "{}",
+        expanded.source
+    );
+    assert!(expanded.source.contains("have x == x by normalize();"));
+    verify_c0_sources(&expanded.source, &sources)
+        .expect("the batch's structured certificates must parse and recheck");
+}
+
 #[test]
 fn expansion_reads_a_one_tactic_proof_as_its_block() {
     let source = r#"
@@ -12262,7 +12325,7 @@ const RESOURCE_EXAMPLE_PIPELINE_CASES: &[(&str, &str, &str, &str)] = &[
         "linked-list",
         "linked_list.click",
         "list_roundtrip",
-        "rewrite(at(statement(5).entry, observed) == at(statement(5).entry, node->value));",
+        "have node->next == tail by {\n        assumption();\n    }",
     ),
     (
         "input-cursor",
@@ -17199,4 +17262,153 @@ fn algebraic_integer_match_bindings_expand_and_recheck() {
             panic!("{label} expansion should recheck: {}", error.message())
         });
     }
+}
+
+/// The Click line, 1-based, of the first line of `source` containing `text`.
+fn line_containing(source: &str, text: &str) -> usize {
+    source
+        .lines()
+        .position(|line| line.contains(text))
+        .unwrap_or_else(|| panic!("no line contains `{text}`"))
+        + 1
+}
+
+/// A loop phase written in a grouped proof's `loop` tactic is a claim of its
+/// own: its label, and a line of its proof, select just that phase, and the
+/// expansion replaces only the phase's `by` clause with its checked
+/// certificate. The rest of the contract proof, including the other phase
+/// and the `simp()` after the loop, is untouched.
+#[test]
+fn a_written_loop_phase_expands_alone_by_label_and_by_line() {
+    let (click, sources) = mdtest_sources("mdtests/loop_entry_guard_before_written_implication.md");
+    let sources = sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let function = "loop_entry_guard_before_written_implication";
+    let label = format!("{function}.loop(0).preserve");
+    let expanded = expand_c0_claim_source_by_label(&click, &sources, &label).unwrap();
+    let written = "preserve by simp;";
+    let start = click.find(written).unwrap();
+    let end = start + written.len();
+    assert!(expanded.starts_with(&click[..start]), "{expanded}");
+    assert!(expanded.ends_with(&click[end..]), "{expanded}");
+    let phase = &expanded[start..expanded.len() - (click.len() - end)];
+    assert!(phase.starts_with("preserve by {"), "{phase}");
+    assert!(!phase.contains("simp"), "{phase}");
+    verify_c0_sources(&expanded, &sources).unwrap();
+
+    let inputs = ProgramInputs::Bundle(sources.clone());
+    let at = |text: &str, scope| {
+        claim_at(
+            None,
+            &click,
+            &inputs,
+            line_containing(&click, text),
+            None,
+            scope,
+        )
+        .unwrap()
+    };
+    let selected = at(written, ClaimLocationScope::Innermost);
+    assert_eq!(selected.label, label);
+    assert_eq!(selected.owner, function);
+    assert_eq!(
+        at("initialize by {", ClaimLocationScope::Innermost).label,
+        format!("{function}.loop(0).initialize")
+    );
+    // A line of the phase inside the loop tactic, past its first line.
+    assert_eq!(
+        at("intro();", ClaimLocationScope::Innermost).label,
+        format!("{function}.loop(0).initialize")
+    );
+    // The proof unit that checks the phase is the contract proof writing it,
+    // which is what audit and proof tracing select, without verifying.
+    assert_eq!(
+        at(written, ClaimLocationScope::ProofUnit).label,
+        format!("{function}.contract")
+    );
+    // The `loop` keyword's own line belongs to the contract proof.
+    assert_eq!(
+        at("loop {", ClaimLocationScope::Innermost).label,
+        format!("{function}.contract")
+    );
+    let by_line = expand_claim_by_label(
+        None,
+        &click,
+        &inputs,
+        &selected.label,
+        Some(selected.position),
+    )
+    .unwrap();
+    assert_eq!(by_line.source, expanded);
+    assert_eq!(by_line.proof_unit, format!("{function}.contract"));
+}
+
+const OMITTED_PHASE_C: &str = "int32 f(int32 a, int32 b) {
+    while (a > 0) {
+        a = 0;
+        b = 0;
+    }
+    return a;
+}
+";
+
+const OMITTED_PHASE_CLICK: &str = r#"verifying "omitted.c";
+
+int32 f(int32 a, int32 b) {
+    requires a <= 0;
+    ensures result <= 0;
+} by {
+    loop {
+        decreases a + 1;
+        invariant a <= 0;
+    }
+    step();
+    simp();
+}
+"#;
+
+/// A `loop` tactic that writes neither phase leaves both to automation.
+/// Expanding one by its label writes it out as an explicit phase proof in
+/// the tactic's body, and changes nothing else.
+#[test]
+fn an_omitted_loop_phase_expands_to_an_explicit_phase_proof() {
+    let sources = [("omitted.c", OMITTED_PHASE_C)];
+    verify_c0_sources(OMITTED_PHASE_CLICK, &sources).unwrap();
+    let insertion = OMITTED_PHASE_CLICK.find("}\n    step();").unwrap();
+    for phase in ["initialize", "preserve"] {
+        let expanded = expand_c0_claim_source_by_label(
+            OMITTED_PHASE_CLICK,
+            &sources,
+            &format!("f.loop(0).{phase}"),
+        )
+        .unwrap();
+        assert!(
+            expanded.starts_with(&OMITTED_PHASE_CLICK[..insertion]),
+            "{expanded}"
+        );
+        assert!(
+            expanded.ends_with(&OMITTED_PHASE_CLICK[insertion..]),
+            "{expanded}"
+        );
+        let inserted =
+            &expanded[insertion..expanded.len() - (OMITTED_PHASE_CLICK.len() - insertion)];
+        assert!(
+            inserted.starts_with(&format!("    {phase} by {{\n")),
+            "{inserted}"
+        );
+        assert!(inserted.ends_with("        }\n    "), "{inserted}");
+        verify_c0_sources(&expanded, &sources).unwrap();
+    }
+    let error =
+        expand_c0_claim_source_by_label(OMITTED_PHASE_CLICK, &sources, "f.loop(1).preserve")
+            .unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("no `loop` tactic in `f`'s proofs proves loop(1)"),
+        "{}",
+        error.message()
+    );
 }

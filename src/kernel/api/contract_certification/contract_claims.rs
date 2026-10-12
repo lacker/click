@@ -2458,6 +2458,7 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                 load_equalities,
                 loop_semantics: contract_execution.loop_semantics,
                 applied_tactics: contract_execution.applied_tactics.clone(),
+                checked_callees: contract_execution.checked_callees.clone(),
             })
         })
         .collect::<Option<Vec<_>>>();
@@ -2759,6 +2760,9 @@ pub fn c_verified_function_rule(
     Some(CVerifiedFunctionRule {
         function,
         loop_semantics,
+        checked_callees: crate::kernel::termination::merge_checked_callees(
+            proofs.iter().map(|proof| proof.checked_callees.as_ref()),
+        ),
         applied_tactics: proofs
             .iter()
             .flat_map(|proof| proof.applied_tactics.iter().cloned())
@@ -2825,6 +2829,7 @@ pub(crate) fn c_recursive_function_contract_hypothesis(
         function,
         // A hypothesis certified nothing, so it says nothing about loops.
         loop_semantics: CLoopSemantics::Verify,
+        checked_callees: None,
         applied_tactics: Default::default(),
     })
 }

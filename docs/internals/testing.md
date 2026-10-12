@@ -1112,12 +1112,13 @@ its sites:
 A passing audit prints one bounded row per claim by default:
 
 ```text
-CLAIM [2/25] examples/owned-vector/vector.click  vector_copy.ensures_0 (1 sites) ... ok (1 sites)
+CLAIM [2/25] examples/owned-vector/vector.click  vector_copy.contract (1 sites) ... ok (1 sites)
 ```
 
 Repeat `--claim LABEL` to select exact named proof units. Unknown labels are an
 error; labels present in multiple sidecars are rejected as ambiguous unless the
-audit target is narrowed to one sidecar. `--verbose` prints all per-site phase
+audit target is narrowed to one sidecar or the claim is selected by location,
+`--claim FILE:LINE[:COLUMN]`. `--verbose` prints all per-site phase
 timings:
 
 ```text

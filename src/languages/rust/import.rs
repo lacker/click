@@ -15,6 +15,7 @@ pub struct PreparedRustImport {
 struct Inner {
     export: RustExport,
     identity: String,
+    execution: crate::languages::ExecutionCache,
 }
 impl PreparedRustImport {
     pub fn logical_source(&self) -> &str {
@@ -26,6 +27,13 @@ impl PreparedRustImport {
     pub fn export(&self) -> &RustExport {
         &self.inner.export
     }
+    pub(crate) fn prepared_execution(
+        &self,
+    ) -> Result<Arc<crate::languages::PreparedExecution>, String> {
+        self.inner
+            .execution
+            .get_or_lower(|| super::prepare_execution(self))
+    }
 }
 #[cfg(test)]
 pub(super) fn prepared_for_test(export: RustExport) -> Result<PreparedRustImport, String> {
@@ -34,6 +42,7 @@ pub(super) fn prepared_for_test(export: RustExport) -> Result<PreparedRustImport
         inner: Arc::new(Inner {
             export,
             identity: "charon-authority-test".into(),
+            execution: Default::default(),
         }),
     })
 }
@@ -344,6 +353,7 @@ pub fn load_import(path: &Path) -> Result<PreparedRustImport, String> {
         inner: Arc::new(Inner {
             export,
             identity: lock.identity,
+            execution: Default::default(),
         }),
     })
 }

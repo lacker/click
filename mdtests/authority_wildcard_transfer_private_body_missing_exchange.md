@@ -23,5 +23,5 @@ void move(int32* source, int32* destination, int32* p) {
 ```
 
 ```expect
-fail: left `move.ensures_2` unproved
+fail: left `move.produces_0` unproved
 ```

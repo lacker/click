@@ -197,25 +197,17 @@ fn proof_shape_hint(tactics: &[ProofTactic]) -> Option<(usize, &'static str)> {
     })
 }
 
-fn diagnostic_claim_label(function_name: &str, claim: &FunctionClaimRef<'_>) -> String {
-    let label = function_claim_label(function_name, claim);
-    match claim.clause().ensure() {
+fn diagnostic_claim_label(function_block: &FunctionBlock, claim: &FunctionClaimRef<'_>) -> String {
+    let label = function_claim_label(function_block, claim);
+    let statement = match claim.clause().ensure() {
         Ensure::Resource(resource) => {
-            let verb = if claim.clause().borrowed() {
-                "owns"
-            } else {
-                "produces"
-            };
-            format!(
-                "{function_name}.{verb}: {}",
-                crate::surface::validation::describe_resource_clause(resource)
-            )
+            crate::surface::validation::describe_resource_clause(resource)
         }
-        Ensure::Proposition(proposition) => format!(
-            "{label}: {}",
+        Ensure::Proposition(proposition) => {
             crate::surface::diagnostics::describe_click_proposition(proposition)
-        ),
-    }
+        }
+    };
+    format!("{label}: {statement}")
 }
 
 fn unsupported_proof_shape(
@@ -535,10 +527,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
             Err(error) => return Err(error),
         }
     }
-    let claim_labels = [diagnostic_claim_label(
-        function_block.signature().name(),
-        claim,
-    )];
+    let claim_labels = [diagnostic_claim_label(function_block, claim)];
     Err(unsupported_proof_shape(
         claim_label,
         false,
@@ -562,7 +551,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     tactics: &[ProofTactic],
     tactic_source: ProofTacticSource,
 ) -> Result<ClaimProofResult, ClickError> {
-    let proof_label = format!("{}.contract", function_block.signature().name());
+    let proof_label = function_block.contract_claim_label();
     let _local_layouts =
         super::surface_synthesis::LocalStructLayoutScope::enter(parsed_function, function_block);
     if claims.is_empty() {
@@ -808,7 +797,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     }
     let claim_labels = claims
         .iter()
-        .map(|claim| diagnostic_claim_label(function_block.signature().name(), claim))
+        .map(|claim| diagnostic_claim_label(function_block, claim))
         .collect::<Vec<_>>();
     Err(unsupported_proof_shape(
         &proof_label,
@@ -1712,9 +1701,9 @@ pub(super) fn finish_ordered_proof<'a>(
     claim_surface_builders: &mut Vec<(VerifiedClaim, ProofCertificateBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_label = if require_explicit_closers {
-        format!("{}.contract", function_block.signature().name())
+        function_block.contract_claim_label()
     } else {
-        function_claim_label(function_block.signature().name(), &claims[0])
+        function_claim_label(function_block, &claims[0])
     };
     // The drain re-enters the proof-object substrate exactly once: the
     // terminal execution context becomes an execution-frontier `Proof` whose
@@ -3991,7 +3980,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         completed
                                     } else {
                                         let claim_label = function_claim_label(
-                                            function_block.signature().name(),
+                                            function_block,
                                             &claims[claim_index],
                                         );
                                         return Err(ClickError::new(format!(
@@ -4124,7 +4113,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         };
                                         for (claim_index, _, _) in &direct_resource_claims {
                                             let claim_label = function_claim_label(
-                                                function_block.signature().name(),
+                                                function_block,
                                                 &claims[*claim_index],
                                             );
                                             let checked = required_outcome(&outcome_proof)?.check_outcome_resource_claim(&completed_execution, claims[*claim_index]).map_err(|error| {
@@ -4286,9 +4275,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     })
                                                     .map(|(claim_index, _, _)| *claim_index)
                                                     .expect("the scope goal came from direct_claims");
-                                                let claim_label = function_claim_label(
-                                                    function_block.signature().name(),
-                                                    &claims[claim_index],
+                                                let claim_label = function_claim_label(function_block, &claims[claim_index],
                                                 );
                                                 // A restricted miss must stay restricted even
                                                 // while explaining it: do not launch an
@@ -4540,10 +4527,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     else {
                                         continue;
                                     };
-                                    let claim_label = function_claim_label(
-                                        function_block.signature().name(),
-                                        claim,
-                                    );
+                                    let claim_label = function_claim_label(function_block, claim);
                                     if let Err(reason) = close_claim_directly_from_outcome(
                                         root,
                                         function,
@@ -4752,8 +4736,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             // the completion claim certification matches. The
                             // exact surface checker below remains for claims
                             // that closure does not reach.
-                            let claim_label =
-                                function_claim_label(function_block.signature().name(), claim);
+                            let claim_label = function_claim_label(function_block, claim);
                             if let Some(root) = outcome_proof.as_ref()
                                 && let Ensure::Proposition(surface_goal) = claim.clause().ensure()
                             {
@@ -4828,8 +4811,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         .enumerate()
                         .find(|(claim_index, _)| !closures[*claim_index].is_closed())
                     {
-                        let claim_label =
-                            function_claim_label(function_block.signature().name(), claim);
+                        let claim_label = function_claim_label(function_block, claim);
                         let closer = "`simp()`";
                         let summary = format!(
                             "`{proof_label}` path {path_index} left `{claim_label}` unproved; use {closer} after establishing the facts and resources it needs (claim index {claim_index})"

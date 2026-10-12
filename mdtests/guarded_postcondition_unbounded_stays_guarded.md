@@ -57,5 +57,5 @@ int32 caller(struct box* b) {
 ```
 
 ```expect
-fail: `ensures old(st.live) <= st.live` failed for `caller.ensures_1`
+fail: `ensures old(st.live) <= st.live` failed for `caller.ensures_0`
 ```

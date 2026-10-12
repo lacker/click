@@ -1658,7 +1658,10 @@ fn abstract_c_state_for_join_across_with_policy(
                 .iter()
                 .map(|sibling| &sibling.memory)
                 .collect::<Vec<_>>();
-            let memory = abstract_state
+            // Record the checked arm, not the scratch memory whose marker
+            // union above differs depending on which arm is being abstracted.
+            // The join itself already unions every incoming arm's blocks.
+            let memory = state
                 .memory
                 .clone()
                 .with_interface_memory_havoc_preserving_loans(
@@ -5122,6 +5125,7 @@ pub fn prove_checked_c_function_execution_with_environment(
         entry_representation_origin: None,
         boundary_transfer: None,
         checked_call_events: Default::default(),
+        checked_callees: None,
         applied_tactics: Default::default(),
     }
 }
@@ -6962,6 +6966,11 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         checked_call_events,
         loop_semantics: execution_semantics.loops,
         applied_tactics,
+        checked_callees: super::termination::merge_checked_callees(
+            checked_artifacts
+                .iter()
+                .map(|artifact| artifact.checked_callees.as_ref()),
+        ),
     }
 }
 

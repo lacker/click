@@ -8778,6 +8778,43 @@ fn evaluate_loop_effect_segment_value_with_facts(
     label: &str,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<(CValue, ExecutionFacts), String>> {
+    evaluate_loop_effect_segment_value_capturing(
+        state,
+        expression,
+        assumptions,
+        label,
+        budget,
+        None,
+    )
+}
+
+pub(super) fn evaluate_resource_argument_value(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    label: &str,
+    budget: &mut ExecutionBudget,
+    diagnostic: &mut Option<CRuntimeError>,
+) -> ExecutionResult<Result<CValue, String>> {
+    Ok(evaluate_loop_effect_segment_value_capturing(
+        state,
+        expression,
+        assumptions,
+        label,
+        budget,
+        Some(diagnostic),
+    )?
+    .map(|(value, _)| value))
+}
+
+fn evaluate_loop_effect_segment_value_capturing(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    label: &str,
+    budget: &mut ExecutionBudget,
+    diagnostic: Option<&mut Option<CRuntimeError>>,
+) -> ExecutionResult<Result<(CValue, ExecutionFacts), String>> {
     let paths = evaluate_c_expression_paths(state, expression, assumptions, budget)?;
     // An endpoint the facts do not keep defined splits into its defined value
     // and the undefined behavior beside it: name that behavior, which a
@@ -8844,6 +8881,16 @@ fn evaluate_loop_effect_segment_value_with_facts(
         CExpressionOutcome::RuntimeError(error) => {
             if let CRuntimeError::MissingResource { resource } = &error {
                 crate::kernel::functions::record_resource_dependency(*resource.clone());
+                if let Some(diagnostic) = diagnostic {
+                    *diagnostic = Some(CRuntimeError::ContractResourceDiagnostic {
+                        reason: format!(
+                            "{label} could not be evaluated: required access authority is unavailable"
+                        ),
+                        held: None,
+                        required: resource.clone(),
+                        memory: Some(Box::new(state.memory().clone())),
+                    });
+                }
             }
             Ok(Err(format!(
                 "{label} produced runtime error: {}",
@@ -10087,5 +10134,53 @@ mod wide_range_reader_tests {
             crate::kernel::primitives::IndexIntervals::default(),
         );
         assert!(run_slots_clear_of_loop_summaries(&run, &[summary], &facts).is_none());
+    }
+}
+
+#[cfg(test)]
+mod resource_argument_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn missing_argument_read_retains_the_actual_snapshot_and_permission() {
+        let state =
+            CState::new().with_local("p", CValue::pointer(Pointer::symbolic(Variable(985_910))));
+        let expression = c_load(c_variable("p"));
+        let assumptions = PureFactContext::new();
+        let mut budget = ExecutionBudget::default();
+        let mut diagnostic = None;
+        let captured = evaluate_resource_argument_value(
+            &state,
+            &expression,
+            &assumptions,
+            "resource `cell` argument 1",
+            &mut budget,
+            &mut diagnostic,
+        )
+        .unwrap();
+        let ordinary = evaluate_loop_effect_segment_value(
+            &state,
+            &expression,
+            &assumptions,
+            "resource `cell` argument 1",
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(captured, ordinary);
+        assert!(captured.is_err());
+        let Some(CRuntimeError::ContractResourceDiagnostic {
+            memory: Some(memory),
+            required,
+            held: None,
+            ..
+        }) = diagnostic
+        else {
+            panic!("the failed read must retain its operands")
+        };
+        assert_eq!(*memory, *state.memory());
+        assert!(matches!(
+            *required,
+            CResourceFact::View(CResource::Memory(_))
+        ));
     }
 }

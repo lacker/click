@@ -43,7 +43,7 @@ fail: missing resource fact `owns b[1]`
   C operation: *(b + 1) = 1
   C statement at a_store_refusal_lists_the_contracts_requires.c:2:5: `b[1] = 1;`
 proof context:
-  pure facts: [0 <= n, 1 <= n, n <= 1073741823, n <= 1073741823 (unsigned), viewable(memory=snapshot#1, base=a, bytes:uint32=(n*4)), viewable(memory=snapshot#1, base=b, bytes:uint32=(n*4)), memory(b[Int32:0..n], stride=4) separate memory(a[Int32:0..n], stride=4)]
+  pure facts: [0 <= n, 1 <= n, n <= 1073741823, n <= 1073741823 (unsigned), viewable(memory=snapshot#1, base=a, bytes:uint32=(n*4)), viewable(memory=snapshot#1, base=b, bytes:uint32=(n*4)), memory(b[Int32:0..n], stride=4) separate memory(a[Int32:0..n], stride=4), validated-composition { views memory(a[Int32:0..n], stride=4); owns memory(b[Int32:0..n], stride=4) x 1; support details omitted }]
 
   label definitions (recorded constructions, not additional facts):
     snapshot#1 = initial empty memory

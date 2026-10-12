@@ -185,6 +185,105 @@ mod tests {
         }
     }
 
+    /// Each clause kind numbers its claims separately, so an `owns` clause
+    /// does not renumber the `ensures` after it, and `--claim` (expand and
+    /// audit) and `--trace-proof` also select a claim by a line its clause or
+    /// proof covers.
+    #[test]
+    fn claims_are_labelled_per_clause_kind_and_selected_by_line() {
+        let directory =
+            std::env::temp_dir().join(format!("click-claim-lines-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("f.c"),
+            "void f(int *p) { p[0] = 1; }\nvoid g(int *p) { p[0] = 2; }\n",
+        )
+        .unwrap();
+        let sidecar = directory.join("f.click");
+        fs::write(
+            &sidecar,
+            "verifying \"f.c\";\n\
+             void f(int32* p) {\n\
+             \x20   owns p[0..1];\n\
+             \x20   ensures p[0] == 1 by {\n\
+             \x20       execute();\n\
+             \x20       simp();\n\
+             \x20   }\n\
+             }\n\
+             void g(int32* p) { owns p[0..1]; ensures p[0] == 2 by { execute(); simp(); } }\n",
+        )
+        .unwrap();
+        let path = sidecar.display().to_string();
+        let output = |name: &str| directory.join(name).display().to_string();
+        let run = |words: &[&str]| entry(words.iter().map(|word| word.to_string()));
+        let expand = |claim: &str, name: &str| {
+            run(&["expand", "--claim", claim, "--output", &output(name), &path])
+                .map(|()| fs::read_to_string(directory.join(name)).unwrap())
+        };
+
+        let by_label = expand("f.ensures_0", "ensures.click").unwrap();
+        assert!(by_label.contains("    owns p[0..1];\n"), "{by_label}");
+        assert!(
+            !by_label.contains("execute();\n        simp();"),
+            "{by_label}"
+        );
+        let by_line = expand(&format!("{path}:5"), "line.click").unwrap();
+        assert_eq!(by_line, by_label);
+        let owns = expand("f.owns_0", "owns.click").unwrap();
+        assert!(owns.contains("    owns p[0..1] by {"), "{owns}");
+        assert_eq!(
+            expand(&format!("{path}:3:10"), "owns-line.click").unwrap(),
+            owns
+        );
+        let shifted = expand("f.ensures_1", "missing.click").unwrap_err();
+        assert!(
+            shifted.contains("could not locate function claim `f.ensures_1`"),
+            "{shifted}"
+        );
+
+        let uncovered = expand(&format!("{path}:1"), "none.click").unwrap_err();
+        assert!(
+            uncovered.contains(&format!(
+                "{path}:1: no claim's clause or proof covers this line"
+            )),
+            "{uncovered}"
+        );
+        let several = expand(&format!("{path}:9"), "several.click").unwrap_err();
+        assert!(
+            several.contains(&format!(
+                "{path}:9: 2 claims cover this line; add the column of one of them:\n  {path}:9:20 `g.owns_0`\n  {path}:9:34 `g.ensures_0`"
+            )),
+            "{several}"
+        );
+        let elsewhere = expand("other.click:5", "elsewhere.click").unwrap_err();
+        assert!(
+            elsewhere.contains("`other.click:5` names a location in `other.click`"),
+            "{elsewhere}"
+        );
+
+        run(&["audit", "--claim", &format!("{path}:9:40"), &path]).unwrap();
+        let audit = run(&["audit", "--claim", &format!("{path}:1"), &path]).unwrap_err();
+        assert!(
+            audit.contains(&format!(
+                "{path}:1: no claim's clause or proof covers this line"
+            )),
+            "{audit}"
+        );
+        run(&["verify", "--trace-proof", &format!("{path}:9:40"), &path]).unwrap();
+        run(&["verify", "--trace-proof", &format!("{path}:4"), &path]).unwrap();
+        let trace = run(&["verify", "--trace-proof", &format!("{path}:8"), &path]).unwrap_err();
+        assert!(
+            trace.contains(&format!(
+                "{path}:8: no claim's clause or proof covers this line"
+            )),
+            "{trace}"
+        );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
     /// A store Click steps over itself while preserving a loop's invariants
     /// is refused at the `loop` tactic that owns that phase, not at the
     /// claim's first tactic (the phase proof's own tactics count from zero),

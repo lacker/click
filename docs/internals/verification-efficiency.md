@@ -438,6 +438,21 @@ into a cached success.
 
 ## Lazy separation and compact composition carriers
 
+Borrow/owner separation over explicitly opened composites uses existing checked
+loan bindings. Composition admission indexes only changed memory-address keys
+and changed bindings; a persistent binding journal also captures changes that
+leave the resource store itself unchanged. Queries consult sources indexed by
+the two addresses, and recheck the exact retained composition. They do not scan
+unrelated resources or unrelated composition history. Repeated bindings share
+their existing state. No complete tree footprint or list of separated pairs is
+constructed. The `borrow_partition_tests` regressions check evidence withdrawal,
+overlap rejection, branch-local binding changes, and lookup/admission scaling
+with growing unrelated state. The surface regression
+`composite_borrow_partition_nested_openings_scale_with_depth` checks explicit
+nesting at several depths. Exit resource equality tries the requested
+fold/unfold comparison by consumption before searching combinations of exposed
+definitions, and exposure stops when a non-memory target is found.
+
 Resource contexts never materialize pairwise `CResourceSeparate`
 propositions, and neither do the fact contexts that hold them. A multi-owner
 context exposes one compact `CResourceComposition` carrier. Holding it states
@@ -719,6 +734,21 @@ derivations.
 
 Whole-project termination is decided in two passes over one call graph, built
 once from the run's verified functions and the inline helpers they reach.
+For a function with complete checked execution evidence, call dependencies
+come from its retained checked statements. A branch proved unreachable adds
+no calls; a summarized statement, including a loop, conservatively adds every
+call in its syntax. Missing dependency evidence falls back to scanning the
+source body. Tactic dependencies and address-taken callback checks still apply.
+
+Dependencies are collected once when an execution artifact is finalized.
+Shared statement nodes are visited once across summary applications, using
+identity keys rather than structural hashes. Certified claims share the
+resulting immutable set; merging claims visits each distinct shared set once,
+without copying a growing call set at every execution step. The
+`checked_callee_summary_reuse_scales_with_input_not_product` and
+`checked_callee_claim_reuse_shares_the_dependency_set` regressions grow both
+dependency count and reuse count from 16 through 1,024 to guard this cost.
+
 `c_termination_height_plan` proposes a height per node — iterative Tarjan with
 an explicit stack, longest path over the condensation, cycle members sharing a
 height. `c_verified_function_termination_rules` then checks that proposal:

@@ -4475,8 +4475,10 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         .iter()
         .find(|function| function.signature().name() == "caller")
         .expect("caller contract should exist");
-    let predicate_environment =
-        PredicateEnvironment::new(&[]).with_contracts(click_file.contract_definitions());
+    let predicate_environment = PredicateEnvironment::new(&[]).with_contracts(
+        click_file.contract_definitions(),
+        &click_file.c_function_names,
+    );
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
     let theorem_environment = TheoremEnvironment::new(&[]);
     let parsed_function = syntax::parse_function(

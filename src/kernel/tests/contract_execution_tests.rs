@@ -1509,6 +1509,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let statement = c_seq(
@@ -1609,6 +1610,7 @@ fn verified_function_rule_coerces_null_constants_in_contract_views() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let execution = prove_symbolic_c_execution_paths_with_environment(
@@ -1681,6 +1683,7 @@ fn verified_function_rule_does_not_publish_one_spec_alias_path() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let execution = prove_symbolic_c_execution_paths_with_environment(
@@ -1739,6 +1742,7 @@ fn opaque_pointer_result_can_alias_its_argument() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let execution = prove_symbolic_c_execution_paths_with_environment(
@@ -1808,6 +1812,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let statement = c_seq(
@@ -1867,6 +1872,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let mut budget = ExecutionBudget::default();
@@ -3383,6 +3389,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
         reuse_context_facts: Vec::new(),
         checked_call_events: Default::default(),
         loop_semantics: CLoopSemantics::Verify,
+        checked_callees: None,
         applied_tactics: Default::default(),
     };
 
@@ -3486,6 +3493,7 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
                 reuse_context_facts: Vec::new(),
                 checked_call_events: Default::default(),
                 loop_semantics: CLoopSemantics::Verify,
+                checked_callees: None,
                 applied_tactics: Default::default(),
             },
         )
@@ -3574,6 +3582,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
         reuse_context_facts: Vec::new(),
         checked_call_events: Default::default(),
         loop_semantics: CLoopSemantics::Verify,
+        checked_callees: None,
         applied_tactics: Default::default(),
     };
 
@@ -5107,6 +5116,7 @@ fn call_requirement_obligations_carry_their_lowering_record() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let state = CState::new()
@@ -5189,6 +5199,7 @@ fn opaque_rule_environment(function: CFunction) -> CExecutionEnvironment {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         })
 }
@@ -5307,6 +5318,7 @@ fn an_anchor_ranks_only_calls_to_the_function_it_names() {
             .with_verified_function_rule(CVerifiedFunctionRule {
                 function: other,
                 loop_semantics: CLoopSemantics::Verify,
+                checked_callees: None,
                 applied_tactics: Default::default(),
             }),
         &drain,

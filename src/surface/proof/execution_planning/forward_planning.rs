@@ -195,8 +195,12 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "`{}.loop({loop_index}).initialize`: {message}",
-                                environment.function_block.signature().name()
+                                "`{}`: {message}",
+                                crate::surface::claim_labels::loop_phase_claim_label(
+                                    environment.function_block.signature().name(),
+                                    loop_index,
+                                    "initialize",
+                                )
                             ))
                         })?;
                 }
@@ -230,8 +234,12 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 }
                 .map_err(|refusal| {
                     ClickError::new(format!(
-                        "`{}.loop({loop_index}).preserve`: {}{}",
-                        environment.function_block.signature().name(),
+                        "`{}`: {}{}",
+                        crate::surface::claim_labels::loop_phase_claim_label(
+                            environment.function_block.signature().name(),
+                            loop_index,
+                            "preserve",
+                        ),
                         crate::surface::diagnostics::describe_loop_head_refusal(&refusal),
                         crate::surface::diagnostics::describe_c_statement_site()
                     ))
@@ -407,9 +415,10 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             if !preservation_path_certificates.is_empty() {
                 let claim_label = environment.frontier_loop_source.map_or_else(
                     || {
-                        format!(
-                            "{}.loop({loop_index}).preserve",
-                            environment.function_block.signature().name()
+                        crate::surface::claim_labels::loop_phase_claim_label(
+                            environment.function_block.signature().name(),
+                            loop_index,
+                            "preserve",
                         )
                     },
                     |source| source.claim_label.clone(),

@@ -149,7 +149,7 @@ pub(in crate::surface) fn verify_concrete_theorem_definition(
         .iter()
         .enumerate()
         .map(|(ensure_index, ensure_clause)| {
-            let claim_label = theorem_claim_label(theorem.name(), ensure_index, ensure_clause);
+            let claim_label = theorem.ensure_claim_label(ensure_index);
             let started = std::time::Instant::now();
             let result = verify_theorem_ensure(
                 theorem,
@@ -1743,17 +1743,6 @@ pub(in crate::surface) fn pure_theorem_array_refs(
         .collect()
 }
 
-fn theorem_claim_label(
-    theorem_name: &str,
-    ensure_index: usize,
-    ensure_clause: &EnsureClause,
-) -> String {
-    match ensure_clause.name() {
-        Some(name) => format!("{theorem_name}.{name}"),
-        None => format!("{theorem_name}.ensures_{ensure_index}"),
-    }
-}
-
 fn verify_theorem_ensure(
     theorem: &TheoremDefinition,
     ensure_index: usize,
@@ -2086,7 +2075,7 @@ fn verify_contract_refinement_theorem(
     })?;
     let refinement = match (concrete_target, source_contract) {
         (Some(target), None) => {
-            c_function_contract_refinement_context(function_environment, name, target).ok_or_else(
+            c_function_contract_refinement_context(function_environment, name, spec_definitions.predicates.function_execution_name(target)).ok_or_else(
                 || {
                     ClickError::new(format!(
                         "`{claim_label}`: `{target}` is not a verified or external function compatible with contract `{name}`"
@@ -4046,7 +4035,7 @@ mod tests {
     fn verify_standard_declaration(source: &str) -> Result<(), ClickError> {
         let file = crate::surface::parser::parse_file_items(source)?;
         let predicate_environment = PredicateEnvironment::new(file.predicate_definitions())
-            .with_contracts(file.contract_definitions());
+            .with_contracts(file.contract_definitions(), &file.c_function_names);
         let click_function_environment =
             ClickFunctionEnvironment::new(file.click_function_definitions());
         let spec_definitions =

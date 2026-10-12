@@ -318,6 +318,45 @@ pub(crate) struct LoanViewBindings {
 pub(crate) struct LoanViewBindingsState {
     pub(crate) identity: u64,
     pub(crate) map: PersistentMap<ResourceOccurrenceId, LoanViewBinding>,
+    changes: imbl::Vector<(u64, ResourceOccurrenceId)>,
+}
+
+impl LoanViewBindingsState {
+    pub(crate) fn updated(
+        &self,
+        map: PersistentMap<ResourceOccurrenceId, LoanViewBinding>,
+        changed: impl IntoIterator<Item = ResourceOccurrenceId>,
+    ) -> Arc<Self> {
+        let mut changes = self.changes.clone();
+        let identity = next_loan_binding_identity();
+        changes.extend(changed.into_iter().map(|occurrence| (identity, occurrence)));
+        Arc::new(Self {
+            identity,
+            map,
+            changes,
+        })
+    }
+
+    /// Bindings are a persistent branch-local journal. A shared prefix lets
+    /// producer admission index metadata-only changes without scanning views.
+    pub(crate) fn changed_occurrences_since(&self, prior: &Self) -> Vec<ResourceOccurrenceId> {
+        if self.identity == prior.identity {
+            return Vec::new();
+        }
+        // A source's history can branch. Reading both suffixes is necessary:
+        // the current branch may restore an occurrence the other removed.
+        let mut common = self.changes.len().min(prior.changes.len());
+        while common > 0 && self.changes.get(common - 1) != prior.changes.get(common - 1) {
+            crate::instrumentation::record_deterministic_work(1);
+            common -= 1;
+        }
+        (common..self.changes.len())
+            .map(|index| &self.changes[index])
+            .chain((common..prior.changes.len()).map(|index| &prior.changes[index]))
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+            .map(|(_, occurrence)| *occurrence)
+            .collect()
+    }
 }
 
 pub(crate) fn next_loan_binding_identity() -> u64 {
@@ -387,10 +426,10 @@ impl LoanViewBindings {
             return self.clone();
         }
         Self {
-            state: Arc::new(LoanViewBindingsState {
-                identity: next_loan_binding_identity(),
-                map: self.state.map.with_inserted(occurrence, binding),
-            }),
+            state: self.state.updated(
+                self.state.map.with_inserted(occurrence, binding),
+                [occurrence],
+            ),
         }
     }
 
@@ -399,10 +438,9 @@ impl LoanViewBindings {
             return self.clone();
         }
         Self {
-            state: Arc::new(LoanViewBindingsState {
-                identity: next_loan_binding_identity(),
-                map: self.state.map.without_key(&occurrence),
-            }),
+            state: self
+                .state
+                .updated(self.state.map.without_key(&occurrence), [occurrence]),
         }
     }
 }

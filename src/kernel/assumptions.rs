@@ -2542,16 +2542,7 @@ impl PureFactContext {
     }
 
     pub(in crate::kernel) fn has_same_reasoning_policy(&self, other: &Self) -> bool {
-        self.defer_non_exact_loadability_obligations
-            == other.defer_non_exact_loadability_obligations
-            && self.defer_non_exact_condition_reasoning == other.defer_non_exact_condition_reasoning
-            && self.prefer_symbolic_external_loads == other.prefer_symbolic_external_loads
-            && self.force_symbolic_external_loads == other.force_symbolic_external_loads
-            && self.allow_symbolic_contract_loads == other.allow_symbolic_contract_loads
-            && self.require_owned_expression_loads == other.require_owned_expression_loads
-            && self.transport_memory_load_condition_facts
-                == other.transport_memory_load_condition_facts
-            && self.keep_spec_loads_symbolic == other.keep_spec_loads_symbolic
+        self.reasoning_policy == other.reasoning_policy
     }
 
     fn fingerprint<T: std::hash::Hash>(tag: u64, value: &T) -> u64 {
@@ -2577,30 +2568,7 @@ impl PureFactContext {
         for resources in self.resource_compositions.iter() {
             fingerprint ^= Self::fingerprint(3, resources);
         }
-        if self.defer_non_exact_loadability_obligations {
-            fingerprint ^= 1 << 56;
-        }
-        if self.defer_non_exact_condition_reasoning {
-            fingerprint ^= 1 << 57;
-        }
-        if self.prefer_symbolic_external_loads {
-            fingerprint ^= 1 << 58;
-        }
-        if self.force_symbolic_external_loads {
-            fingerprint ^= 1 << 59;
-        }
-        if self.allow_symbolic_contract_loads {
-            fingerprint ^= 1 << 60;
-        }
-        if self.require_owned_expression_loads {
-            fingerprint ^= 1 << 63;
-        }
-        if self.keep_spec_loads_symbolic {
-            fingerprint ^= 1 << 62;
-        }
-        if self.transport_memory_load_condition_facts {
-            fingerprint ^= 1 << 61;
-        }
+        fingerprint ^= self.reasoning_policy.fingerprint();
         self.content_fingerprint = fingerprint;
     }
 
@@ -4817,6 +4785,40 @@ impl PureFactContext {
         })
     }
 
+    /// Separation of an exposed owner and a checked loan-bound projection.
+    /// Candidate lookup uses only the queried address keys, and the retained
+    /// composition is the authority subsequently checked by memory evidence.
+    pub(in crate::kernel) fn borrow_partition_separated_members<'a>(
+        &'a self,
+        left: &Pointer,
+        right: &Pointer,
+        contains_left: impl Fn(&CMemoryRange) -> bool,
+        contains_right: impl Fn(&CMemoryRange) -> bool,
+    ) -> Option<(&'a ResourceContext, &'a CMemoryRange, &'a CMemoryRange)> {
+        for source in self
+            .composition_object_resources
+            .partition_sources_at(&[left, right])
+        {
+            if !self.resource_compositions.contains(source) {
+                continue;
+            }
+            for borrowed in [false, true] {
+                if let Some((a, b)) = source
+                    .partition_memory_member_at(left, borrowed, &contains_left)
+                    .zip(source.partition_memory_member_at(right, !borrowed, &contains_right))
+                    && !self.memory_ranges_overlap_after_base_equality(a, b)
+                {
+                    record_implicit_reasoning_provenance(
+                        self,
+                        &Proposition::CResourceComposition(source.clone()),
+                    );
+                    return Some((source, a, b));
+                }
+            }
+        }
+        None
+    }
+
     pub(super) fn insert_proposition_fact(&mut self, proposition: Proposition) {
         if let Proposition::CResourceComposition(resources) = proposition {
             if std::sync::Arc::make_mut(&mut self.resource_compositions).insert(resources.clone()) {
@@ -5006,109 +5008,96 @@ impl PureFactContext {
     ///
     /// Condition reasoning is unchanged: this flag only controls the
     /// obligation boundary used by the evaluator.
-    pub(crate) fn defer_non_exact_loadability_obligations(mut self) -> Self {
-        if !self.defer_non_exact_loadability_obligations {
-            self.defer_non_exact_loadability_obligations = true;
-            self.content_fingerprint ^= 1 << 56;
-        }
-        self
+    pub(crate) fn defer_non_exact_loadability_obligations(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::DEFER_NON_EXACT_LOADABILITY_OBLIGATIONS)
     }
 
     pub(crate) fn should_defer_non_exact_loadability_obligations(&self) -> bool {
-        self.defer_non_exact_loadability_obligations
+        self.reasoning_policy
+            .contains(ReasoningPolicy::DEFER_NON_EXACT_LOADABILITY_OBLIGATIONS)
     }
 
     /// Surface-certificate synthesis uses this only to structurally lower a
     /// candidate form before comparing it with an already-certified
     /// kernel proposition. Ordinary proof checking must not enable it.
-    pub(crate) fn allow_symbolic_contract_loads(mut self) -> Self {
-        if !self.allow_symbolic_contract_loads {
-            self.allow_symbolic_contract_loads = true;
-            self.content_fingerprint ^= 1 << 60;
-        }
-        self
+    pub(crate) fn allow_symbolic_contract_loads(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::ALLOW_SYMBOLIC_CONTRACT_LOADS)
     }
 
     pub(crate) fn should_allow_symbolic_contract_loads(&self) -> bool {
-        self.allow_symbolic_contract_loads
+        self.reasoning_policy
+            .contains(ReasoningPolicy::ALLOW_SYMBOLIC_CONTRACT_LOADS)
     }
 
     pub(crate) fn require_owned_expression_loads(mut self) -> Self {
-        if self.allow_symbolic_contract_loads {
-            self.allow_symbolic_contract_loads = false;
-            self.content_fingerprint ^= 1 << 60;
+        if self.should_allow_symbolic_contract_loads() {
+            self.toggle_reasoning_policy(ReasoningPolicy::ALLOW_SYMBOLIC_CONTRACT_LOADS);
         }
-        if !self.require_owned_expression_loads {
-            self.require_owned_expression_loads = true;
-            self.content_fingerprint ^= 1 << 63;
+        self.with_reasoning_policy(ReasoningPolicy::REQUIRE_OWNED_EXPRESSION_LOADS)
+    }
+
+    fn with_reasoning_policy(mut self, choice: ReasoningPolicy) -> Self {
+        if !self.reasoning_policy.contains(choice) {
+            self.toggle_reasoning_policy(choice);
         }
         self
+    }
+
+    fn toggle_reasoning_policy(&mut self, choice: ReasoningPolicy) {
+        self.reasoning_policy.toggle(choice);
+        self.content_fingerprint ^= choice.fingerprint();
     }
 
     pub(in crate::kernel) fn should_require_owned_expression_loads(&self) -> bool {
-        self.require_owned_expression_loads
+        self.reasoning_policy
+            .contains(ReasoningPolicy::REQUIRE_OWNED_EXPRESSION_LOADS)
     }
 
-    pub(crate) fn transport_memory_load_condition_facts(mut self) -> Self {
-        if !self.transport_memory_load_condition_facts {
-            self.transport_memory_load_condition_facts = true;
-            self.content_fingerprint ^= 1 << 61;
-        }
-        self
+    pub(crate) fn transport_memory_load_condition_facts(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::TRANSPORT_MEMORY_LOAD_CONDITION_FACTS)
     }
 
     pub(crate) fn should_transport_memory_load_condition_facts(&self) -> bool {
-        self.transport_memory_load_condition_facts
+        self.reasoning_policy
+            .contains(ReasoningPolicy::TRANSPORT_MEMORY_LOAD_CONDITION_FACTS)
     }
 
-    pub(crate) fn defer_non_exact_condition_reasoning(mut self) -> Self {
-        if !self.defer_non_exact_condition_reasoning {
-            self.defer_non_exact_condition_reasoning = true;
-            self.content_fingerprint ^= 1 << 57;
-        }
-        self
+    pub(crate) fn defer_non_exact_condition_reasoning(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::DEFER_NON_EXACT_CONDITION_REASONING)
     }
 
     pub(super) fn should_defer_non_exact_condition_reasoning(&self) -> bool {
-        self.defer_non_exact_condition_reasoning
+        self.reasoning_policy
+            .contains(ReasoningPolicy::DEFER_NON_EXACT_CONDITION_REASONING)
     }
 
     /// The pure function definitions the kernel evaluates constant
     /// applications by. A context carries one table.
-    pub(crate) fn prefer_symbolic_external_loads(mut self) -> Self {
-        if !self.prefer_symbolic_external_loads {
-            self.prefer_symbolic_external_loads = true;
-            self.content_fingerprint ^= 1 << 58;
-        }
-        self
+    pub(crate) fn prefer_symbolic_external_loads(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::PREFER_SYMBOLIC_EXTERNAL_LOADS)
     }
 
     pub(super) fn should_prefer_symbolic_external_loads(&self) -> bool {
-        self.prefer_symbolic_external_loads
+        self.reasoning_policy
+            .contains(ReasoningPolicy::PREFER_SYMBOLIC_EXTERNAL_LOADS)
     }
 
-    pub(crate) fn force_symbolic_external_loads(mut self) -> Self {
-        if !self.force_symbolic_external_loads {
-            self.force_symbolic_external_loads = true;
-            self.content_fingerprint ^= 1 << 59;
-        }
-        self
+    pub(crate) fn force_symbolic_external_loads(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::FORCE_SYMBOLIC_EXTERNAL_LOADS)
     }
 
     pub(crate) fn should_force_symbolic_external_loads(&self) -> bool {
-        self.force_symbolic_external_loads
+        self.reasoning_policy
+            .contains(ReasoningPolicy::FORCE_SYMBOLIC_EXTERNAL_LOADS)
     }
 
-    pub(crate) fn keep_spec_loads_symbolic(mut self) -> Self {
-        if !self.keep_spec_loads_symbolic {
-            self.keep_spec_loads_symbolic = true;
-            self.content_fingerprint ^= 1 << 62;
-        }
-        self
+    pub(crate) fn keep_spec_loads_symbolic(self) -> Self {
+        self.with_reasoning_policy(ReasoningPolicy::KEEP_SPEC_LOADS_SYMBOLIC)
     }
 
     pub(super) fn should_keep_spec_loads_symbolic(&self) -> bool {
-        self.keep_spec_loads_symbolic
+        self.reasoning_policy
+            .contains(ReasoningPolicy::KEEP_SPEC_LOADS_SYMBOLIC)
     }
 
     pub(crate) fn proves_exact(&self, proposition: &Proposition) -> bool {

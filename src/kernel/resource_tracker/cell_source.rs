@@ -177,6 +177,7 @@ pub(in crate::kernel) enum MemoryDagAssumptionKind {
 pub(in crate::kernel) enum StoreSeparatedRangesAuthority {
     ExactProposition(Proposition),
     ResourceComposition(ResourceContext),
+    BorrowPartition(ResourceContext),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -630,6 +631,10 @@ impl MemoryDagHopJustification {
                             && proposition.memory_separation().is_some_and(
                                 |(fact_left, fact_right)| fact_left == left && fact_right == right,
                             )
+                    }
+                    StoreSeparatedRangesAuthority::BorrowPartition(resources) => {
+                        assumptions.resource_compositions.contains(resources)
+                            && resources.proves_borrow_partition_separate(left, right)
                     }
                     StoreSeparatedRangesAuthority::ResourceComposition(resources) => {
                         assumptions.resource_compositions.contains(resources)

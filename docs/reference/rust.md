@@ -298,9 +298,15 @@ An item of a crate import is named by its path from the crate:
 `fn quad::walk(bytes: &[u8]) -> u32`, a type `quad::Quad`, and
 `impl adler2::algo::U32X4 { ... }`. The path stands for the name the
 importer gives the item (`__rust_q_I4_quad_I4_walk`). A diagnostic prints
-the path, `quad::walk.contract`, and `--claim` and `--trace-proof` take it;
-an operator method, whose importer name ends in its trait's suffix, keeps
-that name. The importer names an inherent method by the
+the path, `quad::walk.contract`, and `--claim` and `--trace-proof` take it.
+An operator-trait method prints in Rust's qualified form: the method of
+`impl MulAssign<u32> for adler2::algo::U32X4` is
+`<adler2::algo::U32X4 as MulAssign<u32>>::mul_assign`, a reference or by-value
+argument reads `<T as AddAssign<&T>>::add_assign` or
+`<T as AddAssign<T>>::add_assign`, and `impl Default for adler2::Adler32` is
+`<adler2::Adler32 as Default>::default`. `--claim` and `--trace-proof` take
+that form, the importer's name, or a `FILE:LINE` location in the sidecar
+([claim labels](cli/expand.md#claim-labels)). The importer names an inherent method by the
 module its `impl` block is in, which Rust does not write: the method is
 found in the import by its type and name, of which Rust allows one.
 

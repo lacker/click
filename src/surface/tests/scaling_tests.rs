@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn expanded_loop_claims_preserve_the_audit_work_bound() {
+    for (fixture, claim) in [
+        ("c_decreases_recursive_in_loop", "recursive_loop.contract"),
+        ("later_loop_preserve", "later_loop_preserve.contract"),
+        ("loop_exit_snapshot", "count_from_to.contract"),
+        ("nested_loop_preserve", "nested_loop_preserve.contract"),
+    ] {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("mdtests/{fixture}.md"));
+        let markdown = std::fs::read_to_string(&path).unwrap();
+        let input = crate::cli::parse_mdtest(&path, &markdown).unwrap();
+        let source = input.click_source.as_deref().unwrap();
+        let sources = input
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let expanded =
+            crate::surface::expand_c0_claim_source_by_label(source, &sources, claim).unwrap();
+        let samples = [source, expanded.as_str()].map(|source| {
+            let position =
+                crate::surface::c0_tactic_source_position(source, &sources, claim, 0).unwrap();
+            let (result, sample) = scaling_sample(0, || {
+                crate::surface::verify_c0_sources_at(
+                    source,
+                    &sources,
+                    position.line,
+                    position.column,
+                )
+            });
+            result.unwrap();
+            sample
+        });
+        assert!(
+            samples[1].work <= samples[0].work * 2 || samples[1].work <= samples[0].work + 10_000,
+            "{fixture}: original {}, expanded {}; {}",
+            samples[0].work,
+            samples[1].work,
+            named_growth_diagnostic(&samples)
+        );
+    }
+}
+
+#[test]
 fn execution_target_resource_scope_parsing_is_linear_in_selected_declarations() {
     let samples = [1, 8, 32, 128].map(|count| {
         let mut source = "resource Counter() { field revision: int32; }\n".to_string();
@@ -6888,7 +6932,7 @@ fn simp_premise_spelling_is_linear_in_early_returns() {
                     work: *sample
                         .named_work
                         .get(SPELLING)
-                        .unwrap_or_else(|| panic!("simp spelled no premise: {sample:?}")),
+                        .unwrap_or(&0),
                     named_work: BTreeMap::new(),
                 });
             }
@@ -7468,4 +7512,109 @@ fn owned_pointer_parameters_scale_with_their_number() {
         })
         .collect::<Vec<_>>();
     assert_near_linear_scaling("owned pointer parameters", &samples);
+}
+
+/// A selected field separation after unfold uses the live partition before
+/// attempting to connect the older body compositions to surrounding owners.
+#[test]
+fn held_field_separation_precedes_general_composition_reasoning() {
+    let mut work = Vec::new();
+    for size in [4, 8, 16, 32] {
+        let parameters = (0..size)
+            .map(|i| format!(", struct node* q{i}"))
+            .collect::<String>();
+        let resources = (0..size)
+            .map(|i| format!("consumes r{i}: cell(q{i});\n"))
+            .collect::<String>();
+        let unfolds = (0..size)
+            .map(|i| format!("unfold(r{i});\n"))
+            .collect::<String>();
+        let c_source = format!(
+            "struct node {{ uint64 word; struct node *left; struct node *right; }};
+void inspect(struct node* parent, struct node* child{parameters}) {{ }}"
+        );
+        let click_source = format!(
+            "verifying \"held.c\";
+resource cell(p: struct node*) {{ field value: uint64; owns p->word; fact p->word == value; }}
+void inspect(struct node* parent, struct node* child{parameters}) {{
+ owns *parent; consumes c: cell(child); {resources}
+}} by {{
+ {unfolds}
+ unfold(c);
+ have separate(memory(parent->word), memory(child->word)) by assumption();
+ execute(); simp();
+}}"
+        );
+        let (result, samples) = crate::instrumentation::collect_tactic_work(|| {
+            verify_c0_sources(&click_source, &[("held.c", &c_source)])
+        });
+        result.unwrap_or_else(|error| panic!("{size}: {}", error.message()));
+        let selected = samples
+            .iter()
+            .filter(|sample| sample.tactic.tactic_name == "have")
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1);
+        work.push(selected[0].work);
+    }
+    assert!(work.iter().all(|count| *count > 0));
+    assert!(
+        work.windows(2).all(|pair| pair[0] == pair[1]),
+        "held field lookup traversed unrelated compositions: {work:?}"
+    );
+}
+
+/// Explicitly opening nested owners and borrowed projections must not search
+/// every combination of unfolded definitions during exit certification.
+#[test]
+fn composite_borrow_partition_nested_openings_scale_with_depth() {
+    let c = "struct node { int value; }; struct callbacks { void (*invoke)(void); }; void update(struct node *p, const struct callbacks *cb) { p->value = 1; cb->invoke(); }";
+    let mut previous_work = None;
+    let samples = [2usize, 4, 8, 16].map(|depth| {
+        let mut source = String::from(r#"
+verifying "callback.c";
+contract void Callback() { ensures 1 == 1; }
+resource node0(p: struct node*) { owns p->value; }
+resource callbacks0(cb: const struct callbacks*) {
+    views cb->invoke;
+    fact Callback(cb->invoke);
+}
+"#);
+        for layer in 1..=depth {
+            let child = layer - 1;
+            source.push_str(&format!("resource node{layer}(p: struct node*) {{ owns node{child}(p); }}\nresource callbacks{layer}(cb: const struct callbacks*) {{ owns callbacks{child}(cb); }}\n"));
+        }
+        source.push_str(&format!("void update(struct node* p, const struct callbacks* cb) {{ owns node{depth}(p); views callbacks{depth}(cb); ensures p->value == 1; }} by {{\n"));
+        for layer in (1..=depth).rev() {
+            source.push_str(&format!("unfold(node{layer}(p)); observe(callbacks{layer}(cb));\n"));
+        }
+        source.push_str("unfold(node0(p)); open(callbacks0(cb)) { execute(); } fold(node0(p));\n");
+        for layer in 1..=depth {
+            source.push_str(&format!("fold(node{layer}(p));\n"));
+        }
+        source.push_str("simp(); }");
+        if depth == 2 {
+            // Initialize shared frontend tables outside the scaling samples.
+            verify_c0_sources(&source, &[("callback.c", c)]).unwrap();
+        }
+        let verify = || verify_c0_sources(&source, &[("callback.c", c)]);
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            if let Some(previous) = previous_work {
+                // Enforce the same growth law while running: a regression
+                // should fail locally instead of exploring exponentially.
+                crate::instrumentation::with_run_work_limit(3 * previous, verify)
+            } else {
+                verify()
+            }
+        });
+        result.unwrap_or_else(|error| panic!("depth {depth}: {}", error.message()));
+        previous_work = Some(work);
+        (depth, work)
+    });
+    eprintln!("nested borrow partition work: {samples:?}");
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= 3 * pair[0].1,
+            "superlinear nested openings: {samples:?}"
+        );
+    }
 }

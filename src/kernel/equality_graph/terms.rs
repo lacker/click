@@ -213,6 +213,9 @@ pub(super) struct TermClasses {
     non_affine_classes: PersistentSet<u64>,
     affine_applications: PersistentMap<u64, PersistentSet<u64>>,
     affine_uses: PersistentMap<u64, PersistentSet<u64>>,
+    // Only applications with literal-folding rules need revisiting when an
+    // existing class first learns a constant. Boolean observations do not.
+    constant_uses: PersistentMap<u64, PersistentSet<u64>>,
     non_affine_address_blocks: PersistentSet<PointerBlock>,
     address_blocks: PersistentMap<u64, PointerBlock>,
     history: Option<Arc<MergeHistory>>,
@@ -969,7 +972,12 @@ impl TermClasses {
     fn register_application(&mut self, id: u64, application: Application) {
         self.applications.insert(id, application);
         let class = self.root(id);
-        let affine = !self.non_affine_classes.contains(&class);
+        // Conditions and footprint predicates are boolean observations,
+        // never address operands. Their congruence uses remain in `uses`.
+        let affine = !matches!(
+            application,
+            Application::Condition(..) | Application::Footprint(..)
+        ) && !self.non_affine_classes.contains(&class);
         if affine {
             let applications = self
                 .affine_applications
@@ -981,6 +989,13 @@ impl TermClasses {
         }
         for operand in application.operands() {
             let root = self.root(operand);
+            if matches!(
+                application,
+                Application::Int32Add(..) | Application::Int32Scaled(..)
+            ) {
+                let uses = self.constant_uses.get(&root).cloned().unwrap_or_default();
+                self.constant_uses.insert(root, uses.with_value(id));
+            }
             if affine {
                 let uses = self.affine_uses.get(&root).cloned().unwrap_or_default();
                 self.affine_uses.insert(root, uses.with_value(id));
@@ -1112,11 +1127,22 @@ impl TermClasses {
                 && let Some(value) = self.int32_constants.get(&moved).copied()
             {
                 self.int32_constants.insert(kept, value);
-                for id in kept_uses.iter() {
+                let literal_uses = self.constant_uses.get(&kept).cloned().unwrap_or_default();
+                for id in literal_uses.iter() {
                     self.reindex_application(*id, &mut pending);
                 }
             }
             self.int32_constants.remove(&moved);
+            if let Some(moved_literal_uses) = self.constant_uses.get(&moved).cloned() {
+                self.constant_uses.remove(&moved);
+                let mut kept_literal_uses =
+                    self.constant_uses.get(&kept).cloned().unwrap_or_default();
+                for id in moved_literal_uses.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    kept_literal_uses = kept_literal_uses.with_value(*id);
+                }
+                self.constant_uses.insert(kept, kept_literal_uses);
+            }
             for id in moved_uses.iter() {
                 crate::instrumentation::record_deterministic_work(1);
                 kept_uses = kept_uses.with_value(*id);

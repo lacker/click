@@ -541,7 +541,7 @@ mod certificate_tests {
         )
         .expect("theorem should parse");
         let predicate_environment = PredicateEnvironment::new(file.predicate_definitions())
-            .with_contracts(file.contract_definitions());
+            .with_contracts(file.contract_definitions(), &file.c_function_names);
         let click_function_environment =
             ClickFunctionEnvironment::new(file.click_function_definitions());
         let spec_definitions =
@@ -647,7 +647,7 @@ mod certificate_tests {
         )
         .expect("theorems should parse");
         let predicate_environment = PredicateEnvironment::new(file.predicate_definitions())
-            .with_contracts(file.contract_definitions());
+            .with_contracts(file.contract_definitions(), &file.c_function_names);
         let click_function_environment =
             ClickFunctionEnvironment::new(file.click_function_definitions());
 

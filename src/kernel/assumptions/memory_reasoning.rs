@@ -1837,6 +1837,124 @@ impl PureFactContext {
                 ))
     }
 
+    pub(in crate::kernel) fn pointers_directly_disjoint_by_range(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
+            return false;
+        }
+        let contains = |pointer: &Pointer, range: &CMemoryRange| {
+            if range.wide_bounds().is_some() {
+                self.pointer_access_in_wide_range(pointer, range.element_width(), range)
+            } else {
+                self.pointer_in_range_with_width(
+                    pointer,
+                    range.base(),
+                    range.start(),
+                    range.end(),
+                    range.element_width(),
+                )
+            }
+        };
+        if self
+            .borrow_partition_separated_members(
+                left,
+                right,
+                |range| contains(left, range),
+                |range| contains(right, range),
+            )
+            .is_some()
+        {
+            return true;
+        }
+        let direct = self
+            .memory_separation_candidates(&left.block, &right.block)
+            .find_map(|(proposition, left_range, right_range)| {
+                let contained = contains(left, left_range) && contains(right, right_range)
+                    || contains(right, left_range) && contains(left, right_range);
+                (contained
+                    && !self.memory_ranges_overlap_after_base_equality(left_range, right_range))
+                .then_some(proposition)
+            });
+        if let Some(proposition) = direct {
+            record_implicit_reasoning_provenance(self, proposition);
+            return true;
+        }
+        if let Some((resources, _, _)) = self.composition_separated_members(
+            &left.block,
+            &right.block,
+            |range| contains(left, range),
+            |range| contains(right, range),
+            |left_range, right_range| {
+                !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
+            },
+        ) {
+            record_implicit_reasoning_provenance(
+                self,
+                &Proposition::CResourceComposition(resources.clone()),
+            );
+            return true;
+        }
+        false
+    }
+
+    pub(in crate::kernel) fn pointers_proven_disjoint_by_shallow_explicit_range(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        if self.pointers_proven_equal_ignoring_memory_separation(left, right) {
+            return false;
+        }
+        let contains = |pointer: &Pointer, range: &CMemoryRange| {
+            // A wide range has its one membership rule.
+            if range.wide_bounds().is_some() {
+                return self.pointer_access_in_wide_range(pointer, range.element_width(), range);
+            }
+            self.pointer_in_range_by_shallow_fact_graph_with_width(
+                pointer,
+                range.base(),
+                range.start(),
+                range.end(),
+                range.element_width(),
+            )
+        };
+        self.memory_separation_candidates(&left.block, &right.block)
+            .any(|(proposition, left_range, right_range)| {
+                let proved = contains(left, left_range) && contains(right, right_range)
+                    || contains(right, left_range) && contains(left, right_range);
+                let proved = proved
+                    && !self.memory_ranges_overlap_after_base_equality(left_range, right_range);
+                if proved {
+                    record_implicit_reasoning_provenance(self, proposition);
+                }
+                proved
+            })
+            || self
+                .composition_separated_members(
+                    &left.block,
+                    &right.block,
+                    |range| contains(left, range),
+                    |range| contains(right, range),
+                    |left_range, right_range| {
+                        !self.memory_ranges_overlap_after_base_equality(left_range, right_range)
+                    },
+                )
+                .inspect(|(resources, _, _)| {
+                    record_implicit_reasoning_provenance(
+                        self,
+                        &Proposition::CResourceComposition((*resources).clone()),
+                    );
+                })
+                .is_some()
+            || self
+                .resource_compositions
+                .iter()
+                .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
+    }
+
     pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph_with_width(
         &self,
         pointer: &Pointer,
@@ -2168,6 +2286,17 @@ impl PureFactContext {
         ) else {
             return false;
         };
+        if self
+            .borrow_partition_separated_members(
+                left.base(),
+                right.base(),
+                |range| memory_range_contained_for_memory_resolution(left, range, self),
+                |range| memory_range_contained_for_memory_resolution(right, range, self),
+            )
+            .is_some()
+        {
+            return true;
+        }
         // Separate sides need not have the same logical element width.
         // Each query is contained in its own certificate side below.
         if self
@@ -2804,6 +2933,26 @@ impl PureFactContext {
                 right.signed_constant_end(),
             )
             && (left_end <= right_start || right_end <= left_start)
+        {
+            return true;
+        }
+
+        if let (CResource::Memory(a), CResource::Memory(b)) = (left, right)
+            && self
+                .borrow_partition_separated_members(
+                    a.base(),
+                    b.base(),
+                    |range| {
+                        self.proves_resource_contains_inner(&CResource::Memory(range.clone()), left)
+                    },
+                    |range| {
+                        self.proves_resource_contains_inner(
+                            &CResource::Memory(range.clone()),
+                            right,
+                        )
+                    },
+                )
+                .is_some()
         {
             return true;
         }
@@ -4068,6 +4217,17 @@ impl PureFactContext {
         }
         if self.pointer_overlaps_range_after_path_equality(pointer, range) {
             return false;
+        }
+        if self
+            .borrow_partition_separated_members(
+                range.base(),
+                pointer,
+                |available| memory_range_shallowly_contained_with_facts(range, available, self),
+                |available| self.pointer_directly_in_memory_range(pointer, available),
+            )
+            .is_some()
+        {
+            return true;
         }
         let owned_member_holds_pointer = |resources: &ResourceContext| {
             resources.proves_owned_range_separate_from_pointer_shallow(

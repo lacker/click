@@ -285,7 +285,7 @@ fn charon_array_reference_assignments_live_refresh_and_borrow_rejections() {
     );
     fs::write(p.config(), serde_json::to_vec(&config).unwrap()).unwrap();
     refresh_import(&p.config()).unwrap();
-    C0VerificationSession::new_program_prepared(SIDECAR, &load_import(&p.config()).unwrap())
+    C0VerificationSession::new_program_prepared(SIDECAR, load_import(&p.config()).unwrap())
         .unwrap();
     for (source, diagnostic) in [
         ("pub fn bad(x: &[u32;2]) { *x = [1,2]; }", "E0594"),
@@ -388,7 +388,7 @@ fn charon_external_array_copies_live_refresh() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         &fs::read_to_string(p.root.join("borrow.click")).unwrap(),
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
 }

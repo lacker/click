@@ -5104,12 +5104,16 @@ thread_local! {
     static SHARED_MEMORY_VARIABLES: std::cell::RefCell<
         std::collections::HashMap<(u32, u32), VariableCounts>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
+    // Pointer-read projections share heap metadata even when their selected
+    // cells differ. Retain the root, so an address cannot be reused for a hit.
+    static HEAP_VARIABLES: std::cell::RefCell<Option<(std::sync::Arc<crate::kernel::primitives::CHeapMemory>, VariableCounts)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Forgets every snapshot's remembered variables; see
 /// [`SHARED_MEMORY_VARIABLES`].
 pub(in crate::kernel) fn clear_shared_memory_variables() {
     SHARED_MEMORY_VARIABLES.with(|table| table.borrow_mut().clear());
+    HEAP_VARIABLES.with(|table| *table.borrow_mut() = None);
 }
 
 fn remembered_memory_variables(memory: &SharedCMemory) -> Option<VariableCounts> {
@@ -5395,20 +5399,64 @@ fn adjust_run_counts_by_changed_slots(
 
 /// A snapshot's counts from all of its entries; one unit per entry unless
 /// `whole` is [`WholeCount::Uncharged`].
+fn heap_variable_counts(
+    heap: &std::sync::Arc<crate::kernel::primitives::CHeapMemory>,
+    whole: WholeCount,
+) -> VariableCounts {
+    let previous = HEAP_VARIABLES.with(|table| table.borrow().clone());
+    let counts = if let Some((base, mut counts)) = previous {
+        if std::sync::Arc::ptr_eq(&base, heap) {
+            return counts;
+        }
+        for (before, after) in [
+            (&base.uninitialized_objects, &heap.uninitialized_objects),
+            (base.initialized.as_map(), heap.initialized.as_map()),
+        ] {
+            for change in before.diff(after) {
+                crate::instrumentation::record_deterministic_work(1);
+                let pointer = change.key();
+                if before.contains_key(pointer) {
+                    add_counts(&mut counts, object_address_variables(pointer), -1);
+                }
+                if after.contains_key(pointer) {
+                    add_counts(&mut counts, object_address_variables(pointer), 1);
+                }
+            }
+        }
+        counts
+    } else {
+        if whole == WholeCount::Charged {
+            crate::instrumentation::record_deterministic_work(
+                heap.uninitialized_objects.len() + heap.initialized.as_map().len(),
+            );
+        }
+        let mut counts = VariableCounts::default();
+        for pointer in heap
+            .uninitialized_objects
+            .keys()
+            .chain(heap.initialized.as_map().keys())
+        {
+            add_counts(&mut counts, object_address_variables(pointer), 1);
+        }
+        counts
+    };
+    HEAP_VARIABLES.with(|table| *table.borrow_mut() = Some((heap.clone(), counts.clone())));
+    counts
+}
+
 fn counts_whole(memory: &CMemory, whole: WholeCount) -> VariableCounts {
     if whole == WholeCount::Charged {
-        crate::instrumentation::record_deterministic_work(memory_entry_count(memory));
+        crate::instrumentation::record_deterministic_work(
+            memory.blocks.len() + memory.cells.representation_len() + memory.union_cells.len(),
+        );
     }
-    let mut counts = VariableCounts::default();
+    // Start from the retained heap counts, rather than enumerating their
+    // variables to combine them with each selected read projection.
+    let mut counts = heap_variable_counts(&memory.heap, whole);
     for (block, contents) in memory.blocks.iter() {
         add_counts(&mut counts, block_variables(block, contents), 1);
     }
-    for pointer in memory
-        .heap
-        .uninitialized_objects
-        .keys()
-        .chain(memory.heap.initialized.as_map().keys())
-        .chain(memory.heap.object_input_domains.keys())
+    for pointer in memory.heap.object_input_domains.keys()
         .chain(memory.heap.scalar_input_domains.keys())
     {
         add_counts(&mut counts, object_address_variables(pointer), 1);
@@ -5772,6 +5820,52 @@ mod integer_expression_tests {
                 pair[1] <= pair[0] * 3,
                 "shared Integer DAG collector attempts grew superlinearly: {attempts_by_depth:?}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod heap_variable_projection_tests {
+    use super::*;
+
+    #[test]
+    fn heap_variable_counts_follow_local_edits_and_keep_siblings_isolated() {
+        for size in [16u64, 64, 256, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let pointer = |id| Pointer {
+                block: PointerBlock::Symbolic(Variable(id)),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let mut heap = crate::kernel::primitives::CHeapMemory::default();
+            for id in 1..=size {
+                heap.uninitialized_objects.insert(pointer(id), 4);
+            }
+            let heap = std::sync::Arc::new(heap);
+            let original = heap_variable_counts(&heap, WholeCount::Charged);
+            let selected = CMemory {
+                heap: heap.clone(),
+                ..CMemory::new().with_block("selected:read", 4)
+            };
+            let (projected, work) = crate::instrumentation::measure_deterministic_work(|| {
+                counts_whole(&selected, WholeCount::Charged)
+            });
+            assert_eq!(projected, original);
+            assert_eq!(work, 1, "a selected read enumerated {size} heap entries");
+            let mut changed = (*heap).clone();
+            changed.uninitialized_objects.remove(&pointer(1));
+            changed.uninitialized_objects.insert(pointer(10_000), 4);
+            let changed = std::sync::Arc::new(changed);
+            let (counts, work) = crate::instrumentation::measure_deterministic_work(|| {
+                heap_variable_counts(&changed, WholeCount::Charged)
+            });
+            assert!(!counts.contains_key(&Variable(1)));
+            assert!(counts.contains_key(&Variable(10_000)));
+            assert_eq!(counts.len(), size as usize);
+            assert!(work <= 4, "local heap edit walked {size} objects: {work}");
+            assert_eq!(heap_variable_counts(&heap, WholeCount::Charged), original);
+            let empty = std::sync::Arc::new(crate::kernel::primitives::CHeapMemory::default());
+            assert!(heap_variable_counts(&empty, WholeCount::Charged).is_empty());
+            assert_eq!(heap_variable_counts(&changed, WholeCount::Charged), counts);
         }
     }
 }

@@ -3,6 +3,7 @@ mod charon;
 mod crate_inputs;
 mod import;
 pub(crate) mod lowering;
+pub mod names;
 mod profile;
 pub mod schema;
 pub use import::{PreparedRustImport, load_import, refresh_import};

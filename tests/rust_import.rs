@@ -156,12 +156,12 @@ fn charon_owned_array_fields_live_refresh_and_compiler_rejections() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_OWNED_ARRAY_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     fs::write(p.root.join("owned.rs"), "pub struct Packet { pub words: [u32;4] } pub fn nonuniform()->u32 { let packet=Packet { words:[1,2,3,4] }; let next=packet; next.words[0] }").unwrap();
     refresh_import(&p.config()).unwrap();
-    C0VerificationSession::new_program_prepared("verifying \"owned.rs\"; fn nonuniform() -> u32 { ensures result == 1u32; } by { execute(); simp(); }", &load_import(&p.config()).unwrap()).unwrap();
+    C0VerificationSession::new_program_prepared("verifying \"owned.rs\"; fn nonuniform() -> u32 { ensures result == 1u32; } by { execute(); simp(); }", load_import(&p.config()).unwrap()).unwrap();
     fs::write(p.root.join("owned.rs"), "pub struct Packet { pub words: [u32;4] } pub fn invalid()->u32 { let packet=Packet { words:[1;4] }; let next=packet; packet.words[0] + next.words[0] }").unwrap();
     fs::remove_file(p.root.join("owned.ullbc")).unwrap();
     let error = refresh_import(&p.config()).unwrap_err();
@@ -246,7 +246,7 @@ fn charon_array_snapshots_live_refresh() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_SNAPSHOT_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
 }
@@ -418,7 +418,7 @@ fn charon_assignment_operators_live_refresh_and_source_semantics() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_OPERATOR_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for source in [
@@ -545,7 +545,7 @@ fn charon_shared_iteration_live_refresh_and_rejected_protocols() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_ITERATION_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for source in [
@@ -668,7 +668,7 @@ fn charon_array_fields_live_refresh_and_compiler_rejections() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_FIELDS_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for source in [
@@ -786,7 +786,7 @@ fn rust_and_charon_unsigned_shifts_preserve_full_width_counts() {
     let p = Project::new(CHARON_ARITHMETIC_SOURCE);
     refresh_import(&p.config()).unwrap();
     let sidecar = CHARON_ARITHMETIC_SIDECAR.replace("arithmetic.rs", "borrow.rs");
-    C0VerificationSession::new_program_prepared(&sidecar, &load_import(&p.config()).unwrap())
+    C0VerificationSession::new_program_prepared(&sidecar, load_import(&p.config()).unwrap())
         .unwrap();
 }
 #[test]
@@ -802,7 +802,7 @@ fn charon_checksum_arithmetic_live_refresh_and_rejected_modes() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_ARITHMETIC_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for source in [
@@ -895,7 +895,7 @@ fn charon_nested_live_refresh_and_rejected_array_borrows() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_NESTED_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for (source, diagnostic) in [
@@ -1036,7 +1036,7 @@ fn charon_chunks_live_refresh_and_rejected_protocols() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_CHUNK_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for (source, diagnostic) in [
@@ -1199,7 +1199,7 @@ fn charon_slices_live_refresh_and_borrow_checking() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_SLICE_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for (source, diagnostic) in [
@@ -1307,7 +1307,7 @@ fn charon_arrays_live_refresh_and_rejected_source_shapes() {
     refresh_import(&p.config()).unwrap();
     C0VerificationSession::new_program_prepared(
         CHARON_ARRAY_SIDECAR,
-        &load_import(&p.config()).unwrap(),
+        load_import(&p.config()).unwrap(),
     )
     .unwrap();
     for (source, diagnostic) in [

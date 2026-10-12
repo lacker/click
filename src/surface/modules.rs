@@ -371,6 +371,10 @@ fn merge_modules(
     identities.retain(|identity| identity != entry);
     identities.push(entry.to_string());
     let mut merged = ClickFile {
+        c_function_names: locals
+            .get(entry)
+            .map(|file| file.c_function_names.clone())
+            .unwrap_or_default(),
         imports: Vec::new(),
         verifying_sources: Vec::new(),
         c_target: None,

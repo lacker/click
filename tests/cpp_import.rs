@@ -86,7 +86,7 @@ int32 probe() { ensures result == 11; } by { execute(); simp(); }
             read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
         let expanded = expand_project_claim_source_by_label(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             "probe.contract",
         )
         .unwrap();
@@ -96,7 +96,7 @@ int32 probe() { ensures result == 11; } by { execute(); simp(); }
             C0VerificationSession::new_program_prepared_project(&parsed, &import).unwrap();
         let position = project_tactic_source_position(
             &rewritten,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             "probe.contract",
             0,
         )
@@ -194,7 +194,7 @@ int32 probe(struct View& input) {
             read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
         let expanded = expand_project_claim_source_by_label(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             "probe.contract",
         )
         .unwrap();
@@ -205,7 +205,7 @@ int32 probe(struct View& input) {
         let rewritten = parsed.with_entry_source(expanded.clone());
         let position = project_tactic_source_position(
             &rewritten,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             "probe.contract",
             0,
         )
@@ -291,7 +291,7 @@ struct View copy(const struct View& input) {
     let whole = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
     let expanded = expand_project_claim_source_by_label(
         &whole,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "copy.contract",
     )
     .unwrap();
@@ -431,7 +431,7 @@ int32 probe(int32 input) {
     let parsed = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
     for label in ["Node_constructor.contract", "probe.contract"] {
         let expanded =
-            expand_project_claim_source_by_label(&parsed, &ProgramInputs::Program(&import), label)
+            expand_project_claim_source_by_label(&parsed, &ProgramInputs::program(&import), label)
                 .unwrap();
         verify_program_prepared_project(&parsed.with_entry_source(expanded), &import).unwrap();
     }
@@ -1401,7 +1401,7 @@ int32& probe(int32& value) { views value; ensures &result == &value; ensures res
     verify_program_prepared_project(&parsed, &import).unwrap();
     let position = project_tactic_source_position(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "probe.contract",
         1,
     )
@@ -1409,13 +1409,13 @@ int32& probe(int32& value) { views value; ensures &result == &value; ensures res
     for expanded in [
         click::surface::expand_project_claim_source_by_label(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             "probe.contract",
         )
         .unwrap(),
         expand_project_tactic_source_at(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             position.line,
             position.column,
         )
@@ -2133,7 +2133,7 @@ fn scalar_int32_profile_propagates_a_modular_throw_past_a_normal_call_continuati
         .expect("the caller must preserve the helper's exceptional exit");
     let expanded = expand_project_claim_source_by_label(
         &click_project,
-        &ProgramInputs::Program(&prepared),
+        &ProgramInputs::program(&prepared),
         "caller.exceptional_ensures_0",
     )
     .expect("expand the caller's exceptional proof");
@@ -2144,7 +2144,7 @@ fn scalar_int32_profile_propagates_a_modular_throw_past_a_normal_call_continuati
         .expect("retain the expanded scalar exception environment");
     let site = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&prepared),
+        &ProgramInputs::program(&prepared),
         "caller.exceptional_ensures_0",
         0,
     )
@@ -2227,7 +2227,7 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
         .expect("a caught modular throw should satisfy a nonthrowing caller signature");
     let expanded = expand_project_claim_source_by_label(
         &click_project,
-        &ProgramInputs::Program(&prepared),
+        &ProgramInputs::program(&prepared),
         "caller.ensures_0",
     )
     .expect("expand the handler proof");
@@ -2255,7 +2255,7 @@ fn scalar_int32_profile_catches_a_modular_throw_with_a_typed_payload() {
         .expect("retain the expanded handler environment");
     let site = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&prepared),
+        &ProgramInputs::program(&prepared),
         "caller.ensures_0",
         0,
     )
@@ -2365,7 +2365,7 @@ fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
         .expect("the mixed conditional cleanup join should verify");
     let expanded = expand_project_claim_source_by_label(
         &click_project,
-        &ProgramInputs::Program(&prepared),
+        &ProgramInputs::program(&prepared),
         "caller.contract",
     )
     .expect("expand the mixed outcome proof");
@@ -2377,7 +2377,7 @@ fn scalar_int32_profile_joins_a_caught_throw_inside_conditional_cleanup() {
             .expect("retain the mixed outcome verification environment");
     let site = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&prepared),
+        &ProgramInputs::program(&prepared),
         "caller.contract",
         0,
     )
@@ -2462,7 +2462,7 @@ int32 caller(bool fail) { ensures result == 7; }
     verify_program_prepared_project(&parsed, &import).unwrap();
     let expanded = expand_project_claim_source_by_label(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "caller.ensures_0",
     )
     .unwrap();
@@ -2472,7 +2472,7 @@ int32 caller(bool fail) { ensures result == 7; }
         C0VerificationSession::new_program_prepared_project(&parsed, &import).unwrap();
     let position = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "caller.ensures_0",
         0,
     )
@@ -3506,7 +3506,7 @@ fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
         "both return paths certify returned ownership and both postconditions"
     );
 
-    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::Program(&import))
+    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::program(&import))
         .unwrap();
     assert_eq!(
         sites
@@ -3517,14 +3517,14 @@ fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
     );
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "choose.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -3536,7 +3536,7 @@ fn locked_cpp_branch_and_early_return_verify_through_the_shared_sidecar_path() {
         .expect("retain the original branch verification environment");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "choose.contract",
         0,
     )
@@ -3607,7 +3607,7 @@ fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
         "the proof returns ownership and checks both postconditions without an inferred view"
     );
 
-    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::Program(&import))
+    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::program(&import))
         .unwrap();
     assert_eq!(
         sites
@@ -3618,14 +3618,14 @@ fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
     );
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "write_then_read.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -3637,7 +3637,7 @@ fn const_reference_preserves_qualification_and_may_alias_a_mutable_reference() {
         .expect("retain the const-reference verification environment");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "write_then_read.contract",
         0,
     )
@@ -3920,7 +3920,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
         .expect("verify the helper and caller through shared modular call rules");
     assert_eq!(verified.len(), 6);
 
-    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::Program(&import))
+    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::program(&import))
         .unwrap();
     assert_eq!(
         sites
@@ -3931,14 +3931,14 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     );
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "call_set_seven.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -3950,7 +3950,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
         .expect("retain the modular C++ verification environment");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "call_set_seven.contract",
         0,
     )
@@ -4040,14 +4040,14 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "relay_value.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4059,7 +4059,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
         .expect("retain the scalar-local verification environment");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "relay_value.contract",
         0,
     )
@@ -4185,14 +4185,14 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "bump_reference.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4289,14 +4289,14 @@ fn record_reference_member_loads_and_stores_verify_offline() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "stage_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4389,14 +4389,14 @@ fn brace_initialized_local_aggregate_verifies_offline() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "stage_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4533,14 +4533,14 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "capture.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4674,14 +4674,14 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "capture.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4793,14 +4793,14 @@ fn every_return_after_construction_runs_the_checked_destructor() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "with_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4867,14 +4867,14 @@ fn modular_caller_observes_captured_result_and_restored_entry_value() {
         .expect("the caller must receive 7 or 9 and still own an unchanged 41");
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "call_with_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -4886,7 +4886,7 @@ fn modular_caller_observes_captured_result_and_restored_entry_value() {
         .expect("retain the caller's original verification environment");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "call_with_restore.contract",
         0,
     )
@@ -4969,14 +4969,14 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "restore_twice.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -5081,14 +5081,14 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "scoped_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -5209,14 +5209,14 @@ fn sibling_scopes_reuse_a_local_name_with_independent_cleanup() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "sibling_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -5364,14 +5364,14 @@ fn overlapping_scope_destroys_inner_before_outer_on_every_exit() {
 
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "overlap_restore.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -5494,7 +5494,7 @@ fn conditional_construction_cleans_up_only_the_constructed_arm() {
 
     let expanded = expand_project_claim_source_by_label(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "conditional_restore.contract",
     )
     .expect("fully expand the proof across the conditional lifetime");
@@ -5505,7 +5505,7 @@ fn conditional_construction_cleans_up_only_the_constructed_arm() {
         .expect("retain the original conditional-construction verification environment");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "conditional_restore.contract",
         0,
     )
@@ -5919,7 +5919,7 @@ fn cpp_profile_expansion_and_audit_session_share_the_locked_input() {
     let click_source = fs::read_to_string(&sidecar).unwrap();
     let click_project = read_click_project(&sidecar, &click_source).unwrap();
 
-    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::Program(&import))
+    let sites = project_smart_tactic_source_sites(&click_project, &ProgramInputs::program(&import))
         .unwrap();
     assert_eq!(
         sites
@@ -5930,14 +5930,14 @@ fn cpp_profile_expansion_and_audit_session_share_the_locked_input() {
     );
     let execute = project_tactic_source_position(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "increment.contract",
         0,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &click_project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         execute.line,
         execute.column,
     )
@@ -5950,7 +5950,7 @@ fn cpp_profile_expansion_and_audit_session_share_the_locked_input() {
         .expect("start the retained audit session");
     let next = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "increment.contract",
         0,
     )
@@ -6761,18 +6761,18 @@ fn ordinary_value_methods_import_with_const_receiver_and_mixed_width_fields() {
         verify_program_prepared_project(&parsed, &import)
             .unwrap_or_else(|error| panic!("{selected}: {}", error.message()));
         let sites =
-            project_smart_tactic_source_sites(&parsed, &ProgramInputs::Program(&import)).unwrap();
+            project_smart_tactic_source_sites(&parsed, &ProgramInputs::program(&import)).unwrap();
         let site = sites.first().unwrap();
         let site = project_tactic_source_position(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             &site.claim_label,
             site.source_index,
         )
         .unwrap();
         let expanded = expand_project_tactic_source_at(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             site.line,
             site.column,
         )
@@ -6783,12 +6783,12 @@ fn ordinary_value_methods_import_with_const_receiver_and_mixed_width_fields() {
         let (session, _) =
             C0VerificationSession::new_program_prepared_project(&parsed, &import).unwrap();
         let next_sites =
-            project_smart_tactic_source_sites(&rewritten, &ProgramInputs::Program(&import))
+            project_smart_tactic_source_sites(&rewritten, &ProgramInputs::program(&import))
                 .unwrap();
         let next = next_sites.first().unwrap();
         let next = project_tactic_source_position(
             &rewritten,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             &next.claim_label,
             next.source_index,
         )
@@ -6860,7 +6860,7 @@ fn check_sidecar_tactic(
     verify_program_prepared_project(&parsed, import)
         .unwrap_or_else(|error| panic!("{}\n{source}", error.message()));
     let sites =
-        project_smart_tactic_source_sites(&parsed, &ProgramInputs::Program(import)).unwrap();
+        project_smart_tactic_source_sites(&parsed, &ProgramInputs::program(import)).unwrap();
     let first = match claim_prefix {
         Some(prefix) => sites
             .iter()
@@ -6870,14 +6870,14 @@ fn check_sidecar_tactic(
     };
     let position = project_tactic_source_position(
         &parsed,
-        &ProgramInputs::Program(import),
+        &ProgramInputs::program(import),
         &first.claim_label,
         first.source_index,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &parsed,
-        &ProgramInputs::Program(import),
+        &ProgramInputs::program(import),
         position.line,
         position.column,
     )
@@ -6892,7 +6892,7 @@ fn check_sidecar_tactic(
     let (session, _) =
         C0VerificationSession::new_program_prepared_project(&parsed, import).unwrap();
     let sites =
-        project_smart_tactic_source_sites(&rewritten, &ProgramInputs::Program(import)).unwrap();
+        project_smart_tactic_source_sites(&rewritten, &ProgramInputs::program(import)).unwrap();
     let first = match claim_prefix {
         Some(prefix) => sites
             .iter()
@@ -6902,7 +6902,7 @@ fn check_sidecar_tactic(
     };
     let position = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(import),
+        &ProgramInputs::program(import),
         &first.claim_label,
         first.source_index,
     )
@@ -12856,7 +12856,7 @@ ensures round_down == 0 implies (to_integer(result) + -1) * to_integer(d) < to_i
     if !rejections {
         let expanded = expand_project_claim_source_by_label(
             &parsed,
-            &ProgramInputs::Program(&import),
+            &ProgramInputs::program(&import),
             "rounded.ensures_0",
         )
         .unwrap();
@@ -15446,21 +15446,21 @@ theorem read_application() executes read(const struct State& state) {
     let parsed = read_click_project(&path, source).unwrap();
     verify_program_prepared_project(&parsed, &import).unwrap();
     let sites =
-        project_smart_tactic_source_sites(&parsed, &ProgramInputs::Program(&import)).unwrap();
+        project_smart_tactic_source_sites(&parsed, &ProgramInputs::program(&import)).unwrap();
     let first = sites
         .iter()
         .find(|site| site.claim_label.starts_with("read_application."))
         .unwrap();
     let position = project_tactic_source_position(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         &first.claim_label,
         first.source_index,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         position.line,
         position.column,
     )
@@ -15471,7 +15471,7 @@ theorem read_application() executes read(const struct State& state) {
         C0VerificationSession::new_program_prepared_project(&parsed, &import).unwrap();
     let position = project_tactic_source_position(
         &rewritten,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         &first.claim_label,
         first.source_index,
     )
@@ -16060,18 +16060,18 @@ fn cpp_expansion_writes_a_branch_over_a_reference_by_its_referent_offline() {
     let parsed = read_click_project(&path, text).unwrap();
     verify_program_prepared_project(&parsed, &import).unwrap();
     let sites =
-        project_smart_tactic_source_sites(&parsed, &ProgramInputs::Program(&import)).unwrap();
+        project_smart_tactic_source_sites(&parsed, &ProgramInputs::program(&import)).unwrap();
     let first = sites.first().unwrap();
     let position = project_tactic_source_position(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         &first.claim_label,
         first.source_index,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         position.line,
         position.column,
     )
@@ -16099,18 +16099,18 @@ fn cpp_expansion_writes_a_branch_over_a_struct_reference_by_its_field_offline() 
     let parsed = read_click_project(&path, text).unwrap();
     verify_program_prepared_project(&parsed, &import).unwrap();
     let sites =
-        project_smart_tactic_source_sites(&parsed, &ProgramInputs::Program(&import)).unwrap();
+        project_smart_tactic_source_sites(&parsed, &ProgramInputs::program(&import)).unwrap();
     let first = sites.first().unwrap();
     let position = project_tactic_source_position(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         &first.claim_label,
         first.source_index,
     )
     .unwrap();
     let expanded = expand_project_tactic_source_at(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         position.line,
         position.column,
     )
@@ -16652,7 +16652,7 @@ uint64 probe(int32* backing, uint64 count) {
         "probe.contract",
     ] {
         let expanded =
-            expand_project_claim_source_by_label(&parsed, &ProgramInputs::Program(&import), label)
+            expand_project_claim_source_by_label(&parsed, &ProgramInputs::program(&import), label)
                 .unwrap();
         verify_program_prepared_project(&parsed.with_entry_source(expanded), &import).unwrap();
     }
@@ -16749,7 +16749,7 @@ int32 probe(int32 input) {
     let parsed = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
     let expanded = expand_project_claim_source_by_label(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "probe.contract",
     )
     .unwrap();
@@ -16814,7 +16814,7 @@ uint64 probe(int32* backing, uint64 count) {
     let parsed = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
     let expanded = expand_project_claim_source_by_label(
         &parsed,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "Descriptor_constructor.contract",
     )
     .unwrap();
@@ -16908,7 +16908,7 @@ uint64 probe(int32* p, uint64 n) {
     let whole = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
     let expanded = expand_project_claim_source_by_label(
         &whole,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "probe.contract",
     )
     .unwrap();
@@ -16917,7 +16917,7 @@ uint64 probe(int32* p, uint64 n) {
         C0VerificationSession::new_program_prepared_project(&whole, &import).unwrap();
     let position = project_tactic_source_position(
         &whole,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "probe.ensures_0",
         0,
     )
@@ -17069,7 +17069,7 @@ uint64 probe(struct View& view, uint64 n) {
     let whole = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
     let expanded = expand_project_claim_source_by_label(
         &whole,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "probe.contract",
     )
     .unwrap();
@@ -17078,7 +17078,7 @@ uint64 probe(struct View& view, uint64 n) {
         C0VerificationSession::new_program_prepared_project(&whole, &import).unwrap();
     let position = project_tactic_source_position(
         &whole,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "probe.ensures_0",
         0,
     )

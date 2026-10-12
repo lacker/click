@@ -230,8 +230,9 @@ empty hole fits the unchanged context at the same black height, and the return
 is null. Its mutations reject unchanged links and a non-null fixup return.
 
 `rbtree_erase_right_child.click` and `rbtree_erase_left_child.click` cover
-non-root one-child deletion for both parent links. They derive colors from
-red-black validity, return the exact blackened/reparented replacement and
+one-child deletion at the root and on both non-root parent links. They derive
+colors from red-black validity, return the exact blackened/reparented
+replacement and
 unchanged context, and prove whole-tree balance, parent consistency, in-order
 contents, and null fixup. `rbtree_erase_one_child.click` supplies the balance,
 local symmetry, and parent-consistency theorems. Mutation tests reject unchanged
@@ -1276,8 +1277,15 @@ rotation-link, parent/color, and cursor mutation checks pass.
 directions after propagation. It admits nonempty focus, near, and far subtrees,
 including arbitrary children of the red far node. The two rotations retain the
 exact balanced root, consistent parent links, unchanged in-order contents, and
-strict context decrease on continuing iterations. Red-sibling cases 1/3/4 after
-propagation remain. Depends on 11.
+strict context decrease on continuing iterations.
+`rbtree_erase_color_flips_red_inner_right.click` extends this to cases 1/3/4
+after propagation when the deficit is the right child, including nonempty
+focus and rotation subtrees. Its 34 proofs retain exact result, red-black,
+parent-consistency, and in-order guarantees.
+`rbtree_erase_color_flips_red_all.click` adds the mirrored left-deficit
+propagated 1/3/4 case with the same guarantees. Its coverage theorem removes
+the case-selection precondition from the repair contract. The complete erase
+wrapper integration remains. Depends on 11.
 
 **Chunk 13. `____rb_erase_color`, right-sibling cases, and `rb_erase`.** The
 color-flip propagation proof already covers both orientations, including
@@ -1305,8 +1313,19 @@ repeated propagation; `rbtree_erase_color_flips_rotations.click` adds mirrored
 cases 3 and 4 with nonempty subtrees. `rbtree_erase_color_flips_red_exit.click`
 adds mirrored red-sibling cases 1/2 after propagation with nonempty subtrees.
 `rbtree_erase_color_flips_red_outer.click` adds mirrored cases 1/4 after
-propagation. Red-sibling cases 1/3/4 and the complete `rb_erase`
-wrapper remain. Depends on 12.
+propagation. `rbtree_erase_color_flips_red_all.click` completes both
+orientations of propagated red-sibling cases 1/3/4 with nonempty subtrees.
+The unchanged `rb_erase` wrapper now verifies for every leaf deletion: red or
+black leaves on either parent link, and the sole root. Its read-only
+callback-table splice and general color repair are both checked in the same
+unit. A conditional splice contract supplies either the deficit required by
+repair or a balanced context for the no-repair branch. The wrapper returns
+the detached node and exact balanced root, with parent consistency and
+in-order removal. The left-child and right-child sidecars now verify the
+unchanged wrapper for exactly one child at every tree position, including the
+borrowed callback-table splice, callback refinements, and context reconstruction.
+Two-child deletion still needs wrapper integration.
+Depends on 12.
 
 ### Augmented
 

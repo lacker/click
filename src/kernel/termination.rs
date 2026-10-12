@@ -1,4 +1,5 @@
 use super::prelude::*;
+use std::sync::Arc;
 
 /// Charges `units` of termination work to the ambient deterministic-work
 /// counters.
@@ -9,7 +10,7 @@ use super::prelude::*;
 /// walks, a call edge it reads, a level member it settles, a planner visit,
 /// or a worklist step — so `termination_scaling_tests` counts the checker
 /// rather than the host clock.
-fn charge_termination_work(units: usize) {
+pub(in crate::kernel) fn charge_termination_work(units: usize) {
     crate::instrumentation::record_deterministic_work(units);
 }
 
@@ -1478,39 +1479,63 @@ fn collect_spec_expression_c_variables(
 }
 
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
+    statement_calls_visiting(statement, calls, &mut |_| true);
+}
+
+/// Identity memoization visits a shared summary body once even when distinct
+/// checked theorems apply it at different snapshots. The evidence keeps every
+/// node alive for the traversal; no deep structural key is constructed.
+pub(in crate::kernel) fn checked_statement_calls(
+    statement: &CStatement,
+    seen: &mut std::collections::HashSet<usize>,
+    calls: &mut BTreeSet<String>,
+) {
+    statement_calls_visiting(statement, calls, &mut |node| {
+        seen.insert(node as *const CStatement as usize)
+    });
+}
+
+fn statement_calls_visiting(
+    statement: &CStatement,
+    calls: &mut BTreeSet<String>,
+    visit: &mut impl FnMut(&CStatement) -> bool,
+) {
     charge_termination_work(1);
+    if !visit(statement) {
+        return;
+    }
     match statement {
         CStatement::CallAssign { function_name, .. } | CStatement::Call { function_name, .. } => {
             calls.insert(function_name.clone());
         }
         CStatement::Seq(first, second) => {
-            statement_calls(first, calls);
-            statement_calls(second, calls);
+            statement_calls_visiting(first, calls, visit);
+            statement_calls_visiting(second, calls, visit);
         }
         CStatement::TryCatchInt32 {
             try_body, handler, ..
         } => {
-            statement_calls(try_body, calls);
-            statement_calls(handler, calls);
+            statement_calls_visiting(try_body, calls, visit);
+            statement_calls_visiting(handler, calls, visit);
         }
         CStatement::If {
             then_branch,
             else_branch,
             ..
         } => {
-            statement_calls(then_branch, calls);
-            statement_calls(else_branch, calls);
+            statement_calls_visiting(then_branch, calls, visit);
+            statement_calls_visiting(else_branch, calls, visit);
         }
-        CStatement::While { body, .. } => statement_calls(body, calls),
+        CStatement::While { body, .. } => statement_calls_visiting(body, calls, visit),
         CStatement::Switch {
             expression: _,
             cases,
         } => {
             for case in cases {
-                statement_calls(&case.body, calls);
+                statement_calls_visiting(&case.body, calls, visit);
             }
         }
-        CStatement::ForStep { step, .. } => statement_calls(step, calls),
+        CStatement::ForStep { step, .. } => statement_calls_visiting(step, calls, visit),
         CStatement::Skip
         | CStatement::EndAutomaticLifetimes { .. }
         | CStatement::Break
@@ -3654,6 +3679,31 @@ fn check_loops(
     }
 }
 
+/// Union each shared dependency set once at a certification boundary. Missing
+/// evidence is contagious: it must never be interpreted as an empty call set.
+pub(in crate::kernel) fn merge_checked_callees<'a>(
+    sets: impl IntoIterator<Item = Option<&'a Arc<BTreeSet<String>>>>,
+) -> Option<Arc<BTreeSet<String>>> {
+    let mut unique = BTreeMap::new();
+    for set in sets {
+        charge_termination_work(1);
+        let set = set?;
+        unique.entry(Arc::as_ptr(set) as usize).or_insert(set);
+    }
+    if unique.is_empty() {
+        return None;
+    }
+    if unique.len() == 1 {
+        return Some((*unique.values().next().unwrap()).clone());
+    }
+    let mut combined = BTreeSet::new();
+    for set in unique.values() {
+        charge_termination_work(set.len());
+        combined.extend(set.iter().cloned());
+    }
+    Some(Arc::new(combined))
+}
+
 /// The callees of one body, with a callee spelled like an object the function
 /// binds recorded under a name no function can have.
 ///
@@ -3664,9 +3714,15 @@ fn check_loops(
 fn termination_callees(function: &CFunction) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     statement_calls(&function.source_body, &mut found);
+    classify_termination_callees(function, found.into_iter())
+}
+
+fn classify_termination_callees(
+    function: &CFunction,
+    found: impl Iterator<Item = String>,
+) -> BTreeSet<String> {
     let objects = function_object_names(function);
     found
-        .into_iter()
         .map(|callee| {
             if objects.contains(&callee) {
                 format!("{callee}#indirect")
@@ -3977,6 +4033,10 @@ fn termination_call_graph<'a>(
         .filter(|function| !functions.contains_key(function.name()))
         .map(|function| (function.name().to_string(), *function))
         .collect::<BTreeMap<_, _>>();
+    let checked_calls = partial_rules
+        .iter()
+        .map(|rule| (rule.function.name(), rule.checked_callees.as_ref()))
+        .collect::<BTreeMap<_, _>>();
     let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
     let mut pending = functions.keys().cloned().collect::<Vec<_>>();
     while let Some(name) = pending.pop() {
@@ -3987,7 +4047,13 @@ fn termination_call_graph<'a>(
         let function = *functions
             .get(&name)
             .expect("every pending name was added with its function");
-        let mut found = termination_callees(function);
+        let mut found = match checked_calls.get(function.name()) {
+            Some(Some(callees)) => {
+                charge_termination_work(callees.len());
+                classify_termination_callees(function, callees.iter().cloned())
+            }
+            Some(None) | None => termination_callees(function),
+        };
         if let Some(tactics) = applied_tactics.get(&name) {
             charge_termination_work(tactics.len());
             found.extend(tactics.iter().cloned());
@@ -5755,6 +5821,7 @@ mod local_descent_tests {
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, Vec::new(), body),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: Default::default(),
         }
     }
@@ -5946,6 +6013,7 @@ mod local_descent_tests {
             }
             CVerifiedFunctionRule {
                 loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+                checked_callees: None,
                 applied_tactics: Default::default(),
                 function: CFunction::new(
                     CType::Void,
@@ -6099,6 +6167,7 @@ mod local_descent_tests {
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, parameters, body),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: Default::default(),
         }
     }
@@ -6288,6 +6357,7 @@ mod local_descent_tests {
     fn a_loop_certification_executed_to_its_exit_owes_no_measure() {
         let bare = |name: &str| CVerifiedFunctionRule {
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: Default::default(),
             function: CFunction::new(
                 CType::Void,
@@ -6474,6 +6544,7 @@ mod local_descent_tests {
             body = CStatement::Seq(Arc::new(body), Arc::new(guarded_call(argument)));
             [CVerifiedFunctionRule {
                 loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+                checked_callees: None,
                 applied_tactics: Default::default(),
                 function: CFunction::new(
                     CType::Void,
@@ -6616,6 +6687,7 @@ mod local_descent_tests {
         CVerifiedFunctionRule {
             function,
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: Default::default(),
         }
     }
@@ -6648,6 +6720,7 @@ mod local_descent_tests {
         CVerifiedFunctionRule {
             function,
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: BTreeSet::from([name.to_string()]),
         }
     }
@@ -6801,6 +6874,7 @@ mod local_descent_tests {
             function: CFunction::new(CType::Void, name, Vec::new(), body)
                 .with_recursion_measure(declared_component()),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: Default::default(),
         }
     }
@@ -7002,6 +7076,7 @@ mod termination_scaling_tests {
         CVerifiedFunctionRule {
             function: CFunction::new(CType::Void, name, Vec::new(), calls_body(callees)),
             loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            checked_callees: None,
             applied_tactics: Default::default(),
         }
     }
@@ -7245,5 +7320,74 @@ mod termination_scaling_tests {
                 measured.size, measured.nodes, measured.plan_work, measured.check_work
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod checked_callee_certification_tests {
+    use super::*;
+
+    #[test]
+    fn checked_callee_graph_distinguishes_missing_and_empty_evidence() {
+        let rule = |checked_callees| CVerifiedFunctionRule {
+            function: CFunction::new(
+                CType::Void,
+                "caller",
+                vec![],
+                crate::kernel::c_call("callee", vec![]),
+            ),
+            loop_semantics: CLoopSemantics::ApplyVerifiedRules,
+            applied_tactics: Default::default(),
+            checked_callees,
+        };
+        let empty = rule(Some(Arc::new(BTreeSet::new())));
+        let missing = rule(None);
+        assert!(termination_call_graph(std::slice::from_ref(&empty), &[]).1["caller"].is_empty());
+        let expected = BTreeSet::from(["callee".to_string()]);
+        assert_eq!(
+            termination_call_graph(std::slice::from_ref(&missing), &[]).1["caller"],
+            expected
+        );
+        // Name-keyed function selection and metadata selection must agree,
+        // including when the selected rule lacks dependency evidence.
+        assert_eq!(
+            termination_call_graph(&[empty, missing], &[]).1["caller"],
+            expected
+        );
+    }
+
+    #[test]
+    fn checked_callee_claim_reuse_shares_the_dependency_set() {
+        let mut previous = None;
+        for size in [16, 64, 256, 1024] {
+            let calls = Arc::new(
+                (0..size)
+                    .map(|n| format!("callee_{n}"))
+                    .collect::<BTreeSet<_>>(),
+            );
+            let (merged, work) = crate::instrumentation::measure_deterministic_work(|| {
+                merge_checked_callees(std::iter::repeat_n(Some(&calls), size)).unwrap()
+            });
+            eprintln!("claim reuse size={size}, dependency work={work}");
+            assert!(Arc::ptr_eq(&calls, &merged));
+            assert_eq!(merged.len(), size);
+            if let Some(before) = previous {
+                assert!(
+                    work <= 5 * before,
+                    "superlinear claim reuse: {before} -> {work}"
+                );
+            }
+            previous = Some(work);
+        }
+        let empty = Arc::new(BTreeSet::new());
+        assert!(merge_checked_callees([Some(&empty), None]).is_none());
+        assert!(merge_checked_callees([]).is_none());
+        assert!(merge_checked_callees([Some(&empty)]).unwrap().is_empty());
+        let left = Arc::new(BTreeSet::from(["left".into()]));
+        let right = Arc::new(BTreeSet::from(["right".into()]));
+        assert_eq!(
+            *merge_checked_callees([Some(&left), Some(&right)]).unwrap(),
+            BTreeSet::from(["left".into(), "right".into()])
+        );
     }
 }

@@ -63,6 +63,9 @@ struct ExecutionFactsData {
     exact_invalid: bool,
     len: usize,
     propositions_invalid: bool,
+    // Every fact of this projection is present in the stream. Append-only
+    // publications extend this checkpoint by persistent-map differences.
+    covered_context: Option<ContextFacts>,
 }
 impl ExecutionFacts {
     pub fn new() -> Self {
@@ -150,6 +153,9 @@ impl ExecutionFacts {
         let data = Arc::make_mut(&mut self.data);
         let other = Arc::make_mut(&mut other.data);
         data.len += other.len;
+        if other.covered_context.is_some() {
+            data.covered_context = other.covered_context.take();
+        }
         data.propositions_invalid |= other.propositions_invalid;
         data.exact_invalid |= other.exact_invalid;
         data.exact = data.exact.clone().union(std::mem::take(&mut other.exact));
@@ -164,20 +170,84 @@ impl ExecutionFacts {
         self.append(&mut other.clone());
     }
     pub(super) fn append_context(&mut self, facts: &ContextFacts) {
-        let count = facts
-            .iter()
-            .filter(|(_, fact)| !self.contains_proposition(fact.proposition()))
-            .count();
-        if count == 0 {
-            return;
-        }
-        let excluded = Arc::new(self.clone());
+        let count = match &self.data.covered_context {
+            Some(previous) => previous
+                .diff(facts)
+                .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+                .filter_map(|change| match change {
+                    imbl::ordmap::DiffItem::Add(_, fact)
+                    | imbl::ordmap::DiffItem::Update { new: (_, fact), .. } => Some(fact),
+                    imbl::ordmap::DiffItem::Remove(..) => None,
+                })
+                .filter(|fact| !self.contains_proposition(fact.proposition()))
+                .count(),
+            None => facts
+                .iter()
+                .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+                .filter(|(_, fact)| !self.contains_proposition(fact.proposition()))
+                .count(),
+        };
+        let excluded = (count != 0).then(|| Arc::new(self.clone()));
         let data = Arc::make_mut(&mut self.data);
-        data.blocks.push_back(FactBlock::Context {
-            facts: facts.clone(),
-            excluded,
-        });
-        data.len += count;
+        data.covered_context = Some(facts.clone());
+        if let Some(excluded) = excluded {
+            data.blocks.push_back(FactBlock::Context {
+                facts: facts.clone(),
+                excluded,
+            });
+            data.len += count;
+        }
+    }
+
+    /// Facts missing from an exact checked context. Context publications
+    /// compare persistent roots rather than enumerating their shared prefix.
+    pub(in crate::kernel) fn facts_not_assumed_by<'a>(
+        &'a self,
+        assumptions: &super::PureFactContext,
+    ) -> Vec<&'a ExecutionPureFact> {
+        let mut selected = Vec::new();
+        for block in &self.data.blocks {
+            match block {
+                FactBlock::Facts(facts) => selected.extend(
+                    facts
+                        .iter()
+                        .map(Arc::as_ref)
+                        .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+                        .filter(|fact| !assumptions.contains_assumed_exact(fact.proposition())),
+                ),
+                FactBlock::Context { facts, excluded } => {
+                    for change in assumptions.execution_fact_projection.diff(facts) {
+                        crate::instrumentation::record_deterministic_work(1);
+                        let fact = match change {
+                            imbl::ordmap::DiffItem::Add(_, fact)
+                            | imbl::ordmap::DiffItem::Update { new: (_, fact), .. } => {
+                                fact.as_ref()
+                            }
+                            imbl::ordmap::DiffItem::Remove(..) => continue,
+                        };
+                        if !excluded.contains_proposition(fact.proposition())
+                            && !assumptions.contains_assumed_exact(fact.proposition())
+                        {
+                            selected.push(fact);
+                        }
+                    }
+                }
+            }
+        }
+        selected
+    }
+
+    /// Context projections contain plain logical facts; opaque producer
+    /// metadata lives only in explicit blocks.
+    pub(in crate::kernel) fn producer_facts(&self) -> impl Iterator<Item = &ExecutionPureFact> {
+        self.data
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                FactBlock::Facts(facts) => Some(facts.iter().map(Arc::as_ref)),
+                FactBlock::Context { .. } => None,
+            })
+            .flatten()
     }
     pub(crate) fn filtered(&self, predicate: impl Fn(&ExecutionPureFact) -> bool) -> Self {
         if self.iter().all(&predicate) {
@@ -304,6 +374,7 @@ impl ExecutionFacts {
         data.len -= 1;
         data.propositions_invalid = true;
         data.exact_invalid = true;
+        data.covered_context = None;
         let FactBlock::Facts(facts) = &mut data.blocks[0] else {
             unreachable!()
         };
@@ -316,6 +387,7 @@ impl ExecutionFacts {
         let data = Arc::make_mut(&mut self.data);
         data.propositions_invalid = true;
         data.exact_invalid = true;
+        data.covered_context = None;
         let FactBlock::Facts(facts) = &mut data.blocks[0] else {
             unreachable!()
         };
@@ -878,6 +950,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn context_checkpoint_is_invalidated_by_edits_and_selection() {
+        let context = PureFactContext::new()
+            .assume_proposition(guard(1, true))
+            .assume_proposition(guard(2, false));
+        let mut facts = ExecutionFacts::new();
+        facts.append_context(&context.execution_fact_projection);
+        let mut selected = facts.selected(&[0]);
+        selected.append_context(&context.execution_fact_projection);
+        assert_eq!(selected.len(), 2);
+        *facts.get_mut(0) = ExecutionPureFact::certified(guard(3, true));
+        facts.append_context(&context.execution_fact_projection);
+        assert_eq!(facts.len(), 3);
+        assert!(facts[0].is_certified());
+        assert!(facts.contains_proposition(&guard(1, true)));
+        facts.pop();
+        facts.append_context(&context.execution_fact_projection);
+        assert_eq!(facts.len(), 3);
+        let subset = facts.filtered(|fact| fact.proposition() != &guard(2, false));
+        let mut subset = subset;
+        subset.append_context(&context.execution_fact_projection);
+        assert_eq!(subset.len(), 3);
+    }
     #[test]
     fn context_publication_deduplicates_by_proposition_and_preserves_metadata() {
         let proposition = guard(1, true);

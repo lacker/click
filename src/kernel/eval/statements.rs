@@ -1995,7 +1995,7 @@ fn execute_c_heap_free_paths(
         let Some(resources) = state
             .resources
             .clone()
-            .without_fact(&allocation, &effective_assumptions)
+            .without_fact_delaying_normalization(&allocation, &effective_assumptions)
         else {
             paths.push(CStatementExecutionPath::new(
                 CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
@@ -2013,8 +2013,22 @@ fn execute_c_heap_free_paths(
             element_count,
             range_width,
         ));
-        let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
-        else {
+        // Single-supplier consumption keeps unrelated holdings untouched.
+        // Split and supported owners still need their composition checked.
+        let consumed = resources
+            .clone()
+            .without_fact_delaying_normalization(&complete_access, &effective_assumptions)
+            .or_else(|| {
+                resources
+                    .clone()
+                    .without_fact_incrementally(&complete_access, &effective_assumptions)
+            })
+            .or_else(|| {
+                resources
+                    .normalized(&effective_assumptions)
+                    .without_fact_delaying_normalization(&complete_access, &effective_assumptions)
+            });
+        let Some(resources) = consumed else {
             // A live mutex consumed ownership of its storage; name it rather
             // than the bytes it took.
             let error = super::super::mutexes::storage_retirement_refusal(
@@ -2040,30 +2054,39 @@ fn execute_c_heap_free_paths(
             paths.push(CStatementExecutionPath::new(outcome, facts, obligations));
             continue;
         }
-        let resource_assumptions = state
-            .resources()
-            .observable_facts_assuming_valid(&effective_assumptions)
-            .into_iter()
-            .fold(effective_assumptions.clone(), |assumptions, fact| {
-                assumptions.assume_proposition(fact)
-            });
-        if let Some(stale) = resources.facts().iter().find(|resource| {
-            resource.may_refer_to_memory_block(&pointer.block)
-                && !resource.is_proven_separate_from_allocation_with_element_width(
-                    &pointer,
-                    &bytes,
-                    range_width,
-                    &resource_assumptions,
-                )
-        }) {
-            paths.push(CStatementExecutionPath::new(
-                CStatementOutcome::RuntimeError(CRuntimeError::StaleResourceAfterFree {
-                    resource: Box::new(stale.clone()),
-                }),
-                facts,
-                obligations,
-            ));
-            continue;
+        // A free can invalidate only resources that refer to this block.
+        // Most frees leave no such facts after consuming the allocation and
+        // its full ownership. Avoid projecting the whole ambient composition
+        // in that common case; the indexed candidates preserve the same
+        // conservative separation checks when a dependent resource remains.
+        {
+            let mut candidates = resources.facts_that_may_refer_to_memory_block(&pointer.block);
+            if let Some(first) = candidates.next() {
+                let resource_assumptions = state
+                    .resources()
+                    .observable_facts_assuming_valid(&effective_assumptions)
+                    .into_iter()
+                    .fold(effective_assumptions.clone(), |assumptions, fact| {
+                        assumptions.assume_proposition(fact)
+                    });
+                if let Some(stale) = std::iter::once(first).chain(candidates).find(|resource| {
+                    !resource.is_proven_separate_from_allocation_with_element_width(
+                        &pointer,
+                        &bytes,
+                        range_width,
+                        &resource_assumptions,
+                    )
+                }) {
+                    paths.push(CStatementExecutionPath::new(
+                        CStatementOutcome::RuntimeError(CRuntimeError::StaleResourceAfterFree {
+                            resource: Box::new(stale.clone()),
+                        }),
+                        facts,
+                        obligations,
+                    ));
+                    continue;
+                }
+            }
         }
         let memory = working_memory
             .free_heap_block(pointer.pointer(), &effective_assumptions)
@@ -3940,11 +3963,19 @@ fn local_declaration_pointer(state: &mut CState, name: &str) -> Result<Pointer, 
 /// Live loans and protocol reservations must be checked before calling this.
 pub(in crate::kernel) fn retire_automatic_storage_owner(state: &mut CState, range: &CMemoryRange) {
     let owner = CResourceFact::own_memory(range.clone());
-    if let Some(resources) = state
-        .resources
-        .clone()
-        .without_fact_incrementally(&owner, &PureFactContext::default())
-    {
+    let assumptions = PureFactContext::default();
+    let resources = if state.resources.exact_count(&owner) != 0 {
+        state
+            .resources
+            .clone()
+            .without_fact_delaying_normalization(&owner, &assumptions)
+    } else {
+        state
+            .resources
+            .clone()
+            .without_fact_incrementally(&owner, &assumptions)
+    };
+    if let Some(resources) = resources {
         state.resources = resources;
     }
 }

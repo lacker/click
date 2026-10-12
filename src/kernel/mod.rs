@@ -335,6 +335,7 @@ impl VerificationSession {
             assumptions::clear_frame_expansion_memo();
             api::clear_borrowed_input_root_memo();
             reasoning::variable_collection::clear_shared_memory_variables();
+            functions::clear_automatic_lifetime_retirement();
         }
         Self { fresh: outermost }
     }
@@ -407,6 +408,7 @@ impl VerificationSession {
         assumptions::clear_frame_expansion_memo();
         api::clear_borrowed_input_root_memo();
         reasoning::variable_collection::clear_shared_memory_variables();
+        functions::clear_automatic_lifetime_retirement();
         true
     }
 

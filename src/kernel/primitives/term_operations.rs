@@ -166,6 +166,16 @@ fn int64_interval_fits(lower: i128, upper: i128) -> bool {
 }
 
 impl Bitvector32Term {
+    /// Keep pointer-to-integer casts canonical when checked rewriting turns
+    /// a symbolic pointer into null, just as C cast evaluation does.
+    pub(crate) fn pointer_address(pointer: Pointer) -> Self {
+        if pointer == Pointer::null() {
+            Self::UInt64Constant(0)
+        } else {
+            Self::PointerAddress(Box::new(pointer))
+        }
+    }
+
     /// The range an `int64` term has from its own root constructor alone: a
     /// constant is itself, and a value widened from a 32-bit source lies in
     /// that source type's range. This inspects only the root, never

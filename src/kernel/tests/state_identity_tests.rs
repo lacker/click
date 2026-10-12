@@ -417,3 +417,35 @@ fn interface_join_does_not_visit_cells_its_arms_share() {
         "joining beside 4096 known cells cost {large} work units against {small} beside 64"
     );
 }
+
+#[test]
+fn interface_join_provenance_uses_checked_arms_before_marker_union() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let pointer = Pointer {
+        block: "global:branch-value".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = CMemory::new().with_block(pointer.block.clone(), 4);
+    let then_state = CState::new().with_memory(
+        base.clone()
+            .store(pointer.clone(), int32(1))
+            .with_block("havoc:7", 0),
+    );
+    let else_state = CState::new().with_memory(
+        base.clone()
+            .store(pointer, int32(2))
+            .with_block("havoc:8", 0),
+    );
+    let siblings = [&then_state, &else_state];
+    let stable = std::collections::BTreeMap::new();
+    let abstract_arm = |state| {
+        abstract_c_state_for_interface_join_across(state, &siblings, &stable, 9)
+            .expect("the checked arms can be abstracted")
+    };
+    let left = abstract_arm(&then_state);
+    let right = abstract_arm(&else_state);
+    assert!(
+        left.state.eq_with_memories_from(&right.state, &base),
+        "marker-union scratch memories must not become extra incoming arms"
+    );
+}

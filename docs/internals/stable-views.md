@@ -347,7 +347,7 @@ between compiler-checked borrow legality and Click's functional claims.
 | Open and close | `mdtests/rb_augment_callbacks_helper_mutates_body_stepwise.md` (a viewed open closes the same way from a step as from `execute()`), `execution_open_scope_owns_entry_body_and_close_transactionally` |
 | Escaping borrows | `a_hold_blocks_ending_the_scope_and_changes_identity`, `escaping_borrow_keeps_the_loan_open_until_the_composite_is_consumed`, `consuming_the_composite_recovers_the_owner`, `mdtests/borrowing_composite_survives_an_owning_call.md`, `examples/input-cursor` |
 | Effects | `candidate_rejects_mutable_effect_overlapping_a_composite_view_piece`, `candidate_allows_a_mutable_effect_reserved_from_another_owned_occurrence` |
-| Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md` |
+| Callbacks and refinement | `stable_view_refinement_uses_checked_variance_for_subranges`, `mdtests/rb_augment_callbacks_helper_owns_without_separate.md` |
 | Loops and branches | `loop_havoc_requires_a_checked_set_disjoint_from_active_loans`, `loop_back_edge_refuses_a_dropped_share_or_a_regenerated_root`, `abstract_join_rejects_a_loan_ended_on_only_one_arm` |
 | Suspended workers | `src/kernel/tests/thread_transition_tests.rs` (both join orders, linear completion rights, refusal paths, scoped termination, withheld guarantees, backing lifetime, and four-size recovery scaling) |
 | Evidence | `hostile_transition_payload_is_rechecked`, `transitions_are_bound_to_their_exact_predecessor`, `session_rejects_a_stale_identity_before_reverification` |

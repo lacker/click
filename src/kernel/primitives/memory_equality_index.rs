@@ -601,6 +601,7 @@ impl MemoryAccessCandidates {
 #[derive(Clone, Debug, Default)]
 pub(in crate::kernel) struct ObjectEvidenceSources {
     resources: ResourceContext,
+    partition_sources: PersistentMap<Pointer, imbl::Vector<ResourceContext>>,
     source_checkpoints: PersistentMap<usize, ResourceContext>,
     // Address selection retains only producer-published inputs. Raw provenance
     // sources remain cheap to hold and never initialize a logical read index.
@@ -609,6 +610,42 @@ pub(in crate::kernel) struct ObjectEvidenceSources {
 }
 impl ObjectEvidenceSources {
     pub(in crate::kernel) fn admit(&mut self, source: &ResourceContext) {
+        if !source.loan_dependencies.map.is_empty() {
+            let origin = std::sync::Arc::as_ptr(&source.storage.origin) as usize;
+            let delta = self
+                .source_checkpoints
+                .get(&origin)
+                .and_then(|prior| source.changed_memory_inputs_from(prior));
+            let facts = delta.unwrap_or_else(|| source.iter().cloned().collect());
+            let mut bases = facts
+                .iter()
+                .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+                .filter_map(|fact| fact.memory_range())
+                .map(|range| range.base().clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            if let Some(prior) = self.source_checkpoints.get(&origin) {
+                for occurrence in source
+                    .loan_dependencies
+                    .changed_occurrences_since(&prior.loan_dependencies)
+                {
+                    if let Some(binding) = source.loan_dependency(occurrence)
+                        && let Some(range) = binding.viewed.memory_range()
+                    {
+                        bases.insert(range.base().clone());
+                    }
+                }
+            }
+            for base in bases {
+                crate::instrumentation::record_deterministic_work(1);
+                let mut sources = self
+                    .partition_sources
+                    .get(&base)
+                    .cloned()
+                    .unwrap_or_default();
+                sources.push_back(source.clone());
+                self.partition_sources.insert(base, sources);
+            }
+        }
         Self::admit_into(&mut self.resources, &mut self.source_checkpoints, source);
         if !source.storage.index.memory_by_block.is_empty()
             && source
@@ -624,6 +661,36 @@ impl ObjectEvidenceSources {
                 source,
             );
         }
+    }
+
+    /// Only sources that changed a queried address are candidates. Persistent
+    /// delta admission avoids rescanning unchanged resources or proof history.
+    pub(in crate::kernel) fn partition_sources_at<'a>(
+        &'a self,
+        pointers: &[&Pointer],
+    ) -> impl Iterator<Item = &'a ResourceContext> {
+        let mut keys = std::collections::BTreeSet::new();
+        for pointer in pointers {
+            let mut base = (*pointer).clone();
+            loop {
+                keys.insert(base.clone());
+                base.offset = match &base.offset {
+                    PointerOffsetTerm::Add(left, _) => (**left).clone(),
+                    PointerOffsetTerm::Constant(value) if *value != 0 => {
+                        PointerOffsetTerm::Constant(0)
+                    }
+                    _ => break,
+                };
+            }
+        }
+        keys.into_iter().flat_map(move |key| {
+            crate::instrumentation::record_deterministic_work(1);
+            self.partition_sources
+                .get(&key)
+                .into_iter()
+                .flat_map(|sources| sources.iter().rev())
+                .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+        })
     }
 
     fn admit_into(

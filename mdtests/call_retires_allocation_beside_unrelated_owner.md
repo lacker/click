@@ -20,11 +20,12 @@ Both halves are needed. Reading the lent resources after the call would let a
 callee that frees `box->data` and re-points it at the caller's kept memory
 make the lent owners appear to cover that memory
 (`call_retires_the_allocation_it_was_lent_not_the_one_it_returns.md`). The
-partition speaks only for kept *owned* memory, and only when a lent owner
-covers the whole allocation: a kept range inside the allocation and a kept
-view that may alias it are still refused
-(`call_refuses_a_kept_range_inside_the_allocation_it_retires.md`,
-`call_refuses_a_kept_view_that_may_alias_the_allocation_it_frees.md`).
+partition requires a lent owner covering the whole allocation: a kept range
+inside it is still refused (`call_refuses_a_kept_range_inside_the_allocation_it_retires.md`).
+Checked borrowed views are also separated from that owner
+(`call_frees_owned_allocation_beside_borrowed_view.md`); a caller cannot supply
+the owned allocation itself as that view
+(`call_rejects_lending_the_allocation_it_transfers.md`).
 
 ```c filename=box.c
 struct box {

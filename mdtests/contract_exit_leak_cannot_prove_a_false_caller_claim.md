@@ -47,5 +47,5 @@ int32 caller(int32* p) {
 ```
 
 ```expect
-fail: `leak.contract` path 0 left `leak.ensures_1` unproved
+fail: `leak.contract` path 0 left `leak.produces_0` unproved
 ```

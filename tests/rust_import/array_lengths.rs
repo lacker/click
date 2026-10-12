@@ -114,7 +114,7 @@ fn charon_array_lengths_live_refresh_and_compiler_rejections() {
             } else {
                 ARRAYS_SIDECAR
             },
-            &load_import(&p.config()).unwrap(),
+            load_import(&p.config()).unwrap(),
         )
         .unwrap();
     }

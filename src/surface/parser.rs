@@ -1,8 +1,14 @@
+mod cpp_model;
+mod rust_syntax;
 mod tokenizer;
+use cpp_model::rewrite_model_accessors;
+use rust_syntax::rust_signature_hint;
 
+use crate::languages::SourceLanguage;
 use tokenizer::tokenize;
 
 use super::*;
+use claim_labels::{ClaimClauseKind, flattened_claim_ids};
 
 #[derive(Clone, Debug)]
 pub(super) struct QualifiedCObject {
@@ -84,81 +90,17 @@ pub(super) fn parse(source: &str) -> Result<ClickFile, ClickError> {
         .parse_file()
 }
 
-/// What a function's proof needs to know about its automatic locals that
-/// only the source language's front end can say.
+/// Source-language metadata for one function: its execution identity and the
+/// automatic-local layouts a sidecar cannot infer from its signature.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::surface) struct FunctionLocals {
+    /// Exact C execution identity; absent when the source spelling is ambiguous.
+    pub(in crate::surface) execution_name: Option<String>,
     /// The struct name of each local of struct-pointer type.
     pub(in crate::surface) struct_pointers: BTreeMap<String, String>,
     /// The locals of reference type, which a proof names by their referent
     /// as it names a reference parameter.
     pub(in crate::surface) references: BTreeSet<String>,
-}
-
-/// Rewrites each application of a bound C++ model accessor into its field
-/// path: `std_span_data(s)` becomes `s._M_ptr` under libstdc++, and a
-/// compound argument is parenthesized first. The rewritten access is then
-/// parsed and checked like a written one, so an argument of another type is
-/// refused where its field is resolved. An accessor is bound only when the
-/// layouts hold a record with its path; otherwise its name is left as a call.
-fn rewrite_model_accessors(
-    tokens: Vec<Token>,
-    positions: Vec<SourcePosition>,
-    layouts: &BTreeMap<String, syntax::C0StructLayout>,
-) -> (Vec<Token>, Vec<SourcePosition>) {
-    let accessors = crate::languages::cpp::standard_library::model_accessors(layouts);
-    if accessors.is_empty() {
-        return (tokens, positions);
-    }
-    let mut rewritten_tokens = Vec::with_capacity(tokens.len());
-    let mut rewritten_positions = Vec::with_capacity(positions.len());
-    let mut index = 0;
-    while index < tokens.len() {
-        let path = match &tokens[index] {
-            Token::Ident(name) if tokens.get(index + 1) == Some(&Token::LParen) => {
-                accessors.get(name.as_str()).copied()
-            }
-            _ => None,
-        };
-        let close = path.and_then(|_| {
-            let mut depth = 0_usize;
-            (index + 1..tokens.len()).find(|&candidate| {
-                match tokens[candidate] {
-                    Token::LParen => depth += 1,
-                    Token::RParen => depth -= 1,
-                    _ => {}
-                }
-                depth == 0
-            })
-        });
-        let (Some(path), Some(close)) = (path, close) else {
-            rewritten_tokens.push(tokens[index].clone());
-            rewritten_positions.push(positions[index].clone());
-            index += 1;
-            continue;
-        };
-        let at = positions[index].clone();
-        let argument = index + 2..close;
-        if argument.len() == 1 && matches!(tokens[argument.start], Token::Ident(_)) {
-            rewritten_tokens.push(tokens[argument.start].clone());
-            rewritten_positions.push(positions[argument.start].clone());
-        } else {
-            rewritten_tokens.push(Token::LParen);
-            rewritten_positions.push(at.clone());
-            rewritten_tokens.extend(tokens[argument.clone()].iter().cloned());
-            rewritten_positions.extend(positions[argument].iter().cloned());
-            rewritten_tokens.push(Token::RParen);
-            rewritten_positions.push(positions[close].clone());
-        }
-        for field in path {
-            rewritten_tokens.push(Token::Dot);
-            rewritten_positions.push(at.clone());
-            rewritten_tokens.push(Token::Ident((*field).to_string()));
-            rewritten_positions.push(at.clone());
-        }
-        index = close + 1;
-    }
-    (rewritten_tokens, rewritten_positions)
 }
 
 pub(super) fn parse_with_layouts_and_aggregate_objects(
@@ -292,76 +234,6 @@ fn is_builtin_tactic_spelling(name: &str) -> bool {
                     .next()
                     == Some(name)
         })
-}
-
-/// The name the Rust importer gives the item at a path of two or more
-/// segments, `quad::walk` or `adler2::algo::U32X4`: `__rust_q` and each
-/// segment with its length, `__rust_q_I4_quad_I4_walk`
-/// (`qualified_record_name` in `src/languages/rust/charon.rs`). A single
-/// segment is the name itself.
-pub(in crate::surface) fn rust_path_name(segments: &[&str]) -> String {
-    match segments {
-        [name] => (*name).to_string(),
-        _ => segments
-            .iter()
-            .fold("__rust_q".to_string(), |encoded, segment| {
-                format!("{encoded}_I{}_{segment}", segment.len())
-            }),
-    }
-}
-
-/// The name of an inherent method of the type named `impl_type`, whose
-/// `impl` block is in the type's own module. A type named by a path has
-/// the importer's qualified method name, its module, then `_T` and the
-/// type, then the method (`qualified_function_name`); any other is
-/// `Type_method`.
-pub(in crate::surface) fn rust_inherent_method_name(
-    impl_module: Option<&str>,
-    impl_type: &str,
-    method: &str,
-) -> String {
-    // An item inside the method, `compute::LIMIT`, arrives with its path
-    // segments already written after the method's own name
-    // ([`rust_method_path_name`]); the length the importer writes is the
-    // method's alone.
-    let (own, inside) = method.split_at(method.find("_I").unwrap_or(method.len()));
-    match impl_module {
-        Some(module) => format!(
-            "{module}_T{}_{impl_type}_I{}_{own}{inside}",
-            impl_type.len(),
-            own.len()
-        ),
-        None => format!("{impl_type}_{method}"),
-    }
-}
-
-/// A method's name as written in an `impl` block, `compute` or
-/// `compute::LIMIT`: the method's own name, then each further segment as
-/// the importer writes a path segment.
-pub(in crate::surface) fn rust_method_path_name(path: &[&str]) -> String {
-    path[1..].iter().fold(path[0].to_string(), |name, segment| {
-        format!("{name}_I{}_{segment}", segment.len())
-    })
-}
-
-/// The C0 type a Rust scalar type name denotes.
-fn rust_scalar_type(name: &str) -> Option<C0Type> {
-    Some(match name {
-        "bool" => C0Type::Bool,
-        "i8" => C0Type::Int8,
-        "i16" => C0Type::Int16,
-        "i32" => C0Type::Int32,
-        "i64" | "isize" => C0Type::Int64,
-        "i128" => C0Type::Int128,
-        "u8" => C0Type::UInt8,
-        "u16" => C0Type::UInt16,
-        "u32" => C0Type::UInt32,
-        "u64" | "usize" => C0Type::UInt64,
-        "u128" => C0Type::UInt128,
-        "f32" => C0Type::Float32,
-        "f64" => C0Type::Float64,
-        _ => return None,
-    })
 }
 
 /// `have P by simp;` as the one-step script `have P by { simp(); }`. Out of
@@ -603,9 +475,9 @@ struct Parser {
     /// In a resource that declares no fields and names a child: the hidden
     /// parent field that holds each `child.field`.
     hidden_child_fields: BTreeMap<(String, String), ResourceFieldAccess>,
-    /// Whether a `verifying` source is Rust, which is what admits a Rust
+    /// The language of the `verifying` sources. Rust admits a Rust
     /// signature (`fn name(a: T) -> T`).
-    verifies_rust: bool,
+    language: SourceLanguage,
     /// The slice parameters of the Rust signature being parsed. Each is one
     /// name in the sidecar and a pointer with a `name_len` length underneath.
     rust_slice_params: BTreeSet<String>,
@@ -830,56 +702,10 @@ struct ParsedFunctionSignature {
 
 /// Give a concrete replacement for scalar and slice signatures. Record and
 /// method contracts need an `impl` and the imported type identity instead.
-fn rust_signature_hint(parsed: &ParsedFunctionSignature) -> Option<String> {
-    let signature = &parsed.signature;
-    if !parsed.struct_params.is_empty() || parsed.return_struct_name.is_some() {
-        return None;
+impl Parser {
+    fn verifies_rust(&self) -> bool {
+        self.language == SourceLanguage::Rust
     }
-    let scalar_name = |c_type| {
-        [
-            "bool", "i8", "i16", "i32", "isize", "i128", "u8", "u16", "u32", "usize", "u128",
-            "f32", "f64",
-        ]
-        .into_iter()
-        .find(|name| rust_scalar_type(name) == Some(c_type))
-    };
-    let name = super::rust_names::rust_display_name(&signature.name)
-        .unwrap_or_else(|| signature.name.clone());
-    if name.starts_with("__rust_q") {
-        return None;
-    }
-    let mut parameters = Vec::new();
-    let mut index = 0;
-    while let Some(parameter) = signature.parameters.get(index) {
-        let spelling = if let Some(pointee) = parameter.c_type().pointee_type() {
-            let reference = if parameter.pointee_constant {
-                "&"
-            } else {
-                "&mut "
-            };
-            let base = scalar_name(pointee)?;
-            let slice = signature.parameters.get(index + 1).is_some_and(|length| {
-                length.name == format!("{}_len", parameter.name)
-                    && length.c_type() == C0Type::UInt64
-            });
-            if slice {
-                index += 1;
-                format!("{reference}[{base}]")
-            } else {
-                format!("{reference}{base}")
-            }
-        } else {
-            scalar_name(parameter.c_type())?.to_string()
-        };
-        parameters.push(format!("{}: {spelling}", parameter.name));
-        index += 1;
-    }
-    let return_type = if signature.return_type == C0Type::Void {
-        String::new()
-    } else {
-        format!(" -> {}", scalar_name(signature.return_type)?)
-    };
-    Some(format!("fn {name}({}){return_type}", parameters.join(", ")))
 }
 
 fn algebraic_parameter_types(
@@ -974,10 +800,13 @@ impl Parser {
         let (tokens, positions) = rewrite_model_accessors(tokens, positions, &struct_layouts);
         // Source clauses may follow declarations. Choose the spelling for the
         // whole file so moving the clause cannot bypass a Rust syntax check.
-        let verifies_rust = tokens.windows(2).any(|pair| {
-            matches!(pair, [Token::Ident(keyword), Token::String(path)]
-                if keyword == "verifying" && path.ends_with(".rs"))
-        });
+        let language =
+            SourceLanguage::of_sources(tokens.windows(2).filter_map(|pair| match pair {
+                [Token::Ident(keyword), Token::String(path)] if keyword == "verifying" => {
+                    Some(path.as_str())
+                }
+                _ => None,
+            }));
         let matching_parentheses = validate_parenthesis_nesting(&tokens, &positions)?;
         Ok(Self {
             source_aliases: BTreeMap::new(),
@@ -995,7 +824,7 @@ impl Parser {
             in_resource_definition: false,
             declared_resource_fields: BTreeMap::new(),
             hidden_child_fields: BTreeMap::new(),
-            verifies_rust,
+            language,
             rust_slice_params: BTreeSet::new(),
             rust_impl_type: None,
             rust_impl_method_suffix: None,
@@ -1208,7 +1037,7 @@ impl Parser {
                 resource_definitions.push(self.parse_resource_definition(false)?);
             } else if self.peek_ident() == Some("extern") {
                 function_blocks.push(self.parse_function_block(true)?);
-            } else if self.verifies_rust && self.peek_ident() == Some("impl") {
+            } else if self.verifies_rust() && self.peek_ident() == Some("impl") {
                 self.parse_rust_impl_block(&mut function_blocks)?;
             } else {
                 function_blocks.push(self.parse_function_block(false)?);
@@ -1230,6 +1059,16 @@ impl Parser {
         }
         self.position = end;
         let file = ClickFile {
+            c_function_names: std::sync::Arc::new(
+                self.local_struct_pointers_by_function
+                    .iter()
+                    .filter_map(|(source, info)| {
+                        info.execution_name
+                            .as_ref()
+                            .map(|target| (source.clone(), target.clone()))
+                    })
+                    .collect(),
+            ),
             imports,
             verifying_sources,
             c_target,
@@ -1594,8 +1433,8 @@ impl Parser {
             }
         }
         self.expect(Token::Semicolon)?;
-        if source_path.ends_with(".rs") {
-            self.verifies_rust = true;
+        if SourceLanguage::of_source_path(&source_path) == SourceLanguage::Rust {
+            self.language = SourceLanguage::Rust;
         }
         Ok(source_path)
     }
@@ -2639,6 +2478,7 @@ impl Parser {
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
         let mut ensures = Vec::new();
+        let mut ensure_kinds = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             match self.peek_ident() {
                 Some("let") => {
@@ -2703,6 +2543,7 @@ impl Parser {
                         )
                         .map_err(|message| self.error(message))?,
                     );
+                    ensure_kinds.push(ClaimClauseKind::Owns);
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
                             EnsureClause {
@@ -2746,6 +2587,7 @@ impl Parser {
                     self.position += 1;
                     let resource = self.parse_owned_resource_binding()?;
                     let proof = self.parse_proof_clause_or_default()?;
+                    ensure_kinds.push(ClaimClauseKind::Produces);
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
                             EnsureClause {
@@ -2783,6 +2625,7 @@ impl Parser {
                     } else {
                         self.parse_ensure_clause()?
                     };
+                    ensure_kinds.push(ClaimClauseKind::Ensures);
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
                             .map_err(|message| self.error(message))?,
@@ -2814,10 +2657,17 @@ impl Parser {
             .into_iter()
             .flat_map(expand_aggregate_requirement)
             .collect();
+        let mut ensure_source_clauses = Vec::new();
         let ensures: Vec<EnsureClause> = ensures
             .into_iter()
-            .flat_map(expand_aggregate_ensure_clause)
+            .enumerate()
+            .flat_map(|(source, ensure)| {
+                let expanded = expand_aggregate_ensure_clause(ensure);
+                ensure_source_clauses.extend(std::iter::repeat_n(source, expanded.len()));
+                expanded
+            })
             .collect();
+        let ensure_claim_ids = flattened_claim_ids(&ensure_kinds, &ensure_source_clauses);
 
         Ok(TheoremDefinition {
             name,
@@ -2829,6 +2679,7 @@ impl Parser {
             }),
             requires,
             ensures,
+            ensure_claim_ids,
         })
     }
 
@@ -2906,6 +2757,9 @@ impl Parser {
         let mut decreases = None;
         let mut constructs = Vec::new();
         let mut ensures = Vec::new();
+        // The kind each written postcondition clause was written as, which
+        // its claim label counts it among.
+        let mut ensure_kinds = Vec::new();
         let mut exceptional_ensures = Vec::new();
         // A local of struct-pointer type is a memory base in this function's
         // proof just as a parameter is. The signature wins a shared spelling.
@@ -3044,6 +2898,7 @@ impl Parser {
                             ));
                         }
                         let proof = self.parse_proof_clause_or_default()?;
+                        ensure_kinds.push(ClaimClauseKind::Produces);
                         ensures.push(
                             apply_contract_lets_to_ensure_clause(
                                 EnsureClause {
@@ -3103,6 +2958,7 @@ impl Parser {
                         )
                         .map_err(|message| self.error(message))?,
                     );
+                    ensure_kinds.push(ClaimClauseKind::Owns);
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
                             EnsureClause {
@@ -3164,6 +3020,7 @@ impl Parser {
                         &parameter_names_in_order,
                         CalleeResourceBinderKind::Produced,
                     );
+                    ensure_kinds.push(ClaimClauseKind::Produces);
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(
                             EnsureClause {
@@ -3199,6 +3056,7 @@ impl Parser {
                             ));
                         }
                     }
+                    ensure_kinds.push(ClaimClauseKind::Ensures);
                     ensures.push(
                         apply_contract_lets_to_ensure_clause(ensure, &contract_lets)
                             .map_err(|message| self.error(message))?,
@@ -3364,6 +3222,7 @@ impl Parser {
                 expanded
             })
             .collect();
+        let ensure_claim_ids = flattened_claim_ids(&ensure_kinds, &ensure_source_clauses);
 
         let mut object_alignment_facts = Vec::new();
         for requirement in &requires {
@@ -3426,6 +3285,7 @@ impl Parser {
             ensures,
             exceptional_ensures,
             ensure_source_clauses,
+            ensure_claim_ids,
             grouped_proof,
             parameter_struct_casts,
             parameter_field_places,
@@ -3597,7 +3457,7 @@ impl Parser {
             reference_params,
             return_struct_name: parsed_return_type.struct_name,
         };
-        if self.verifies_rust && !self.in_contract_definition {
+        if self.verifies_rust() && !self.in_contract_definition {
             let replacement = rust_signature_hint(&parsed)
                 .map(|signature| format!("write `{signature}`"))
                 .unwrap_or_else(|| {
@@ -3608,393 +3468,6 @@ impl Parser {
             )));
         }
         Ok(parsed)
-    }
-
-    /// A Rust sidecar states its signature as Rust does:
-    /// `fn name(a: T, b: U) -> R`, with references, slices, and methods in
-    /// `impl` blocks. C-shaped function contracts are refused for Rust sources.
-    #[inline(never)]
-    fn parse_rust_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
-        if !self.verifies_rust {
-            return Err(self.error(
-                "a `fn` signature is the Rust spelling; a C or C++ source's contract is written `type name(type parameter, ...)`",
-            ));
-        }
-        if self.pending_contract_name.is_some() {
-            return Err(self.error(
-                "a named contract does not take a `fn` signature yet; write `contract type Name(type parameter, ...)`",
-            ));
-        }
-        self.expect_ident_spelling("fn")?;
-        let path = self.expect_rust_path("function name")?;
-        self.skip_rust_lifetime_parameters()?;
-        let name = if self.rust_impl_type.is_some() {
-            // A method's own name; an item inside it, `compute::LIMIT`,
-            // follows as the importer writes path segments.
-            rust_method_path_name(&path.iter().map(String::as_str).collect::<Vec<_>>())
-        } else {
-            rust_path_name(&path.iter().map(String::as_str).collect::<Vec<_>>())
-        };
-        self.expect(Token::LParen)?;
-        let mut parameters = Vec::new();
-        let mut struct_params = BTreeMap::new();
-        // A method is the function `Type_name`, and its receiver is the
-        // first parameter, a pointer to the type named `self`.
-        let name = match self.rust_impl_type.clone() {
-            Some(impl_type) => {
-                if let Some(receiver) = self.parse_rust_receiver(&impl_type)? {
-                    let parsed = self.parse_parameter_array_suffix("self".into(), receiver)?;
-                    if let Some(struct_name) = parsed.struct_name {
-                        struct_params.insert(parsed.parameter.name.clone(), struct_name);
-                    }
-                    parameters.push(parsed.parameter);
-                    if self.peek() == Some(&Token::Comma) {
-                        self.position += 1;
-                    }
-                }
-                match &self.rust_impl_method_suffix {
-                    Some(suffix) => format!("{impl_type}_{name}_{suffix}"),
-                    None => self.rust_inherent_method(&impl_type, &name)?,
-                }
-            }
-            None => name,
-        };
-        let mut rust_slice_parameters = Vec::new();
-        while self.peek() != Some(&Token::RParen) {
-            let parameter_name = self.expect_ident("parameter name")?;
-            self.expect(Token::Colon)?;
-            if let Some(element) = self.parse_rust_slice_type()? {
-                // `bytes: &[T]` is the pointer and length Rust passes. The
-                // sidecar names the slice once and reads `bytes.len()`.
-                let length = format!("{parameter_name}_len");
-                self.rust_slice_params.insert(parameter_name.clone());
-                rust_slice_parameters.push(parameter_name.clone());
-                parameters.push(
-                    self.parse_parameter_array_suffix(parameter_name, element)?
-                        .parameter,
-                );
-                let length_type = ParsedType {
-                    c_type: C0Type::UInt64,
-                    struct_name: None,
-                    struct_pointer: false,
-                    constant: false,
-                    pointee_constant: false,
-                    reference: false,
-                };
-                parameters.push(
-                    self.parse_parameter_array_suffix(length, length_type)?
-                        .parameter,
-                );
-                if self.peek() != Some(&Token::Comma) {
-                    break;
-                }
-                self.position += 1;
-                continue;
-            }
-            let parsed_type = self.parse_rust_type()?;
-            let parsed = self.parse_parameter_array_suffix(parameter_name, parsed_type)?;
-            if let Some(struct_name) = parsed.struct_name {
-                struct_params.insert(parsed.parameter.name.clone(), struct_name);
-            }
-            parameters.push(parsed.parameter);
-            if self.peek() != Some(&Token::Comma) {
-                break;
-            }
-            self.position += 1;
-        }
-        self.expect(Token::RParen)?;
-        let parsed_return_type = if self.peek() == Some(&Token::Arrow) {
-            self.position += 1;
-            self.parse_rust_type()?
-        } else {
-            ParsedType {
-                c_type: C0Type::Void,
-                struct_name: None,
-                struct_pointer: false,
-                constant: false,
-                pointee_constant: false,
-                reference: false,
-            }
-        };
-        let return_type = match parsed_return_type.struct_name.as_deref() {
-            Some(struct_name) => self.scalar_struct_value_type(struct_name)?,
-            None => parsed_return_type.c_type,
-        };
-        let diverges = if self.peek_ident() == Some("diverges") {
-            self.position += 1;
-            true
-        } else {
-            false
-        };
-        Ok(ParsedFunctionSignature {
-            signature: FunctionSignature {
-                return_type,
-                return_pointee_constant: false,
-                return_reference: false,
-                name,
-                parameters,
-                exceptional_type: None,
-                diverges,
-                declared_loadable_bytes: Vec::new(),
-                rust_spelling: super::RustSignatureSpelling::rust(rust_slice_parameters),
-            },
-            struct_params,
-            struct_array_params: BTreeSet::new(),
-            reference_params: BTreeSet::new(),
-            return_struct_name: parsed_return_type.struct_name,
-        })
-    }
-
-    /// `impl Type { ... }` or `impl Trait for Type { ... }`: each `fn` inside
-    /// is the method's contract and proof. A trait method is named by its
-    /// type, as the imported function is.
-    #[inline(never)]
-    fn parse_rust_impl_block(
-        &mut self,
-        function_blocks: &mut Vec<FunctionBlock>,
-    ) -> Result<(), ClickError> {
-        self.expect_ident_spelling("impl")?;
-        let mut impl_path = self.expect_rust_path("type name")?;
-        let suffix = self.parse_rust_trait_argument()?;
-        let mut inherent = true;
-        if self.peek_ident() == Some("for") {
-            self.position += 1;
-            impl_path = self.expect_rust_path("type name")?;
-            inherent = false;
-        } else if suffix.is_some() {
-            return Err(self.error("a trait with a type argument is implemented `for` a type"));
-        }
-        self.expect(Token::LBrace)?;
-        let segments: Vec<&str> = impl_path.iter().map(String::as_str).collect();
-        let impl_type = rust_path_name(&segments);
-        // An inherent block is taken to be in its type's module.
-        let impl_module = (inherent && segments.len() > 1).then(|| {
-            segments[..segments.len() - 1]
-                .iter()
-                .fold("__rust_q".to_string(), |encoded, segment| {
-                    format!("{encoded}_I{}_{segment}", segment.len())
-                })
-        });
-        let suffix = suffix.map(|(reference, mutable, name)| {
-            let name = if name == "Self" {
-                impl_type.clone()
-            } else {
-                name
-            };
-            let scalar = matches!(
-                name.as_str(),
-                "i32" | "u8" | "u16" | "u32" | "usize" | "bool"
-            );
-            match (reference, scalar) {
-                (false, true) => name,
-                (false, false) => format!("value_{}{name}", name.len()),
-                (true, _) => format!("ref_{}{name}", if mutable { "mut_" } else { "" }),
-            }
-        });
-        let previous = self.rust_impl_type.replace(impl_type);
-        let previous_suffix = std::mem::replace(&mut self.rust_impl_method_suffix, suffix);
-        let previous_module = std::mem::replace(&mut self.rust_impl_module, impl_module);
-        let mut result = Ok(());
-        while self.peek() != Some(&Token::RBrace) {
-            if self.peek_ident() != Some("fn") {
-                result = Err(self.error("an `impl` block holds `fn` contracts"));
-                break;
-            }
-            match self.parse_function_block(false) {
-                Ok(block) => function_blocks.push(block),
-                Err(error) => {
-                    result = Err(error);
-                    break;
-                }
-            }
-        }
-        self.rust_impl_type = previous;
-        self.rust_impl_method_suffix = previous_suffix;
-        self.rust_impl_module = previous_module;
-        result?;
-        self.expect(Token::RBrace)?;
-        Ok(())
-    }
-
-    /// The imported function an inherent method of a type named by a path
-    /// is. The importer names it by the module its `impl` block is in,
-    /// which Rust does not write, so the one imported function that is this
-    /// method of this type is found by the rest of its name. Rust allows a
-    /// type one inherent method of a name, so there is at most one. With
-    /// no import to consult, or none found, the block is taken to be in its
-    /// type's module.
-    #[inline(never)]
-    fn rust_inherent_method(&self, impl_type: &str, method: &str) -> Result<String, ClickError> {
-        let Some(module) = self.rust_impl_module.as_deref() else {
-            return Ok(rust_inherent_method_name(None, impl_type, method));
-        };
-        let suffix = rust_inherent_method_name(Some(""), impl_type, method);
-        let mut found = self
-            .local_struct_pointers_by_function
-            .keys()
-            .filter(|name| name.starts_with("__rust_q") && name.ends_with(&suffix));
-        match (found.next(), found.next()) {
-            (Some(name), None) => Ok(name.clone()),
-            (Some(_), Some(_)) => Err(self.error(format!(
-                "the import has more than one method `{method}` of this type"
-            ))),
-            (None, _) => Ok(rust_inherent_method_name(Some(module), impl_type, method)),
-        }
-    }
-
-    /// A Rust path, `name` or `crate_name::module::name`, as its segments.
-    #[inline(never)]
-    fn expect_rust_path(&mut self, what: &str) -> Result<Vec<String>, ClickError> {
-        let mut segments = vec![self.expect_ident(what)?];
-        while self.peek() == Some(&Token::ColonColon) {
-            self.position += 1;
-            segments.push(self.expect_ident(what)?);
-        }
-        Ok(segments)
-    }
-
-    /// A Rust path as the name the importer gives the item it names.
-    #[inline(never)]
-    fn expect_rust_path_name(&mut self, what: &str) -> Result<String, ClickError> {
-        let path = self.expect_rust_path(what)?;
-        Ok(rust_path_name(
-            &path.iter().map(String::as_str).collect::<Vec<_>>(),
-        ))
-    }
-
-    /// A lifetime, `'a` in `&'a T`, which a contract does not use.
-    fn skip_rust_lifetime(&mut self) {
-        if matches!(self.peek(), Some(Token::Lifetime(_))) {
-            self.position += 1;
-        }
-    }
-
-    /// The generic parameters after a function's name, `<'a, 'b: 'a>`, when
-    /// they are all lifetimes. The importer refuses a generic function, so a
-    /// type parameter is refused here too.
-    fn skip_rust_lifetime_parameters(&mut self) -> Result<(), ClickError> {
-        if self.peek() != Some(&Token::LessThan) {
-            return Ok(());
-        }
-        self.position += 1;
-        loop {
-            let Some(Token::Lifetime(_)) = self.peek() else {
-                return Err(self.error(
-                    "a `fn` signature's generic parameters may only be lifetimes, such as `<'a>`; a generic function is not supported",
-                ));
-            };
-            self.position += 1;
-            if self.peek() == Some(&Token::Colon) {
-                self.position += 1;
-                while matches!(self.peek(), Some(Token::Lifetime(_))) {
-                    self.position += 1;
-                    if self.peek() != Some(&Token::Plus) {
-                        break;
-                    }
-                    self.position += 1;
-                }
-            }
-            if self.peek() == Some(&Token::Comma) {
-                self.position += 1;
-            }
-            if self.peek() == Some(&Token::GreaterThan) {
-                self.position += 1;
-                return Ok(());
-            }
-        }
-    }
-
-    /// The type argument of an operator trait, `<u32>`, `<&Lanes>` or
-    /// `<Self>`: whether it is a reference, whether that is mutable, and
-    /// the type's name. The caller turns it into the suffix the Rust
-    /// importer gives the implementation's methods (`rhs_name` in
-    /// `src/languages/rust/charon/assignment_operators.rs`): a scalar by its
-    /// name, a record by value as `value_<length><name>`, and a reference as
-    /// `ref_` or `ref_mut_` and what it refers to. `None`, with nothing
-    /// consumed, for a trait without one.
-    #[inline(never)]
-    fn parse_rust_trait_argument(&mut self) -> Result<Option<(bool, bool, String)>, ClickError> {
-        if self.peek() != Some(&Token::LessThan) {
-            return Ok(None);
-        }
-        self.position += 1;
-        let reference = self.peek() == Some(&Token::Amp);
-        if reference {
-            self.position += 1;
-            self.skip_rust_lifetime();
-        }
-        let mutable = reference && self.peek_ident() == Some("mut");
-        if mutable {
-            self.position += 1;
-        }
-        let name = self.expect_rust_path_name("type name")?;
-        self.expect(Token::GreaterThan)?;
-        Ok(Some((reference, mutable, name)))
-    }
-
-    /// A method's receiver: `&self`, `&mut self` or `self`, as the type of
-    /// the parameter it is. `None`, with nothing consumed, for an associated
-    /// function that takes no receiver.
-    fn parse_rust_receiver(&mut self, impl_type: &str) -> Result<Option<ParsedType>, ClickError> {
-        let start = self.position;
-        let reference = self.peek() == Some(&Token::Amp);
-        if reference {
-            self.position += 1;
-            self.skip_rust_lifetime();
-        }
-        let mutable = reference && self.peek_ident() == Some("mut");
-        if mutable {
-            self.position += 1;
-        }
-        if self.peek_ident() != Some("self") {
-            self.position = start;
-            return Ok(None);
-        }
-        self.position += 1;
-        Ok(Some(ParsedType {
-            c_type: C0Type::Int32Pointer,
-            struct_name: Some(impl_type.to_string()),
-            struct_pointer: reference,
-            constant: false,
-            pointee_constant: reference && !mutable,
-            reference: false,
-        }))
-    }
-
-    /// `&[T]` or `&mut [T]` with a scalar element, as the pointer to its
-    /// first element; `None`, with nothing consumed, for any other type.
-    #[inline(never)]
-    fn parse_rust_slice_type(&mut self) -> Result<Option<ParsedType>, ClickError> {
-        if self.peek() != Some(&Token::Amp) {
-            return Ok(None);
-        }
-        let lifetime = usize::from(matches!(self.peek_next(), Some(Token::Lifetime(_))));
-        let mutable =
-            self.tokens.get(self.position + 1 + lifetime) == Some(&Token::Ident("mut".into()));
-        let bracket = self.position + 1 + lifetime + usize::from(mutable);
-        if self.tokens.get(bracket) != Some(&Token::LBracket) {
-            return Ok(None);
-        }
-        // `&[T; N]` is a reference to an array, not a slice.
-        if self.tokens.get(bracket + 2) == Some(&Token::Semicolon) {
-            return Ok(None);
-        }
-        self.position = bracket + 1;
-        let spelling = self.expect_ident("slice element type")?;
-        let Some(c_type) = rust_scalar_type(&spelling).and_then(C0Type::pointer_type) else {
-            return Err(self.error(format!(
-                "a slice of `{spelling}` in a `fn` signature is not supported; the Rust importer reads slices of scalars only"
-            )));
-        };
-        self.expect(Token::RBracket)?;
-        Ok(Some(ParsedType {
-            c_type,
-            struct_name: None,
-            struct_pointer: false,
-            constant: false,
-            pointee_constant: !mutable,
-            reference: false,
-        }))
     }
 
     /// The index between brackets. Out of line, with the two helpers below:
@@ -4019,125 +3492,6 @@ impl Parser {
     fn c_variable_expression(&mut self, name: String) -> ContractExpression {
         let name = self.take_rust_slice_len(&name).unwrap_or(name);
         ContractExpression::CFragment(CExpression::Variable(name))
-    }
-
-    /// `name.len()` where `name` is a slice parameter: consumes `.len()` and
-    /// answers the length's own name.
-    fn take_rust_slice_len(&mut self, name: &str) -> Option<String> {
-        if !self.rust_slice_params.contains(name)
-            || self.peek() != Some(&Token::Dot)
-            || self.peek_next() != Some(&Token::Ident("len".into()))
-            || self.tokens.get(self.position + 2) != Some(&Token::LParen)
-            || self.tokens.get(self.position + 3) != Some(&Token::RParen)
-        {
-            return None;
-        }
-        self.position += 4;
-        Some(format!("{name}_len"))
-    }
-
-    /// `&T` and `&mut T` in a signature. The parameter is the pointer that
-    /// carries the reference, as Rust's own `value` is: the contract names
-    /// the referent `*value` and a field `parent.left`. `&T` is a pointer to
-    /// a constant referent. The contract still states `views` or `owns`.
-    #[inline(never)]
-    fn parse_rust_reference_type(&mut self) -> Result<ParsedType, ClickError> {
-        self.expect(Token::Amp)?;
-        self.skip_rust_lifetime();
-        let mutable = if self.peek_ident() == Some("mut") {
-            self.position += 1;
-            true
-        } else {
-            false
-        };
-        if matches!(self.peek(), Some(Token::Amp | Token::LParen)) {
-            return Err(self.error(
-                "a reference to a reference or to `()` in a `fn` signature is not supported; the Rust importer refuses it",
-            ));
-        }
-        // `&[T; N]` is the pointer to the array's first element. The length
-        // is the type's, so the contract writes it: `views words[0..N]`.
-        let array = self.peek() == Some(&Token::LBracket);
-        if array {
-            self.position += 1;
-        }
-        let spelling = self.expect_rust_path_name("type")?;
-        if array {
-            self.expect(Token::Semicolon)?;
-            // The length is a constant expression; the importer checks it.
-            while !matches!(self.peek(), Some(Token::RBracket) | None) {
-                self.position += 1;
-            }
-            self.expect(Token::RBracket)?;
-            if rust_scalar_type(&spelling).is_none() {
-                return Err(self.error(format!(
-                    "an array of `{spelling}` in a `fn` signature is not supported; the Rust importer reads arrays of scalars only"
-                )));
-            }
-        }
-        Ok(match rust_scalar_type(&spelling) {
-            Some(scalar) => {
-                let Some(c_type) = scalar.pointer_type() else {
-                    return Err(self.error(format!(
-                        "a reference to `{spelling}` is not supported in a `fn` signature"
-                    )));
-                };
-                ParsedType {
-                    c_type,
-                    struct_name: None,
-                    struct_pointer: false,
-                    constant: false,
-                    pointee_constant: !mutable,
-                    reference: false,
-                }
-            }
-            None => ParsedType {
-                c_type: C0Type::Int32Pointer,
-                struct_name: Some(spelling),
-                struct_pointer: true,
-                constant: false,
-                pointee_constant: !mutable,
-                reference: false,
-            },
-        })
-    }
-
-    /// A Rust type in a signature: an integer or float type, `bool`, `()`,
-    /// or a struct by name.
-    fn parse_rust_type(&mut self) -> Result<ParsedType, ClickError> {
-        let scalar = |c_type| ParsedType {
-            c_type,
-            struct_name: None,
-            struct_pointer: false,
-            constant: false,
-            pointee_constant: false,
-            reference: false,
-        };
-        if self.peek() == Some(&Token::LParen) {
-            self.position += 1;
-            self.expect(Token::RParen)?;
-            return Ok(scalar(C0Type::Void));
-        }
-        if self.peek() == Some(&Token::Amp) {
-            return self.parse_rust_reference_type();
-        }
-        if self.peek() == Some(&Token::LBracket) {
-            return Err(self.error(
-                "an array or slice passed by value in a `fn` signature is not supported; the Rust importer refuses it",
-            ));
-        }
-        let spelling = self.expect_rust_path_name("type")?;
-        Ok(match rust_scalar_type(&spelling) {
-            Some(c_type) => scalar(c_type),
-            None => ParsedType {
-                c_type: C0Type::Int32Pointer,
-                struct_name: Some(spelling),
-                struct_pointer: false,
-                constant: false,
-                pointee_constant: false,
-                reference: false,
-            },
-        })
     }
 
     fn parse_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
@@ -4757,7 +4111,7 @@ impl Parser {
     /// field's position, `self.0`, which names the field the importer calls
     /// `_0`.
     fn expect_field_name(&mut self) -> Result<String, ClickError> {
-        if self.verifies_rust
+        if self.verifies_rust()
             && self.position > 0
             && self.tokens.get(self.position - 1) == Some(&Token::Arrow)
         {
@@ -4765,7 +4119,7 @@ impl Parser {
                 self.error("a Rust reference field is written `p.f`; replace `p->f` with `p.f`")
             );
         }
-        if self.verifies_rust
+        if self.verifies_rust()
             && let Some(Token::Number(position)) = self.peek()
         {
             let name = format!("_{position}");
@@ -10444,48 +9798,6 @@ impl Parser {
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
         self.parse_contract_unary_at_depth(0)
-    }
-
-    /// `expr as T` in a Rust sidecar is the scalar cast `(T)expr`. It binds
-    /// tighter than a binary operator and looser than a unary one, as in
-    /// Rust. `as` followed by anything but a scalar type is left for the
-    /// clause that owns it (`intro() as name`).
-    #[inline(never)]
-    fn parse_rust_casts(
-        &mut self,
-        mut operand: ContractExpression,
-    ) -> Result<ContractExpression, ClickError> {
-        while self.verifies_rust
-            && self.peek_ident() == Some("as")
-            && matches!(
-                self.peek_next(),
-                Some(Token::Ident(name)) if rust_scalar_type(name).is_some()
-            )
-        {
-            self.position += 1;
-            let target = self.expect_ident("type")?;
-            let target_type = rust_scalar_type(&target)
-                .expect("checked above")
-                .to_kernel_type();
-            let Some(expression) = contract_expression_as_c_fragment(&operand) else {
-                return Err(self.error("scalar cast expects a current C expression; put old(...) around the whole cast for an entry-state value"));
-            };
-            // Keep the same operand-bearing representation as a C-style
-            // scalar cast, including its proof-expression identity.
-            operand = ContractExpression::CUnary {
-                operand: Box::new(operand),
-                lowered: CExpression::Cast {
-                    expression: Box::new(expression),
-                    target_type,
-                    integer_mode: crate::kernel::CIntegerCastMode::Standard,
-                    pointee_struct: None,
-                    pointee_volatile: false,
-                    pointee_constant: false,
-                    explicit_qualification: false,
-                },
-            };
-        }
-        Ok(operand)
     }
 
     fn parse_contract_unary_at_depth(

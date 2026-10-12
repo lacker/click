@@ -155,6 +155,126 @@ pub fn parse_source_line_location(source: &str) -> Result<(PathBuf, usize, Optio
     Ok((PathBuf::from(path), line, None))
 }
 
+/// A claim argument naming a source location, `FILE:LINE` or
+/// `FILE:LINE:COLUMN`, where `FILE` is a sidecar (`.click`) or mdtest
+/// (`.md`): the location, or why it is malformed. `None` for any other
+/// argument, which is a claim label: a label never ends in a `.click` or
+/// `.md` path and a line number.
+pub fn parse_claim_location(
+    argument: &str,
+) -> Option<Result<(PathBuf, usize, Option<usize>), String>> {
+    let numeric = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    let (rest, last) = argument.rsplit_once(':')?;
+    let path = match rest.rsplit_once(':') {
+        Some((path, line)) if numeric(line) && numeric(last) => path,
+        _ if numeric(last) => rest,
+        _ => return None,
+    };
+    let source_file = Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "click" || extension == "md");
+    source_file.then(|| parse_source_line_location(argument))
+}
+
+/// The claim whose clause or proof covers a location of a sidecar's Click
+/// source (or, with `project`, of its entry module), resolved against the
+/// sidecar's inputs ([`crate::surface::claim_at`]).
+pub fn claim_at(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    inputs: &CInput,
+    line: usize,
+    column: Option<usize>,
+    scope: crate::surface::ClaimLocationScope,
+) -> Result<crate::surface::SourceClaim, crate::surface::ClaimLocationError> {
+    crate::surface::claim_at(
+        project,
+        click_source,
+        &inputs.program_inputs(),
+        line,
+        column,
+        scope,
+    )
+}
+
+/// A claim location failure as the user wrote the location: `path` and
+/// lines of the file, which sit `line_offset` lines before the Click
+/// source's (an mdtest's preceding markdown), with the claims the location
+/// could have meant.
+pub fn describe_claim_location_error(
+    path: &Path,
+    line_offset: usize,
+    line: usize,
+    column: Option<usize>,
+    error: &crate::surface::ClaimLocationError,
+) -> String {
+    let location = |line: usize, column: Option<usize>| {
+        let line = line + line_offset;
+        column.map_or_else(
+            || format!("{}:{line}", path.display()),
+            |column| format!("{}:{line}:{column}", path.display()),
+        )
+    };
+    let mut message = format!("{}: {}", location(line, column), error.reason);
+    for candidate in &error.candidates {
+        message.push_str(&format!(
+            "\n  {} `{}`",
+            location(candidate.position.line, Some(candidate.position.column)),
+            crate::surface::display_rust_names(&candidate.label)
+        ));
+    }
+    message
+}
+
+/// Resolves a claim argument that names a location of `target`, the file a
+/// command reads, `FILE:LINE[:COLUMN]` ([`parse_claim_location`]), to the
+/// claim covering it. Lines are lines of `target`, whose Click source starts
+/// after `line_offset` lines (an mdtest's preceding markdown). `None` when
+/// the argument is a claim label. `scope` says whether a loop phase written
+/// in a proof script names itself or the proof that writes it.
+pub fn claim_at_argument(
+    argument: &str,
+    target: &Path,
+    line_offset: usize,
+    project: Option<&ClickProject>,
+    click_source: &str,
+    inputs: &CInput,
+    scope: crate::surface::ClaimLocationScope,
+) -> Option<Result<crate::surface::SourceClaim, String>> {
+    let location = parse_claim_location(argument)?;
+    Some(location.and_then(|(path, line, column)| {
+        if !same_file(&path, target) {
+            return Err(format!(
+                "`{argument}` names a location in `{}`, but the command reads `{}`; a claim location names a line of that file",
+                path.display(),
+                target.display()
+            ));
+        }
+        let click_line = line
+            .checked_sub(line_offset)
+            .filter(|line| *line > 0)
+            .ok_or_else(|| {
+                format!(
+                    "{}:{line}: the line is before the ```click block, which starts on line {}",
+                    path.display(),
+                    line_offset + 1
+                )
+            })?;
+        claim_at(project, click_source, inputs, click_line, column, scope).map_err(|error| {
+            describe_claim_location_error(&path, line_offset, click_line, column, &error)
+        })
+    }))
+}
+
+/// Whether `named` and `target` are the same file, as `--claim FILE:LINE`
+/// must name the file the command reads.
+pub fn same_file(named: &Path, target: &Path) -> bool {
+    match (fs::canonicalize(named), fs::canonicalize(target)) {
+        (Ok(named), Ok(target)) => named == target,
+        _ => named == target,
+    }
+}
+
 /// Returns true when the argument is shaped like `PATH:LINE:COLUMN`, meaning
 /// it ends in two colon-separated all-digit segments.
 ///
@@ -635,7 +755,7 @@ impl CInput {
         match self {
             Self::Bundle(sources) => crate::surface::ProgramInputs::Bundle(source_refs(sources)),
             Self::Prepared(imports) => crate::surface::ProgramInputs::Prepared(imports),
-            Self::PreparedProgram(import) => crate::surface::ProgramInputs::Program(import),
+            Self::PreparedProgram(import) => crate::surface::ProgramInputs::program(import),
         }
     }
 }
@@ -686,11 +806,8 @@ fn read_c_inputs_for_target(
             };
             return crate::languages::load_compiler_import(&config).map(|imports| match imports {
                 crate::languages::PreparedCompilerImport::C(imports) => CInput::Prepared(imports),
-                crate::languages::PreparedCompilerImport::Cpp(import) => {
-                    CInput::PreparedProgram(PreparedProgram::Cpp(import))
-                }
-                crate::languages::PreparedCompilerImport::Rust(import) => {
-                    CInput::PreparedProgram(PreparedProgram::Rust(import))
+                crate::languages::PreparedCompilerImport::Program(program) => {
+                    CInput::PreparedProgram(program)
                 }
             });
         }

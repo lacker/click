@@ -17,10 +17,8 @@ no-op helpers through a `const` table, and
 `mdtests/rb_augment_callbacks_rejects_mismatch.md` binds `.rotate` to a
 function that satisfies `Copy` and is refused.
 
-The helper needs `separate(memory(*augment), memory(*parent))`:
-without it the table is allowed to overlap the node the callbacks touch, and
-reloading the next field after a call yields a function pointer that carries no
-contract.
+This fixture states `separate(memory(*augment), memory(*parent))` explicitly
+to preserve the callback table across the calls.
 
 The three contracts state `views` footprints, which is what the no-op bodies
 do. `mdtests/rb_augment_callbacks_helper_owns.md` is this same helper with
@@ -29,8 +27,8 @@ then havocs the link cells it owns, and the separation hypothesis above is what
 keeps the table's remaining fields — and the contracts they carry — alive
 across the call. `mdtests/rb_augment_callbacks_helper_owns_cell_separate.md`
 states that separation cell by cell instead, and
-`mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md` drops it and
-fails at the second call.
+`mdtests/rb_augment_callbacks_helper_owns_without_separate.md` drops it and
+uses the opened table’s checked borrow partition to prove the same separation.
 
 Inside `lib/rbtree.c` itself only the exported, non-inline entry points need a
 contract like this. The always-inline `__rb_insert` takes its `augment_rotate`

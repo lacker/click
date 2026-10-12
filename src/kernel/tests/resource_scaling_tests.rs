@@ -1801,3 +1801,112 @@ fn shared_view_offset_alias_lookup_is_indexed_and_preserves_occurrences() {
     }
     assert_constant_plus_log_growth("shared view offset alias", &samples, 64.0);
 }
+
+#[test]
+fn observable_projection_reuses_local_edits_across_sibling_paths() {
+    let mut samples = Vec::new();
+    for size in [16usize, 64, 256, 1024] {
+        let _session = crate::kernel::VerificationSession::enter();
+        crate::kernel::set_never_address_taken_locals(
+            (0..size).map(|i| format!("hidden_{i}")).collect(),
+        );
+        let assumptions = PureFactContext::new();
+        let mut source = ResourceContext::new().unchecked_with_facts([
+            owned_range(heap_base(1), 0, 4),
+            owned_range(heap_base(2), 0, 4),
+        ]);
+        for i in 0..size {
+            source = source.unchecked_with_fact(owned_range(
+                CMemory::local_pointer(&format!("hidden_{i}")),
+                0,
+                4,
+            ));
+        }
+        let expected = source.observable_facts_assuming_valid(&assumptions);
+        let sibling = source
+            .clone()
+            .unchecked_with_fact(owned_range(heap_base(3), 0, 4));
+        let (changed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            sibling.observable_facts_assuming_valid(&assumptions)
+        });
+        assert_ne!(changed, expected);
+        assert_eq!(
+            source.observable_facts_assuming_valid(&assumptions),
+            expected
+        );
+        assert_eq!(
+            sibling.observable_facts_assuming_valid(&assumptions),
+            changed
+        );
+        assert_eq!(source.facts().len(), size + 2);
+        crate::kernel::withdraw_never_address_taken_locals(&BTreeSet::from(
+            ["hidden_0".to_owned()],
+        ));
+        assert_ne!(
+            source.observable_facts_assuming_valid(&assumptions),
+            expected
+        );
+        samples.push((size, work));
+    }
+    assert_constant_plus_log_growth("observable projection local edit", &samples, 4.0);
+}
+
+#[test]
+fn observable_projection_tracks_supported_views_caches_and_owner_retirement() {
+    for size in [16usize, 32, 64, 128] {
+        let _session = crate::kernel::VerificationSession::enter();
+        crate::kernel::set_never_address_taken_locals(
+            (0..size).map(|i| format!("hidden_{i}")).collect(),
+        );
+        let assumptions = PureFactContext::new();
+        let owner = owned_range(heap_base(1), 0, 4);
+        let view =
+            CResourceFact::view_memory(CMemoryRange::new(heap_base(1), 0u32.into(), 2u32.into()));
+        let mut source = ResourceContext::new()
+            .unchecked_with_facts([owner.clone(), owned_range(heap_base(2), 0, 4)]);
+        for i in 0..size {
+            source = source.unchecked_with_fact(owned_range(
+                CMemory::local_pointer(&format!("hidden_{i}")),
+                0,
+                4,
+            ));
+        }
+        source.observable_facts_assuming_valid(&assumptions);
+        let supported = source
+            .clone()
+            .unchecked_with_supported_facts(&owner, [view.clone()]);
+        let cached = supported
+            .clone()
+            .with_cached_supported_expansion(&owner, vec![view.clone()]);
+        let retired = cached
+            .clone()
+            .without_fact_delaying_normalization(&owner, &assumptions)
+            .expect("the exact owner can be consumed");
+        for context in [&supported, &cached, &retired, &source, &cached] {
+            let mut fresh = context.clone();
+            fresh.observable_projection = Default::default();
+            let expected = fresh.observable_facts_assuming_valid(&assumptions);
+            assert_eq!(
+                context.observable_facts_assuming_valid(&assumptions),
+                expected
+            );
+        }
+        assert!(
+            !retired.contains_exact_representation(&view),
+            "a cached view cannot survive its owner"
+        );
+        let hidden_owner = owned_range(CMemory::local_pointer("hidden_0"), 0, 4);
+        let hidden_view = CResourceFact::view_memory(CMemoryRange::new(
+            CMemory::local_pointer("hidden_0"),
+            0u32.into(),
+            2u32.into(),
+        ));
+        let hidden_supported = source
+            .clone()
+            .unchecked_with_supported_facts(&hidden_owner, [hidden_view]);
+        assert_eq!(
+            hidden_supported.observable_facts_assuming_valid(&assumptions),
+            source.observable_facts_assuming_valid(&assumptions)
+        );
+    }
+}

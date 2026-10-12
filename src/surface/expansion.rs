@@ -1,3 +1,6 @@
+mod source_index;
+pub use source_index::ProofSourceIndex;
+
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -384,33 +387,7 @@ fn function_expansion_claim_by_label(
     function: &FunctionBlock,
     claim_label: &str,
 ) -> Option<CProofClaim> {
-    let name = function.signature().name();
-    if claim_label == format!("{name}.contract") && function.covering_proof().is_some() {
-        return Some(CProofClaim::Grouped);
-    }
-    for (clauses, prefix, claim) in [
-        (
-            function.ensures(),
-            "ensures",
-            CProofClaim::Ensure as fn(usize) -> CProofClaim,
-        ),
-        (
-            function.exceptional_ensures(),
-            "exceptional_ensures",
-            CProofClaim::ExceptionalEnsure as fn(usize) -> CProofClaim,
-        ),
-    ] {
-        for (index, ensure) in clauses.iter().enumerate() {
-            let label = ensure.name().map_or_else(
-                || format!("{name}.{prefix}_{index}"),
-                |label| format!("{name}.{label}"),
-            );
-            if label == claim_label {
-                return Some(claim(index));
-            }
-        }
-    }
-    None
+    function.claim_by_label(claim_label)
 }
 
 /// Expands one function claim selected by the same stable label used by
@@ -422,14 +399,8 @@ pub fn expand_c0_claim_source_by_label(
 ) -> Result<String, ClickError> {
     let file = parse_source_with_c_layouts(click_source, c_sources)?;
     for theorem in file.theorem_definitions() {
-        for (index, ensure) in theorem.ensures().iter().enumerate() {
-            let label = ensure.name().map_or_else(
-                || format!("{}.ensures_{index}", theorem.name()),
-                |name| format!("{}.{name}", theorem.name()),
-            );
-            if label == claim_label {
-                return expand_pure_theorem_source(click_source, c_sources, theorem.name(), index);
-            }
+        if let Some(index) = theorem.ensure_index_by_label(claim_label) {
+            return expand_pure_theorem_source(click_source, c_sources, theorem.name(), index);
         }
     }
     for function in proof_function_blocks(&file) {
@@ -441,6 +412,17 @@ pub fn expand_c0_claim_source_by_label(
                 claim,
             );
         }
+    }
+    if let Some(expansion) = expand_loop_phase_claim(
+        None,
+        click_source,
+        &ProgramInputs::Bundle(c_sources.to_vec()),
+        &CSourceContext::bundle(c_sources),
+        &file,
+        claim_label,
+        None,
+    )? {
+        return Ok(expansion.source);
     }
     Err(ClickError::new(format!(
         "could not locate function claim `{claim_label}`"
@@ -458,23 +440,13 @@ pub fn expand_project_claim_source_by_label(
     let sources = CSourceContext::of(inputs)?.with_click_project(project);
     let file = resolve_click_project_context(project, &sources)?;
     let compiler_imported = matches!(inputs, ProgramInputs::Program(_));
-    let claim_label = &*if compiler_imported {
-        resolve_rust_claim_label(&file, claim_label)
-    } else {
-        claim_label.into()
-    };
+    let claim_label = &*resolve_rust_claim_label(&file, claim_label);
     for theorem in file.theorem_definitions() {
         if !file.theorem_is_selected(theorem.name()) {
             continue;
         }
-        for (index, ensure) in theorem.ensures().iter().enumerate() {
-            let label = ensure.name().map_or_else(
-                || format!("{}.ensures_{index}", theorem.name()),
-                |name| format!("{}.{name}", theorem.name()),
-            );
-            if label == claim_label {
-                return expand_project_pure_theorem_source(project, inputs, theorem.name(), index);
-            }
+        if let Some(index) = theorem.ensure_index_by_label(claim_label) {
+            return expand_project_pure_theorem_source(project, inputs, theorem.name(), index);
         }
     }
     for function in proof_function_blocks(&file) {
@@ -486,6 +458,18 @@ pub fn expand_project_claim_source_by_label(
                 claim,
             );
         }
+    }
+    let click_source = project.entry_source().expect("resolved entry source");
+    if let Some(expansion) = expand_loop_phase_claim(
+        Some(project),
+        click_source,
+        inputs,
+        &sources,
+        &file,
+        claim_label,
+        None,
+    )? {
+        return Ok(expansion.source);
     }
     Err(ClickError::new(format!(
         "could not locate {}function claim `{claim_label}`",
@@ -505,19 +489,13 @@ pub fn expand_c0_prepared_claim_source_by_label(
     let sources = CSourceContext::prepared(imports);
     let file = parse_source_with_c_layouts_context(click_source, &sources)?;
     for theorem in file.theorem_definitions() {
-        for (index, ensure) in theorem.ensures().iter().enumerate() {
-            let label = ensure.name().map_or_else(
-                || format!("{}.ensures_{index}", theorem.name()),
-                |name| format!("{}.{name}", theorem.name()),
+        if let Some(index) = theorem.ensure_index_by_label(claim_label) {
+            return expand_pure_theorem_source_context(
+                click_source,
+                &sources,
+                theorem.name(),
+                index,
             );
-            if label == claim_label {
-                return expand_pure_theorem_source_context(
-                    click_source,
-                    &sources,
-                    theorem.name(),
-                    index,
-                );
-            }
         }
     }
     for function in proof_function_blocks(&file) {
@@ -530,6 +508,17 @@ pub fn expand_c0_prepared_claim_source_by_label(
             );
         }
     }
+    if let Some(expansion) = expand_loop_phase_claim(
+        None,
+        click_source,
+        &ProgramInputs::Prepared(imports),
+        &sources,
+        &file,
+        claim_label,
+        None,
+    )? {
+        return Ok(expansion.source);
+    }
     Err(ClickError::new(format!(
         "could not locate function claim `{claim_label}`"
     )))
@@ -537,7 +526,7 @@ pub fn expand_c0_prepared_claim_source_by_label(
 
 pub fn expand_program_prepared_claim_source_by_label(
     click_source: &str,
-    import: &impl crate::languages::PreparedProgramSource,
+    import: impl Into<crate::languages::PreparedProgram>,
     claim_label: &str,
 ) -> Result<String, ClickError> {
     expand_program_prepared_claim_source_by_label_context(click_source, import, claim_label)
@@ -545,38 +534,39 @@ pub fn expand_program_prepared_claim_source_by_label(
 
 fn expand_program_prepared_claim_source_by_label_context(
     click_source: &str,
-    import: &impl crate::languages::PreparedProgramSource,
+    import: impl Into<crate::languages::PreparedProgram>,
     claim_label: &str,
 ) -> Result<String, ClickError> {
-    let sources = CSourceContext::program(import)?;
+    let import = import.into();
+    let sources = CSourceContext::program(&import)?;
     let file = parse_source_with_c_layouts_context(click_source, &sources)?;
     let claim_label = &*resolve_rust_claim_label(&file, claim_label);
     for theorem in file.theorem_definitions() {
-        for (index, ensure) in theorem.ensures().iter().enumerate() {
-            let label = ensure.name().map_or_else(
-                || format!("{}.ensures_{index}", theorem.name()),
-                |name| format!("{}.{name}", theorem.name()),
-            );
-            if label == claim_label {
-                let verified = verify_click_theorems_with_context(click_source, &sources)?;
-                return rewrite_verified_pure_theorem(
-                    click_source,
-                    &verified,
-                    theorem.name(),
-                    index,
-                );
-            }
+        if let Some(index) = theorem.ensure_index_by_label(claim_label) {
+            let verified = verify_click_theorems_with_context(click_source, &sources)?;
+            return rewrite_verified_pure_theorem(click_source, &verified, theorem.name(), index);
         }
     }
     for function in proof_function_blocks(&file) {
         if let Some(claim) = function_expansion_claim_by_label(function, claim_label) {
             return expand_program_prepared_claim_source_context(
                 click_source,
-                import,
+                &import,
                 function.signature().name(),
                 claim,
             );
         }
+    }
+    if let Some(expansion) = expand_loop_phase_claim(
+        None,
+        click_source,
+        &ProgramInputs::Program(import),
+        &sources,
+        &file,
+        claim_label,
+        None,
+    )? {
+        return Ok(expansion.source);
     }
     Err(ClickError::new(format!(
         "could not locate compiler-imported function claim `{claim_label}`"
@@ -585,7 +575,7 @@ fn expand_program_prepared_claim_source_by_label_context(
 
 fn expand_program_prepared_claim_source_context(
     click_source: &str,
-    import: &dyn crate::languages::PreparedProgramSource,
+    import: &crate::languages::PreparedProgram,
     function_name: &str,
     claim: CProofClaim,
 ) -> Result<String, ClickError> {
@@ -605,7 +595,7 @@ fn expand_program_prepared_claim_source_context(
     let target = position_at_offset(click_source, edit.selector());
     let verified = verify_sources_at(
         click_source,
-        &ProgramInputs::Program(import),
+        &ProgramInputs::program(import),
         target.line,
         target.column,
     )?;
@@ -625,6 +615,386 @@ fn expand_program_prepared_claim_source_context(
         ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
     };
     Ok(splice_source(click_source, &tokens, span, &replacement))
+}
+
+/// What `click expand --claim` rewrote: the source, and the label of the
+/// proof unit whose verification checks the rewrite. That is the claim
+/// itself, except for a loop phase proved inside a claim's proof script,
+/// which that claim's proof checks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimExpansion {
+    pub source: String,
+    pub proof_unit: String,
+}
+
+/// Expands one claim selected by its label, from any input kind: a function
+/// or theorem claim, or a loop phase `f.loop(N).initialize` or
+/// `f.loop(N).preserve`. With `project`, `click_source` is ignored and the
+/// project's entry module is rewritten.
+///
+/// `at`, a location of the claim's source such as [`claim_at`] reports,
+/// chooses among several `loop` tactics that prove the one loop phase the
+/// label names.
+///
+/// The caller is responsible for verifying the returned sidecar, by
+/// `proof_unit`.
+pub fn expand_claim_by_label(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    inputs: &ProgramInputs<'_>,
+    claim_label: &str,
+    at: Option<SourcePosition>,
+) -> Result<ClaimExpansion, ClickError> {
+    let click_source = match project {
+        Some(project) => project.entry_source().ok_or_else(|| {
+            ClickError::new(format!("missing entry module `{}`", project.entry()))
+        })?,
+        None => click_source,
+    };
+    let sources = match project {
+        Some(project) => CSourceContext::of(inputs)?.with_click_project(project),
+        None => CSourceContext::of(inputs)?,
+    };
+    let file = match project {
+        Some(project) => resolve_click_project_context(project, &sources)?,
+        None => parse_source_with_c_layouts_context(click_source, &sources)?,
+    };
+    let at = at
+        .map(|at| offset_at_position(click_source, at.line, at.column))
+        .transpose()?;
+    if let Some(expansion) = expand_loop_phase_claim(
+        project,
+        click_source,
+        inputs,
+        &sources,
+        &file,
+        claim_label,
+        at,
+    )? {
+        return Ok(expansion);
+    }
+    let source = match (project, inputs) {
+        (Some(project), inputs) => {
+            expand_project_claim_source_by_label(project, inputs, claim_label)
+        }
+        (None, ProgramInputs::Bundle(c_sources)) => {
+            expand_c0_claim_source_by_label(click_source, c_sources, claim_label)
+        }
+        (None, ProgramInputs::Prepared(imports)) => {
+            expand_c0_prepared_claim_source_by_label(click_source, imports, claim_label)
+        }
+        (None, ProgramInputs::Program(import)) => {
+            expand_program_prepared_claim_source_by_label_context(click_source, import, claim_label)
+        }
+    }?;
+    Ok(ClaimExpansion {
+        source,
+        proof_unit: claim_label.to_string(),
+    })
+}
+
+/// Expands the loop phase `claim_label` names, if it names one: its written
+/// proof is replaced by the phase's checked certificate, and an omitted
+/// phase gets an explicit `initialize by { ... }` or `preserve by { ... }`.
+///
+/// A loop phase is proved by a `loop` tactic written in a claim's proof
+/// script, and is part of that claim's proof: the source does not name the
+/// C loop the tactic proves, checked execution binds it. The tactic's own
+/// checked expansion, the bound loop with both phases' certificates,
+/// supplies the phase, and the claim is the proof unit that checks the
+/// rewrite.
+fn expand_loop_phase_claim(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    inputs: &ProgramInputs<'_>,
+    sources: &CSourceContext<'_>,
+    file: &ClickFile,
+    claim_label: &str,
+    at: Option<usize>,
+) -> Result<Option<ClaimExpansion>, ClickError> {
+    let claim_label = &*resolve_rust_claim_label(file, claim_label);
+    let Some((function_block, loop_index, phase)) = proof_function_blocks(file).find_map(|block| {
+        let (loop_index, phase) =
+            claim_labels::parse_loop_phase_claim_label(block.signature().name(), claim_label)?;
+        Some((block, loop_index, loop_phase_keyword(phase)))
+    }) else {
+        return Ok(None);
+    };
+    let function_name = function_block.signature().name();
+    let tokens = scan_source_tokens(click_source)?;
+    let _reference_result_source = super::diagnostics::ReferenceResultSourceScope::enter(
+        function_block.signature().returns_reference(),
+    );
+    let _parameter_places = super::diagnostics::ParameterPlaceScope::enter(function_block);
+    let written = written_loop_tactics(click_source, &tokens, file)?
+        .into_iter()
+        .filter(|tactic| tactic.function_name == function_name)
+        .collect::<Vec<_>>();
+    if written.is_empty() {
+        return Err(ClickError::new(format!(
+            "could not locate loop phase `{claim_label}`: the proofs of `{function_name}` write no `loop` tactic"
+        )));
+    }
+    let bound = bind_written_loop_tactics(click_source, sources, file, &written);
+    let mut matching = written
+        .iter()
+        .zip(bound)
+        .filter_map(|(tactic, clause)| match clause {
+            Ok(clause) if clause.region() == &CodeRegion::Loop(loop_index) => {
+                Some(Ok((tactic, clause)))
+            }
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if matching.len() > 1
+        && let Some(at) = at
+    {
+        matching.retain(|(tactic, _)| tactic.anchor <= at && at < tokens[tactic.close].span.end);
+    }
+    let (tactic, clause) = match matching.len() {
+        1 => matching.remove(0),
+        0 => {
+            return Err(ClickError::new(format!(
+                "could not locate loop phase `{claim_label}`: no `loop` tactic in `{function_name}`'s proofs proves loop({loop_index})"
+            )));
+        }
+        several => {
+            return Err(ClickError::new(format!(
+                "loop phase `{claim_label}` is proved by {several} `loop` tactics, at Click source {}; select one by a line of its phase proof, `--claim FILE:LINE`",
+                matching
+                    .iter()
+                    .map(|(tactic, _)| {
+                        let position = position_at_offset(click_source, tactic.anchor);
+                        format!("{}:{}", position.line, position.column)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    };
+    let proof = if phase == "initialize" {
+        clause.initialize_proof()
+    } else {
+        clause.preserve_proof()
+    };
+    let tactics = proof
+        .and_then(SourceProof::tactics)
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "the checked `loop` tactic retained no `{phase}` certificate for `{claim_label}`"
+            ))
+        })?
+        .to_vec();
+    // A phase with nothing to prove is checked by `assumption();`, as its
+    // expansion by location writes it: a `by` block holds at least one tactic.
+    let tactics = if tactics.is_empty() {
+        vec![ProofTactic::Assumption]
+    } else {
+        tactics
+    };
+    let edit = written_loop_phase(&tokens, tactic, phase)?.1;
+    let located = LocatedSourceTactic {
+        site: tactic.located.site.clone(),
+        source_index: 0,
+        nested: Vec::new(),
+        edit: TacticSourceEdit::WholeProof(edit),
+        sibling_starts: Vec::new(),
+        function_block: None,
+    };
+    let (span, replacement) = located.replacement(click_source, &tactics)?;
+    let replacement = indent_replacement(click_source, span.start, &replacement);
+    let expanded = splice_source(click_source, &tokens, &span, &replacement);
+    let source = match project {
+        Some(project) => {
+            let rewritten = project.with_entry_source(expanded.clone());
+            let rewritten_sources = CSourceContext::of(inputs)?.with_click_project(&rewritten);
+            match resolve_click_project_context(&rewritten, &rewritten_sources) {
+                Ok(_) => expanded,
+                Err(error) => {
+                    return Err(unparseable_expansion_error_for_file(
+                        &replacement,
+                        error,
+                        Some(file),
+                    ));
+                }
+            }
+        }
+        None => checked_expanded_source(click_source, sources, &replacement, expanded)?,
+    };
+    Ok(Some(ClaimExpansion {
+        source,
+        proof_unit: tactic.claim_label.clone(),
+    }))
+}
+
+/// The phase keyword a loop phase label spells, as a static name.
+fn loop_phase_keyword(phase: &str) -> &'static str {
+    if phase == "initialize" {
+        "initialize"
+    } else {
+        "preserve"
+    }
+}
+
+/// A `loop` tactic written in a function claim's proof script. The C loop it
+/// proves is the one checked execution reaches there; the source does not
+/// name it.
+#[derive(Clone, Debug)]
+struct WrittenLoopTactic {
+    /// The function whose proof writes it.
+    function_name: String,
+    /// The tactic as source selection addresses it in its claim's proof.
+    located: LocatedSourceTactic,
+    /// The label of the claim whose proof writes it.
+    claim_label: String,
+    /// Where the `loop` keyword starts.
+    anchor: usize,
+    /// The token indices of the braces of its body.
+    open: usize,
+    close: usize,
+}
+
+/// Every `loop` tactic written in a function's proofs, in source order.
+fn written_loop_tactics(
+    click_source: &str,
+    tokens: &[SourceToken],
+    file: &ClickFile,
+) -> Result<Vec<WrittenLoopTactic>, ClickError> {
+    let mut written = Vec::new();
+    for entry in source_tactic_entries(click_source, file)? {
+        let EntrySelection::Located(located) = entry.selection else {
+            continue;
+        };
+        let ProofSite::FunctionClaim { function_name, .. } = &located.site else {
+            continue;
+        };
+        if entry.tactic_name != "loop" {
+            continue;
+        }
+        let function_name = function_name.clone();
+        let first = tokens.partition_point(|token| token.span.start < entry.anchor);
+        let keyword = tokens[first..]
+            .iter()
+            .take_while(|token| token.span.start == entry.anchor)
+            .position(|token| token.text == "loop")
+            .map(|offset| first + offset)
+            .ok_or_else(|| ClickError::new("could not locate a source `loop` tactic"))?;
+        let open = (keyword..tokens.len())
+            .find(|index| tokens[*index].text == "{")
+            .ok_or_else(|| ClickError::new("source `loop` tactic has no body"))?;
+        let close = matching_delimiter(tokens, open, "{", "}")?;
+        written.push(WrittenLoopTactic {
+            function_name,
+            located,
+            claim_label: entry.claim_label,
+            anchor: entry.anchor,
+            open,
+            close,
+        });
+    }
+    Ok(written)
+}
+
+/// Where a written `loop` tactic's `phase` proof is: the `phase` keyword's
+/// start and the edit that replaces its `by` clause, or, for a phase the
+/// tactic leaves to automation, the edit that writes one before the body's
+/// closing brace.
+fn written_loop_phase(
+    tokens: &[SourceToken],
+    tactic: &WrittenLoopTactic,
+    phase: &'static str,
+) -> Result<(Option<usize>, ProofSourceEdit), ClickError> {
+    let mut depth = 0usize;
+    for cursor in tactic.open + 1..tactic.close {
+        match tokens[cursor].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth = depth.saturating_sub(1),
+            text if depth == 0
+                && text == phase
+                && tokens
+                    .get(cursor + 1)
+                    .is_some_and(|token| token.text == "by") =>
+            {
+                return Ok((
+                    Some(tokens[cursor].span.start),
+                    ProofSourceEdit::Explicit(proof_span(tokens, cursor + 1)?),
+                ));
+            }
+            _ => {}
+        }
+    }
+    let insertion = tokens[tactic.close].span.start;
+    Ok((
+        None,
+        ProofSourceEdit::OmittedLoopPhase {
+            span: insertion..insertion,
+            selector: tactic.anchor,
+            phase,
+        },
+    ))
+}
+
+/// The checked expansion of each written `loop` tactic: the loop clause
+/// bound to the C loop it proves, with both phases' certificates. Each is
+/// captured as the selected tactic of its own verification, as expanding it
+/// by its location does; a `loop` tactic nested in another's phase is
+/// checked inside that one's capture, so the two are not captured together.
+fn bind_written_loop_tactics(
+    click_source: &str,
+    sources: &CSourceContext<'_>,
+    file: &ClickFile,
+    written: &[WrittenLoopTactic],
+) -> Vec<Result<StructuralClause, ClickError>> {
+    written
+        .iter()
+        .map(|tactic| {
+            crate::instrumentation::record_deterministic_work(1);
+            let located = &tactic.located;
+            let mut capture = ExpansionCapture::for_nested_tactic(
+                located.site.clone(),
+                located.source_index,
+                &located.nested,
+            );
+            take_expansion_replaces_from();
+            let verification = instrumentation::with_default_tactic_limits(|| {
+                crate::surface::verification::verify_c0_sources_with_context(
+                    click_source,
+                    sources,
+                    None,
+                    None,
+                    Some(&mut capture),
+                    Some(file.clone()),
+                )
+            });
+            take_expansion_replaces_from();
+            let result = match &capture.nested {
+                Some(nested) => nested.result(),
+                None => capture.result.clone(),
+            };
+            let position = position_at_offset(click_source, tactic.anchor);
+            match result {
+                Some(Ok(tactics)) => match tactics.as_slice() {
+                    [ProofTactic::Loop(clause)] => Ok(clause.clone()),
+                    _ => Err(ClickError::new(format!(
+                        "the `loop` tactic at {}:{} did not expand to one bound loop",
+                        position.line, position.column
+                    ))),
+                },
+                Some(Err(error)) => Err(ClickError::new(error)),
+                None => Err(match verification {
+                    Err(error) => error.with_context(format!(
+                        "the proof did not check the `loop` tactic at {}:{}",
+                        position.line, position.column
+                    )),
+                    Ok(_) => ClickError::new(format!(
+                        "checked execution never reached the `loop` tactic at {}:{}",
+                        position.line, position.column
+                    )),
+                }),
+            }
+        })
+        .collect()
 }
 
 pub use crate::source::SourcePosition;
@@ -931,7 +1301,7 @@ pub fn expand_project_tactic_source_at(
         ProgramInputs::Program(import) => expand_program_prepared_tactic_source_at_context(
             project,
             click_source,
-            *import,
+            import,
             line,
             column,
         ),
@@ -1105,17 +1475,23 @@ pub fn expand_c0_prepared_tactic_source_at(
 
 pub fn expand_program_prepared_tactic_source_at(
     click_source: &str,
-    import: &impl crate::languages::PreparedProgramSource,
+    import: impl Into<crate::languages::PreparedProgram>,
     line: usize,
     column: usize,
 ) -> Result<String, ClickError> {
-    expand_program_prepared_tactic_source_at_context(None, click_source, import, line, column)
+    expand_program_prepared_tactic_source_at_context(
+        None,
+        click_source,
+        &import.into(),
+        line,
+        column,
+    )
 }
 
 fn expand_program_prepared_tactic_source_at_context(
     project: Option<&ClickProject>,
     click_source: &str,
-    import: &dyn crate::languages::PreparedProgramSource,
+    import: &crate::languages::PreparedProgram,
     line: usize,
     column: usize,
 ) -> Result<String, ClickError> {
@@ -1150,7 +1526,7 @@ fn expand_program_prepared_tactic_source_at_context(
         return match project {
             Some(project) => expand_project_claim_source(
                 project,
-                &ProgramInputs::Program(import),
+                &ProgramInputs::program(import),
                 function_name,
                 *claim,
             ),
@@ -1172,7 +1548,7 @@ fn expand_program_prepared_tactic_source_at_context(
             if let Some(project) = project {
                 super::proof::capture_project_tactic_expansion(
                     project,
-                    &ProgramInputs::Program(import),
+                    &ProgramInputs::program(import),
                     selected.site.clone(),
                     selected.source_index,
                     &selected.nested,
@@ -1191,7 +1567,7 @@ fn expand_program_prepared_tactic_source_at_context(
             if let Some(project) = project {
                 super::proof::capture_project_proof_site_expansion(
                     project,
-                    &ProgramInputs::Program(import),
+                    &ProgramInputs::program(import),
                     selected.site.clone(),
                 )?
             } else {
@@ -1508,6 +1884,7 @@ struct FunctionSource {
 }
 
 fn scan_source_tokens(source: &str) -> Result<Vec<SourceToken>, ClickError> {
+    source_index::record_tokenization_work(source.len());
     let mut tokens = Vec::new();
     let mut index = 0;
     while index < source.len() {
@@ -1930,6 +2307,18 @@ fn find_ensure_proof_edit(
     body_close: usize,
     wanted: usize,
 ) -> Result<ProofSourceEdit, ClickError> {
+    let clause = find_ensure_clause(tokens, body_open, body_close, wanted)?;
+    find_proof_edit_after(tokens, clause, body_close)
+}
+
+/// The keyword token of written `ensures`, `owns`, or `produces` clause
+/// `wanted`, counted together in source order.
+fn find_ensure_clause(
+    tokens: &[SourceToken],
+    body_open: usize,
+    body_close: usize,
+    wanted: usize,
+) -> Result<usize, ClickError> {
     let mut depth = 0;
     let mut found = 0;
     let mut index = body_open + 1;
@@ -1945,13 +2334,13 @@ fn find_ensure_proof_edit(
                         != Some("exceptional") =>
             {
                 if found == wanted {
-                    return find_proof_edit_after(tokens, index, body_close);
+                    return Ok(index);
                 }
                 found += 1;
             }
             "owns" | "produces" if depth == 0 => {
                 if found == wanted {
-                    return find_proof_edit_after(tokens, index, body_close);
+                    return Ok(index);
                 }
                 found += 1;
             }
@@ -1970,6 +2359,17 @@ fn find_exceptional_ensure_proof_edit(
     body_close: usize,
     wanted: usize,
 ) -> Result<ProofSourceEdit, ClickError> {
+    let clause = find_exceptional_ensure_clause(tokens, body_open, body_close, wanted)?;
+    find_proof_edit_after(tokens, clause + 1, body_close)
+}
+
+/// The `exceptional` token of written `exceptional ensures` clause `wanted`.
+fn find_exceptional_ensure_clause(
+    tokens: &[SourceToken],
+    body_open: usize,
+    body_close: usize,
+    wanted: usize,
+) -> Result<usize, ClickError> {
     let mut depth = 0;
     let mut found = 0;
     let mut index = body_open + 1;
@@ -1983,7 +2383,7 @@ fn find_exceptional_ensure_proof_edit(
                         == Some("ensures") =>
             {
                 if found == wanted {
-                    return find_proof_edit_after(tokens, index + 1, body_close);
+                    return Ok(index);
                 }
                 found += 1;
             }
@@ -2450,7 +2850,10 @@ impl ProofSite {
                 function_name,
                 loop_index,
                 phase,
-            } => format!("`{function_name}.loop({loop_index}).{phase}`"),
+            } => format!(
+                "`{}`",
+                claim_labels::loop_phase_claim_label(function_name, *loop_index, phase)
+            ),
         }
     }
 }
@@ -3086,6 +3489,377 @@ fn select_smart_tactic_file(
     Ok(smart_tactic_candidate(click_source, entry))
 }
 
+/// One claim a source location can name: the label `click expand --claim`
+/// and `click audit --claim` take, the function or theorem that owns it
+/// (the proof unit `click verify --trace-proof` traces), and where its
+/// clause or proof starts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceClaim {
+    pub label: String,
+    pub owner: String,
+    /// Where the claim's clause, or its proof when that is all the claim
+    /// writes, starts, in the Click source's own coordinates.
+    pub position: SourcePosition,
+}
+
+/// Why a source location names no single claim. `candidates` lists the
+/// claims the location could have meant, if any.
+#[derive(Clone, Debug)]
+pub struct ClaimLocationError {
+    pub reason: String,
+    pub candidates: Vec<SourceClaim>,
+}
+
+impl ClaimLocationError {
+    fn from_error(error: ClickError) -> Self {
+        Self {
+            reason: error.message().to_string(),
+            candidates: Vec::new(),
+        }
+    }
+}
+
+/// How finely a source location names a claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaimLocationScope {
+    /// The innermost claim, including a loop phase proved by a `loop`
+    /// tactic inside a claim's proof script, `f.loop(N).preserve`. The
+    /// source does not say which C loop such a tactic proves, so naming its
+    /// phase checks the proof that writes it.
+    Innermost,
+    /// The claim whose proof is checked as one unit: a loop phase inside a
+    /// proof script names that proof, and nothing is verified.
+    ProofUnit,
+}
+
+/// The claim whose clause or proof covers a source location of a sidecar
+/// (or, with `project`, of its entry module).
+///
+/// A claim covers the source from its clause's keyword through the end of
+/// its proof: an `ensures`, `owns`, or `produces` clause and its `by`, an
+/// `exceptional ensures` clause, a loop phase proof, a function's grouped
+/// proof, or a tactic's proof. A clause without its own proof that the
+/// grouped proof covers names the grouped proof, `f.contract`, which is the
+/// claim that proves it. With [`ClaimLocationScope::Innermost`], a written
+/// `initialize` or `preserve` proof of a `loop` tactic in a proof script is
+/// a claim inside the claim whose proof writes it. With a column the
+/// location selects the innermost claim containing it; without one, the
+/// line must touch exactly one claim that contains no other claim touching
+/// it.
+pub fn claim_at(
+    project: Option<&ClickProject>,
+    click_source: &str,
+    inputs: &ProgramInputs<'_>,
+    line: usize,
+    column: Option<usize>,
+    scope: ClaimLocationScope,
+) -> Result<SourceClaim, ClaimLocationError> {
+    let sources = CSourceContext::of(inputs).map_err(ClaimLocationError::from_error)?;
+    let (click_source, sources, file) = match project {
+        Some(project) => {
+            let sources = sources.with_click_project(project);
+            let click_source = project.entry_source().ok_or_else(|| {
+                ClaimLocationError::from_error(ClickError::new(format!(
+                    "missing entry module `{}`",
+                    project.entry()
+                )))
+            })?;
+            let file = resolve_click_project_context(project, &sources)
+                .map_err(ClaimLocationError::from_error)?;
+            (click_source, sources, file)
+        }
+        None => {
+            let file = parse_source_with_c_layouts_context(click_source, &sources)
+                .map_err(ClaimLocationError::from_error)?;
+            (click_source, sources, file)
+        }
+    };
+    let regions =
+        claim_source_regions(click_source, &file, scope).map_err(ClaimLocationError::from_error)?;
+    let region = select_claim_region(click_source, &regions, line, column)?;
+    let label = match &region.written_phase {
+        None => region.label.clone(),
+        Some((tactic, phase)) => {
+            let bound =
+                bind_written_loop_tactics(click_source, &sources, &file, std::slice::from_ref(tactic))
+                    .remove(0)
+                    .map_err(|error| ClaimLocationError {
+                        reason: format!(
+                            "{} names a loop phase, but which C loop its `loop` tactic proves could not be determined: {}",
+                            region.label,
+                            error.message()
+                        ),
+                        candidates: Vec::new(),
+                    })?;
+            let CodeRegion::Loop(loop_index) = bound.region() else {
+                return Err(ClaimLocationError::from_error(ClickError::new(
+                    "a checked `loop` tactic was bound to no loop",
+                )));
+            };
+            claim_labels::loop_phase_claim_label(&region.owner, *loop_index, phase)
+        }
+    };
+    Ok(SourceClaim {
+        label,
+        owner: region.owner.clone(),
+        position: position_at_offset(click_source, region.anchor),
+    })
+}
+
+/// One claim and the source it covers.
+struct ClaimRegion {
+    span: Range<usize>,
+    /// Where the claim is reported: its clause's start, or its proof's.
+    anchor: usize,
+    /// The claim's label; for a written phase of a `loop` tactic, which
+    /// checked execution binds, a description of it until it is bound.
+    label: String,
+    owner: String,
+    /// The `loop` tactic and phase a written loop phase proof in a proof
+    /// script belongs to.
+    written_phase: Option<(WrittenLoopTactic, &'static str)>,
+}
+
+/// Every claim of the source's selected theorems, functions, and tactics,
+/// with the source each covers. A claim whose source cannot be located is
+/// left out: it cannot be selected by location.
+fn claim_source_regions(
+    click_source: &str,
+    file: &ClickFile,
+    scope: ClaimLocationScope,
+) -> Result<Vec<ClaimRegion>, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
+    let declarations = declaration_source_index(&tokens)?;
+    let mut regions = Vec::new();
+    let clause_region = |clause: usize, edit: &ProofSourceEdit| {
+        let start = tokens[clause].span.start;
+        start..edit.span().end.max(start)
+    };
+    for theorem in file.theorem_definitions() {
+        if !file.theorem_is_selected(theorem.name()) {
+            continue;
+        }
+        let Some(source) = declarations.get(theorem.name()) else {
+            continue;
+        };
+        for index in 0..theorem.ensures().len() {
+            let Ok(clause) =
+                find_ensure_clause(&tokens, source.body_open, source.body_close, index)
+            else {
+                continue;
+            };
+            let Ok(edit) = find_proof_edit_after(&tokens, clause, source.body_close) else {
+                continue;
+            };
+            let span = clause_region(clause, &edit);
+            regions.push(ClaimRegion {
+                anchor: span.start,
+                span,
+                label: theorem.ensure_claim_label(index),
+                owner: theorem.name().to_string(),
+                written_phase: None,
+            });
+        }
+    }
+    for function_block in proof_function_blocks(file) {
+        if function_block.is_external() {
+            continue;
+        }
+        let function_name = function_block.signature().name();
+        let Some(function) = declarations
+            .get(function_name)
+            .or_else(|| declarations.get(&rust_inherent_method_in_its_type_module(function_name)?))
+            .copied()
+        else {
+            continue;
+        };
+        let owner = function_name.to_string();
+        for clause in function_block.structural_clauses() {
+            let CodeRegion::Loop(loop_index) = clause.region() else {
+                continue;
+            };
+            for phase in ["initialize", "preserve"] {
+                if let Ok((_, Some(span), _)) =
+                    find_loop_phase_proof_span(&tokens, &function, *loop_index, phase)
+                {
+                    regions.push(ClaimRegion {
+                        anchor: span.start,
+                        span,
+                        label: claim_labels::loop_phase_claim_label(
+                            function_name,
+                            *loop_index,
+                            phase,
+                        ),
+                        owner: owner.clone(),
+                        written_phase: None,
+                    });
+                }
+            }
+        }
+        if function_block.grouped_proof().is_some()
+            && let Ok(span) = find_grouped_proof_span(&tokens, &function)
+        {
+            regions.push(ClaimRegion {
+                anchor: span.start,
+                span,
+                label: function_block.contract_claim_label(),
+                owner: owner.clone(),
+                written_phase: None,
+            });
+        }
+        // A claim the grouped proof covers is proved there, so its clause
+        // names that proof.
+        let label =
+            |claim: CProofClaim| function_block.claim_label(covering_claim(function_block, claim));
+        let mut written = None;
+        for index in 0..function_block.ensures().len() {
+            // The members of a flattened aggregate clause share their
+            // written clause, its label, and its proof.
+            let source = function_block.ensure_source_clause(index);
+            if written.replace(source) == Some(source) {
+                continue;
+            }
+            let Ok(clause) =
+                find_ensure_clause(&tokens, function.body_open, function.body_close, source)
+            else {
+                continue;
+            };
+            let Ok(edit) = find_proof_edit_after(&tokens, clause, function.body_close) else {
+                continue;
+            };
+            let span = clause_region(clause, &edit);
+            regions.push(ClaimRegion {
+                anchor: span.start,
+                span,
+                label: label(CProofClaim::Ensure(index)),
+                owner: owner.clone(),
+                written_phase: None,
+            });
+        }
+        for index in 0..function_block.exceptional_ensures().len() {
+            let Ok(clause) = find_exceptional_ensure_clause(
+                &tokens,
+                function.body_open,
+                function.body_close,
+                index,
+            ) else {
+                continue;
+            };
+            let Ok(edit) = find_proof_edit_after(&tokens, clause + 1, function.body_close) else {
+                continue;
+            };
+            let span = clause_region(clause, &edit);
+            regions.push(ClaimRegion {
+                anchor: span.start,
+                span,
+                label: label(CProofClaim::ExceptionalEnsure(index)),
+                owner: owner.clone(),
+                written_phase: None,
+            });
+        }
+    }
+    if scope == ClaimLocationScope::Innermost {
+        for tactic in written_loop_tactics(click_source, &tokens, file)? {
+            for phase in ["initialize", "preserve"] {
+                let (Some(keyword), edit) = written_loop_phase(&tokens, &tactic, phase)? else {
+                    continue;
+                };
+                regions.push(ClaimRegion {
+                    anchor: keyword,
+                    span: keyword..edit.span().end,
+                    label: format!(
+                        "the `{phase}` proof of the `loop` tactic in `{}`",
+                        tactic.claim_label
+                    ),
+                    owner: tactic.function_name.clone(),
+                    written_phase: Some((tactic.clone(), phase)),
+                });
+            }
+        }
+    }
+    Ok(regions)
+}
+
+/// The one claim a location selects among `regions`: with a column, the
+/// innermost claim containing it; without one, the only claim (by label)
+/// whose source touches the line.
+fn select_claim_region<'r>(
+    click_source: &str,
+    regions: &'r [ClaimRegion],
+    line: usize,
+    column: Option<usize>,
+) -> Result<&'r ClaimRegion, ClaimLocationError> {
+    let claim = |region: &ClaimRegion| SourceClaim {
+        label: region.label.clone(),
+        owner: region.owner.clone(),
+        position: position_at_offset(click_source, region.anchor),
+    };
+    let line_start =
+        offset_at_position(click_source, line, 1).map_err(ClaimLocationError::from_error)?;
+    let line_end = click_source[line_start..]
+        .find('\n')
+        .map_or(click_source.len(), |newline| line_start + newline);
+    let on_line = || {
+        let all_touching = regions
+            .iter()
+            .filter(|region| region.span.start <= line_end && region.span.end > line_start)
+            .collect::<Vec<_>>();
+        let mut touching: Vec<&ClaimRegion> = Vec::new();
+        for &region in &all_touching {
+            // A claim written inside another names the line it touches; the
+            // claim around it does not.
+            let encloses_another = all_touching.iter().any(|inner| {
+                inner.span != region.span
+                    && region.span.start <= inner.span.start
+                    && inner.span.end <= region.span.end
+            });
+            if !encloses_another && touching.iter().all(|seen| seen.label != region.label) {
+                touching.push(region);
+            }
+        }
+        touching
+    };
+    match column {
+        Some(column) => {
+            let wanted = offset_at_position(click_source, line, column)
+                .map_err(ClaimLocationError::from_error)?;
+            // Claims nest only where a proof script writes a loop phase;
+            // the shorter is the more specific.
+            if let Some(region) = regions
+                .iter()
+                .filter(|region| region.span.contains(&wanted))
+                .min_by_key(|region| region.span.end - region.span.start)
+            {
+                return Ok(region);
+            }
+            let touching = on_line();
+            Err(ClaimLocationError {
+                reason: if touching.is_empty() {
+                    "no claim's clause or proof contains this location".to_string()
+                } else {
+                    "no claim's clause or proof contains this location; the claims on this line are:"
+                        .to_string()
+                },
+                candidates: touching.into_iter().map(claim).collect(),
+            })
+        }
+        None => match on_line().as_slice() {
+            [] => Err(ClaimLocationError {
+                reason: "no claim's clause or proof covers this line".to_string(),
+                candidates: Vec::new(),
+            }),
+            [only] => Ok(only),
+            several => Err(ClaimLocationError {
+                reason: format!(
+                    "{} claims cover this line; add the column of one of them:",
+                    several.len()
+                ),
+                candidates: several.iter().map(|region| claim(region)).collect(),
+            }),
+        },
+    }
+}
+
 fn smart_tactic_candidate(click_source: &str, entry: &SourceTacticEntry) -> SmartTacticCandidate {
     SmartTacticCandidate {
         claim_label: entry.claim_label.clone(),
@@ -3304,7 +4078,7 @@ fn rust_trait_argument_suffix(header: &[SourceToken], impl_type: &str) -> Option
     if segments.is_empty() {
         return None;
     }
-    let name = super::parser::rust_path_name(&segments);
+    let name = crate::languages::rust::names::path_name(&segments);
     let name = name.as_str();
     let name = if name == "Self" { impl_type } else { name };
     let scalar = matches!(name, "i32" | "u8" | "u16" | "u32" | "usize" | "bool");
@@ -3340,7 +4114,7 @@ fn declaration_source_index(
                 if let Some(open) = (index..tokens.len()).find(|at| tokens[*at].text == "{") {
                     let close = matching_delimiter(tokens, open, "{", "}")?;
                     let path = rust_path_ending_at(tokens, open - 1);
-                    let impl_type = super::parser::rust_path_name(&path);
+                    let impl_type = crate::languages::rust::names::path_name(&path);
                     let inherent = tokens[index..open].iter().all(|token| token.text != "for");
                     let module = (inherent && path.len() > 1).then(|| {
                         path[..path.len() - 1]
@@ -3364,8 +4138,8 @@ fn declaration_source_index(
                         let path = rust_path_ending_at(tokens, before);
                         match &impl_block {
                             // A method's own name, and an item inside it.
-                            Some(_) => super::parser::rust_method_path_name(&path),
-                            None => super::parser::rust_path_name(&path),
+                            Some(_) => crate::languages::rust::names::method_path_name(&path),
+                            None => crate::languages::rust::names::path_name(&path),
                         }
                     });
                 }
@@ -3379,7 +4153,7 @@ fn declaration_source_index(
                             format!("{impl_type}_{name}_{suffix}")
                         }
                         Some((impl_type, module, None, _)) => {
-                            super::parser::rust_inherent_method_name(
+                            crate::languages::rust::names::inherent_method_name(
                                 module.as_deref(),
                                 impl_type,
                                 &name,
@@ -3441,10 +4215,7 @@ fn source_tactic_entries(
             }
             let edit =
                 find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
-            let label = ensure.name().map_or_else(
-                || format!("{}.ensures_{ensure_index}", theorem.name()),
-                |name| format!("{}.{name}", theorem.name()),
-            );
+            let label = theorem.ensure_claim_label(ensure_index);
             let site = ProofSite::TheoremEnsure {
                 theorem_name: theorem.name().to_string(),
                 ensure_index,
@@ -3493,7 +4264,7 @@ fn source_tactic_entries(
                             loop_index: *loop_index,
                             phase,
                         },
-                        &format!("{function_name}.loop({loop_index}).{phase}"),
+                        &claim_labels::loop_phase_claim_label(function_name, *loop_index, phase),
                         &mut entries,
                     )?;
                 }
@@ -3519,7 +4290,7 @@ fn source_tactic_entries(
                     function_name: function_name.to_string(),
                     claim: CProofClaim::Grouped,
                 },
-                &format!("{function_name}.contract"),
+                &function_block.contract_claim_label(),
                 &mut entries,
             )?;
         }
@@ -3529,10 +4300,7 @@ fn source_tactic_entries(
             }
             let claim = CProofClaim::Ensure(index);
             let edit = find_claim_proof_edit(&tokens, &function, function_block, claim)?;
-            let label = ensure.name().map_or_else(
-                || format!("{function_name}.ensures_{index}"),
-                |name| format!("{function_name}.{name}"),
-            );
+            let label = function_block.ensure_claim_label(index);
             proof_tactic_entries(
                 &tokens,
                 &edit,
@@ -3551,10 +4319,7 @@ fn source_tactic_entries(
             }
             let claim = CProofClaim::ExceptionalEnsure(index);
             let edit = find_claim_proof_edit(&tokens, &function, function_block, claim)?;
-            let label = ensure.name().map_or_else(
-                || format!("{function_name}.exceptional_ensures_{index}"),
-                |name| format!("{function_name}.{name}"),
-            );
+            let label = function_block.exceptional_ensure_claim_label(index);
             proof_tactic_entries(
                 &tokens,
                 &edit,
@@ -3569,6 +4334,27 @@ fn source_tactic_entries(
         }
     }
     Ok(entries)
+}
+
+/// A written one-tactic proof owns its `by` clause when expanded: a
+/// structured certificate or several generated steps need a real block.
+/// The lexer already marks its implicit opening brace with an empty span.
+fn written_tactic_source_edit(
+    tokens: &[SourceToken],
+    start: usize,
+    span: Range<usize>,
+) -> Result<TacticSourceEdit, ClickError> {
+    if let Some(open) = start.checked_sub(1)
+        && tokens[open].text == "{"
+        && tokens[open].span.is_empty()
+        && let Some(by) = open.checked_sub(1)
+        && tokens[by].text == "by"
+    {
+        return Ok(TacticSourceEdit::PartialProofClause(proof_span(
+            tokens, by,
+        )?));
+    }
+    Ok(TacticSourceEdit::Partial(span))
 }
 
 fn proof_tactic_entries(
@@ -3616,7 +4402,7 @@ fn proof_tactic_entries(
                     FlatTactic::Written(tactic) => (
                         tactic_name(tactic).to_string(),
                         source_site_kind(tactic) == SourceSiteKind::ExpandableAutomation,
-                        TacticSourceEdit::Partial(item.span.clone()),
+                        written_tactic_source_edit(tokens, item.tokens.start, item.span.clone())?,
                     ),
                     FlatTactic::Phase(tactic) => {
                         // A frontier-local loop phase proved by one smart
@@ -3804,7 +4590,7 @@ fn block_tactic_entries(
                 site: site.clone(),
                 source_index,
                 nested: path.clone(),
-                edit: TacticSourceEdit::Partial(span.clone()),
+                edit: written_tactic_source_edit(tokens, token_range.start, span.clone())?,
                 sibling_starts: Vec::new(),
                 function_block: None,
             }),
@@ -4179,10 +4965,11 @@ fn resolve_rust_claim_label<'a>(
     file: &ClickFile,
     claim_label: &'a str,
 ) -> std::borrow::Cow<'a, str> {
-    if let Some((function, rest)) = claim_label.split_once('.')
+    if file.source_language() == crate::languages::SourceLanguage::Rust
+        && let Some((function, rest)) = claim_label.split_once('.')
         && function.contains("::")
         && let Some(block) = file.function_blocks().iter().find(|block| {
-            super::rust_names::rust_display_name(block.signature().name()).as_deref()
+            crate::languages::rust::names::rust_display_name(block.signature().name()).as_deref()
                 == Some(function)
         })
     {
@@ -4196,29 +4983,34 @@ fn c0_tactic_source_positions_file(
     click_source: &str,
     claim_label: &str,
 ) -> Result<Vec<SourcePosition>, ClickError> {
-    let claim_label = &*resolve_rust_claim_label(file, claim_label);
     let tokens = scan_source_tokens(click_source)?;
+    c0_tactic_source_positions_with_tokens(file, click_source, claim_label, &tokens)
+}
+
+fn c0_tactic_source_positions_with_tokens(
+    file: &ClickFile,
+    click_source: &str,
+    claim_label: &str,
+    tokens: &[SourceToken],
+) -> Result<Vec<SourcePosition>, ClickError> {
+    let claim_label = &*resolve_rust_claim_label(file, claim_label);
     for theorem in file.theorem_definitions() {
         if !file.theorem_is_selected(theorem.name()) {
             continue;
         }
-        let source = find_theorem(&tokens, theorem.name())?;
+        let source = find_theorem(tokens, theorem.name())?;
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
-            let label = ensure.name().map_or_else(
-                || format!("{}.ensures_{ensure_index}", theorem.name()),
-                |name| format!("{}.{name}", theorem.name()),
-            );
             let execution_claim = theorem.executes.is_some()
                 && ensure_index == 0
-                && claim_label == format!("{}.contract", theorem.name());
-            if label != claim_label && !execution_claim {
+                && claim_label == claim_labels::contract_claim_label(theorem.name());
+            if theorem.ensure_claim_label(ensure_index) != claim_label && !execution_claim {
                 continue;
             }
             let edit =
-                find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
+                find_ensure_proof_edit(tokens, source.body_open, source.body_close, ensure_index)?;
             return proof_source_positions(
                 click_source,
-                &tokens,
+                tokens,
                 match &edit {
                     ProofSourceEdit::Explicit(span) => Some(span),
                     ProofSourceEdit::DefaultTerminator { .. }
@@ -4231,14 +5023,14 @@ fn c0_tactic_source_positions_file(
         }
     }
     for tactic in file.tactic_definitions() {
-        if claim_label != format!("{}.contract", tactic.name()) {
+        if claim_label != tactic.function_block().contract_claim_label() {
             continue;
         }
-        let function = find_tactic(&tokens, tactic.name())?;
+        let function = find_tactic(tokens, tactic.name())?;
         return proof_source_positions(
             click_source,
-            &tokens,
-            Some(&find_grouped_proof_span(&tokens, &function)?),
+            tokens,
+            Some(&find_grouped_proof_span(tokens, &function)?),
             tactic.function_block().grouped_proof(),
             tokens[function.body_close].span.start,
             claim_label,
@@ -4246,10 +5038,10 @@ fn c0_tactic_source_positions_file(
     }
     for function_block in proof_function_blocks(file) {
         let function_name = function_block.signature().name();
-        let function = find_function(&tokens, function_name)?;
+        let function = find_function(tokens, function_name)?;
         for clause in function_block.structural_clauses() {
-            let block = find_structural_clause_block(&tokens, &function, *clause.region())?;
-            let edits = structural_item_proof_edits(&tokens, &block)?;
+            let block = find_structural_clause_block(tokens, &function, *clause.region())?;
+            let edits = structural_item_proof_edits(tokens, &block)?;
             if edits.len() != clause.items().len() {
                 return Err(ClickError::new(format!(
                     "structural source mapping for `{function_name}` {:?} found {} items, expected {}",
@@ -4259,12 +5051,8 @@ fn c0_tactic_source_positions_file(
                 )));
             }
         }
-        if let Some(rest) = claim_label
-            .strip_prefix(function_name)
-            .and_then(|rest| rest.strip_prefix(".loop("))
-            && let Some((loop_index, phase)) = rest.split_once(").")
-            && matches!(phase, "initialize" | "preserve")
-            && let Ok(loop_index) = loop_index.parse::<usize>()
+        if let Some((loop_index, phase)) =
+            claim_labels::parse_loop_phase_claim_label(function_name, claim_label)
             && let Some(clause) = function_block
                 .structural_clauses()
                 .iter()
@@ -4276,71 +5064,53 @@ fn c0_tactic_source_positions_file(
                 clause.preserve_proof()
             };
             let (fallback, proof_span, _) =
-                find_loop_phase_proof_span(&tokens, &function, loop_index, phase)?;
+                find_loop_phase_proof_span(tokens, &function, loop_index, phase)?;
             return proof_source_positions(
                 click_source,
-                &tokens,
+                tokens,
                 proof_span.as_ref(),
                 proof,
                 fallback,
                 claim_label,
             );
         }
-        let selected = if claim_label == format!("{function_name}.contract") {
-            function_block
-                .covering_proof()
-                .map(|proof| (CProofClaim::Grouped, proof))
-        } else {
-            function_block
-                .ensures()
-                .iter()
-                .enumerate()
-                .find_map(|(index, ensure)| {
-                    let label = ensure.name().map_or_else(
-                        || format!("{function_name}.ensures_{index}"),
-                        |name| format!("{function_name}.{name}"),
-                    );
-                    (label == claim_label).then_some((CProofClaim::Ensure(index), ensure.proof()))
-                })
-                .or_else(|| {
-                    function_block
-                        .exceptional_ensures()
-                        .iter()
-                        .enumerate()
-                        .find_map(|(index, ensure)| {
-                            let label = ensure.name().map_or_else(
-                                || format!("{function_name}.exceptional_ensures_{index}"),
-                                |name| format!("{function_name}.{name}"),
-                            );
-                            (label == claim_label)
-                                .then_some((CProofClaim::ExceptionalEnsure(index), ensure.proof()))
-                        })
-                })
-        };
+        let selected = function_block
+            .claim_by_label(claim_label)
+            .and_then(|claim| match claim {
+                CProofClaim::Grouped => function_block.covering_proof().map(|proof| (claim, proof)),
+                CProofClaim::Ensure(index) => function_block
+                    .ensures()
+                    .get(index)
+                    .map(|ensure| (claim, ensure.proof())),
+                CProofClaim::ExceptionalEnsure(index) => function_block
+                    .exceptional_ensures()
+                    .get(index)
+                    .map(|ensure| (claim, ensure.proof())),
+            });
         let Some((claim, proof)) = selected else {
             continue;
         };
         let fallback = match claim {
             CProofClaim::Grouped => tokens[function.body_close].span.start,
             CProofClaim::Ensure(_) | CProofClaim::ExceptionalEnsure(_) => {
-                find_claim_clause_offset(&tokens, &function, function_block, claim)?
+                find_claim_clause_offset(tokens, &function, function_block, claim)?
             }
         };
         let proof_span = match claim {
             CProofClaim::Grouped => {
-                match find_grouped_proof_edit(&tokens, &function, function_block)? {
+                match find_grouped_proof_edit(tokens, &function, function_block)? {
                     ProofSourceEdit::Explicit(span) => Some(span),
                     ProofSourceEdit::DefaultTerminator { .. }
                     | ProofSourceEdit::OmittedLoopPhase { .. } => None,
                 }
             }
             CProofClaim::Ensure(_) | CProofClaim::ExceptionalEnsure(_) => {
-                find_claim_proof_span(&tokens, &function, function_block, claim).ok()
+                find_claim_proof_span(tokens, &function, function_block, claim).ok()
             }
         };
         return proof_source_positions(
             click_source,
-            &tokens,
+            tokens,
             proof_span.as_ref(),
             Some(proof),
             fallback,
@@ -4461,7 +5231,7 @@ fn find_loop_phase_proof_span(
     )))
 }
 
-fn parse_source_with_c_layouts(
+pub(super) fn parse_source_with_c_layouts(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<ClickFile, ClickError> {

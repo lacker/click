@@ -1140,11 +1140,7 @@ pub(in crate::kernel) fn cast_c_value_to_type(
                 "function addresses do not convert to integers".to_string(),
             ));
         }
-        let address = if pointer.is_null() {
-            Bitvector32Term::UInt64Constant(0)
-        } else {
-            Bitvector32Term::PointerAddress(Box::new(pointer.pointer().clone()))
-        };
+        let address = Bitvector32Term::pointer_address(pointer.pointer().clone());
         return Ok(match target_type {
             CType::UInt64 => CValue::UInt64(address),
             _ => CValue::Int64(address),

@@ -2248,6 +2248,30 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
     if stated.is_some() {
         return stated;
     }
+    // A checked borrowed projection remains separate from current ownership.
+    // Query only address-keyed exposed members; no recursive expansion or
+    // pairwise separation facts are constructed.
+    if let Some((resources, left, right)) = assumptions.borrow_partition_separated_members(
+        resolved_write,
+        resolved_load,
+        |range| AccessInRangeEvidence::for_access(write, write_bytes, range, assumptions).is_some(),
+        |range| {
+            AccessInRangeEvidence::for_access(pointer, load_bytes, range, assumptions).is_some()
+        },
+    ) {
+        let write_membership =
+            AccessInRangeEvidence::for_access(write, write_bytes, left, assumptions)?;
+        let load_membership =
+            AccessInRangeEvidence::for_access(pointer, load_bytes, right, assumptions)?;
+        return Some(MemoryDagHopJustification::StoreSeparatedRanges {
+            authority: StoreSeparatedRangesAuthority::BorrowPartition(resources.clone()),
+            left: left.clone(),
+            right: right.clone(),
+            orientation: StoreSeparatedRangeOrientation::WriteLeftLoadRight,
+            write_membership,
+            load_membership,
+        });
+    }
     // The composition law asked on demand: an owned member holding the
     // written address and a different one holding the read.
     let write_memberships = std::cell::RefCell::new(Vec::new());
@@ -7649,3 +7673,193 @@ mod pointer_designation_tests;
 
 #[cfg(test)]
 mod range_transport_tests;
+
+#[cfg(test)]
+mod borrow_partition_tests {
+    use super::*;
+    use crate::kernel::loans::{LoanLedger, LoanViewBinding};
+
+    fn range(id: u64) -> CMemoryRange {
+        CMemoryRange::new(
+            Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Variable(Variable(id)),
+            },
+            0u32.into(),
+            1u32.into(),
+        )
+    }
+
+    fn resources() -> (ResourceContext, ResourceContext, CMemoryRange, CMemoryRange) {
+        let write = range(901_001);
+        let read = range(901_002);
+        let view = CResourceFact::view_memory(read.clone());
+        let bare = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(write.clone()))
+            .unchecked_with_fact(view.clone());
+        let support = bare.occurrences_for_fact(&view)[0];
+        let ledger = LoanLedger::new();
+        let holder = ledger.fresh_participant().unwrap();
+        let opening = ledger
+            .borrowed_contract_input(holder, support, view.clone(), None)
+            .unwrap();
+        let ledger = ledger.apply(&opening.transition).unwrap();
+        assert!(ledger.permits_view(
+            holder,
+            &opening.description,
+            opening.root_share,
+            &PureFactContext::new()
+        ));
+        let bound = bare.clone().with_loan_dependency(
+            support,
+            LoanViewBinding {
+                loan: opening.loan,
+                scope: opening.scope,
+                share: opening.root_share,
+                support,
+                viewed: view,
+                hold: None,
+            },
+        );
+        (bare, bound, write, read)
+    }
+
+    #[test]
+    fn borrow_partition_evidence_requires_live_binding_and_rechecks_overlap() {
+        let (bare, bound, write, read) = resources();
+        let proposition = Proposition::CResourceComposition(bound.clone());
+        let context = PureFactContext::new().assume_proposition(proposition.clone());
+        let witness =
+            typed_store_separated_ranges_evidence(write.base(), 4, read.base(), 4, &context)
+                .unwrap();
+        let step = CMemoryDerivation::Store {
+            base: intern_c_memory(CMemory::new()),
+            pointer: write.base().clone(),
+            value: CValue::Int32(1u32.into()),
+        };
+        assert!(witness.checks(&step, read.base(), 4, &context));
+        let missing = PureFactContext::new()
+            .assume_proposition(Proposition::CResourceComposition(bare.clone()));
+        assert!(
+            typed_store_separated_ranges_evidence(write.base(), 4, read.base(), 4, &missing)
+                .is_none()
+        );
+        assert!(!witness.checks(&step, read.base(), 4, &missing));
+        // Retain the candidate index but withdraw its authority.
+        let mut withdrawn = context.clone();
+        std::sync::Arc::make_mut(&mut withdrawn.resource_compositions).remove(&bound);
+        assert!(!witness.checks(&step, read.base(), 4, &withdrawn));
+        assert!(
+            typed_store_separated_ranges_evidence(write.base(), 4, read.base(), 4, &withdrawn)
+                .is_none()
+        );
+        assert!(!witness.checks(&step, read.base(), 8, &context));
+        let overlapping = context.assume_condition(
+            ConditionTerm::pointer_equal(write.base().clone(), read.base().clone()),
+            true,
+        );
+        assert!(!witness.checks(&step, read.base(), 4, &overlapping));
+        assert!(
+            typed_store_separated_ranges_evidence(write.base(), 4, read.base(), 4, &overlapping)
+                .is_none()
+        );
+
+        // Only metadata changes: the resource store itself is shared.
+        let installed = missing.assume_proposition(proposition);
+        assert!(
+            typed_store_separated_ranges_evidence(write.base(), 4, read.base(), 4, &installed)
+                .is_some()
+        );
+        let occurrence = bound.occurrences_for_fact(&CResourceFact::view_memory(read.clone()))[0];
+        let removed = bound
+            .clone()
+            .without_bound_view_occurrence(occurrence, bound.loan_dependency(occurrence).unwrap())
+            .unwrap()
+            .unchecked_with_fact(CResourceFact::view_memory(read.clone()));
+        assert!(!removed.proves_borrow_partition_separate(&write, &read));
+    }
+
+    #[test]
+    fn borrow_partition_binding_journal_tracks_branches_and_ignores_repeated_binding() {
+        let (bare, bound, _, read) = resources();
+        let occurrence = bound.occurrences_for_fact(&CResourceFact::view_memory(read))[0];
+        let binding = bound.loan_dependency(occurrence).unwrap().clone();
+        let initial =
+            crate::kernel::loans::LoanViewBindings::from_state(bare.loan_dependency_state());
+        let left = initial.with_inserted(occurrence, binding.clone());
+        let right = initial.with_inserted(occurrence, binding.clone());
+        // Equal-length branches have distinct updates; neither is a prefix.
+        assert_eq!(
+            left.state().changed_occurrences_since(&right.state()),
+            vec![occurrence, occurrence]
+        );
+        let removed = left.without(occurrence);
+        assert_eq!(
+            removed.state().changed_occurrences_since(&left.state()),
+            vec![occurrence]
+        );
+        assert_eq!(
+            left.state().changed_occurrences_since(&removed.state()),
+            vec![occurrence]
+        );
+        let mut repeated = left.clone();
+        for _ in 0..1024 {
+            repeated = repeated.with_inserted(occurrence, binding.clone());
+        }
+        assert!(std::sync::Arc::ptr_eq(&left.state(), &repeated.state()));
+        assert!(
+            repeated
+                .state()
+                .changed_occurrences_since(&left.state())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn borrow_partition_query_does_not_scan_unrelated_resources_or_history() {
+        let mut samples = Vec::new();
+        let mut admission_samples = Vec::new();
+        for size in [16u64, 64, 256, 1024] {
+            let (_, mut source, write, read) = resources();
+            let mut context = PureFactContext::new()
+                .assume_proposition(Proposition::CResourceComposition(source.clone()));
+            let (_, admission) = crate::instrumentation::measure_deterministic_work(|| {
+                for index in 0..size {
+                    source = source
+                        .clone()
+                        .unchecked_with_fact(CResourceFact::own_memory(range(910_000 + index)));
+                    context = context
+                        .clone()
+                        .assume_proposition(Proposition::CResourceComposition(source.clone()));
+                }
+            });
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                for _ in 0..16 {
+                    assert!(
+                        typed_store_separated_ranges_evidence(
+                            write.base(),
+                            4,
+                            read.base(),
+                            4,
+                            &context
+                        )
+                        .is_some()
+                    );
+                }
+            });
+            eprintln!("borrow partition size={size}, admission={admission}, queries={work}");
+            samples.push(work);
+            admission_samples.push(admission);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "unrelated history changed lookup work: {samples:?}"
+        );
+        assert!(
+            admission_samples
+                .windows(2)
+                .all(|pair| pair[1] <= 5 * pair[0]),
+            "superlinear admission: {admission_samples:?}"
+        );
+    }
+}

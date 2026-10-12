@@ -353,11 +353,11 @@ pub(crate) fn render_resource_fact(fact: &CResourceFact) -> String {
     render_resource_fact_labeled(fact, &mut labels)
 }
 
-#[cfg(test)]
 pub(crate) fn render_resource_fact_labeled(
     fact: &CResourceFact,
     labels: &mut SnapshotLabels,
 ) -> String {
+    labels.trace_labels = true;
     let mut renderer = Renderer {
         output: String::with_capacity(128),
         nodes: 0,
@@ -365,18 +365,18 @@ pub(crate) fn render_resource_fact_labeled(
         truncated: false,
         labels,
         bound_names: Vec::new(),
-        trace_facts: false,
+        trace_facts: true,
     };
     match fact {
         CResourceFact::Own(resource, quantity) => {
             renderer.push("owns ");
-            renderer.trace_resource(resource);
+            renderer.resource(resource);
             renderer.push(" x ");
             renderer.bitvector(quantity);
         }
         CResourceFact::View(resource) => {
             renderer.push("views ");
-            renderer.trace_resource(resource);
+            renderer.resource(resource);
         }
     }
     if renderer.truncated {
@@ -1632,58 +1632,6 @@ impl Renderer<'_> {
         }
     }
 
-    #[cfg(test)]
-    fn trace_resource(&mut self, resource: &CResource) {
-        match resource {
-            CResource::MutexGuard(_) => self.push("mutex-guard"),
-            CResource::MutexLive(_) => self.push("mutex-live"),
-            CResource::MutexUse(identity) => {
-                self.push("mutex_use(");
-                self.pointer(identity.mutex());
-                self.push(")");
-            }
-            CResource::Publication(right) => {
-                self.push(right.side().keyword());
-                self.push("(");
-                self.pointer(right.flag());
-                self.push(", ");
-                self.push(right.payload().family());
-                self.push(")");
-            }
-            CResource::PopulationAuthority(description) => {
-                self.push("authority(");
-                self.push(description.family());
-                self.push("(");
-                for (index, argument) in description.arguments().iter().enumerate() {
-                    if index > 0 {
-                        self.push(", ");
-                    }
-                    self.algebraic_value(argument);
-                }
-                if let Some(arity) = description.population_arity() {
-                    for _ in 1..arity {
-                        self.push(", _");
-                    }
-                }
-                self.push("))");
-            }
-            CResource::Composite { name, arguments } | CResource::Token { name, arguments } => {
-                self.push(name);
-                self.push("(");
-                for (index, argument) in arguments.iter().take(4).enumerate() {
-                    if index > 0 {
-                        self.push(", ");
-                    }
-                    self.algebraic_value(argument);
-                }
-                if arguments.len() > 4 {
-                    self.push(", …");
-                }
-                self.push(")");
-            }
-            _ => self.resource(resource),
-        }
-    }
     fn memory(&mut self, memory: &CMemory) {
         match self.labels.label(memory) {
             Some(label) => self.fmt(format_args!("snapshot#{label}")),

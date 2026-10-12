@@ -67,7 +67,7 @@ phase keeps the per-tactic work budgets [`click verify`](verify.md#deterministic
 | `--verification-time-limit DURATION` | `10m` | Contain a hung proof-unit verification. |
 | `--time-limit DURATION` | `10m` | Limit the whole audit, including inventory; print a resume cursor when sites are known. |
 | `--start-at PATH:LINE:COLUMN` | none | Resume inclusively at a source location. |
-| `--claim CLAIM` | all | Select an exact claim. Repeat the option to select several claims. |
+| `--claim CLAIM` | all | Select an exact claim by its [label](expand.md#claim-labels), or `PATH:LINE[:COLUMN]`: the claim whose clause or proof covers that line of an audited sidecar or mdtest (Markdown lines), as `click expand --claim` resolves it, except that a line of a loop phase written in a `loop` tactic selects the proof that writes the tactic, whose sites include the phase's. A label shared by several audited files is ambiguous; a location names one. Repeat the option to select several claims. |
 | `--changed-since REVISION` | none | Select claims affected since a Git revision. |
 | `--verbose` | off | Include phase costs for each claim batch. |
 | `--keep-going` | off | Continue after failures instead of stopping at the first failure. |

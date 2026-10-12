@@ -1208,16 +1208,21 @@ impl<'a> Proof<'a> {
         let resource_unfolded = self
             .execution()
             .is_some_and(|execution| execution.presentation.resource_unfolded);
-        let mut body_facts = if !at_frontier || resource_unfolded {
-            self.facts().with_selected_resource_separation(&body_kernel)
-        } else {
+        // The current partition can answer a selected owned-field query
+        // directly. Try it before general reasoning over older compositions:
+        // those may require expensive snapshot/range transport even though
+        // both current owners already establish this goal.
+        let held_facts = if let Some(execution) = self.execution() {
             self.facts()
-                .with_selected_composition_separation(&body_kernel)
+                .with_selected_held_resource_separation(&body_kernel, &execution.core.state)
+        } else {
+            self.facts().clone()
         };
-        if let Some(execution) = self.execution() {
-            body_facts = body_facts
-                .with_selected_held_resource_separation(&body_kernel, &execution.core.state);
-        }
+        let mut body_facts = if !at_frontier || resource_unfolded {
+            held_facts.with_selected_resource_separation(&body_kernel)
+        } else {
+            held_facts.with_selected_composition_separation(&body_kernel)
+        };
         // A `have` stated at an execution frontier may use the frontier's
         // effect facts exactly as the shared mid-execution law offers them.
         if at_frontier && let Some(execution) = self.execution() {

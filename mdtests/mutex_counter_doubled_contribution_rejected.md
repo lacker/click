@@ -209,5 +209,5 @@ int32 increment_twice(struct mutex_counter* counter) {
 ```
 
 ```expect
-fail: `increment_counter.ensures_1` unproved
+fail: `increment_counter.produces_0` unproved
 ```

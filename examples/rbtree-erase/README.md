@@ -41,12 +41,13 @@ height, so balance is preserved and the fixup return is null. It uses the same
 exclusive callback-table contract as the black-leaf sidecar.
 
 `rbtree_erase_right_child.click` and `rbtree_erase_left_child.click` cover
-non-root deletion with one nonempty child, for either child direction and either
-parent link. Neither contract assumes the erased node's or child's color.
+deletion with one nonempty child, for either child direction, either parent
+link, and deletion of the root.
+Neither contract assumes the erased node's or child's color.
 Validity implies that copying the erased node's parent/color word blackens the
 child. The proofs return that exact replacement model and the unchanged context,
 with whole-tree red-black validity, parent consistency, preserved child in-order
-contents, and a null fixup parent. Both use exclusive callback-table ownership.
+contents, and a null fixup parent. Both borrow the read-only callback table.
 
 `rbtree_erase_nonroot_successor.click` extends the immediate red-leaf successor
 case below the root, on either parent link. It returns the exact successor
@@ -226,6 +227,49 @@ exact balanced root, consistent parents, and unchanged in-order contents under
 any outer context. Each passes all 136 audit sites; four mutations reject an
 incorrect near-child parent or attachment. Rotations after deficit propagation
 and the complete `rb_erase` wrapper remain.
+
+`rbtree_erase_color_flips_red_inner_right.click` extends the propagated repair
+proof with red-sibling cases 1, 3, and 4 when the deficit is the right child.
+The focus and rotation subtrees may be nonempty. It retains the existing
+color-flip propagation and both orientations of cases 1/2 and 1/4, and returns
+the exact balanced tree with consistent parents and preserved in-order contents.
+The parent/color frame is explicit across the inner and outer updates, and the
+saved child pointer is connected to the right link before the subtree is folded.
+The mirrored propagated red-sibling inner rotation and complete erase wrapper
+remain.
+
+`rbtree_erase_color_flips_red_all.click` adds the mirrored left-deficit
+red-sibling cases 1/3/4. It covers color-flip propagation followed by cases
+1/2, 1/4, or 1/3/4, as well as the black-sibling rotations, in both directions
+with nonempty focus and rotation subtrees. The exact result, parent links,
+red-black invariants, and in-order contents are preserved. A structural context
+proof derives case coverage from the black-deficit invariant, so callers need
+no separate `erase_flips_red_all` precondition.
+
+The same sidecar now verifies the unchanged `rb_erase` wrapper end to end for
+all leaf deletions: red or black leaves on either parent link, and the sole
+root. The splice borrows the callback table read-only and calls the verified
+parent-link helper. For a nonroot black leaf, its empty hole and deficit
+context satisfy the general repair contract; otherwise the wrapper refolds
+the already balanced tree without calling repair.
+The wrapper returns ownership of the detached node and a balanced root with
+consistent parents and exactly the in-order contents of the old context with
+the erased leaf removed. Its contract requires views of the static const dummy
+callback fields; initialization of these views at program startup is outside
+this local proof.
+
+`rbtree_erase_left_child.click` and `rbtree_erase_right_child.click` also verify
+the unchanged wrapper end to end when the erased node has exactly one child,
+at the root or on either parent link. Their splice proofs borrow the constant
+callback table without additional separation preconditions. They return the
+detached node and a balanced, parent-consistent root with exact in-order
+contents. Checked execution proves the repair call unreachable in these cases.
+Two-child deletion still needs wrapper integration.
+
+`rb_erase.c` includes the existing unchanged splice and repair extracts and adds
+the dummy callbacks, const table, and `rb_erase` definition verbatim from pinned
+`lib/rbtree.c`. All helper bodies and callback refinements are checked in this
+combined sidecar.
 
 The callback contracts describe the non-augmented case: callbacks cannot
 mutate tree fields or require augmentation metadata. The borrowed table is

@@ -1,10 +1,11 @@
-# A call refuses to free a lent allocation beside a kept view that may alias it
+# A call frees an owned allocation beside a separately borrowed view
 
-`box_destroy` frees `box->data`, which the caller lends inside `boxed(box)`.
-The caller also keeps `views q[0..1]` for an unrelated parameter `q`. A view
-is not an owner, so ownership exclusivity says nothing about it, and no fact
-separates `q` from the freed allocation: `q` may point into it. The call is
-refused with the stale-resource reason.
+`boxed(box)` owns every byte of the allocation that `box_destroy` frees.
+The caller's `views q[0..1]` is backed by a separate checked loan, so it cannot
+alias those owned bytes in a valid entry partition. Opening the composite
+carries that separation to the retirement check without a written premise.
+`call_rejects_lending_the_allocation_it_transfers.md` rejects a caller that
+tries to supply the freed cell itself as this borrowed view.
 
 ```c filename=box.c
 struct box {
@@ -50,5 +51,5 @@ void box_release(struct box* box, struct box* other, int32* q) {
 ```
 
 ```expect
-fail: resource would remain usable after its allocation is freed
+pass
 ```

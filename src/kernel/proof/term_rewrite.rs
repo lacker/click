@@ -763,15 +763,28 @@ fn integer_is_zero(term: &IntegerTerm) -> bool {
     matches!(term, IntegerTerm::Constant(value) if num_traits::Zero::is_zero(value))
 }
 
-/// One rebuilt 32-bit machine comparison, put back through the smart
-/// constructor that decides it when both sides are literals.
-///
-/// This adds no arithmetic of its own: each arm is the constructor every other
-/// producer of that condition already calls, so a condition a rewrite rebuilt
-/// is spelled exactly as a condition a lowering built. Anything that is not a
-/// 32-bit comparison passes through untouched.
+/// Decide rebuilt scalar guards through their existing context-free rules.
+/// Machine comparisons use their smart constructors; concrete nullary enum
+/// constructors use the algebraic equality decision. Other guards stay intact.
 fn folded_machine_condition(condition: ConditionTerm) -> ConditionTerm {
     match condition {
+        ConditionTerm::AlgebraicEqual(ref left, ref right)
+            if matches!(&left.node, AlgebraicTermNode::Constructor { fields, .. } if fields.is_empty())
+                && matches!(&right.node, AlgebraicTermNode::Constructor { fields, .. } if fields.is_empty()) =>
+        {
+            // A rewritten enum discriminant is a concrete guard, just like
+            // an integer literal comparison. Decide it before visiting an
+            // unreachable arm (which may contain an unrelated binder).
+            // Restrict this constant-folding path to nullary constructors;
+            // unknown fields still require their own checked evidence.
+            let equality = Proposition::Equal(
+                Term::Algebraic(left.as_ref().clone()),
+                Term::Algebraic(right.as_ref().clone()),
+            );
+            crate::kernel::spec::constant_spec_condition_value(&equality)
+                .map(ConditionTerm::Constant)
+                .unwrap_or(condition)
+        }
         ConditionTerm::Bitvector32Equal(left, right) => ConditionTerm::equal(*left, *right),
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             ConditionTerm::signed_less_than(*left, *right)
@@ -4577,7 +4590,7 @@ impl<'a> TermRewrite<'a> {
                 Bitvector32Term::MemoryLoad(memory.clone(), Box::new(rewritten), *kind)
             }
             Bitvector32Term::PointerAddress(pointer) => {
-                Bitvector32Term::PointerAddress(Box::new(self.pointer(pointer)))
+                Bitvector32Term::pointer_address(self.pointer(pointer))
             }
             Bitvector32Term::IntegerToMachine { value, destination } => {
                 Bitvector32Term::IntegerToMachine {

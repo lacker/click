@@ -804,9 +804,10 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
 ) -> Result<AutomaticLoopBody, ClickError> {
     let claim_label = environment.frontier_loop_source.map_or_else(
         || {
-            format!(
-                "{}.loop({loop_index}).preserve",
-                environment.function_block.signature().name()
+            crate::surface::claim_labels::loop_phase_claim_label(
+                environment.function_block.signature().name(),
+                loop_index,
+                "preserve",
             )
         },
         |source| source.claim_label.clone(),

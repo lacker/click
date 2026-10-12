@@ -9116,16 +9116,20 @@ pub(crate) fn registered_block_alignment_charged(
 pub(crate) struct BlockRegistriesState {
     alignment: BTreeMap<PointerBlock, u64>,
     never_address_taken: BTreeSet<String>,
+    never_address_taken_key: std::sync::Arc<()>,
 }
 
 pub(crate) fn capture_block_registries() -> BlockRegistriesState {
     BlockRegistriesState {
         alignment: BLOCK_ALIGNMENT_REGISTRY.with(|registry| registry.borrow().clone()),
         never_address_taken: NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| registry.borrow().clone()),
+        never_address_taken_key: never_address_taken_locals_key(),
     }
 }
 
 pub(crate) fn restore_block_registries(state: &BlockRegistriesState) {
+    NEVER_ADDRESS_TAKEN_LOCALS_KEY
+        .with(|key| *key.borrow_mut() = state.never_address_taken_key.clone());
     BLOCK_ALIGNMENT_REGISTRY.with(|registry| *registry.borrow_mut() = state.alignment.clone());
     NEVER_ADDRESS_TAKEN_LOCALS
         .with(|registry| *registry.borrow_mut() = state.never_address_taken.clone());
@@ -9154,6 +9158,7 @@ thread_local! {
     /// parsed function body, and emptied when a session starts. Absence is the
     /// answer for everything else, including the verifier's own synthetic
     /// names, so an unpopulated registry decides nothing.
+    static NEVER_ADDRESS_TAKEN_LOCALS_KEY: std::cell::RefCell<std::sync::Arc<()>> = std::cell::RefCell::new(std::sync::Arc::new(()));
     static NEVER_ADDRESS_TAKEN_LOCALS: std::cell::RefCell<BTreeSet<String>> =
         const { std::cell::RefCell::new(BTreeSet::new()) };
 }
@@ -9161,7 +9166,12 @@ thread_local! {
 /// Records the program-wide never-address-taken names for this session. The
 /// surface computes them from every function body it parsed; see
 /// `never_address_taken_local_names`.
+pub(crate) fn never_address_taken_locals_key() -> std::sync::Arc<()> {
+    NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| key.borrow().clone())
+}
+
 pub(crate) fn set_never_address_taken_locals(names: BTreeSet<String>) {
+    NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
     NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| *registry.borrow_mut() = names);
 }
 
@@ -9177,7 +9187,11 @@ pub(crate) fn withdraw_never_address_taken_locals(taken: &BTreeSet<String>) -> b
         let mut registry = registry.borrow_mut();
         let before = registry.len();
         registry.retain(|name| !taken.contains(name));
-        registry.len() != before
+        let changed = registry.len() != before;
+        if changed {
+            NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
+        }
+        changed
     })
 }
 
@@ -9231,6 +9245,7 @@ pub(crate) fn block_is_never_address_taken_local(block: &PointerBlock) -> bool {
 }
 
 pub(crate) fn clear_never_address_taken_locals() {
+    NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
     NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| registry.borrow_mut().clear());
 }
 

@@ -14,7 +14,6 @@ use click::cli::{
     read_lone_sidecar_project, read_mdtest_project_if_needed, select_targets, shell_quote,
     source_refs,
 };
-use click::surface::claim_label_matches;
 use click::surface::{
     C0VerificationSession, ClickProject, SourcePosition, c0_incremental_selection,
     click_import_sites, expand_c0_claim_source_by_label, expand_c0_prepared_claim_source_by_label,
@@ -24,6 +23,7 @@ use click::surface::{
     project_smart_tactic_source_sites, project_tactic_source_position, smart_tactic_source_sites,
     tactic_source_position, verify_project_at, verify_sources_at, verifying_source_paths,
 };
+use click::surface::{claim_label_matches, display_rust_names};
 
 /// Each phase's wall-clock bound is crash containment only: a phase is judged
 /// by its deterministic work, so machine load cannot change a verdict.
@@ -105,7 +105,9 @@ options:
   --time-limit <DURATION>
   --start-at <PATH:LINE:COLUMN>
                               inclusively resume at this source location
-  --claim <CLAIM>             audit one named claim; may be repeated
+  --claim <CLAIM>             audit one claim, by label or by PATH:LINE[:COLUMN]
+                              of a line its clause or proof covers; may be
+                              repeated
   --changed-since <REVISION>  audit claims affected since a Git revision
   --verbose                   print one successful row per smart site
   --keep-going                continue after failures instead of stopping
@@ -620,7 +622,8 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         "  {} unique smart source sites in {inventory_claims} claims",
         sites.len()
     );
-    let claim_sites = select_claim_sites(&sites, &arguments.claims)?;
+    let claims = resolve_audit_claims(&sources, &arguments.claims)?;
+    let claim_sites = select_claim_sites(&sites, &claims)?;
     if !arguments.claims.is_empty() {
         println!(
             "  selected {} sites in {} named claims",
@@ -1228,17 +1231,93 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
     Ok(sites.into_values().collect())
 }
 
-fn select_claim_sites(sites: &[AuditSite], claims: &[String]) -> Result<Vec<AuditSite>, String> {
+/// One `--claim`: a label, or the claim covering a source location, which
+/// also names the one file it is in.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AuditClaim {
+    /// As the user wrote it.
+    requested: String,
+    label: String,
+    path: Option<PathBuf>,
+}
+
+impl AuditClaim {
+    fn selects(&self, site: &AuditSite) -> bool {
+        claim_label_matches(&site.claim, &self.label)
+            && self
+                .path
+                .as_ref()
+                .is_none_or(|path| *path == site.click_path)
+    }
+}
+
+/// Resolves each `--claim`: a label as written, or `FILE:LINE[:COLUMN]`, the
+/// claim whose clause or proof covers that line of one audited file.
+fn resolve_audit_claims(sources: &[PathBuf], claims: &[String]) -> Result<Vec<AuditClaim>, String> {
+    claims
+        .iter()
+        .map(|requested| {
+            let Some(location) = cli::parse_claim_location(requested) else {
+                return Ok(AuditClaim {
+                    requested: requested.clone(),
+                    label: requested.clone(),
+                    path: None,
+                });
+            };
+            let (path, _, _) = location?;
+            let canonical = fs::canonicalize(&path)
+                .map_err(|error| format!("failed to resolve `{}`: {error}", path.display()))?;
+            if !sources
+                .iter()
+                .any(|source| fs::canonicalize(source).is_ok_and(|source| source == canonical))
+            {
+                return Err(format!(
+                    "`{requested}` names a location in `{}`, which this audit does not read",
+                    path.display()
+                ));
+            }
+            let source = load_audit_source(&canonical)?;
+            let claim = cli::claim_at_argument(
+                requested,
+                &canonical,
+                source.line_offset,
+                source.project.as_ref(),
+                &source.click_source,
+                &source.inputs,
+                // Audit sites carry the label of the proof that writes them.
+                click::surface::ClaimLocationScope::ProofUnit,
+            )
+            .expect("a parsed claim location")?;
+            Ok(AuditClaim {
+                requested: requested.clone(),
+                label: claim.label,
+                path: Some(canonical),
+            })
+        })
+        .collect()
+}
+
+fn select_claim_sites(
+    sites: &[AuditSite],
+    claims: &[AuditClaim],
+) -> Result<Vec<AuditSite>, String> {
     if claims.is_empty() {
         return Ok(sites.to_vec());
     }
     for claim in claims {
         let paths = sites
             .iter()
-            .filter(|site| claim_label_matches(&site.claim, claim))
+            .filter(|site| claim.selects(site))
             .map(|site| site.click_path.clone())
             .collect::<BTreeSet<_>>();
         if paths.is_empty() {
+            if claim.path.is_some() {
+                return Err(format!(
+                    "`{}` names claim `{}`, which has no smart tactic to audit",
+                    claim.requested,
+                    display_rust_names(&claim.label)
+                ));
+            }
             let known = sites
                 .iter()
                 .map(|site| site.claim.as_str())
@@ -1248,7 +1327,8 @@ fn select_claim_sites(sites: &[AuditSite], claims: &[String]) -> Result<Vec<Audi
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(format!(
-                "unknown audit claim `{claim}`{}",
+                "unknown audit claim `{}`{}",
+                claim.requested,
                 if known.is_empty() {
                     String::new()
                 } else {
@@ -1258,7 +1338,8 @@ fn select_claim_sites(sites: &[AuditSite], claims: &[String]) -> Result<Vec<Audi
         }
         if paths.len() > 1 {
             return Err(format!(
-                "audit claim `{claim}` is ambiguous across: {}; name one sidecar as the audit target",
+                "audit claim `{}` is ambiguous across: {}; name one sidecar as the audit target, or select the claim by `FILE:LINE`",
+                claim.requested,
                 paths
                     .iter()
                     .map(|path| path.display().to_string())
@@ -1269,11 +1350,7 @@ fn select_claim_sites(sites: &[AuditSite], claims: &[String]) -> Result<Vec<Audi
     }
     Ok(sites
         .iter()
-        .filter(|site| {
-            claims
-                .iter()
-                .any(|claim| claim_label_matches(&site.claim, claim))
-        })
+        .filter(|site| claims.iter().any(|claim| claim.selects(site)))
         .cloned()
         .collect())
 }

@@ -38,7 +38,7 @@ int32 planned(int32 u) {
 ```
 
 ```expect
-fail: `ensures result == 8` failed for `planned.ensures_1` path 1: unclosed goal: result == 8; left side evaluated to (load(&g) + 1), right side evaluated to 8
+fail: `ensures result == 8` failed for `planned.ensures_0` path 1: unclosed goal: result == 8; left side evaluated to (load(&g) + 1), right side evaluated to 8
 proof context for the goal:
   case: [0 != u]
   pure facts: [int32 <(load A=read<Bits32>(snapshot#1, pointer=value#1), 100) is true]

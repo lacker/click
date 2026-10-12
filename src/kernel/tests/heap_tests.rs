@@ -862,6 +862,7 @@ fn scoped_call_borrows_end_before_free() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: helper,
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
     let statement = c_seq(
@@ -1592,6 +1593,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
         .with_verified_function_rule(CVerifiedFunctionRule {
             function: function.clone(),
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         });
 

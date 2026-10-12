@@ -8,7 +8,7 @@ expansion.
 
 ```text
 usage: click verify [--work-limit <UNITS>] [--time-limit <DURATION>] <sidecar.click|mdtest.md>[:<line>:<column>]
-       click verify --trace-proof <PROOF> [--trace-to <LINE[:COLUMN]>] <sidecar.click|mdtest.md>
+       click verify --trace-proof <PROOF|PATH:LINE[:COLUMN]> [--trace-to <LINE[:COLUMN]>] <sidecar.click|mdtest.md>
        click verify [--work-limit <UNITS>] [--time-limit <DURATION>] <project-directory|examples-directory>
        click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 ```
@@ -67,7 +67,7 @@ rather than checking their proofs.
 | --- | --- |
 | `--work-limit UNITS` | Set the deterministic whole-run work budget independently for each selected sidecar, mdtest, or proof unit. The default is `50000000`. |
 | `--time-limit DURATION` | Set the wall-clock crash-containment bound independently for each selected sidecar, mdtest, or proof unit. The default is `10m`. This is not a verdict about the proof; see [Deterministic verdicts](#deterministic-verdicts). |
-| `--trace-proof PROOF` | Verify only this C function or pure theorem of one sidecar, selected by name, and, on a proof error, show checked steps on its failing path with added facts and changed resource counts. A sidecar cannot declare one name as both a C function and a theorem, so the name alone selects the proof. Theorems that the traced theorem cites stay assumptions, and no C function is verified for a theorem trace. If the script completes but contract certification fails, show the failed obligation and a bounded view of facts available to that check. Trace length and total output size are not capped; individual fact previews remain bounded. |
+| `--trace-proof PROOF` | Verify only this C function or pure theorem of one sidecar, selected by name (a Rust item by its path or, for an operator-trait method, its qualified form such as `<adler2::algo::U32X4 as MulAssign<u32>>::mul_assign`), or by `PATH:LINE[:COLUMN]` of the target, which selects the function or theorem owning the claim whose clause or proof covers that line ([claim labels](expand.md#claim-labels)), and, on a proof error, show checked steps on its failing path with added facts and changed resource counts. A sidecar cannot declare one name as both a C function and a theorem, so the name alone selects the proof. Theorems that the traced theorem cites stay assumptions, and no C function is verified for a theorem trace. If the script completes but contract certification fails, show the failed obligation and a bounded view of facts available to that check. Trace length and total output size are not capped; individual fact previews remain bounded. |
 | `--trace-to LINE[:COLUMN]` | Focus `--trace-proof` on a written tactic at this source location, including in a successful proof; the tactic may sit inside a proof `match` arm, an arm of a proof `if`, `cases` or `both`, or a loop's `preserve` body, whose trace is shown under the enclosing proof's path up to the `loop`. A target after a proof `if` or `cases` whose arms both check it is traced through the first arm. Without it, the trace follows the failing tactic. |
 | `--changed-since REVISION` | Select claims affected since a Git revision. Reuse requires a valid full-verification marker for the baseline and verifier binary. |
 | `--explain` | With `--changed-since`, print the incremental selection without verifying it. |

@@ -309,7 +309,7 @@ the verifier.
 A failing proof step names where it was written:
 
 ```text
-`allocated_vector_push.ensures_0` proof step source tactic 1 > have body tactic 2: ...
+`allocated_vector_push.contract` proof step source tactic 1 > have body tactic 2: ...
 ```
 
 `source tactic 1` is the claim's source tactic occurrence, numbered exactly as

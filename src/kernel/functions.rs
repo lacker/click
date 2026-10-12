@@ -6012,11 +6012,11 @@ fn execute_verified_function_applications_with_suspension(
         // built once, here, so the population transition and the returned
         // resources agree on its fresh fields.
         let mut produced_instances = BTreeMap::new();
-        // A produced instance's arguments are read at the return, where the
-        // contract's own input instances still address the cells their
-        // unmatched bodies owned (`produces after: state(region->arena)`
-        // beside a consumed region). The views are the contract's inputs
-        // only, and they are computed once, when some instance is produced.
+        // Current arguments of a produced instance are read at return, where
+        // the contract's input instances still address cells their unmatched
+        // bodies owned (`produces after: state(region->arena)` beside a
+        // consumed region). These views come only from the contract's inputs
+        // and are computed once. Entry arguments use entry_contract_state.
         let mut produced_argument_state: Option<CState> = None;
         for resource in interface.resource_ensures() {
             let Some(identity) = resource.instance_identity() else {
@@ -6082,7 +6082,11 @@ fn execute_verified_function_applications_with_suspension(
                     )
                 }
             });
-            let (name, arguments) = match evaluate_function_resource_spec(
+            // Each argument keeps its declared snapshot. In particular, an
+            // `old(...)` argument uses entry read authority, not the fresh
+            // post-call memory used for current arguments.
+            let (name, arguments) = match evaluate_function_resource_spec_with_entry(
+                &entry_contract_state,
                 argument_state,
                 &instance_resource,
                 &effective_assumptions,
@@ -15101,15 +15105,15 @@ fn add_normalized_verified_ensure_facts(
     ensure_facts: &(impl ExecutionFactSource + ?Sized),
     ensure_obligations: &[ProofObligation],
 ) {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = ensure
+    else {
+        return;
+    };
     if !ensure_obligations.is_empty()
         || !crate::kernel::eval::proposition_mentions_registered_load_variable(ensure)
     {
         return;
     }
-    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = ensure
-    else {
-        return;
-    };
     let assumptions = assumptions_with_path_context(ensure_assumptions, ensure_facts, &[])
         .assume_proposition(ensure.clone());
     let constant_value = |term: &Bitvector32Term| {
@@ -15863,6 +15867,7 @@ fn with_contract_interface_argument_views(
     values: &[CValue],
 ) -> CState {
     let mut state = state.clone();
+    state.resources = state.resources.unpublished_contract_view();
     for (parameter, value) in interface.parameters().iter().zip(values) {
         if parameter.aggregate_layout().is_some() {
             // Aggregate parameters are already represented by the copied
@@ -25237,9 +25242,7 @@ pub(super) fn expand_all_composite_resource_facts(
 ) -> Option<ResourceContext> {
     let mut cached = context.clone();
     let supports = context
-        .facts()
-        .iter()
-        .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+        .composite_facts()
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -25284,7 +25287,7 @@ fn expand_checked_authority_controls(
 ) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let mut expanded = context.clone();
     let mut controls = Vec::new();
-    for fact in context.facts() {
+    for fact in context.composite_facts() {
         let CResource::Composite { name, .. } = fact.resource() else {
             continue;
         };
@@ -25439,7 +25442,9 @@ pub(super) fn expose_composite_resource_fact(
         if !seen.insert(context.clone()) {
             continue;
         }
-        if structural && context.satisfies_memory_fact_structurally(target) {
+        if (structural && context.satisfies_memory_fact_structurally(target))
+            || (!structural && context.satisfies_fact(target, assumptions))
+        {
             return Some(context);
         }
         // The composite whose pointer argument is the target's base by
@@ -25504,12 +25509,7 @@ fn expand_composite_resource_context(
 ) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let mut expanded = context.clone();
     let mut composites = Vec::new();
-    let roots = context
-        .facts()
-        .iter()
-        .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
-        .cloned()
-        .collect::<Vec<_>>();
+    let roots = context.composite_facts().cloned().collect::<Vec<_>>();
     for root in roots {
         expanded = expand_composite_resource_tree(
             &expanded,
@@ -29017,19 +29017,33 @@ fn resource_clause_position(resources: &[CResourceSpec], index: usize) -> (usize
         .unwrap_or((index, resources.len()))
 }
 
+fn annotate_resource_clause_error(error: CRuntimeError, note: String) -> CRuntimeError {
+    match error {
+        CRuntimeError::FunctionContract(message) => {
+            CRuntimeError::FunctionContract(format!("{message} ({note})"))
+        }
+        CRuntimeError::ContractResourceDiagnostic {
+            reason,
+            held,
+            required,
+            memory,
+        } => CRuntimeError::ContractResourceDiagnostic {
+            reason: format!("{reason} ({note})"),
+            held,
+            required,
+            memory,
+        },
+        error => error,
+    }
+}
+
 fn resource_clause_runtime_error(
     error: CRuntimeError,
     index: usize,
     resources: &[CResourceSpec],
 ) -> CRuntimeError {
-    let CRuntimeError::FunctionContract(message) = error else {
-        return error;
-    };
     let (index, total) = resource_clause_position(resources, index);
-    CRuntimeError::FunctionContract(format!(
-        "{message} ({})",
-        resource_clause_position_note(index, total)
-    ))
+    annotate_resource_clause_error(error, resource_clause_position_note(index, total))
 }
 
 /// Whether a clause failed for want of a value it had to read, which is the
@@ -29037,6 +29051,9 @@ fn resource_clause_runtime_error(
 /// a section that stalls on these as a pair; anything else is one clause's own
 /// problem.
 fn resource_clause_failure_awaits_supply(error: &CRuntimeError) -> bool {
+    if let CRuntimeError::ContractResourceDiagnostic { memory, .. } = error {
+        return memory.is_some();
+    }
     let CRuntimeError::FunctionContract(message) = error else {
         return false;
     };
@@ -29057,15 +29074,9 @@ fn resource_clause_cycle_runtime_error(
     other: usize,
     resources: &[CResourceSpec],
 ) -> CRuntimeError {
-    let CRuntimeError::FunctionContract(message) = error else {
-        return error;
-    };
     let (index, _) = resource_clause_position(resources, index);
     let (other, _) = resource_clause_position(resources, other);
-    CRuntimeError::FunctionContract(format!(
-        "{message} ({})",
-        resource_clause_stall_note(index, other)
-    ))
+    annotate_resource_clause_error(error, resource_clause_stall_note(index, other))
 }
 
 fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRuntimeError {
@@ -29642,20 +29653,46 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 Ok(references) => references,
                 Err(error) => return Ok(Err(error)),
             };
-            if instance.resource_arguments() != references.as_slice()
-                || quantity.as_const() != Some(1)
-                || instance.name() != name
-                || instance.schema() != schema
-                || instance.arguments().len() != arguments.len()
-                || !instance
+            let mismatch = if instance.resource_arguments() != references.as_slice() {
+                Some("resource reference arguments differ".to_owned())
+            } else if quantity.as_const() != Some(1) {
+                Some("the required quantity is not one".to_owned())
+            } else if instance.name() != name {
+                Some("resource families differ".to_owned())
+            } else if instance.schema() != schema {
+                Some("resource field schemas differ".to_owned())
+            } else if instance.arguments().len() != arguments.len() {
+                Some("resource argument counts differ".to_owned())
+            } else {
+                instance
                     .arguments()
                     .iter()
                     .zip(arguments.iter())
-                    .all(|(a, b)| crate::kernel::resource_arguments_proven_equal(a, b, assumptions))
-            {
-                return Ok(Err(CRuntimeError::FunctionContract(
-                    "named resource instance does not match its contract".into(),
-                )));
+                    .enumerate()
+                    .find(|(_, (a, b))| {
+                        !crate::kernel::resource_arguments_proven_equal(a, b, assumptions)
+                    })
+                    .map(|(index, _)| {
+                        format!(
+                            "equality of resource argument {} was not established",
+                            index + 1
+                        )
+                    })
+            };
+            if let Some(reason) = mismatch {
+                return Ok(Err(CRuntimeError::ContractResourceDiagnostic {
+                    reason: format!(
+                        "named resource instance does not match its contract: {reason}"
+                    ),
+                    held: Some(Box::new(CResourceFact::own(CResource::Instance(
+                        instance.clone(),
+                    )))),
+                    required: Box::new(CResourceFact::Own(
+                        CResource::Composite { name, arguments },
+                        quantity,
+                    )),
+                    memory: None,
+                }));
             }
             Ok(Ok(CResourceFact::own(CResource::Instance(
                 instance.clone(),
@@ -30255,15 +30292,29 @@ fn evaluate_function_declared_resource_spec(
                 Bitvector32Term::Constant(CType::Int32.byte_width()),
             ))
         } else {
-            match evaluate_loop_effect_segment_value(
+            let mut diagnostic = None;
+            match super::loops::evaluate_resource_argument_value(
                 argument_state,
                 argument,
                 assumptions,
-                &format!("resource `{name}` argument {index}"),
+                &format!("resource `{name}` argument {}", index + 1),
                 budget,
+                &mut diagnostic,
             )? {
                 Ok(value) => value,
                 Err(error) => {
+                    if let Some(mut diagnostic) = diagnostic {
+                        if let (
+                            Some(spelling),
+                            CRuntimeError::ContractResourceDiagnostic { reason, .. },
+                        ) = (
+                            source_arguments.and_then(|items| items.get(index)),
+                            &mut diagnostic,
+                        ) {
+                            *reason = format!("{reason}; expression `{spelling}`");
+                        }
+                        return Ok(Err(diagnostic));
+                    }
                     if let Some(spelling) = source_arguments.and_then(|items| items.get(index)) {
                         let action = match access {
                             CResourceAccessMode::Own => "owns",
@@ -30574,13 +30625,72 @@ fn retired_automatic_creation_blocks(state: &CState, after: &CMemory) -> Vec<Poi
         .collect()
 }
 
+type AutomaticLifetimeInput = (usize, usize, usize, usize, usize);
+
+struct AutomaticLifetimeRetirement {
+    // Pin the input roots so their addresses cannot be reused during a session.
+    input: CMemory,
+    blocks: Vec<PointerBlock>,
+    after: CMemory,
+}
+
+thread_local! {
+    static AUTOMATIC_LIFETIME_RETIREMENT: std::cell::RefCell<std::collections::HashMap<AutomaticLifetimeInput, AutomaticLifetimeRetirement>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(super) fn clear_automatic_lifetime_retirement() {
+    AUTOMATIC_LIFETIME_RETIREMENT.with(|memo| memo.borrow_mut().clear());
+}
+
+/// Only the physical transition is reused. Callers check current loan,
+/// mutex, population and return-value restrictions before calling this.
+fn retire_automatic_lifetime_blocks(before: &CMemory, blocks: &[PointerBlock]) -> CMemory {
+    if blocks.is_empty() {
+        return before.clone();
+    }
+    crate::instrumentation::record_deterministic_work(1);
+    let key = before.diagnostic_identity();
+    let reused = AUTOMATIC_LIFETIME_RETIREMENT.with(|memo| {
+        let memo = memo.borrow();
+        let retained = memo.get(&key)?;
+        if !before.same_storage_roots(&retained.input) || blocks.len() != retained.blocks.len() {
+            return None;
+        }
+        crate::instrumentation::record_deterministic_work(blocks.len());
+        (blocks == retained.blocks).then(|| retained.after.clone())
+    });
+    if let Some(after) = reused {
+        return after;
+    }
+    let after = blocks.iter().fold(before.clone(), |memory, block| {
+        memory.without_local_block(block)
+    });
+    AUTOMATIC_LIFETIME_RETIREMENT.with(|memo| {
+        memo.borrow_mut().insert(
+            key,
+            AutomaticLifetimeRetirement {
+                input: before.clone(),
+                blocks: blocks.to_vec(),
+                after: after.clone(),
+            },
+        );
+    });
+    after
+}
+
 fn end_inline_frame_automatic_lifetimes(state: &CState) -> Result<CMemory, CRuntimeError> {
-    let mut memory = state.memory.clone();
+    let memory = &state.memory;
+    let mut blocks = Vec::new();
+    let mut selected = BTreeSet::new();
     for slot in state.locals.slots() {
+        crate::instrumentation::record_deterministic_work(1);
         if !block_is_frame_scoped_automatic_object(&slot.block) {
             continue;
         }
         if !memory.has_block(&slot.block) {
+            continue;
+        }
+        if !selected.insert(slot.block.clone()) {
             continue;
         }
         if let Some(error) = super::mutexes::automatic_storage_refusal(
@@ -30596,9 +30706,9 @@ fn end_inline_frame_automatic_lifetimes(state: &CState) -> Result<CMemory, CRunt
         if let Some(error) = state.population_storage_retirement_refusal(&slot.block) {
             return Err(error);
         }
-        memory = memory.without_local_block(&slot.block);
+        blocks.push(slot.block.clone());
     }
-    Ok(memory)
+    Ok(retire_automatic_lifetime_blocks(memory, &blocks))
 }
 
 /// A non-inline body's declared locals have ended before its postconditions
@@ -30612,14 +30722,20 @@ fn end_function_body_automatic_lifetimes(
     caller: &CMemory,
     returned: Option<&CValue>,
 ) -> Result<CMemory, CRuntimeError> {
-    let mut memory = state.memory.clone();
+    let memory = &state.memory;
+    let mut blocks = Vec::new();
+    let mut selected = BTreeSet::new();
     for slot in state.locals.slots() {
+        crate::instrumentation::record_deterministic_work(1);
         if slot.block.starts_with("local:")
             && !(function.return_aggregate_layout().is_some()
                 && matches!(returned, Some(CValue::Pointer(pointer)) if pointer.pointer().block == slot.block))
             && !caller.has_block(&slot.block)
             && memory.has_block(&slot.block)
         {
+            if !selected.insert(slot.block.clone()) {
+                continue;
+            }
             if let Some(error) = super::mutexes::automatic_storage_refusal(
                 state,
                 state
@@ -30633,10 +30749,10 @@ fn end_function_body_automatic_lifetimes(
             if let Some(error) = state.population_storage_retirement_refusal(&slot.block) {
                 return Err(error);
             }
-            memory = memory.without_local_block(&slot.block);
+            blocks.push(slot.block.clone());
         }
     }
-    Ok(memory)
+    Ok(retire_automatic_lifetime_blocks(memory, &blocks))
 }
 
 /// Whether this block is an automatic object a call frame minted for itself,
@@ -31471,12 +31587,13 @@ fn contract_exit_outcome_with_boundary_transfer(
     let outcome = match outcome {
         CStatementOutcome::Return { value, mut state } => {
             if state.loan_view_bindings().iter().next().is_none() {
-                let resources = match ResourceContext::new()
-                    .try_compose_with_facts(state.resources.facts().iter().cloned(), assumptions)
-                {
-                    Ok(resources) => resources,
-                    Err(error) => return Ok(Err(resource_context_runtime_error(error))),
-                };
+                // Validate the retained partition, then normalize its representation.
+                // Re-inserting every fact into an empty context repeated all
+                // attachment work at each explicit path completion.
+                if let Some(error) = state.resources.validity_error(assumptions) {
+                    return Ok(Err(resource_context_runtime_error(error)));
+                }
+                let resources = state.resources.clone().normalized(assumptions);
                 state = Box::new(state.with_resource_context(resources));
             } else if state.resources.validity_error(assumptions).is_some()
                 || !state.loan_bindings_are_consistent()
@@ -32387,6 +32504,50 @@ mod population_creation_frame_tests {
     }
 
     #[test]
+    fn automatic_lifetime_reuse_tracks_exact_memory_and_retired_blocks() {
+        for size in [16usize, 32, 64, 128] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let blocks = (0..size)
+                .map(|i| PointerBlock::from(format!("local:lifetime:memo_{i}")))
+                .collect::<Vec<_>>();
+            let before = blocks.iter().fold(CMemory::new(), |memory, block| {
+                memory.with_block(block.clone(), 4)
+            });
+            let after = retire_automatic_lifetime_blocks(&before, &blocks);
+            let (repeated, work) = crate::instrumentation::measure_deterministic_work(|| {
+                retire_automatic_lifetime_blocks(&before, &blocks)
+            });
+            assert_eq!(after, repeated);
+            assert!(
+                work <= size + 1,
+                "retiring {size} exact blocks again rebuilt memory: {work}"
+            );
+            for block in &blocks {
+                assert!(!after.has_block(block));
+                assert!(after.is_ended_local_block(block));
+            }
+            // A sibling input must not evict the result needed when checking
+            // this branch again after execution has visited other outcomes.
+            let sibling = before.clone().with_block("caller:sibling", 4);
+            retire_automatic_lifetime_blocks(&sibling, &blocks);
+            let (interleaved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                retire_automatic_lifetime_blocks(&before, &blocks)
+            });
+            assert_eq!(interleaved, after);
+            assert!(
+                work <= size + 1,
+                "interleaved retirement rebuilt {size} blocks: {work}"
+            );
+            let partial = retire_automatic_lifetime_blocks(&before, &blocks[..size - 1]);
+            assert!(partial.has_block(&blocks[size - 1]));
+            let changed = before.clone().with_block("caller:preserved", 8);
+            let changed_after = retire_automatic_lifetime_blocks(&changed, &blocks);
+            assert!(changed_after.has_block(&PointerBlock::from("caller:preserved")));
+            assert!(!after.has_block(&PointerBlock::from("caller:preserved")));
+        }
+    }
+
+    #[test]
     fn ended_automatic_storage_retires_creation_evidence() {
         let function = c_function(CType::Int32, "scope", vec![], c_return(c_int32_literal(0)));
         for name in ["frame:holder", "lifetime:holder"] {
@@ -32553,6 +32714,7 @@ mod verified_call_initialization_tests {
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
                 loop_semantics: CLoopSemantics::Verify,
+                checked_callees: None,
                 applied_tactics: Default::default(),
             });
         execute_c_function_call_paths(
@@ -32853,6 +33015,7 @@ mod stable_view_call_tests {
         CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
             function: function.clone(),
             loop_semantics: CLoopSemantics::Verify,
+            checked_callees: None,
             applied_tactics: Default::default(),
         })
     }
@@ -33444,6 +33607,7 @@ mod stable_view_call_tests {
             CExecutionEnvironment::new().with_verified_function_rule(CVerifiedFunctionRule {
                 function: function.clone(),
                 loop_semantics: CLoopSemantics::Verify,
+                checked_callees: None,
                 applied_tactics: Default::default(),
             });
         let paths = execute_c_function_call_paths(
@@ -34212,6 +34376,7 @@ mod stable_view_call_tests {
             .with_verified_function_rule(CVerifiedFunctionRule {
                 function: inner,
                 loop_semantics: CLoopSemantics::Verify,
+                checked_callees: None,
                 applied_tactics: Default::default(),
             });
 

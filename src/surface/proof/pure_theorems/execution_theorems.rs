@@ -89,6 +89,9 @@ pub(super) fn verify_execution_theorem(
             Some(callback)
         }
     };
+    let concrete_callee =
+        concrete_callee.map(|name| spec_definitions.predicates.function_execution_name(name));
+    let call_name = concrete_callee.unwrap_or(&execution.callback);
     let mut names = BTreeSet::from([execution.callback.clone()]);
     for parameter in &execution.parameters {
         if !names.insert(parameter.name().to_string()) || parameter.name() == "result" {
@@ -275,7 +278,7 @@ pub(super) fn verify_execution_theorem(
         .collect();
     let body = if block.signature().return_type() == C0Type::Void {
         syntax::C0Statement::Call {
-            function_name: execution.callback.clone(),
+            function_name: call_name.to_string(),
             arguments,
             site: crate::languages::c::syntax::C0Site::NONE,
         }
@@ -283,7 +286,7 @@ pub(super) fn verify_execution_theorem(
         syntax::C0Statement::Seq(
             Box::new(syntax::C0Statement::CallAssign {
                 target: "result".into(),
-                function_name: execution.callback.clone(),
+                function_name: call_name.to_string(),
                 arguments,
                 site: crate::languages::c::syntax::C0Site::NONE,
             }),

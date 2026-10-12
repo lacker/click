@@ -1180,6 +1180,13 @@ route for a target contract with proof parameters, which `unfold(Name)` refuses.
 The [modeled-instance variant](https://github.com/clicklang/click/blob/master/mdtests/c_contract_executes_concrete_model.md)
 carries a tree instance through the same two maps.
 
+A concrete `static inline` callback uses its ordinary source spelling in both
+forms of refinement theorem. The contract fact refers to the same
+translation-unit-local function as a C initializer or call. If multiple
+translation units define that spelling, Click does not choose one or identify
+their function pointers. The [inline callback regression](https://github.com/clicklang/click/blob/master/mdtests/c_contract_inline_callback.md)
+checks both refinement forms and a static const callback table.
+
 ### Automatic formation at `&f`
 
 Passing `&f` where a named contract is required does not always need such a
@@ -2942,8 +2949,10 @@ under the LP64 profile. It is the spec spelling of the C cast
 `(unsigned long) pointer` and denotes the same kernel term: the address keeps
 the exact source pointer, so `address(p) == address(q)` is decided exactly as
 `p == q`, `address(p) == 0` as `p == 0`, and a comparison with an integer that
-has no pointer origin stays undecided. Contracts use it to describe words that
-hold a pointer in integer form, such as `ensures node->word == address(next)`
+has no pointer origin stays undecided. Rewriting the pointer to null reduces
+its address to `uint64` zero, also inside arithmetic with symbolic operands.
+Contracts use it to describe words that hold a pointer in integer form,
+such as `ensures node->word == address(next)`
 or, for a tagged word, `requires node->word == address(next) + 1`. Tag
 operations on such words (`+`, `|`, `& ~m`, `& m`) and the cast back to a
 pointer are checked rewrites whose obligations come from `aligned`; the

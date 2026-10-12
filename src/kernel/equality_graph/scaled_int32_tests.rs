@@ -165,3 +165,36 @@ fn scaled_int32_forks_do_not_reindex_unaffected_parents() {
         assert!(!graph.are_int32_equal(&scalar(20_000), &scalar(1)));
     }
 }
+
+#[test]
+fn learning_a_literal_does_not_revisit_unrelated_boolean_parents() {
+    let mut samples = Vec::new();
+    for size in [16u64, 64, 256, 1024] {
+        let mut graph = EqualityGraph::default();
+        for value in 0..size {
+            graph.add_condition(
+                &ConditionTerm::equal(scalar(1), Bitvector32Term::Constant(value as u32)),
+                false,
+            );
+        }
+        graph.add_offset_equality(&scaled(1, 4), &offset(10));
+        let sibling = graph.clone();
+        let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+            graph.add_int32_equality(&scalar(1), &Bitvector32Term::Constant(2048));
+            assert!(graph.are_offsets_equal(&offset(10), &PointerOffsetTerm::Constant(8192)));
+        });
+        assert!(!sibling.are_offsets_equal(&offset(10), &PointerOffsetTerm::Constant(8192)));
+        assert!(graph.knows_condition(
+            &ConditionTerm::equal(scalar(1), Bitvector32Term::Constant(0)),
+            false
+        ));
+        samples.push((size, work));
+    }
+    let (smallest, base) = samples[0];
+    for (size, work) in &samples {
+        assert!(
+            *work <= base + 8 * (size / smallest).ilog2() as usize,
+            "literal learning: {samples:?}"
+        );
+    }
+}

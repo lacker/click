@@ -34,5 +34,5 @@ void f(int32 a[], int32 n) {
 ```
 
 ```expect
-fail: `ensures g[0] == 5` failed for `f.ensures_1` path 0: unclosed goal: g[0] == 5; left side evaluated to 1, right side evaluated to 5
+fail: `ensures g[0] == 5` failed for `f.ensures_0` path 0: unclosed goal: g[0] == 5; left side evaluated to 1, right side evaluated to 5
 ```

@@ -314,7 +314,7 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
                     (CInput::PreparedProgram(import), Some(project)) => {
                         project_tactic_source_position(
                             project,
-                            &ProgramInputs::Program(import),
+                            &ProgramInputs::program(import),
                             claim,
                             source_index,
                         )

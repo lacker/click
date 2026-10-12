@@ -485,6 +485,7 @@ pub(super) fn instantiate_theorem(
             .iter()
             .map(|ensure| instantiate_ensure_clause(ensure, substitution, &algebraic_parameters))
             .collect::<Result<Vec<_>, _>>()?,
+        ensure_claim_ids: definition.ensure_claim_ids.clone(),
     })
 }
 

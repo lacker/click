@@ -1464,7 +1464,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                                 ),
                                 CInput::PreparedProgram(import) => project_tactic_source_position(
                                     &click_project,
-                                    &ProgramInputs::Program(import),
+                                    &ProgramInputs::program(import),
                                     claim,
                                     source_index,
                                 ),
@@ -2751,6 +2751,97 @@ fn rbtree_erase_color_flips_red_outer_requires_near_parent() {
     );
     assert!(
         error.contains("`have` failed for `tmp2->__rb_parent_color =="),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
+#[ignore = "nightly: propagated red-sibling inner repair verifies a whole sidecar"]
+fn rbtree_erase_color_flips_red_inner_right_requires_detached_child_link() {
+    let error = erase_source_replacement_error(
+        "rbtree_erase_color_flips_red_inner_right.click",
+        "rb_erase_color.c",
+        "WRITE_ONCE(sibling->rb_right, tmp1);",
+        "WRITE_ONCE(sibling->rb_right, parent);",
+        1,
+    );
+    assert!(
+        error.contains("rb_right == tmp1"),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
+#[ignore = "nightly: propagated red-sibling inner repair verifies a whole sidecar"]
+fn rbtree_erase_color_flips_red_inner_right_requires_inner_parent_link() {
+    let error = erase_source_replacement_error(
+        "rbtree_erase_color_flips_red_inner_right.click",
+        "rb_erase_color.c",
+        "WRITE_ONCE(tmp2->rb_left, sibling);",
+        "WRITE_ONCE(tmp2->rb_left, parent);",
+        1,
+    );
+    assert!(
+        error.contains("iid->rb_left == sid"),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
+#[ignore = "nightly: propagated red-sibling inner repair verifies a whole sidecar"]
+fn rbtree_erase_color_flips_red_all_requires_left_detached_child_link() {
+    let error = erase_source_replacement_error(
+        "rbtree_erase_color_flips_red_all.click",
+        "rb_erase_color.c",
+        "WRITE_ONCE(sibling->rb_left, tmp1);",
+        "WRITE_ONCE(sibling->rb_left, parent);",
+        1,
+    );
+    assert!(
+        error.contains("rb_left == tmp1"),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
+#[ignore = "nightly: propagated red-sibling inner repair verifies a whole sidecar"]
+fn rbtree_erase_color_flips_red_all_requires_left_inner_parent_link() {
+    let error = erase_source_replacement_error(
+        "rbtree_erase_color_flips_red_all.click",
+        "rb_erase_color.c",
+        "WRITE_ONCE(tmp2->rb_right, sibling);",
+        "WRITE_ONCE(tmp2->rb_right, parent);",
+        1,
+    );
+    assert!(
+        error.contains("iid->rb_right == sid"),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
+fn rbtree_erase_wrapper_uses_the_unchanged_pinned_callbacks_and_body() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let bytes = fs::read(root.join("examples/rbtree-erase/rb_erase.c"))
+        .expect("the pinned erase wrapper exists");
+    assert_eq!(
+        hex_digest(sha256(&bytes)),
+        "5854bdc7cdb7ec2d330c0f7aa15afb5f3c95983cf0a90f2ad0b608113a71b4b8"
+    );
+}
+
+#[test]
+#[ignore = "nightly: erase wrapper mutation verifies the combined repair sidecar"]
+fn rbtree_erase_wrapper_requires_nonnull_color_repair() {
+    let error = erase_source_replacement_error(
+        "rbtree_erase_color_flips_red_all.click",
+        "rb_erase.c",
+        "if (rebalance)",
+        "if (!rebalance)",
+        1,
+    );
+    assert!(
+        error.contains("requires a call to `____rb_erase_color` at the current frontier"),
         "unexpected refusal: {error}"
     );
 }

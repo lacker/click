@@ -1,8 +1,8 @@
 use super::validation::{combined_algebraic_type_definitions, standard_library_function_block};
 use super::*;
+use crate::languages::PreparedProgram;
 use crate::languages::c::compiler_import::PreparedCImport;
 use crate::languages::c::target::CTarget;
-use crate::languages::{PreparedProgram, PreparedProgramSource};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use std::cell::Cell;
@@ -112,15 +112,9 @@ pub fn take_sorry_admissions() -> Vec<SorryAdmission> {
 /// plain source map while leaving room for compiler-prepared inputs without
 /// ambient or global state.
 pub(in crate::surface) struct CSourceContext<'a> {
-    bundle: Option<BTreeMap<&'a str, &'a str>>,
-    imports: Option<&'a [PreparedCImport]>,
-    program_import: Option<PreparedProgram>,
-    program_execution: Option<Arc<crate::languages::PreparedExecution>>,
-    prepared_by_source: Option<BTreeMap<&'a str, &'a PreparedCImport>>,
-    prepared_project_identity: Option<String>,
+    source: ProgramSource<'a>,
     input_digest: [u8; 32],
     specification_digest: Option<[u8; 32]>,
-    prepared_duplicates: bool,
     parsed_units: RefCell<BTreeMap<String, Arc<syntax::C0TranslationUnit>>>,
     /// Bundle sources extracted from a larger file, from the Click project.
     /// Their locations are reported as lines of that file.
@@ -132,6 +126,25 @@ pub(in crate::surface) struct CSourceContext<'a> {
     prepared_parse_count: Cell<usize>,
 }
 
+/// The program a [`CSourceContext`] verifies.
+enum ProgramSource<'a> {
+    /// C sources, by path.
+    Bundle(BTreeMap<&'a str, &'a str>),
+    /// Compiler-prepared C imports, by logical source.
+    PreparedC {
+        imports: &'a [PreparedCImport],
+        by_source: BTreeMap<&'a str, &'a PreparedCImport>,
+        project_identity: String,
+        /// Whether two imports claim the same logical source.
+        duplicates: bool,
+    },
+    /// A prepared program of another language and its lowered execution.
+    Program {
+        import: PreparedProgram,
+        execution: Arc<crate::languages::PreparedExecution>,
+    },
+}
+
 /// The C translation units or prepared program a Click project verifies.
 pub enum ProgramInputs<'a> {
     /// C sources, by path.
@@ -139,7 +152,14 @@ pub enum ProgramInputs<'a> {
     /// Compiler-prepared C imports.
     Prepared(&'a [PreparedCImport]),
     /// A prepared program of another language.
-    Program(&'a dyn PreparedProgramSource),
+    Program(PreparedProgram),
+}
+
+impl ProgramInputs<'_> {
+    /// The inputs of a prepared program of another language.
+    pub fn program(import: impl Into<PreparedProgram>) -> Self {
+        Self::Program(import.into())
+    }
 }
 
 impl<'a> CSourceContext<'a> {
@@ -151,16 +171,11 @@ impl<'a> CSourceContext<'a> {
             parts.push(path.as_bytes());
             parts.push(source.as_bytes());
         }
+        let input_digest = digest_framed_parts(parts);
         Self {
-            bundle: Some(bundle),
-            imports: None,
-            program_import: None,
-            program_execution: None,
-            prepared_by_source: None,
-            prepared_project_identity: None,
-            input_digest: digest_framed_parts(parts),
+            source: ProgramSource::Bundle(bundle),
+            input_digest,
             specification_digest: None,
-            prepared_duplicates: false,
             parsed_units: RefCell::new(BTreeMap::new()),
             c_source_containers: BTreeMap::new(),
             _model_accessors: None,
@@ -211,20 +226,17 @@ impl<'a> CSourceContext<'a> {
             identity_parts.push(identity.as_bytes());
         }
         Self {
-            bundle: None,
-            imports: Some(imports),
-            program_import: None,
-            program_execution: None,
-            prepared_by_source: Some(
-                imports
+            source: ProgramSource::PreparedC {
+                imports,
+                by_source: imports
                     .iter()
                     .map(|import| (import.logical_source(), import))
                     .collect(),
-            ),
-            prepared_project_identity: Some(project_identity),
+                project_identity,
+                duplicates: duplicate_logical_source,
+            },
             input_digest: digest_framed_parts(identity_parts),
             specification_digest: None,
-            prepared_duplicates: duplicate_logical_source,
             parsed_units: RefCell::new(BTreeMap::new()),
             c_source_containers: BTreeMap::new(),
             _model_accessors: None,
@@ -236,9 +248,10 @@ impl<'a> CSourceContext<'a> {
     /// The contracts the prepared frontend supplies for library functions the
     /// program calls, parsed after the sidecar's own declarations.
     pub(in crate::surface) fn library_contracts(&self) -> &str {
-        self.program_execution
-            .as_ref()
-            .map_or("", |execution| execution.library_contracts.as_str())
+        match &self.source {
+            ProgramSource::Program { execution, .. } => &execution.library_contracts,
+            _ => "",
+        }
     }
 
     /// `click_source` followed by [`Self::library_contracts`]. Appending
@@ -253,29 +266,26 @@ impl<'a> CSourceContext<'a> {
         }
     }
 
-    pub(in crate::surface) fn program<P: PreparedProgramSource + ?Sized>(
-        import: &P,
+    pub(in crate::surface) fn program(
+        import: impl Into<PreparedProgram>,
     ) -> Result<Self, ClickError> {
-        let program = import.prepared_program();
+        let program = import.into();
         let program_execution = program.prepare_execution().map_err(ClickError::new)?;
         let model_accessors =
             super::diagnostics::ModelAccessorScope::enter(&program_execution.layouts);
         let input_digest = digest_framed_parts([
             b"click-typed-prepared-project-v1".as_slice(),
-            program.language().as_bytes(),
+            program.language().name().as_bytes(),
             program.logical_source().as_bytes(),
             program.identity().as_bytes(),
         ]);
         Ok(Self {
-            bundle: None,
-            imports: None,
-            program_execution: Some(program_execution),
-            prepared_by_source: None,
-            prepared_project_identity: Some(program.identity().to_string()),
+            source: ProgramSource::Program {
+                import: program,
+                execution: program_execution,
+            },
             input_digest,
-            program_import: Some(program),
             specification_digest: None,
-            prepared_duplicates: false,
             parsed_units: RefCell::new(BTreeMap::new()),
             c_source_containers: BTreeMap::new(),
             _model_accessors: model_accessors,
@@ -389,16 +399,36 @@ impl<'a> CSourceContext<'a> {
         match inputs {
             ProgramInputs::Bundle(sources) => Ok(Self::bundle(sources)),
             ProgramInputs::Prepared(imports) => Ok(Self::prepared(imports)),
-            ProgramInputs::Program(import) => Self::program(*import),
+            ProgramInputs::Program(import) => Self::program(import),
         }
     }
 
     fn bundle_sources(&self) -> Result<&BTreeMap<&'a str, &'a str>, ClickError> {
-        self.bundle.as_ref().ok_or_else(|| {
-            ClickError::new(
+        let ProgramSource::Bundle(bundle) = &self.source else {
+            return Err(ClickError::new(
                 "incremental source comparison is unavailable for compiler-prepared imports",
-            )
-        })
+            ));
+        };
+        Ok(bundle)
+    }
+
+    /// The compiler-prepared C import for `source_path`.
+    fn prepared_c_import(&self, source_path: &str) -> Option<&'a PreparedCImport> {
+        match &self.source {
+            ProgramSource::PreparedC { by_source, .. } => by_source.get(source_path).copied(),
+            _ => None,
+        }
+    }
+
+    /// The identity of a compiler-prepared program; `None` for C sources.
+    fn prepared_project_identity(&self) -> Option<&str> {
+        match &self.source {
+            ProgramSource::Bundle(_) => None,
+            ProgramSource::PreparedC {
+                project_identity, ..
+            } => Some(project_identity),
+            ProgramSource::Program { import, .. } => Some(import.identity()),
+        }
     }
 }
 
@@ -624,7 +654,7 @@ fn verify_click_file_theorems_with_environment(
     let predicate_definitions = combined_predicate_definitions(file)?;
     let click_function_definitions = combined_click_function_definitions(file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
-        .with_contracts(file.contract_definitions());
+        .with_contracts(file.contract_definitions(), &file.c_function_names);
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         &combined_algebraic_type_definitions(file)?,
@@ -708,7 +738,7 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
-        .with_contracts(file.contract_definitions());
+        .with_contracts(file.contract_definitions(), &file.c_function_names);
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         &combined_algebraic_type_definitions(&file)?,
@@ -730,7 +760,10 @@ pub(in crate::surface) fn verify_click_theorems_with_context(
         .flat_map(|theorem| contract_refinement_targets(&file, theorem.name()))
         .collect::<BTreeSet<_>>();
     for target in refinement_targets {
-        let Some(function) = function_environment.get_function(&target).cloned() else {
+        let Some(function) = function_environment
+            .get_function(file.c_function_names.get(&target).unwrap_or(&target))
+            .cloned()
+        else {
             continue;
         };
         if let Some(hypothesis) = crate::kernel::c_recursive_function_contract_hypothesis(function)
@@ -766,7 +799,7 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
-        .with_contracts(file.contract_definitions());
+        .with_contracts(file.contract_definitions(), &file.c_function_names);
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         &combined_algebraic_type_definitions(&file)?,
@@ -793,7 +826,10 @@ pub(in crate::surface) fn verify_click_project_theorem_context(
     )?
     .with_byte_order(file.selected_c_target().byte_order());
     for target in contract_refinement_targets(&file, theorem_name) {
-        let Some(function) = function_environment.get_function(&target).cloned() else {
+        let Some(function) = function_environment
+            .get_function(file.c_function_names.get(&target).unwrap_or(&target))
+            .cloned()
+        else {
             continue;
         };
         if let Some(hypothesis) = crate::kernel::c_recursive_function_contract_hypothesis(function)
@@ -1188,7 +1224,7 @@ pub fn verify_c0_prepared_project(
 /// ordinary verification never consults the source compiler.
 pub fn verify_program_prepared_project(
     project: &ClickProject,
-    import: &impl PreparedProgramSource,
+    import: impl Into<PreparedProgram>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::program(import)?.with_click_project(project);
@@ -1610,9 +1646,9 @@ impl C0VerificationSession {
 
     pub fn new_program_prepared(
         click_source: &str,
-        import: &impl PreparedProgramSource,
+        import: impl Into<PreparedProgram>,
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
-        Self::start(None, click_source, &ProgramInputs::Program(import))
+        Self::start(None, click_source, &ProgramInputs::program(import))
     }
 
     /// Starts a reusable verification session over a loaded Click module graph.
@@ -1632,9 +1668,9 @@ impl C0VerificationSession {
 
     pub fn new_program_prepared_project(
         project: &ClickProject,
-        import: &impl PreparedProgramSource,
+        import: impl Into<PreparedProgram>,
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
-        Self::start_project(project, &ProgramInputs::Program(import))
+        Self::start_project(project, &ProgramInputs::program(import))
     }
 
     fn start_project(
@@ -1702,7 +1738,7 @@ impl C0VerificationSession {
                         _ => None,
                     },
                     prepared_program_import: match inputs {
-                        ProgramInputs::Program(import) => Some(import.prepared_program()),
+                        ProgramInputs::Program(import) => Some(import.clone()),
                         _ => None,
                     },
                     baseline_file,
@@ -2257,7 +2293,7 @@ fn verify_c0_sources_in_context(
             &unselected_theorem_definitions,
         );
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
-            .with_contracts(file.contract_definitions());
+            .with_contracts(file.contract_definitions(), &file.c_function_names);
         let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
             &click_function_definitions,
             &combined_algebraic_type_definitions(&file)?,
@@ -2600,7 +2636,7 @@ fn verify_c0_sources_in_context(
                     )));
                 }
                 record_sorry_admission(
-                    format!("{}.contract", function_block.signature.name()),
+                    function_block.contract_claim_label(),
                     source_path.to_string(),
                 );
                 continue;
@@ -2709,9 +2745,9 @@ fn verify_c0_sources_in_context(
         {
             for claim in claims {
                 let claim_label = if has_explicit_claims {
-                    function_claim_label(function_block.signature.name(), &claim)
+                    function_claim_label(&function_block, &claim)
                 } else {
-                    format!("{}.body_safety", function_block.signature.name())
+                    claim_labels::body_safety_label(function_block.signature.name())
                 };
                 let theorems = match claim.proof() {
                     SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto) => {
@@ -2828,7 +2864,7 @@ fn verify_c0_sources_in_context(
                         parsed_function,
                         &resource_environment,
                         spec_definitions,
-                        &format!("{}.contract certification", function_block.signature.name()),
+                        &format!("{} certification", function_block.contract_claim_label()),
                         None,
                     )
                     .map_err(|error| error.at_declaration(function_block.signature.name()))?;
@@ -3382,7 +3418,7 @@ fn verify_c0_sources_in_context(
                                 .map_or("execution path".to_string(), |(path, _)| path.to_string()),
                             source_tactic_path: None,
                         },
-                        claim_label: format!("{}.contract", function_block.signature.name()),
+                        claim_label: function_block.contract_claim_label(),
                         reason: summary.clone(),
                         state: Some(Arc::new(state)),
                     };
@@ -3635,9 +3671,9 @@ fn verify_c0_sources_in_context(
     function_environment =
         function_environment.with_verified_function_termination_rules(termination_rules);
 
-    if c_sources.prepared_project_identity.is_some() {
+    if let Some(identity) = c_sources.prepared_project_identity() {
         for theorem in &mut verified {
-            theorem.import_identity = c_sources.prepared_project_identity.clone();
+            theorem.import_identity = Some(identity.to_string());
         }
     }
     let artifact_identity = c_sources.artifact_identity_with_runtime(
@@ -5106,10 +5142,7 @@ fn parse_c_source_unit(
     c_sources: &CSourceContext<'_>,
     target: CTarget,
 ) -> Result<syntax::C0TranslationUnit, ClickError> {
-    if let Some(import) = c_sources
-        .prepared_by_source
-        .as_ref()
-        .and_then(|imports| imports.get(source_path))
+    if let Some(import) = c_sources.prepared_c_import(source_path)
         && import.target() != target
     {
         return Err(ClickError::new(format!(
@@ -5121,7 +5154,7 @@ fn parse_c_source_unit(
     if let Some(unit) = c_sources.parsed_units.borrow().get(source_path) {
         return Ok((**unit).clone());
     }
-    let unit = if let Some(bundle) = &c_sources.bundle {
+    let unit = if let ProgramSource::Bundle(bundle) = &c_sources.source {
         let expanded =
             crate::languages::c::source::expand_includes_for_target(source_path, bundle, target)
                 .map_err(|error| {
@@ -5161,11 +5194,7 @@ fn parse_c_source_unit(
         c_sources
             .prepared_parse_count
             .set(c_sources.prepared_parse_count.get() + 1);
-        let import = c_sources
-            .prepared_by_source
-            .as_ref()
-            .and_then(|imports| imports.get(source_path).copied())
-            .ok_or_else(|| {
+        let import = c_sources.prepared_c_import(source_path).ok_or_else(|| {
                 ClickError::new(format!(
                     "import configuration has no prepared translation unit for verifying source `{source_path}`"
                 ))
@@ -5201,7 +5230,7 @@ fn file_scope_object_names(
     target: CTarget,
 ) -> Result<BTreeSet<String>, ClickError> {
     let mut names = BTreeSet::new();
-    if c_sources.program_import.is_some() {
+    if matches!(c_sources.source, ProgramSource::Program { .. }) {
         return Ok(names);
     }
     for source_path in super::verifying_source_paths(click_source)? {
@@ -5360,17 +5389,13 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
     let mut qualified_objects = BTreeMap::new();
     let mut local_struct_pointers = BTreeMap::new();
     let verifying_paths = super::verifying_source_paths(click_source)?;
-    if let Some(import) = c_sources.program_import.as_ref() {
+    if let ProgramSource::Program { import, execution } = &c_sources.source {
         if verifying_paths != vec![import.logical_source().to_string()] {
             return Err(ClickError::new(format!(
                 "prepared {} import logical source must exactly match the verifying clause",
                 import.language()
             )));
         }
-        let execution = c_sources
-            .program_execution
-            .as_ref()
-            .expect("prepared program execution");
         layouts = execution.layouts.clone();
         for function in &execution.functions {
             aggregate_objects.insert(
@@ -5380,6 +5405,7 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
             local_struct_pointers.insert(
                 function.source_name().to_string(),
                 parser::FunctionLocals {
+                    execution_name: Some(function.name().to_string()),
                     struct_pointers: function.local_struct_pointers().clone(),
                     references: function.local_references().clone(),
                 },
@@ -5395,8 +5421,13 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
             local_struct_pointers,
         ));
     }
-    if let Some(imports) = c_sources.imports {
-        if c_sources.prepared_duplicates {
+    if let ProgramSource::PreparedC {
+        imports,
+        duplicates,
+        ..
+    } = &c_sources.source
+    {
+        if *duplicates {
             return Err(ClickError::new(
                 "prepared imports contain duplicate logical translation-unit sources",
             ));
@@ -5728,6 +5759,7 @@ pub(in crate::surface) fn parse_c_layouts_for_target(
             // definitions sharing one source spelling leave no layouts rather
             // than guessing between them.
             let locals = parser::FunctionLocals {
+                execution_name: Some(function.name().to_string()),
                 struct_pointers: function.local_struct_pointers().clone(),
                 references: function.local_references().clone(),
             };
@@ -5759,28 +5791,11 @@ pub(in crate::surface) fn parse_verified_sources(
     file: &ClickFile,
     c_sources: &BTreeMap<&str, &str>,
 ) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
-    let context = CSourceContext {
-        bundle: Some(c_sources.clone()),
-        imports: None,
-        program_import: None,
-        program_execution: None,
-        prepared_by_source: None,
-        prepared_project_identity: None,
-        input_digest: digest_framed_parts(
-            std::iter::once(b"click-c-source-bundle-v1".as_slice()).chain(
-                c_sources
-                    .iter()
-                    .flat_map(|(path, source)| [path.as_bytes(), source.as_bytes()]),
-            ),
-        ),
-        specification_digest: None,
-        prepared_duplicates: false,
-        parsed_units: RefCell::new(BTreeMap::new()),
-        c_source_containers: BTreeMap::new(),
-        _model_accessors: None,
-        #[cfg(test)]
-        prepared_parse_count: Cell::new(0),
-    };
+    let sources = c_sources
+        .iter()
+        .map(|(path, source)| (*path, *source))
+        .collect::<Vec<_>>();
+    let context = CSourceContext::bundle(&sources);
     parse_verified_sources_context(file, &context)
 }
 
@@ -5852,7 +5867,7 @@ pub(in crate::surface) fn parse_verified_sources_context_with_entry(
         }
         // The runtime's declarations are Click's interface, never a
         // platform header, so a compiler import cannot supply them.
-        if c_sources.bundle.is_none() {
+        if !matches!(c_sources.source, ProgramSource::Bundle(_)) {
             return Err(ClickError::new(
                 "modeled-pthread runtime requires Click's built-in `<pthread.h>`; a compiler import cannot supply its declarations",
             ));
@@ -5876,17 +5891,14 @@ pub(in crate::surface) fn parse_verified_sources_context_with_entry(
         ));
     }
 
-    if let Some(import) = c_sources.program_import.as_ref() {
+    if let ProgramSource::Program { import, execution } = &c_sources.source {
         if file.verifying_sources != vec![import.logical_source().to_string()] {
             return Err(ClickError::new(format!(
                 "prepared {} import logical source must exactly match the verifying clause",
                 import.language()
             )));
         }
-        return Ok(c_sources
-            .program_execution
-            .as_ref()
-            .expect("prepared program execution")
+        return Ok(execution
             .functions
             .iter()
             .map(|function| {
@@ -8258,19 +8270,18 @@ pub(in crate::surface) fn resource_access_to_kernel(
     }
 }
 
+/// The label of `claim`, one of `function_block`'s claims or the implicit
+/// body-safety claim of a block without any
+/// ([`FunctionBlock::ensure_claim_label`]).
 pub(in crate::surface) fn function_claim_label(
-    function_name: &str,
+    function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
 ) -> String {
     match claim {
-        FunctionClaimRef::Ensure(index, ensure) => match ensure.name() {
-            Some(name) => format!("{function_name}.{name}"),
-            None => format!("{function_name}.ensures_{index}"),
-        },
-        FunctionClaimRef::ExceptionalEnsure(index, ensure) => match ensure.name() {
-            Some(name) => format!("{function_name}.{name}"),
-            None => format!("{function_name}.exceptional_ensures_{index}"),
-        },
+        FunctionClaimRef::Ensure(index, _) => function_block.ensure_claim_label(*index),
+        FunctionClaimRef::ExceptionalEnsure(index, _) => {
+            function_block.exceptional_ensure_claim_label(*index)
+        }
     }
 }
 

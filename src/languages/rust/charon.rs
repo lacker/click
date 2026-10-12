@@ -260,7 +260,7 @@ fn qualified_record_name(name: &a::Name, krate: &str) -> Result<String, String> 
     if root != krate || !d.is_zero() {
         return Err(unsupported("qualified declaration crate identity"));
     }
-    let mut encoded = "__rust_q".to_string();
+    let mut segments = Vec::with_capacity(name.name.len());
     for part in &name.name {
         let a::PathElem::Ident(n, d) = part else {
             return Err(unsupported("record path component"));
@@ -268,9 +268,9 @@ fn qualified_record_name(name: &a::Name, krate: &str) -> Result<String, String> 
         if !d.is_zero() {
             return Err(unsupported("disambiguated source declaration"));
         }
-        encoded.push_str(&format!("_I{}_{n}", n.len()));
+        segments.push(n.as_str());
     }
-    Ok(encoded)
+    Ok(super::names::qualified_name(segments))
 }
 impl Adapter<'_> {
     fn qualified_function_name(&self, name: &a::Name) -> Result<String, String> {
@@ -280,16 +280,15 @@ impl Adapter<'_> {
         if root != &self.krate.crate_name || !d.is_zero() {
             return Err(unsupported("qualified function crate identity"));
         }
-        let mut encoded = "__rust_q".to_string();
+        let mut encoded = super::names::qualified_name([]);
         for part in &name.name {
             match part {
                 a::PathElem::Ident(n, d) if d.is_zero() => {
-                    encoded.push_str(&format!("_I{}_{n}", n.len()))
+                    super::names::push_path_segment(&mut encoded, n)
                 }
                 a::PathElem::Impl(a::ImplElem::Ty(binder)) if binder.params.is_empty() => {
                     let id = self.record_id(&binder.skip_binder)?;
-                    let ty = &self.records[&id];
-                    encoded.push_str(&format!("_T{}_{ty}", ty.len()));
+                    super::names::push_impl_type(&mut encoded, &self.records[&id]);
                 }
                 _ => return Err(unsupported("qualified function path component")),
             }

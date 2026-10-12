@@ -507,6 +507,23 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    /// Keep the direct structural candidate and its loop-specific universal
+    /// closer inside a named leaf of a wide conjunction.
+    pub(in crate::surface::proof) fn try_direct_structural_closure_with_quantified(
+        &self,
+        quantified: &mut dyn FnMut(&Proof<'a>) -> Result<Option<Proof<'a>>, ClickError>,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self
+            .body
+            .try_direct_structural_closure_with_quantified(quantified)?
+        else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     /// Runs the migrated `simp` search inside the nested proof and retains
     /// the accepted descendant directly.
     /// Whether execution inside the scope reached function exit.

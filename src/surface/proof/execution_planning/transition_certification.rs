@@ -659,7 +659,15 @@ fn certified_transitions_from_execution(
                     // Uncharged with the list's own transport context; see
                     // `PureFactList::direct_transport_context`.
                     premises.into_iter().fold(
-                        pure_facts.direct_transport_context(),
+                        if matches!(fact_transport_policy, StatementFactTransportPolicy::None) {
+                            // A checked simple step already executed under this
+                            // exact context. Reuse its indexed graph rather than
+                            // rebuilding every enclosing branch condition solely
+                            // to normalize the statement's own call facts.
+                            executed_under.clone()
+                        } else {
+                            pure_facts.direct_transport_context()
+                        },
                         |context, fact| context.assume_proposition_uncharged(fact),
                     )
                 })

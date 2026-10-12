@@ -2528,3 +2528,96 @@ fn long_theorem_traces_retain_every_step_and_reach_late_targets() {
         });
     }
 }
+
+/// Retargeting changes a resource's index; the next call must show both
+/// actual indices and identify the equality it rejected.
+#[test]
+fn call_resource_diagnostic_shows_the_rejected_argument() {
+    let c = r#"void retarget(int32 *p, int32 *q, int32 *anchor) {}
+void call(int32 *p, int32 *q, int32 *anchor) { retarget(p, q, anchor); retarget(p, q, anchor); }
+"#;
+    let source = r#"verifying "call_produced_reuse_requires_new_argument.c";
+resource cursor(p: int32*, anchor: int32*) {
+    field tag: int32;
+    owns *anchor;
+}
+void retarget(int32* p, int32* q, int32* anchor) {
+    consumes a: cursor(p, anchor);
+    produces b: cursor(q, anchor);
+    ensures b.tag == old(a.tag);
+} by {
+    unfold(a);
+    let b = fold(cursor(q, anchor), { tag: old(a.tag) });
+    execute(); simp();
+}
+void call(int32* p, int32* q, int32* anchor) {
+    requires p != q;
+    consumes c: cursor(p, anchor);
+    produces *anchor;
+} by {
+    let { b: c } = step(retarget(p, q, anchor), { a: c });
+    let { b: d } = step(retarget(p, q, anchor), { a: c });
+    unfold(d);
+    execute(); simp();
+}
+"#;
+    for tracing in [false, true] {
+        let check = || {
+            let error = verify_c0_sources(
+                source,
+                &[("call_produced_reuse_requires_new_argument.c", c)],
+            )
+            .expect_err("the second call requires the old index");
+            let message = error.message();
+            assert!(
+                message.contains("equality of resource argument 1 was not established"),
+                "{message}"
+            );
+            assert!(message.contains("held:"), "{message}");
+            assert!(message.contains("cursor(ptr<int32*>(q)"), "{message}");
+            assert!(
+                message.contains("required: owns cursor(ptr<int32*>(p)"),
+                "{message}"
+            );
+        };
+        if tracing {
+            with_proof_trace("call", check);
+        } else {
+            check();
+        }
+    }
+}
+
+#[test]
+fn call_resource_diagnostic_read_shows_snapshot_and_access() {
+    use crate::kernel::{Bitvector32Term, CMemoryRange, Pointer, PointerBlock, PointerOffsetTerm};
+    let address = Pointer {
+        block: PointerBlock::Concrete("selected_child_cell".into()),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let required = CResourceFact::View(crate::kernel::CResource::Memory(CMemoryRange::new(
+        address,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    )));
+    let error = crate::kernel::CRuntimeError::ContractResourceDiagnostic {
+        reason: "resource `child` argument 1 could not be evaluated: required access authority is unavailable".into(),
+        held: None,
+        required: Box::new(required),
+        memory: Some(Box::new(crate::kernel::CMemory::new())),
+    };
+    let rendered = super::diagnostics::describe_runtime_error(&error, &[], &[]);
+    assert!(
+        rendered.contains("argument read snapshot: snapshot#1"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("required: views memory(value#1"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("selected_child_cell"), "{rendered}");
+    assert!(
+        rendered.contains("snapshot#1 = initial empty memory"),
+        "{rendered}"
+    );
+}

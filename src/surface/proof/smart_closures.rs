@@ -1673,7 +1673,9 @@ impl<'a> Proof<'a> {
             let mut proof = self.clone();
             for surface in surfaces {
                 let scope = proof.begin_have(surface)?;
-                let Some(closed) = scope.try_simp_closure()? else {
+                let Some(closed) =
+                    scope.try_direct_structural_closure_with_quantified(quantified)?
+                else {
                     return Ok(None);
                 };
                 proof = closed.join()?;
@@ -6305,6 +6307,21 @@ impl<'a> Proof<'a> {
             .iter()
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
+        // Increment-order rules have a checked named theorem certificate.
+        // Avoid building speculative graph-normalization contexts for this
+        // shape, while preserving the ordinary normalization choices elsewhere.
+        let increment_order = signed_nonstrict_parts(goal)
+            .or_else(|| signed_strict_parts(goal))
+            .is_some_and(|(left, right)| {
+                [left, right].iter().any(|term| {
+                    matches!(term, Bitvector32Term::Add(left, right) if left.as_ref() == &Bitvector32Term::Constant(1) || right.as_ref() == &Bitvector32Term::Constant(1))
+                })
+            });
+        if increment_order
+            && let Some(closed) = proof.try_typed_atomic_simp_from_selected_premises(&premise_pairs)
+        {
+            return Some(closed);
+        }
         if crate::kernel::proof::fact_reasoning::is_single_normalization_condition(goal)
             || !crate::kernel::proof::term_rewrite::TermRewrite::conditional_guards(goal).is_empty()
         {

@@ -1146,6 +1146,16 @@ impl ResourceContext {
         Self::default()
     }
 
+    /// A temporary contract-reading view retains every resource and dependency,
+    /// but must not publish synthetic argument permissions into an ambient
+    /// prepared equality index. Its queries prepare only their selected input.
+    pub(crate) fn unpublished_contract_view(&self) -> Self {
+        let mut view = self.clone();
+        view.memory_equalities = Default::default();
+        view.observable_projection = Default::default();
+        view
+    }
+
     /// Begin a fresh resource lineage in the current trusted equality graph.
     /// Capturing the empty input is constant work; later inserts maintain its
     /// paired indexes through deltas. This establishes publication only, not
@@ -1226,8 +1236,20 @@ impl ResourceContext {
         if !std::sync::Arc::ptr_eq(&self.storage.origin, &previous.storage.origin) {
             return None;
         }
-        let mut left = self.storage.history.as_ref();
-        let mut right = previous.storage.history.as_ref();
+        let (current, prior) = match (
+            &self.storage.observable_projection_source,
+            &previous.storage.observable_projection_source,
+        ) {
+            (Some((key, current)), Some((prior_key, prior)))
+                if std::sync::Arc::ptr_eq(key, prior_key) =>
+            {
+                (current.as_ref(), prior.as_ref())
+            }
+            (None, None) => (self.storage.as_ref(), previous.storage.as_ref()),
+            _ => return None,
+        };
+        let mut left = current.history.as_ref();
+        let mut right = prior.history.as_ref();
         let mut changed = BTreeSet::new();
         while !Self::history_tail_is(left, right) {
             crate::instrumentation::record_deterministic_work(1);
@@ -1990,9 +2012,11 @@ impl ResourceContext {
                     .as_ref()
                     .map_or(1, |change| change.depth + 1),
                 entry_delta: Some((entry, true)),
+                metadata_only: false,
                 fact,
                 parent: self.storage.history.clone(),
             })),
+            observable_projection_source: None,
             materialized: std::sync::OnceLock::new(),
         });
         self.advance_published_resource_entries();
@@ -2042,15 +2066,11 @@ impl ResourceContext {
             .any(|occurrence| self.loan_dependencies.map.get(occurrence).is_some())
         {
             let map = removed_occurrences
-                .into_iter()
+                .iter()
                 .fold(self.loan_dependencies.map.clone(), |map, occurrence| {
-                    map.without_key(&occurrence)
+                    map.without_key(occurrence)
                 });
-            self.loan_dependencies =
-                std::sync::Arc::new(crate::kernel::loans::LoanViewBindingsState {
-                    identity: crate::kernel::loans::next_loan_binding_identity(),
-                    map,
-                });
+            self.loan_dependencies = self.loan_dependencies.updated(map, removed_occurrences);
         }
         fact
     }
@@ -2196,9 +2216,11 @@ impl ResourceContext {
                     .as_ref()
                     .map_or(1, |change| change.depth + 1),
                 entry_delta: Some((entry, false)),
+                metadata_only: false,
                 fact: fact.clone(),
                 parent: self.storage.history.clone(),
             })),
+            observable_projection_source: None,
             materialized: std::sync::OnceLock::new(),
         });
         self.advance_published_resource_entries();
@@ -2268,6 +2290,7 @@ impl ResourceContext {
             expansions_by_support_entry,
             origin: self.storage.origin.clone(),
             history: self.storage.history.clone(),
+            observable_projection_source: None,
             materialized: std::sync::OnceLock::new(),
         });
     }
@@ -2307,6 +2330,7 @@ impl ResourceContext {
             history = Some(std::sync::Arc::new(ResourceContextChange {
                 depth: history.as_ref().map_or(1, |change| change.depth + 1),
                 entry_delta: None,
+                metadata_only: false,
                 fact,
                 parent: history,
             }));
@@ -2331,6 +2355,7 @@ impl ResourceContext {
             expansions_by_support_entry: PersistentMap::default(),
             origin: self.storage.origin.clone(),
             history,
+            observable_projection_source: None,
             materialized: std::sync::OnceLock::new(),
         });
         self.rebuild_paired_memory_entries();
@@ -3818,6 +3843,61 @@ impl ResourceContext {
         !(concrete(first) && owned.all(concrete))
     }
 
+    /// Find one exposed member through address keys, never through ambient
+    /// resources. Borrowed members require an occurrence-bound checked loan;
+    /// an owner's ordinary read observation is deliberately ineligible.
+    pub(in crate::kernel) fn partition_memory_member_at(
+        &self,
+        pointer: &Pointer,
+        borrowed: bool,
+        accepts: impl Fn(&CMemoryRange) -> bool,
+    ) -> Option<&CMemoryRange> {
+        let mut base = pointer.clone();
+        loop {
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(entries) = self.storage.index.memory_by_base.get(&base) {
+                for entry in entries.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let fact = self.fact(*entry);
+                    let range = if borrowed {
+                        let Some(binding) = self.loan_dependency(self.occurrence(*entry)) else {
+                            continue;
+                        };
+                        if binding.viewed != *fact {
+                            continue;
+                        }
+                        fact.memory_view_range()
+                    } else {
+                        fact.memory_own_range()
+                    };
+                    if let Some(range) = range.filter(|range| accepts(range)) {
+                        return Some(range);
+                    }
+                }
+            }
+            base.offset = match &base.offset {
+                PointerOffsetTerm::Add(left, _) => (**left).clone(),
+                PointerOffsetTerm::Constant(value) if *value != 0 => PointerOffsetTerm::Constant(0),
+                _ => return None,
+            };
+        }
+    }
+
+    /// A checked live borrow and a separately held owner belong to disjoint
+    /// custody partitions. The loan binding follows checked composite
+    /// projections; observation alone never manufactures such a binding.
+    pub(in crate::kernel) fn proves_borrow_partition_separate(
+        &self,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+    ) -> bool {
+        let holds = |range: &CMemoryRange, borrowed| {
+            self.partition_memory_member_at(range.base(), borrowed, |member| member == range)
+                .is_some()
+        };
+        (holds(left, false) && holds(right, true)) || (holds(left, true) && holds(right, false))
+    }
+
     /// Two distinct owned members of `block`, the first accepted by `left`
     /// and the second by `right`, that the composition law separates: the
     /// on-demand form of the same-block separations a valid composition
@@ -4445,9 +4525,11 @@ impl ResourceContext {
                     .as_ref()
                     .map_or(1, |change| change.depth + 1),
                 entry_delta: None,
+                metadata_only: true,
                 fact: support.clone(),
                 parent: self.storage.history.clone(),
             })),
+            observable_projection_source: None,
             materialized: std::sync::OnceLock::new(),
         });
         self.rekey_cached_support_entries(support);
@@ -4554,6 +4636,7 @@ impl ResourceContext {
             expansions_by_support_entry: self.storage.expansions_by_support_entry.clone(),
             origin: self.storage.origin.clone(),
             history: self.storage.history.clone(),
+            observable_projection_source: None,
             materialized: std::sync::OnceLock::new(),
         });
         let support = self.fact(support_entry).clone();
@@ -4913,6 +4996,23 @@ impl ResourceContext {
             .get_or_init(|| self.iter().cloned().collect())
     }
 
+    /// Select folded composites without materializing unrelated memory facts.
+    pub(in crate::kernel) fn composite_facts(&self) -> impl Iterator<Item = &CResourceFact> {
+        let entries = self
+            .storage
+            .index
+            .exact_shapes
+            .iter()
+            .skip_while(|((family, _, _), _)| *family < ResourceFamily::Composite)
+            .take_while(|((family, _, _), _)| *family == ResourceFamily::Composite)
+            .flat_map(|(_, entries)| entries.iter().copied())
+            .collect::<BTreeSet<_>>();
+        entries
+            .into_iter()
+            .map(|entry| self.fact(entry))
+            .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+    }
+
     /// Whether the context is a partition under `assumptions`, and the first
     /// violation in the canonical order if not.
     ///
@@ -5164,48 +5264,242 @@ impl ResourceContext {
 
     /// Projects facts from a resource composition whose validity has already
     /// been established by an enclosing resource law.
+    fn retained_observable_projection(&self, registry: &std::sync::Arc<()>) -> Option<Self> {
+        let previous = self
+            .observable_projection
+            .lock()
+            .expect("observable resource projection")
+            .clone()?;
+        if !std::sync::Arc::ptr_eq(registry, &previous.registry)
+            || !std::sync::Arc::ptr_eq(&self.storage.origin, &previous.source.origin)
+        {
+            return None;
+        }
+        let mut composition = self.clone();
+        composition.storage = previous.projected;
+        composition.memory_equalities = Default::default();
+        if std::sync::Arc::ptr_eq(&self.storage, &previous.source) {
+            return Some(composition);
+        }
+        let mut current = self.storage.history.as_ref();
+        let mut cached = previous.source.history.as_ref();
+        let mut changed = BTreeSet::new();
+        let mut metadata_supports = BTreeSet::new();
+        while !Self::history_tail_is(current, cached) {
+            let current_depth = current.map_or(0, |change| change.depth);
+            let cached_depth = cached.map_or(0, |change| change.depth);
+            if current_depth >= cached_depth {
+                let change = current?;
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some((entry, _)) = change.entry_delta {
+                    changed.insert(entry);
+                } else if change.metadata_only {
+                    metadata_supports.insert(change.fact.clone());
+                } else {
+                    return None;
+                }
+                current = change.parent.as_ref();
+            } else {
+                let change = cached?;
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some((entry, _)) = change.entry_delta {
+                    changed.insert(entry);
+                } else if change.metadata_only {
+                    metadata_supports.insert(change.fact.clone());
+                } else {
+                    return None;
+                }
+                cached = change.parent.as_ref();
+            }
+        }
+        if changed.is_empty() && !self.storage.facts.shares_root_with(&previous.source.facts) {
+            return None;
+        }
+        for support in metadata_supports {
+            for storage in [&self.storage, &previous.source] {
+                if let Some(entries) = storage.index.exact.get(&support) {
+                    for entry in entries.iter() {
+                        crate::instrumentation::record_deterministic_work(1);
+                        changed.insert(*entry);
+                    }
+                }
+            }
+        }
+        // Replacing an owner also removes its dependent observations. Mirror
+        // only this affected closure, retaining every unrelated private owner.
+        let mut pending = changed.iter().copied().collect::<Vec<_>>();
+        while let Some(entry) = pending.pop() {
+            for storage in [&self.storage, &previous.source] {
+                let Some(occurrence) = storage.occurrence_by_entry.get(&entry) else {
+                    continue;
+                };
+                if let Some(projections) = storage.projections_by_support_occurrence.get(occurrence)
+                {
+                    for projection in projections.iter() {
+                        crate::instrumentation::record_deterministic_work(1);
+                        if changed.insert(*projection) {
+                            pending.push(*projection);
+                        }
+                    }
+                }
+            }
+        }
+        for entry in &changed {
+            if composition.storage.facts.contains_key(entry) {
+                composition.remove_entry(*entry);
+            }
+        }
+        // Ordinary authorities precede supported observations. If a producer
+        // needs a more complex dependency order, use the complete projection.
+        for supported in [false, true] {
+            for entry in &changed {
+                let Some(fact) = self.storage.facts.get(entry) else {
+                    continue;
+                };
+                let support = self.storage.supported_by.get(entry).cloned();
+                if support.is_some() != supported {
+                    continue;
+                }
+                let hidden = fact.memory_range().is_some_and(|range| {
+                    crate::kernel::block_is_never_address_taken_local(&range.base().block)
+                        && self
+                            .storage
+                            .index
+                            .owned_automatic_memory_by_block
+                            .get(&range.base().block)
+                            .is_some_and(|entries| entries.contains(entry))
+                });
+                if hidden {
+                    continue;
+                }
+                if let Some(owner) = &support
+                    && !composition.storage.index.exact.contains_key(owner)
+                    && self
+                        .storage
+                        .support_occurrence_by_projection
+                        .get(entry)
+                        .is_none()
+                {
+                    if owner.memory_range().is_some_and(|range| {
+                        crate::kernel::block_is_never_address_taken_local(&range.base().block)
+                    }) {
+                        continue;
+                    }
+                    return None;
+                }
+                let support_occurrence = self
+                    .storage
+                    .support_occurrence_by_projection
+                    .get(entry)
+                    .copied();
+                if let Some(occurrence) = support_occurrence
+                    && !composition
+                        .storage
+                        .entry_by_occurrence
+                        .contains_key(&occurrence)
+                {
+                    let source_entry = self.storage.entry_by_occurrence.get(&occurrence)?;
+                    let owner = self.fact(*source_entry);
+                    if owner.memory_range().is_some_and(|range| {
+                        crate::kernel::block_is_never_address_taken_local(&range.base().block)
+                    }) {
+                        continue;
+                    }
+                    return None;
+                }
+                std::sync::Arc::make_mut(&mut composition.storage).next_entry_id = *entry;
+                composition.insert_fact_with_support_occurrence_and_metadata_at(
+                    fact.clone(),
+                    support,
+                    support_occurrence,
+                    self.storage
+                        .support_metadata_by_projection
+                        .get(&self.occurrence(*entry))
+                        .cloned(),
+                    Some(self.occurrence(*entry)),
+                );
+            }
+        }
+        for entry in &changed {
+            let Some(occurrence) = self.storage.occurrence_by_entry.get(entry) else {
+                continue;
+            };
+            if let Some(expansion) = self
+                .storage
+                .expansions_by_support_occurrence
+                .get(occurrence)
+                && composition
+                    .storage
+                    .entry_by_occurrence
+                    .contains_key(occurrence)
+            {
+                crate::instrumentation::record_deterministic_work(expansion.len());
+                composition = composition.with_cached_supported_expansion_for_occurrence(
+                    *occurrence,
+                    self.fact(*entry),
+                    expansion.as_ref().clone(),
+                );
+            }
+        }
+        std::sync::Arc::make_mut(&mut composition.storage).next_entry_id =
+            self.storage.next_entry_id;
+        Some(composition)
+    }
+
     pub(crate) fn observable_facts_assuming_valid(
         &self,
         assumptions: &PureFactContext,
     ) -> Vec<Proposition> {
-        let mut propositions = Vec::new();
-        let memory_facts = self
-            .iter()
-            .filter(|fact| fact.family() == ResourceFamily::Memory)
-            .collect::<Vec<_>>();
-        propositions.extend(MEMORY_RESOURCE_ALGEBRA.observable_facts(&memory_facts, assumptions));
-        // Two owned members are pairwise separate, and one owned composite
-        // expands to several: either way the composition is what a frame
-        // check consults for ownership-derived disjointness.
-        // Unaddressable automatic storage cannot contribute a nonstructural
-        // separation: no program pointer can reach it. Keep its permissions
-        // in the execution context, but leave it out of the observable
-        // composition so unrelated declarations do not restate a memory frame.
-        let mut composition = self.clone();
+        // Memory permissions expose their composition, rather than eager
+        // pairwise propositions. No scan of all memory facts is needed here.
+        let mut propositions = MEMORY_RESOURCE_ALGEBRA.observable_facts(&[], assumptions);
+        // Unaddressable private owners are omitted from this scratch view.
+        let registry = crate::kernel::primitives::never_address_taken_locals_key();
+        let retained = self.retained_observable_projection(&registry);
+        let mut composition = retained.clone().unwrap_or_else(|| self.clone());
         let mut detached_pairings = false;
-        for (block, entries) in self.storage.index.owned_automatic_memory_by_block.iter() {
-            crate::instrumentation::record_deterministic_work(1);
-            if crate::kernel::block_is_never_address_taken_local(block) {
-                if !detached_pairings {
-                    // This is a scratch projection, not a published execution
-                    // resource delta. Do not advance the source's prepared
-                    // equality inputs once per discarded private owner: those
-                    // intermediate compositions will never answer a query.
-                    // Pair only the final retained composition when it is used.
-                    composition.memory_equalities = Default::default();
-                    detached_pairings = true;
-                }
-                for entry in entries.iter() {
-                    crate::instrumentation::record_deterministic_work(1);
-                    composition.remove_entry(*entry);
+        if retained.is_none() {
+            for (block, entries) in self.storage.index.owned_automatic_memory_by_block.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                if crate::kernel::block_is_never_address_taken_local(block) {
+                    if !detached_pairings {
+                        // This is a scratch projection, not a published execution
+                        // resource delta. Do not advance the source's prepared
+                        // equality inputs once per discarded private owner: those
+                        // intermediate compositions will never answer a query.
+                        // Pair only the final retained composition when it is used.
+                        composition.memory_equalities = Default::default();
+                        detached_pairings = true;
+                    }
+                    for entry in entries.iter() {
+                        crate::instrumentation::record_deterministic_work(1);
+                        composition.remove_entry(*entry);
+                    }
                 }
             }
         }
+        if detached_pairings || retained.is_some() {
+            std::sync::Arc::make_mut(&mut composition.storage).observable_projection_source =
+                Some((registry.clone(), self.storage.clone()));
+        }
+        *self
+            .observable_projection
+            .lock()
+            .expect("observable resource projection") = Some(ObservableResourceProjection {
+            registry,
+            source: self.storage.clone(),
+            projected: composition.storage.clone(),
+        });
+        // A fact consumer may project this observation again. Its scratch
+        // lineage must not replace the execution source's retained checkpoint.
+        composition.observable_projection = Default::default();
         let owned = composition.iter().filter(|fact| fact.is_own());
-        let owned_composite = composition
-            .iter()
-            .any(|fact| fact.is_own() && matches!(fact.resource(), CResource::Composite { .. }));
-        if owned.count() >= 2 || owned_composite {
+        let owned_composite = composition.composite_facts().any(|fact| fact.is_own());
+        let owned_count = owned.take(2).count();
+        if owned_count >= 2
+            || owned_composite
+            || (owned_count == 1 && !composition.loan_dependencies.map.is_empty())
+        {
             propositions.push(Proposition::CResourceComposition(composition));
         }
         propositions
@@ -6003,6 +6297,7 @@ impl ResourceContext {
                 expansions_by_support_entry: PersistentMap::default(),
                 origin: self.storage.origin.clone(),
                 history: self.storage.history.clone(),
+                observable_projection_source: None,
                 materialized: std::sync::OnceLock::new(),
             });
             return self

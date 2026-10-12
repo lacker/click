@@ -3593,7 +3593,12 @@ impl AnnotationLowerer<'_> {
                     let function = match contract_expression_function_address(function) {
                         Some(target) => {
                             SpecExpression::CExpression(CExpression::Value(CValue::typed_pointer(
-                                Pointer::function(target.to_string()),
+                                Pointer::function(
+                                    self.spec_definitions
+                                        .predicates
+                                        .function_execution_name(target)
+                                        .to_string(),
+                                ),
                                 signature.to_kernel_type(),
                             )))
                         }

@@ -8,11 +8,56 @@ pub(crate) mod compiler_process;
 pub mod cpp;
 pub mod rust;
 
+/// The language a program's sources are written in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceLanguage {
+    C,
+    Cpp,
+    Rust,
+}
+
+impl SourceLanguage {
+    /// The language of the source a `verifying` clause names, by its
+    /// extension.
+    pub fn of_source_path(path: &str) -> Self {
+        if path.ends_with(".rs") {
+            Self::Rust
+        } else if path.ends_with(".cpp") {
+            Self::Cpp
+        } else {
+            Self::C
+        }
+    }
+
+    /// The language of a file's `verifying` sources: Rust when any is a Rust
+    /// source, since that decides which signature syntax the sidecar admits.
+    pub fn of_sources<'p>(paths: impl IntoIterator<Item = &'p str>) -> Self {
+        paths
+            .into_iter()
+            .map(Self::of_source_path)
+            .max_by_key(|language| *language == Self::Rust)
+            .unwrap_or(Self::C)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::C => "C",
+            Self::Cpp => "C++",
+            Self::Rust => "Rust",
+        }
+    }
+}
+
+impl std::fmt::Display for SourceLanguage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum PreparedCompilerImport {
     C(Vec<c::compiler_import::PreparedCImport>),
-    Cpp(cpp::PreparedCppImport),
-    Rust(rust::PreparedRustImport),
+    Program(PreparedProgram),
 }
 
 fn import_language(config_path: &Path) -> Result<Option<String>, String> {
@@ -38,8 +83,10 @@ fn import_language(config_path: &Path) -> Result<Option<String>, String> {
 
 pub fn load_compiler_import(config_path: &Path) -> Result<PreparedCompilerImport, String> {
     match import_language(config_path)?.as_deref() {
-        Some("c++") => cpp::load_import(config_path).map(PreparedCompilerImport::Cpp),
-        Some("rust") => rust::load_import(config_path).map(PreparedCompilerImport::Rust),
+        Some("c++") => cpp::load_import(config_path)
+            .map(|import| PreparedCompilerImport::Program(import.into())),
+        Some("rust") => rust::load_import(config_path)
+            .map(|import| PreparedCompilerImport::Program(import.into())),
         Some(language) => Err(format!("unsupported compiler import language `{language}`")),
         None => c::compiler_import::load_imports(config_path).map(PreparedCompilerImport::C),
     }
@@ -67,8 +114,8 @@ pub enum PreparedProgram {
 impl PreparedProgram {
     pub(crate) fn prepare_execution(&self) -> Result<std::sync::Arc<PreparedExecution>, String> {
         match self {
-            Self::Cpp(import) => Ok(cpp::lower_import(import)?.prepared_execution()),
-            Self::Rust(import) => rust::prepare_execution(import),
+            Self::Cpp(import) => import.prepared_execution(),
+            Self::Rust(import) => import.prepared_execution(),
         }
     }
 
@@ -84,29 +131,54 @@ impl PreparedProgram {
             Self::Rust(p) => p.identity(),
         }
     }
-    pub fn language(&self) -> &'static str {
+    pub fn language(&self) -> SourceLanguage {
         match self {
-            Self::Cpp(_) => "C++",
-            Self::Rust(_) => "Rust",
+            Self::Cpp(_) => SourceLanguage::Cpp,
+            Self::Rust(_) => SourceLanguage::Rust,
         }
     }
 }
-pub trait PreparedProgramSource {
-    fn prepared_program(&self) -> PreparedProgram;
-}
-impl PreparedProgramSource for PreparedProgram {
-    fn prepared_program(&self) -> PreparedProgram {
-        self.clone()
+impl From<&PreparedProgram> for PreparedProgram {
+    fn from(program: &PreparedProgram) -> Self {
+        program.clone()
     }
 }
-impl PreparedProgramSource for cpp::PreparedCppImport {
-    fn prepared_program(&self) -> PreparedProgram {
-        PreparedProgram::Cpp(self.clone())
+impl From<cpp::PreparedCppImport> for PreparedProgram {
+    fn from(import: cpp::PreparedCppImport) -> Self {
+        Self::Cpp(import)
     }
 }
-impl PreparedProgramSource for rust::PreparedRustImport {
-    fn prepared_program(&self) -> PreparedProgram {
-        PreparedProgram::Rust(self.clone())
+impl From<&cpp::PreparedCppImport> for PreparedProgram {
+    fn from(import: &cpp::PreparedCppImport) -> Self {
+        Self::Cpp(import.clone())
+    }
+}
+impl From<rust::PreparedRustImport> for PreparedProgram {
+    fn from(import: rust::PreparedRustImport) -> Self {
+        Self::Rust(import)
+    }
+}
+impl From<&rust::PreparedRustImport> for PreparedProgram {
+    fn from(import: &rust::PreparedRustImport) -> Self {
+        Self::Rust(import.clone())
+    }
+}
+
+/// An import's lowered execution, computed on first use. Lowering depends
+/// only on the import, so every session over the same import shares it.
+#[derive(Debug, Default)]
+pub(crate) struct ExecutionCache(std::sync::OnceLock<std::sync::Arc<PreparedExecution>>);
+
+impl ExecutionCache {
+    pub(crate) fn get_or_lower(
+        &self,
+        lower: impl FnOnce() -> Result<std::sync::Arc<PreparedExecution>, String>,
+    ) -> Result<std::sync::Arc<PreparedExecution>, String> {
+        if let Some(execution) = self.0.get() {
+            return Ok(execution.clone());
+        }
+        let execution = lower()?;
+        Ok(self.0.get_or_init(|| execution).clone())
     }
 }
 

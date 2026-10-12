@@ -230,12 +230,17 @@ fn named_claim_selection_is_exact_ordered_and_rejects_ambiguity() {
         site("a.click", "alpha.ensures_0", 2),
         site("a.click", "beta.ensures_0", 3),
     ];
-    let selected = select_claim_sites(&sites, &["alpha.ensures_0".to_string()]).unwrap();
+    let named = |label: &str| AuditClaim {
+        requested: label.to_string(),
+        label: label.to_string(),
+        path: None,
+    };
+    let selected = select_claim_sites(&sites, &[named("alpha.ensures_0")]).unwrap();
     assert_eq!(selected.len(), 2);
     assert_eq!(selected[0].position.line, 1);
     assert_eq!(selected[1].position.line, 2);
     assert!(
-        select_claim_sites(&sites, &["missing".to_string()])
+        select_claim_sites(&sites, &[named("missing")])
             .unwrap_err()
             .contains("unknown audit claim")
     );
@@ -245,10 +250,20 @@ fn named_claim_selection_is_exact_ordered_and_rejects_ambiguity() {
         site("b.click", "alpha.ensures_0", 1),
     ];
     assert!(
-        select_claim_sites(&ambiguous, &["alpha.ensures_0".to_string()])
+        select_claim_sites(&ambiguous, &[named("alpha.ensures_0")])
             .unwrap_err()
             .contains("ambiguous")
     );
+    // A claim selected by location names its file, which settles the
+    // ambiguity.
+    let located = AuditClaim {
+        requested: "b.click:1".to_string(),
+        label: "alpha.ensures_0".to_string(),
+        path: Some(PathBuf::from("b.click")),
+    };
+    let selected = select_claim_sites(&ambiguous, std::slice::from_ref(&located)).unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].click_path, PathBuf::from("b.click"));
 }
 
 #[test]

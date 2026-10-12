@@ -264,7 +264,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
         .map(|definition| (definition.name(), definition))
         .collect::<BTreeMap<_, _>>();
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions)
-        .with_contracts(file.contract_definitions());
+        .with_contracts(file.contract_definitions(), &file.c_function_names);
     let click_function_environment = ClickFunctionEnvironment::with_algebraic_types(
         &click_function_definitions,
         &combined_algebraic_type_definitions(file)?,

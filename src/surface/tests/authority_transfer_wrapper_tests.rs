@@ -213,7 +213,7 @@ const MEMORY_FRAME_C: &str = "struct Frame { int64 wide; int32 narrow; }; int32 
 #[test]
 fn authority_transfer_wrapper_memory_frame_expands_and_rechecks_retained_proof() {
     let sources = [("wrapper.c", MEMORY_FRAME_C)];
-    for label in ["package.ensures_2", "unpack.ensures_2"] {
+    for label in ["package.produces_0", "unpack.produces_0"] {
         let expanded = expand_project_claim_source_by_label(
             &project(MEMORY_FRAME_SOURCE),
             &ProgramInputs::Bundle(sources.to_vec()),

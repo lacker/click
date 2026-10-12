@@ -29,3 +29,12 @@ slow-timeout = { period = "60s", terminate-after = 20 }
 # time budget; this is hang containment only.
 [profile.nightly]
 slow-timeout = { period = "60s", terminate-after = 120 }
+
+# Compute audits retain independent cold checks under their existing tool
+# timeout. Avoid running their large body mutations against those same CPUs.
+[test-groups.adler-compute]
+max-threads = 1
+
+[[profile.nightly.overrides]]
+filter = 'binary(rust_import) & test(/charon_adler2_(four_byte|general|small_batch)_compute/)'
+test-group = "adler-compute"

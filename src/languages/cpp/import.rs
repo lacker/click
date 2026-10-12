@@ -41,6 +41,7 @@ struct PreparedInner {
     logical_source: String,
     identity: String,
     export: CppExport,
+    execution: crate::languages::ExecutionCache,
 }
 
 impl PreparedCppImport {
@@ -54,6 +55,14 @@ impl PreparedCppImport {
 
     pub fn export(&self) -> &CppExport {
         &self.inner.export
+    }
+
+    pub(crate) fn prepared_execution(
+        &self,
+    ) -> Result<Arc<crate::languages::PreparedExecution>, String> {
+        self.inner
+            .execution
+            .get_or_lower(|| Ok(super::lower_import(self)?.prepared_execution()))
     }
 }
 
@@ -396,6 +405,7 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
             logical_source: config.logical_source,
             identity,
             export,
+            execution: Default::default(),
         }),
     })
 }

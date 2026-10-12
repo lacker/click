@@ -1115,6 +1115,20 @@ Four pairs it does not build:
   `owns *r` is *not* such a clause: `*r` lowers to the plain
   range `r[0..size/4]`, which is what makes `const_callback_field` expressible.
 
+The entry-clause generator still does not expand composites. Once a proof
+explicitly opens them, separation can instead follow checked loan bindings:
+an exposed memory view carrying a live occurrence-bound loan is separate from
+a separately held memory owner in the same validated composition. Ordinary
+observations of an owner carry no loan binding and cannot use this rule; two
+borrowed views cannot use it either. Rewriting or removing a view must preserve
+its exact checked occurrence, not just its printed resource term.
+
+Address-indexed composition sources feed the shared separation query used by
+read normalization, resource goals, and memory evidence. A retained memory hop
+rechecks the source composition, both range memberships, and the current
+non-overlap guards. A later equality proving overlap invalidates that hop.
+No pairwise facts or recursive footprint expansion are produced.
+
 The two sites that know they are at a contract entry produce it independently
 from the same list, so neither trusts the other: the body proof's
 `initial_claim_context_with_caller_owner` (`src/surface/proof.rs`), and

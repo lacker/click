@@ -93,6 +93,7 @@ fn contract_expression_function_address(expression: &ContractExpression) -> Opti
 }
 
 mod checking;
+mod claim_labels;
 mod diagnostics;
 mod expansion;
 mod generics;
@@ -101,8 +102,9 @@ mod integer_truncation;
 mod lowering;
 mod modules;
 mod parser;
-mod rust_names;
-pub use rust_names::{claim_label_matches, display_rust_names, rust_display_name};
+pub use crate::languages::rust::names::{
+    claim_label_matches, display_rust_names, rust_display_name,
+};
 pub(crate) mod planning;
 pub(crate) mod proof_diagnostics;
 mod source_registry;
@@ -119,21 +121,23 @@ mod verification;
 pub use crate::source::SourceContainer;
 use checking::*;
 pub use expansion::{
-    CProofClaim, ClickImportSite, SelectedTacticExpansion, SmartTacticCandidate,
-    SmartTacticSelectionError, SmartTacticSourceSite, SourcePosition, c0_select_smart_tactic,
-    c0_smart_tactic_source_sites, c0_tactic_source_position, click_declaration_source_position,
-    click_import_sites, expand_c0_claim_source, expand_c0_claim_source_by_label,
-    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_tactic_source_at,
-    expand_c0_tactic_source_at, expand_c0_tactics_source_at,
-    expand_program_prepared_claim_source_by_label, expand_program_prepared_tactic_source_at,
-    expand_project_claim_source_by_label, expand_project_tactic_source_at,
-    expand_project_tactics_source_at, expand_tactics_source_at, map_verifying_source_paths,
-    nested_tactic_source_position, project_select_smart_tactic, project_smart_tactic_source_sites,
-    project_tactic_source_position, project_tactic_source_positions, select_smart_tactic,
-    selected_c_target, selected_project_c_target, selected_project_thread_runtime,
-    selected_thread_runtime, smart_tactic_source_sites, tactic_arm_containing_position,
-    tactic_have_body_contains_position, tactic_line_has_multiple_starts, tactic_source_at_position,
-    tactic_source_position, tactic_starts_on_line, verifying_source_paths,
+    CProofClaim, ClaimExpansion, ClaimLocationError, ClaimLocationScope, ClickImportSite,
+    ProofSourceIndex, SelectedTacticExpansion, SmartTacticCandidate, SmartTacticSelectionError,
+    SmartTacticSourceSite, SourceClaim, SourcePosition, c0_select_smart_tactic,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, claim_at,
+    click_declaration_source_position, click_import_sites, expand_c0_claim_source,
+    expand_c0_claim_source_by_label, expand_c0_prepared_claim_source_by_label,
+    expand_c0_prepared_tactic_source_at, expand_c0_tactic_source_at, expand_c0_tactics_source_at,
+    expand_claim_by_label, expand_program_prepared_claim_source_by_label,
+    expand_program_prepared_tactic_source_at, expand_project_claim_source_by_label,
+    expand_project_tactic_source_at, expand_project_tactics_source_at, expand_tactics_source_at,
+    map_verifying_source_paths, nested_tactic_source_position, project_select_smart_tactic,
+    project_smart_tactic_source_sites, project_tactic_source_position,
+    project_tactic_source_positions, select_smart_tactic, selected_c_target,
+    selected_project_c_target, selected_project_thread_runtime, selected_thread_runtime,
+    smart_tactic_source_sites, tactic_arm_containing_position, tactic_have_body_contains_position,
+    tactic_line_has_multiple_starts, tactic_source_at_position, tactic_source_position,
+    tactic_starts_on_line, verifying_source_paths,
 };
 use expansion::{
     ExpansionCapture, NestedTacticCapture, ProofSite, VerificationTarget, verification_target_at,
@@ -436,6 +440,8 @@ fn check_verification_deadline() -> Result<(), ClickError> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
+    /// Unique source spelling to C execution identity, shared by specification lowering.
+    c_function_names: std::sync::Arc<BTreeMap<String, String>>,
     imports: Vec<ImportDeclaration>,
     verifying_sources: Vec<String>,
     /// The C implementation target this file selects with a `target`
@@ -863,6 +869,10 @@ pub struct TheoremDefinition {
     executes: Option<TheoremExecution>,
     requires: Vec<Requirement>,
     ensures: Vec<EnsureClause>,
+    /// For each entry of `ensures`, the written clause it names in claim
+    /// labels: its kind and its position among the theorem's clauses of
+    /// that kind. Empty when the theorem was built without a source.
+    ensure_claim_ids: Vec<claim_labels::ClaimClauseId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1171,6 +1181,12 @@ pub struct FunctionBlock {
     exceptional_ensures: Vec<EnsureClause>,
     /// As `requirement_source_clauses`, for `ensures`.
     ensure_source_clauses: Vec<usize>,
+    /// For each entry of `ensures`, the written clause it names in claim
+    /// labels: its kind (`ensures`, `owns`, or `produces`) and its position
+    /// among the block's clauses of that kind. Members of a flattened
+    /// aggregate clause share their clause's id. Empty when the block was
+    /// built without a source; labels then read the kind off each clause.
+    ensure_claim_ids: Vec<claim_labels::ClaimClauseId>,
     grouped_proof: Option<SourceProof>,
     /// The struct each opaque `void *` parameter is cast to in this block's
     /// clauses and proof, by parameter name. A block casts a parameter to at
@@ -2027,6 +2043,7 @@ pub(crate) fn clone_theorem_definition_iteratively(
             .iter()
             .map(clone_ensure_clause_iteratively)
             .collect(),
+        ensure_claim_ids: theorem.ensure_claim_ids.clone(),
     }
 }
 
@@ -6005,6 +6022,7 @@ impl<'a> SpecDefinitions<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PredicateEnvironment {
+    c_function_names: std::sync::Arc<BTreeMap<String, String>>,
     definitions: BTreeMap<String, PredicateDefinition>,
     resource_state_dependent: BTreeSet<String>,
     contract_signatures: BTreeMap<String, C0Type>,
@@ -6046,12 +6064,18 @@ impl PredicateEnvironment {
                 .iter()
                 .map(|definition| (definition.name().to_string(), definition.clone()))
                 .collect(),
+            c_function_names: Default::default(),
             contract_signatures: BTreeMap::new(),
             contract_definitions: BTreeMap::new(),
         }
     }
 
-    fn with_contracts(mut self, definitions: &[ContractDefinition]) -> Self {
+    fn with_contracts(
+        mut self,
+        definitions: &[ContractDefinition],
+        names: &std::sync::Arc<BTreeMap<String, String>>,
+    ) -> Self {
+        self.c_function_names = names.clone();
         self.contract_signatures = definitions
             .iter()
             .map(|definition| {
@@ -6070,6 +6094,12 @@ impl PredicateEnvironment {
 
     fn get(&self, name: &str) -> Option<&PredicateDefinition> {
         self.definitions.get(name)
+    }
+
+    fn function_execution_name<'a>(&'a self, source: &'a str) -> &'a str {
+        self.c_function_names
+            .get(source)
+            .map_or(source, String::as_str)
     }
 
     fn contract_signature(&self, name: &str) -> Option<C0Type> {
@@ -6747,6 +6777,13 @@ impl ClickFile {
         &self.verifying_sources
     }
 
+    /// The language of this file's `verifying` sources.
+    pub fn source_language(&self) -> crate::languages::SourceLanguage {
+        crate::languages::SourceLanguage::of_sources(
+            self.verifying_sources.iter().map(String::as_str),
+        )
+    }
+
     /// The declared C implementation target, if this file selects one.
     pub fn declared_c_target(&self) -> Option<crate::languages::c::target::CTarget> {
         self.c_target
@@ -6962,6 +6999,61 @@ impl TheoremDefinition {
     pub fn ensures(&self) -> &[EnsureClause] {
         &self.ensures
     }
+
+    /// The label of ensure `index`: `T.name` when the author named it,
+    /// otherwise its clause kind and position among the theorem's clauses
+    /// of that kind, `T.ensures_0` or `T.owns_0`.
+    pub fn ensure_claim_label(&self, index: usize) -> String {
+        let id = self
+            .ensure_claim_ids
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| fallback_claim_id(&self.ensures, index, |index| index));
+        claim_labels::claim_label(
+            &self.name,
+            self.ensures.get(index).and_then(EnsureClause::name),
+            id,
+        )
+    }
+
+    /// The ensure `label` names, by [`Self::ensure_claim_label`]. A
+    /// flattened aggregate clause's members share a label; this is the
+    /// first of them.
+    pub fn ensure_index_by_label(&self, label: &str) -> Option<usize> {
+        label.strip_prefix(self.name.as_str())?.strip_prefix('.')?;
+        (0..self.ensures.len()).find(|index| self.ensure_claim_label(*index) == label)
+    }
+}
+
+/// The claim id of ensure `index` read off the clauses themselves, for a
+/// block or theorem built without a source: its kind, and how many earlier
+/// written clauses (by `source_clause`) have that kind. An index past the
+/// clauses is an `ensures` at that position, as the implicit body-safety
+/// claim is.
+fn fallback_claim_id(
+    ensures: &[EnsureClause],
+    index: usize,
+    source_clause: impl Fn(usize) -> usize,
+) -> claim_labels::ClaimClauseId {
+    let Some(clause) = ensures.get(index) else {
+        return claim_labels::ClaimClauseId {
+            kind: claim_labels::ClaimClauseKind::Ensures,
+            index,
+        };
+    };
+    let kind = claim_labels::ClaimClauseKind::of_ensure(clause);
+    let source = source_clause(index);
+    let mut written = BTreeSet::new();
+    for (earlier, ensure) in ensures[..index].iter().enumerate() {
+        let earlier = source_clause(earlier);
+        if earlier != source && claim_labels::ClaimClauseKind::of_ensure(ensure) == kind {
+            written.insert(earlier);
+        }
+    }
+    claim_labels::ClaimClauseId {
+        kind,
+        index: written.len(),
+    }
 }
 
 impl TheoremExecution {
@@ -7056,6 +7148,81 @@ impl FunctionBlock {
             .get(index)
             .copied()
             .unwrap_or(index)
+    }
+
+    /// The label of ensure `index`: `f.name` when the author named it,
+    /// otherwise the kind of clause it was written as and its position
+    /// among the block's clauses of that kind (`f.ensures_0`, `f.owns_0`,
+    /// `f.produces_0`). An index past the ensures (the implicit body-safety
+    /// claim of a contract without any) is `f.ensures_<index>`.
+    pub fn ensure_claim_label(&self, index: usize) -> String {
+        let id = self
+            .ensure_claim_ids
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| {
+                fallback_claim_id(&self.ensures, index, |index| {
+                    self.ensure_source_clause(index)
+                })
+            });
+        claim_labels::claim_label(
+            self.signature.name(),
+            self.ensures.get(index).and_then(EnsureClause::name),
+            id,
+        )
+    }
+
+    /// The label of exceptional ensure `index`: `f.name` or
+    /// `f.exceptional_ensures_<index>`.
+    pub fn exceptional_ensure_claim_label(&self, index: usize) -> String {
+        claim_labels::claim_label(
+            self.signature.name(),
+            self.exceptional_ensures
+                .get(index)
+                .and_then(EnsureClause::name),
+            claim_labels::ClaimClauseId {
+                kind: claim_labels::ClaimClauseKind::ExceptionalEnsures,
+                index,
+            },
+        )
+    }
+
+    /// The label of the block's grouped proof, `f.contract`.
+    pub fn contract_claim_label(&self) -> String {
+        claim_labels::contract_claim_label(self.signature.name())
+    }
+
+    /// The label of `claim`.
+    pub(in crate::surface) fn claim_label(&self, claim: expansion::CProofClaim) -> String {
+        match claim {
+            expansion::CProofClaim::Ensure(index) => self.ensure_claim_label(index),
+            expansion::CProofClaim::ExceptionalEnsure(index) => {
+                self.exceptional_ensure_claim_label(index)
+            }
+            expansion::CProofClaim::Grouped => self.contract_claim_label(),
+        }
+    }
+
+    /// The claim `label` names, by [`Self::claim_label`]: the grouped proof
+    /// when the block has one, then the first ensure or exceptional ensure
+    /// with that label. A flattened aggregate clause's members share their
+    /// clause's label; this selects the first, whose source proof they share.
+    pub(in crate::surface) fn claim_by_label(&self, label: &str) -> Option<expansion::CProofClaim> {
+        // Every label of this block starts with its name and a dot.
+        label
+            .strip_prefix(self.signature.name())?
+            .strip_prefix('.')?;
+        if label == self.contract_claim_label() && self.covering_proof().is_some() {
+            return Some(expansion::CProofClaim::Grouped);
+        }
+        (0..self.ensures.len())
+            .find(|index| self.ensure_claim_label(*index) == label)
+            .map(expansion::CProofClaim::Ensure)
+            .or_else(|| {
+                (0..self.exceptional_ensures.len())
+                    .find(|index| self.exceptional_ensure_claim_label(*index) == label)
+                    .map(expansion::CProofClaim::ExceptionalEnsure)
+            })
     }
 
     /// As [`Self::resource_requirement_positions`], for the resource

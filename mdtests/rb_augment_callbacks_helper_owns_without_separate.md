@@ -1,15 +1,10 @@
-# An owned callback footprint may overlap the callback table
+# Owned callback footprints are separate from the borrowed callback table
 
-`mdtests/rb_augment_callbacks_helper_owns.md` verifies three indirect calls
-whose contracts own the link cells they write, and it needs
-`separate(memory(*augment), memory(*parent))` to do it. This is
-the same helper with that requirement removed.
-
-Nothing then rules out a table that overlaps the node the first callback
-writes, so the first call may have overwritten `augment->copy`. The cell is
-forgotten at the call, the reload names a different value, and that value
-carries no contract. The proof must fail at the second call rather than reuse
-the contract the `open` established for the pre-call value.
+This is `rb_augment_callbacks_helper_owns.md` without its explicit separation
+requirement. The opened table carries checked borrowed projections, while the
+helper owns the node links passed to each callback. The validated composition
+separates those footprints, preserving subsequent callback reads across the
+owned calls. No extra separation premise is needed.
 
 ```c filename=rb_augment_callbacks.c
 struct node {
@@ -98,5 +93,5 @@ void erase_augmented(struct node* node, struct node* parent,
 ```
 
 ```expect
-fail: no contract fact for the function pointer
+pass
 ```

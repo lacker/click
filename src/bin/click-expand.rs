@@ -9,15 +9,14 @@ use click::cli::{
     read_mdtest, read_mdtest_project_if_needed, source_refs,
 };
 use click::surface::{
-    ClickProject, SmartTacticCandidate, SmartTacticSelectionError, expand_c0_claim_source_by_label,
-    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_tactic_source_at,
-    expand_c0_tactic_source_at, expand_program_prepared_claim_source_by_label,
-    expand_program_prepared_tactic_source_at, expand_project_claim_source_by_label,
-    expand_project_tactic_source_at, map_verifying_source_paths, project_select_smart_tactic,
-    project_tactic_source_position, tactic_source_position, verify_project_at, verify_sources_at,
+    ClickProject, SmartTacticCandidate, SmartTacticSelectionError,
+    expand_c0_prepared_tactic_source_at, expand_c0_tactic_source_at,
+    expand_program_prepared_tactic_source_at, expand_project_tactic_source_at,
+    map_verifying_source_paths, project_select_smart_tactic, project_tactic_source_position,
+    tactic_source_position, verify_project_at, verify_sources_at,
 };
 
-const USAGE: &str = "usage: click expand [--work-limit <UNITS>] [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>[:<column>]\n       click expand --claim <LABEL> [--work-limit <UNITS>] [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.\n\nThe whole command, generating the expansion and checking it, has a deterministic budget of --work-limit units (default 50000000), beside every tactic's own work budget. --time-limit (default 10m) is only a wall-clock crash-containment bound for a hung or CPU-starved run, not a verdict about the proof.";
+const USAGE: &str = "usage: click expand [--work-limit <UNITS>] [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>[:<column>]\n       click expand --claim <LABEL|PATH:LINE[:COLUMN]> [--work-limit <UNITS>] [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>\n\n--claim selects a claim by its label or by a line its clause or proof covers. Expansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.\n\nThe whole command, generating the expansion and checking it, has a deterministic budget of --work-limit units (default 50000000), beside every tactic's own work budget. --time-limit (default 10m) is only a wall-clock crash-containment bound for a hung or CPU-starved run, not a verdict about the proof.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Arguments {
@@ -457,23 +456,35 @@ fn expand_selection(
             .map_err(|error| error.report())?;
             Ok((claim, expanded))
         }
-        Selection::Claim(claim) => {
-            let expanded = match (project, inputs) {
-                (Some(project), _) => {
-                    expand_project_claim_source_by_label(project, &inputs.program_inputs(), claim)
+        Selection::Claim(requested) => {
+            // `--claim FILE:LINE[:COLUMN]` names the claim covering that line.
+            // Its position tells apart `loop` tactics proving one loop phase.
+            let (claim, at) = match cli::claim_at_argument(
+                requested,
+                report.path,
+                report.line_offset,
+                project,
+                click_source,
+                inputs,
+                click::surface::ClaimLocationScope::Innermost,
+            ) {
+                Some(selected) => {
+                    let selected = selected?;
+                    (selected.label, Some(selected.position))
                 }
-                (None, CInput::Bundle(sources)) => {
-                    expand_c0_claim_source_by_label(click_source, &source_refs(sources), claim)
-                }
-                (None, CInput::Prepared(imports)) => {
-                    expand_c0_prepared_claim_source_by_label(click_source, imports, claim)
-                }
-                (None, CInput::PreparedProgram(import)) => {
-                    expand_program_prepared_claim_source_by_label(click_source, import, claim)
-                }
-            }
+                None => (requested.clone(), None),
+            };
+            // A loop phase proved inside a claim's proof script is checked
+            // by verifying that claim.
+            let expansion = click::surface::expand_claim_by_label(
+                project,
+                click_source,
+                &inputs.program_inputs(),
+                &claim,
+                at,
+            )
             .map_err(|error| error.report())?;
-            Ok((claim.clone(), expanded))
+            Ok((expansion.proof_unit, expansion.source))
         }
     }
 }
@@ -1233,6 +1244,81 @@ int32 identity(int32 x) {
 
         assert_ne!(expanded, click_source);
         assert!(!expanded.contains("simp();"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// A loop phase written in a `loop` tactic of a contract proof is
+    /// selected by its label or by a line of its proof. Only the phase is
+    /// rewritten, an omitted phase is written out, and each result is
+    /// checked by verifying the contract proof that writes the phase.
+    #[test]
+    fn run_expands_a_loop_phase_by_label_and_by_line() {
+        let directory = env::temp_dir().join(format!(
+            "click-expand-loop-phase-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let c_source = "int32 f(int32 a, int32 b) {
+    while (a > 0) {
+        a = 0;
+        b = 0;
+    }
+    return a;
+}
+";
+        let click_source = r#"verifying "phase.c";
+
+int32 f(int32 a, int32 b) {
+    requires a <= 0;
+    ensures result <= 0;
+} by {
+    loop {
+        decreases a + 1;
+        invariant a <= 0;
+        initialize by simp;
+    }
+    step();
+    simp();
+}
+"#;
+        let click_path = directory.join("project.click");
+        fs::write(directory.join("phase.c"), c_source).unwrap();
+        fs::write(&click_path, click_source).unwrap();
+        let expand = |claim: String| {
+            run(&Arguments {
+                click_path: click_path.clone(),
+                selection: Selection::Claim(claim),
+                limits: RunLimits::expand(),
+                output: None,
+                in_place: false,
+            })
+        };
+
+        let written = "initialize by simp;";
+        let start = click_source.find(written).unwrap();
+        let end = start + written.len();
+        let by_label = expand("f.loop(0).initialize".to_string())
+            .expect("the written phase should expand and check");
+        assert!(by_label.starts_with(&click_source[..start]), "{by_label}");
+        assert!(by_label.ends_with(&click_source[end..]), "{by_label}");
+        let phase = &by_label[start..by_label.len() - (click_source.len() - end)];
+        assert!(phase.starts_with("initialize by {"), "{phase}");
+        assert!(!phase.contains("simp"), "{phase}");
+        let line = click_source[..start].lines().count();
+        let by_line = expand(format!("{}:{line}", click_path.display()))
+            .expect("a line of the phase should select it");
+        assert_eq!(by_line, by_label);
+
+        let insertion = click_source.find("}\n    step();").unwrap();
+        let omitted = expand("f.loop(0).preserve".to_string())
+            .expect("the omitted phase should expand and check");
+        assert!(omitted.starts_with(&click_source[..insertion]), "{omitted}");
+        assert!(omitted.ends_with(&click_source[insertion..]), "{omitted}");
+        assert!(
+            omitted[insertion..].starts_with("    preserve by {\n"),
+            "{omitted}"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 

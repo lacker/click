@@ -10,9 +10,9 @@ read after that havoc, and the contract carried by that field must survive it.
 It does, because the helper requires
 `separate(memory(*augment), memory(*parent))`: the table is
 provably outside the written range, its cells are retained across the call, and
-the load resolves to the same value the `open` named. Dropping that requirement
-is what `mdtests/rb_augment_callbacks_helper_owns_rejects_unseparated.md`
-checks.
+the load resolves to the same value the `open` named. `mdtests/rb_augment_callbacks_helper_owns_without_separate.md` checks that
+the opened table’s checked borrow partition now supplies this separation even
+without the written requirement.
 
 ```c filename=rb_augment_callbacks.c
 struct node {
