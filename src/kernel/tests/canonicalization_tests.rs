@@ -22,6 +22,13 @@ fn collect_offset_load_variables_from_value(
 ) {
     match value {
         CValue::Void => {}
+        CValue::PointerInteger(value) => {
+            collect_offset_load_variables_from_term(value.bits(), load_variables);
+            collect_offset_load_variables_from_value(
+                &CValue::Pointer(value.origin().clone()),
+                load_variables,
+            );
+        }
         crate::kernel::arithmetic_c_value!(term) => {
             collect_offset_load_variables_from_term(term, load_variables);
         }
@@ -750,8 +757,8 @@ fn pointer_offset_add_coalesces_nested_constant_displacements() {
 fn load_variables_are_congruent_through_ground_index_equalities() {
     // `data[index]` with `index == 0` in scope is the cell `data[0]`: the
     // two load variables are content-addressed by different addresses. They
-    // remain distinct in the ordinary equality graph; an explicit atomic
-    // derivation retains the address-equality path.
+    // share a numeric value once the address equality is known; the explicit
+    // atomic derivation retains the address-equality path.
     let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("data", 8));
     let index = Bitvector32Term::Variable(Variable(7));
     let indexed = Bitvector32Term::MemoryLoad(
@@ -789,9 +796,7 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
         ConditionTerm::equal(index, Bitvector32Term::Constant(0)),
         true,
     );
-    assert!(
-        !with_index_fact.int32_values_known_equal(&indexed_load_variable, &first_load_variable)
-    );
+    assert!(with_index_fact.int32_values_known_equal(&indexed_load_variable, &first_load_variable));
     let goal = Proposition::ConditionIs(
         ConditionTerm::equal(indexed_load_variable.clone(), first_load_variable.clone()),
         true,
@@ -1422,11 +1427,12 @@ fn a_materialized_pointer_cell_is_named_by_the_load_it_holds() {
         offset: PointerOffsetTerm::Constant(8),
     };
     let entry = CMemory::new().with_block("fields", 16);
-    let Bitvector32Term::Variable(loaded) = crate::kernel::canonical_form_of_load(
+    let Bitvector32Term::Variable(loaded) = crate::kernel::canonical_form_of_typed_load(
         intern_c_memory(entry.clone()),
         field.clone(),
-        crate::kernel::LoadKind::Bits32,
-    ) else {
+        CType::Int32Pointer,
+    )
+    .expect("the actual pointer producer has an eight-byte read") else {
         panic!("a load of an opaque cell is named by a load variable");
     };
     let pointer_at = |c_type: CType| {
@@ -1439,11 +1445,12 @@ fn a_materialized_pointer_cell_is_named_by_the_load_it_holds() {
         )
     };
     let name_at = |memory: CMemory, cell: &Pointer| {
-        crate::kernel::canonical_form_of_load(
+        crate::kernel::canonical_form_of_typed_load(
             intern_c_memory(memory),
             cell.clone(),
-            crate::kernel::LoadKind::Bits32,
+            CType::Int32Pointer,
         )
+        .expect("the actual pointer producer has an eight-byte read")
     };
 
     let held = entry

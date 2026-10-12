@@ -9,8 +9,9 @@
 //! only when the pointer is aligned to the alignment the mask presumes and
 //! the tag stays below it, so a tag can never carry into or read an address
 //! bit. Evaluation never rewrites a word; the decision layer applies these
-//! rules when their conditions are decided, and the cast back to a pointer
-//! records the undecided ones as obligations.
+//! rules when their conditions are decided. Numeric recognition refuses
+//! undecided conditions; executable recovery separately requires a retained
+//! pointer origin.
 //!
 //! Every decision here also reports the exact facts it used, so a smart
 //! closure can retain them and a simple `arithmetic using` step can check
@@ -18,6 +19,35 @@
 
 use super::operators::CBitwiseOperation;
 use super::*;
+
+/// A cast can recover only its own retained full origin. Numeric equations
+/// can prove restoration of that address, never choose or manufacture origin.
+pub(in crate::kernel) fn cast_pointer_integer_to_pointer(
+    value: &CPointerIntegerValue,
+    assumptions: &PureFactContext,
+    obligations: &mut Vec<ProofObligation>,
+) -> Result<CPointerValue, String> {
+    let condition = ConditionTerm::uint64_equal(
+        value.bits().clone(),
+        Bitvector32Term::pointer_address(value.origin().pointer().clone()),
+    );
+    let context =
+        "integer-to-pointer cast requires the retained pointer's original address restored";
+    match assumptions.decide(&condition) {
+        Some(true) => Ok(value.origin().clone()),
+        Some(false) => Err(format!("{context}, which is refuted")),
+        None => {
+            add_proof_obligation_with_context(
+                obligations,
+                assumptions,
+                Proposition::ConditionIs(condition, true),
+                Some(context),
+            )
+            .ok_or_else(|| format!("{context}, which is refuted"))?;
+            Ok(value.origin().clone())
+        }
+    }
+}
 
 pub(in crate::kernel) struct TaggedAddress {
     pub(in crate::kernel) pointer: Pointer,
@@ -59,17 +89,6 @@ impl UsedFacts {
         }
     }
 }
-
-/// How an undecided alignment or tag-bound condition is treated.
-enum Undecided<'a> {
-    /// Leave the word unrecognized.
-    Reject,
-    /// Record the condition as an obligation and continue.
-    Oblige(&'a mut Vec<ProofObligation>),
-}
-
-/// A refuted condition names what the operation needed.
-pub(in crate::kernel) struct Refuted(pub(in crate::kernel) String);
 
 /// A tag sum with a zero side is the other side, so a tag read from a fact
 /// such as `word == address(next) + color` is exactly `color`.
@@ -154,48 +173,21 @@ impl PureFactContext {
 fn require(
     form: &TaggedAddress,
     alignment: u64,
-    operation: &str,
     assumptions: &PureFactContext,
-    undecided: &mut Undecided<'_>,
     used: &mut UsedFacts,
-) -> Result<bool, Refuted> {
+) -> Result<bool, ()> {
     let conditions = [
-        (
-            ConditionTerm::pointer_aligned(form.pointer.clone(), alignment),
-            format!("the pointer aligned to {alignment} bytes"),
-        ),
-        (
-            ConditionTerm::uint64_less_than(
-                form.tag.clone(),
-                Bitvector32Term::UInt64Constant(alignment),
-            ),
-            format!("the tag below {alignment}"),
+        ConditionTerm::pointer_aligned(form.pointer.clone(), alignment),
+        ConditionTerm::uint64_less_than(
+            form.tag.clone(),
+            Bitvector32Term::UInt64Constant(alignment),
         ),
     ];
-    for (condition, what) in conditions {
+    for condition in conditions {
         match assumptions.decide_citing(&condition, used) {
             Some(true) => {}
-            Some(false) => {
-                return Err(Refuted(format!(
-                    "{operation} on a tagged pointer address needs {what}, which is refuted"
-                )));
-            }
-            None => match undecided {
-                Undecided::Reject => return Ok(false),
-                Undecided::Oblige(obligations) => {
-                    let context = format!("{operation} on a tagged pointer address needs {what}");
-                    if add_proof_obligation_with_context(
-                        obligations,
-                        assumptions,
-                        Proposition::ConditionIs(condition, true),
-                        Some(&context),
-                    )
-                    .is_none()
-                    {
-                        return Err(Refuted(format!("{context}, which is refuted")));
-                    }
-                }
-            },
+            Some(false) => return Err(()),
+            None => return Ok(false),
         }
     }
     Ok(true)
@@ -204,22 +196,21 @@ fn require(
 fn form_of(
     term: &Bitvector32Term,
     assumptions: &PureFactContext,
-    undecided: &mut Undecided<'_>,
     used: &mut UsedFacts,
     through_facts: bool,
-) -> Result<Option<TaggedAddress>, Refuted> {
+) -> Result<Option<TaggedAddress>, ()> {
     crate::instrumentation::record_deterministic_work(1);
     // A structural miss says nothing about an exact address equation for
     // the complete word. In particular, an opaque input of `word & ~mask`
     // must not hide a checked `(word & ~mask) == address(p)` premise.
-    let direct = structural_form_of(term, assumptions, undecided, used, through_facts)?;
+    let direct = structural_form_of(term, assumptions, used, through_facts)?;
     if direct.is_some() || !through_facts {
         return Ok(direct);
     }
     // One exact recorded 64-bit equality may name the word's address form,
     // as a resource fact `word == address(next) + tag` does.
     for (equal, fact) in assumptions.recorded_uint64_equals(term) {
-        if let Some(form) = form_of(&equal, assumptions, undecided, used, false)? {
+        if let Some(form) = form_of(&equal, assumptions, used, false)? {
             used.cite(Proposition::ConditionIs(fact, true));
             return Ok(Some(form));
         }
@@ -230,32 +221,29 @@ fn form_of(
 fn structural_form_of(
     term: &Bitvector32Term,
     assumptions: &PureFactContext,
-    undecided: &mut Undecided<'_>,
     used: &mut UsedFacts,
     through_facts: bool,
-) -> Result<Option<TaggedAddress>, Refuted> {
+) -> Result<Option<TaggedAddress>, ()> {
     let direct = match term {
         Bitvector32Term::PointerAddress(pointer) => Some(TaggedAddress {
             pointer: pointer.as_ref().clone(),
             tag: Bitvector32Term::UInt64Constant(0),
         }),
         Bitvector32Term::UInt64Add(left, right) => {
-            if let Some(form) = form_of(left, assumptions, undecided, used, through_facts)? {
+            if let Some(form) = form_of(left, assumptions, used, through_facts)? {
                 Some(TaggedAddress {
                     pointer: form.pointer,
                     tag: add_tag(form.tag, right.as_ref().clone()),
                 })
             } else {
-                form_of(right, assumptions, undecided, used, through_facts)?.map(|form| {
-                    TaggedAddress {
-                        pointer: form.pointer,
-                        tag: add_tag(left.as_ref().clone(), form.tag),
-                    }
+                form_of(right, assumptions, used, through_facts)?.map(|form| TaggedAddress {
+                    pointer: form.pointer,
+                    tag: add_tag(left.as_ref().clone(), form.tag),
                 })
             }
         }
         Bitvector32Term::UInt64Subtract(left, right) => {
-            form_of(left, assumptions, undecided, used, through_facts)?.map(|form| TaggedAddress {
+            form_of(left, assumptions, used, through_facts)?.map(|form| TaggedAddress {
                 pointer: form.pointer,
                 tag: Bitvector32Term::uint64_subtract(form.tag, right.as_ref().clone()),
             })
@@ -288,7 +276,7 @@ fn structural_form_of(
                 }
                 _ => return Ok(None),
             };
-            let Some(form) = form_of(inner, assumptions, undecided, used, through_facts)? else {
+            let Some(form) = form_of(inner, assumptions, used, through_facts)? else {
                 return Ok(None);
             };
             match operation {
@@ -296,14 +284,7 @@ fn structural_form_of(
                     let Some(alignment) = clearing_mask_alignment(constant) else {
                         return Ok(None);
                     };
-                    if !require(
-                        &form,
-                        alignment,
-                        "clearing tag bits",
-                        assumptions,
-                        undecided,
-                        used,
-                    )? {
+                    if !require(&form, alignment, assumptions, used)? {
                         return Ok(None);
                     }
                     Some(TaggedAddress {
@@ -321,16 +302,7 @@ fn structural_form_of(
                     else {
                         return Ok(None);
                     };
-                    if constant != 0
-                        && !require(
-                            &form,
-                            alignment,
-                            "setting tag bits",
-                            assumptions,
-                            undecided,
-                            used,
-                        )?
-                    {
+                    if constant != 0 && !require(&form, alignment, assumptions, used)? {
                         return Ok(None);
                     }
                     Some(TaggedAddress {
@@ -355,9 +327,7 @@ pub(in crate::kernel) fn tagged_address_form(
     assumptions: &PureFactContext,
     used: &mut UsedFacts,
 ) -> Option<TaggedAddress> {
-    form_of(term, assumptions, &mut Undecided::Reject, used, true)
-        .ok()
-        .flatten()
+    form_of(term, assumptions, used, true).ok().flatten()
 }
 
 /// `term & mask` with a tag-reading mask, as the masked tag alone, using
@@ -395,16 +365,9 @@ pub(in crate::kernel) fn masked_tag_value(
     };
     let alignment = reading_mask_alignment(mask)?;
     let form = tagged_address_form(inner, assumptions, used)?;
-    require(
-        &form,
-        alignment,
-        "reading tag bits",
-        assumptions,
-        &mut Undecided::Reject,
-        used,
-    )
-    .ok()
-    .filter(|decided| *decided)?;
+    require(&form, alignment, assumptions, used)
+        .ok()
+        .filter(|decided| *decided)?;
     let value =
         Bitvector32Term::uint64_bitwise_and(form.tag, Bitvector32Term::UInt64Constant(mask));
     // A tag read that rewrites to itself makes no progress; deciding it
@@ -412,60 +375,12 @@ pub(in crate::kernel) fn masked_tag_value(
     (&value != term).then_some(value)
 }
 
-/// The pointer a 64-bit word converts back to: its recorded address with the
-/// tag proven zero. Undecided alignment, tag-bound, and zero-tag conditions
-/// become obligations; a refuted one is an error. `Ok(None)` means the word
-/// has no recorded pointer origin.
-pub(in crate::kernel) fn cast_tagged_address_to_pointer(
-    term: &Bitvector32Term,
-    assumptions: &PureFactContext,
-    obligations: &mut Vec<ProofObligation>,
-) -> Result<Option<Pointer>, String> {
-    let mut used = UsedFacts::new();
-    let form = match form_of(
-        term,
-        assumptions,
-        &mut Undecided::Oblige(obligations),
-        &mut used,
-        true,
-    ) {
-        Ok(Some(form)) => form,
-        Ok(None) => return Ok(None),
-        Err(Refuted(message)) => return Err(message),
-    };
-    let tag_is_zero =
-        ConditionTerm::uint64_equal(form.tag.clone(), Bitvector32Term::UInt64Constant(0));
-    match assumptions.decide(&tag_is_zero) {
-        Some(true) => Ok(Some(form.pointer)),
-        Some(false) => Err(
-            "integer-to-pointer cast of a tagged address requires the tag bits proven zero; \
-             they are refuted"
-                .to_string(),
-        ),
-        None => {
-            let context = "integer-to-pointer cast of a tagged address requires the tag bits \
-                           proven zero";
-            if add_proof_obligation_with_context(
-                obligations,
-                assumptions,
-                Proposition::ConditionIs(tag_is_zero, true),
-                Some(context),
-            )
-            .is_none()
-            {
-                return Err(format!("{context}; they are refuted"));
-            }
-            Ok(Some(form.pointer))
-        }
-    }
-}
-
 #[cfg(test)]
 mod exact_word_address_tests {
     use super::*;
 
     // A compound word's exact address is an indexed premise. Unrelated word
-    // equalities must neither be searched nor create conversion obligations.
+    // equalities must not be searched to recover an unrelated numeric form.
     #[test]
     fn compound_word_address_lookup_skips_unrelated_equalities() {
         let _session = crate::kernel::VerificationSession::enter();
@@ -504,13 +419,6 @@ mod exact_word_address_tests {
                 assert_eq!(form.tag.uint64_as_const(), Some(0));
                 assert!(used.complete);
                 assert_eq!(used.premises, vec![fact.clone()]);
-                let mut obligations = Vec::new();
-                assert_eq!(
-                    cast_tagged_address_to_pointer(&expression, &assumptions, &mut obligations)
-                        .unwrap(),
-                    Some(pointer.clone())
-                );
-                assert!(obligations.is_empty());
                 costs.push(work);
             }
             assert!(
@@ -521,7 +429,7 @@ mod exact_word_address_tests {
     }
 
     #[test]
-    fn compound_word_address_requires_origin_and_stops_at_cyclic_equations() {
+    fn compound_word_address_requires_exact_relation_and_stops_at_cyclic_equations() {
         let _session = crate::kernel::VerificationSession::enter();
         let expression = Bitvector32Term::uint64_bitwise_and(
             Bitvector32Term::Variable(Variable(980001)),
@@ -533,13 +441,9 @@ mod exact_word_address_tests {
             PureFactContext::new()
                 .assume_condition(ConditionTerm::uint64_equal(expression.clone(), alias), true),
         ] {
-            let mut obligations = Vec::new();
-            assert_eq!(
-                cast_tagged_address_to_pointer(&expression, &assumptions, &mut obligations)
-                    .unwrap(),
-                None
-            );
-            assert!(obligations.is_empty());
+            let mut used = UsedFacts::new();
+            assert!(tagged_address_form(&expression, &assumptions, &mut used).is_none());
+            assert!(used.premises.is_empty());
         }
     }
 }

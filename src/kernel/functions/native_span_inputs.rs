@@ -134,6 +134,29 @@ fn span_holds(
     {
         return true;
     }
+    let check = span_geometry(
+        state,
+        pointer,
+        element_type,
+        count,
+        access_policy,
+        assumptions,
+    );
+    matches!(check, Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards))
+        if guards.iter().all(|guard| assumptions.decide(guard) == Some(true)))
+}
+
+fn span_geometry(
+    state: &CState,
+    pointer: &CPointerValue,
+    element_type: CType,
+    count: &SharedIntegerTerm,
+    access_policy: CTypedAccessPolicy,
+    assumptions: &PureFactContext,
+) -> Result<
+    crate::kernel::eval::pointer_domains::PointerDomainCheck,
+    crate::kernel::eval::pointer_domains::PointerDomainRefusal,
+> {
     let check_span = match access_policy {
         CTypedAccessPolicy::NativeObjectOnly => {
             crate::kernel::eval::pointer_domains::checked_typed_pointer_span
@@ -142,16 +165,14 @@ fn span_holds(
             crate::kernel::eval::pointer_domains::checked_c_typed_pointer_span
         }
     };
-    let check = check_span(
+    check_span(
         state,
         pointer,
         IntegerTerm::constant_i64(0),
         count.as_ref().clone(),
         element_type,
         assumptions,
-    );
-    matches!(check, Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards))
-        if guards.iter().all(|guard| assumptions.decide(guard) == Some(true)))
+    )
 }
 
 pub(super) fn check_native_span_specs(
@@ -219,6 +240,30 @@ pub(super) fn assume_native_span_specs(
             ) {
                 continue;
             }
+            if next.memory().native_input_is_slice(&pointer) {
+                // Slice signatures already authenticate this exact carrier's
+                // geometry. Entry setup precedes pure preconditions, so retain
+                // that witness when the requested prefix bounds are undecided.
+                // Calls still check this requirement under their actual facts.
+                match span_geometry(
+                    &next,
+                    &pointer,
+                    requirement.element_type,
+                    &count,
+                    requirement.access_policy,
+                    &context,
+                ) {
+                    Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(
+                        guards,
+                    )) if guards
+                        .iter()
+                        .all(|guard| context.decide(guard) != Some(false)) =>
+                    {
+                        continue;
+                    }
+                    _ => return Err("native prefix contradicts its retained slice carrier".into()),
+                }
+            }
             // Definite declared/carried geometry remains decisive. An input
             // assumption cannot widen an existing complete object domain.
             if matches!(
@@ -249,6 +294,89 @@ pub(super) fn assume_native_span_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_slice_entry_defers_only_undecided_prefix_bounds_without_replacing_geometry() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let identity = Variable(989_810);
+        let pointer = CPointerValue::new(Pointer::symbolic(identity), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(identity));
+        let length = Bitvector32Term::Variable(Variable(989_811));
+        let count = crate::kernel::eval::pointer_domains::native_count_observation(
+            MachineIntegerType::UInt64,
+            length.clone(),
+        )
+        .unwrap();
+        let state = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_native_slice_input(pointer.clone(), CType::Int32, count.into())
+                    .unwrap(),
+            )
+            .with_local("p", CValue::Pointer(pointer.clone()));
+        let empty = PureFactContext::new();
+        let spec = span(c_variable("p"), 1);
+        let assumed = assume_native_span_specs(&state, &[spec.clone()], &empty).unwrap();
+        assert_eq!(
+            assumed, state,
+            "entry preserves the exact slice row and its length"
+        );
+        assert!(assumed.memory().native_input_is_slice(&pointer));
+        assert!(check_native_span_specs(&assumed, &[spec.clone()], &empty).is_err());
+        let bounded = empty.clone().assume_condition(
+            ConditionTerm::uint64_equal(length.clone(), Bitvector32Term::UInt64Constant(1)),
+            true,
+        );
+        assert!(check_native_span_specs(&assumed, &[spec.clone()], &bounded).is_ok());
+        let too_short = empty.clone().assume_condition(
+            ConditionTerm::uint64_equal(length, Bitvector32Term::UInt64Constant(0)),
+            true,
+        );
+        assert!(assume_native_span_specs(&state, &[spec.clone()], &too_short).is_err());
+        assert!(check_native_span_specs(&state, &[spec.clone()], &too_short).is_err());
+        let fixed_empty = CState::new()
+            .with_memory(
+                CMemory::new()
+                    .with_native_slice_input(
+                        pointer.clone(),
+                        CType::Int32,
+                        IntegerTerm::constant_i64(0).into(),
+                    )
+                    .unwrap(),
+            )
+            .with_local("p", CValue::Pointer(pointer.clone()));
+        assert!(assume_native_span_specs(&fixed_empty, &[spec.clone()], &empty).is_err());
+        let incompatible = state.with_local(
+            "p",
+            CValue::Pointer(pointer.with_type(CType::UInt32Pointer)),
+        );
+        let wrong_type = spec
+            .clone()
+            .with_native_span_requirements(vec![CNativeSpanRequirement {
+                carrier: c_variable("p"),
+                element_type: CType::UInt32,
+                count: c_int32_literal(1),
+                access_policy: CTypedAccessPolicy::NativeObjectOnly,
+            }]);
+        assert!(assume_native_span_specs(&incompatible, &[wrong_type], &empty).is_err());
+
+        let local = CMemory::local_pointer("native-slice-dead");
+        let dead_pointer = CPointerValue::new(local.clone(), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(Variable(989_812)));
+        let memory = CMemory::new()
+            .with_block(local.block.clone(), 4)
+            .with_native_slice_input(
+                dead_pointer.clone(),
+                CType::Int32,
+                IntegerTerm::constant_i64(1).into(),
+            )
+            .unwrap()
+            .without_local_block(&local.block);
+        let dead = CState::new()
+            .with_memory(memory)
+            .with_local("p", CValue::Pointer(dead_pointer));
+        assert!(assume_native_span_specs(&dead, &[spec], &empty).is_err());
+    }
 
     #[test]
     fn interface_prefix_checks_each_arm_and_preserves_only_phi_geometry() {

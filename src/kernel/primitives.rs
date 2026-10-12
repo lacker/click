@@ -318,7 +318,7 @@ impl LoadKind {
             CValue::Int16(_) => Self::Int16,
             CValue::UInt16(_) => Self::UInt16,
             CValue::Int32(_) | CValue::UInt32(_) => Self::Bits32,
-            CValue::Int64(_) | CValue::UInt64(_) => Self::Bits64,
+            CValue::Int64(_) | CValue::UInt64(_) | CValue::PointerInteger(_) => Self::Bits64,
             CValue::Int128(_) => Self::Int128,
             CValue::UInt128(_) => Self::UInt128,
             CValue::Float32(_) => Self::Float32,
@@ -1620,6 +1620,9 @@ pub enum CValue {
     UInt32(Bitvector32Term),
     Int64(Bitvector32Term),
     UInt64(Bitvector32Term),
+    /// A complete integer representation produced from an actual pointer.
+    /// Numeric observations project its bits; equality cannot issue its origin.
+    PointerInteger(std::sync::Arc<CPointerIntegerValue>),
     Int128(Bitvector32Term),
     UInt128(Bitvector32Term),
     /// IEEE-754 binary32 payload represented in the shared checked term arena.
@@ -1627,6 +1630,73 @@ pub enum CValue {
     /// IEEE-754 binary64 payload represented in the shared checked term arena.
     Float64(Bitvector32Term),
     Pointer(CPointerValue),
+}
+
+/// Executable origin is separate from numeric bits and survives only checked
+/// whole-value transport and the explicitly supported integer operations.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CPointerIntegerValue {
+    bits: Bitvector32Term,
+    signed: bool,
+    origin: CPointerValue,
+}
+
+impl CPointerIntegerValue {
+    pub(in crate::kernel) fn from_pointer(origin: CPointerValue, c_type: CType) -> Option<Self> {
+        let signed = match c_type {
+            CType::Int64 => true,
+            CType::UInt64 => false,
+            _ => return None,
+        };
+        Some(Self {
+            bits: Bitvector32Term::pointer_address(origin.pointer().clone()),
+            signed,
+            origin,
+        })
+    }
+
+    pub(crate) fn bits(&self) -> &Bitvector32Term {
+        &self.bits
+    }
+    pub(crate) fn origin(&self) -> &CPointerValue {
+        &self.origin
+    }
+    pub(crate) fn c_type(&self) -> CType {
+        if self.signed {
+            CType::Int64
+        } else {
+            CType::UInt64
+        }
+    }
+    pub(crate) fn numeric_value(&self) -> CValue {
+        if self.signed {
+            CValue::Int64(self.bits.clone())
+        } else {
+            CValue::UInt64(self.bits.clone())
+        }
+    }
+
+    pub(crate) fn with_numeric_value(&self, value: CValue) -> Option<Self> {
+        let (bits, signed) = match value {
+            CValue::Int64(bits) => (bits, true),
+            CValue::UInt64(bits) => (bits, false),
+            _ => return None,
+        };
+        Some(Self {
+            bits,
+            signed,
+            origin: self.origin.clone(),
+        })
+    }
+
+    /// Structural binder/substitution transport, never numeric-origin recovery.
+    pub(crate) fn with_parts(&self, bits: Bitvector32Term, origin: CPointerValue) -> Self {
+        Self {
+            bits,
+            signed: self.signed,
+            origin,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2807,6 +2877,15 @@ impl AlgebraicTerm {
                 Node::Value(value) => match value {
                     CValue::Void => {}
                     CValue::Bool(v) => visit(v),
+                    CValue::PointerInteger(value) => {
+                        visit(value.bits());
+                        let origin = value.origin();
+                        pending.push(Node::Pointer(origin.pointer()));
+                        if let Some(designation) = origin.designation() {
+                            pending.extend(designation.pointer_terms().map(Node::Pointer));
+                            pending.extend(designation.integer_terms().map(Node::SharedInteger));
+                        }
+                    }
                     CValue::Pointer(v) => {
                         pending.push(Node::Pointer(v.pointer()));
                         if let Some(designation) = v.designation() {
@@ -3342,6 +3421,10 @@ pub enum CArrayObjectKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
+    /// An explicit lexical block; automatic locals retire on every exit.
+    Scope {
+        body: Box<CStatement>,
+    },
     Skip,
     Break,
     Continue,

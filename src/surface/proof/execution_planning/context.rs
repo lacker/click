@@ -140,6 +140,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
     next_loop_index: &mut usize,
 ) -> Option<&'a CStatement> {
     match statement {
+        CStatement::Scope { body } => kernel_loop_by_index(body, target, next_loop_index),
         CStatement::While { body, .. } => {
             let loop_index = *next_loop_index;
             *next_loop_index += 1;

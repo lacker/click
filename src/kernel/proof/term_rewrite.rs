@@ -151,6 +151,7 @@ fn typed_c_replacement(value: &CValue) -> Option<TypedCReplacement> {
         | CValue::Float32(term)
         | CValue::Float64(term) => Some(TypedCReplacement::Bitvector(term.clone())),
         CValue::Pointer(pointer) => Some(TypedCReplacement::Pointer(pointer.clone())),
+        CValue::PointerInteger(value) => Some(TypedCReplacement::Bitvector(value.bits().clone())),
         CValue::Void => None,
     }
 }
@@ -472,6 +473,10 @@ fn collect_c_value_carriers(value: &CValue, variables: &mut CarrierVariables) {
         | CValue::UInt128(term)
         | CValue::Float32(term)
         | CValue::Float64(term) => collect_bitvector_carriers(term, variables),
+        CValue::PointerInteger(value) => {
+            collect_bitvector_carriers(value.bits(), variables);
+            collect_c_pointer_carriers(value.origin(), variables);
+        }
         CValue::Pointer(pointer) => collect_c_pointer_carriers(pointer, variables),
     }
 }
@@ -1102,6 +1107,8 @@ fn exhausted_offset() -> PointerOffsetTerm {
 
 fn exhausted_c_value(value: &CValue) -> CValue {
     match value {
+        // Exhaustion must not fabricate or discard pointer-origin authority.
+        CValue::PointerInteger(value) => CValue::PointerInteger(value.clone()),
         CValue::Void => CValue::Void,
         CValue::Bool(_) => CValue::Bool(Bitvector32Term::Constant(0)),
         CValue::Int8(_) => CValue::Int8(Bitvector32Term::Constant(0)),
@@ -2503,6 +2510,22 @@ impl<'a> TermRewrite<'a> {
             return exhausted_c_value(v);
         }
         let result = match v {
+            CValue::PointerInteger(value) => {
+                let bits = self.bits(value.bits());
+                // Only structural full-pointer substitution transports origin.
+                // A numeric equality replacement supplies bits, never an origin.
+                let origin = if self.typed_variables.is_some() || !self.scope.c.is_empty() {
+                    let CValue::Pointer(origin) =
+                        self.value(&CValue::Pointer(value.origin().clone()))
+                    else {
+                        unreachable!("pointer rewrite preserves pointer sort")
+                    };
+                    origin
+                } else {
+                    value.origin().clone()
+                };
+                CValue::PointerInteger(std::sync::Arc::new(value.with_parts(bits, origin)))
+            }
             CValue::Void => CValue::Void,
             CValue::Bool(v) => CValue::Bool(self.bits(v)),
             CValue::Int8(v) => CValue::Int8(self.bits(v)),

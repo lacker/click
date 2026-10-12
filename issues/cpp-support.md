@@ -31,75 +31,63 @@ the affected contracts. Do not restore the old numeric-alias fallback to make
 the compatibility tests pass. Approval of these boundaries does not establish
 that their implementation or the acceptance matrix is complete.
 
-The current integration checkpoint is not green. The latest full library
-checkpoint ran 5,694 tests: 5,665 passed and 29 failed, with no timeouts (139
-nightly tests skipped). That run does not include all integration fixture suites
-and is not a full gate verdict. It repaired the million-element Rust array
-regression within the unchanged work/time limits: free- and bound-variable
-collection now retain compact run dependencies separately. Focused checks also
-pass the original retained constructor proof, final-release helper, hidden-record
-expansion, mixed-snapshot call proof and adjacent-range C allocation proof.
+The current integration checkpoint is not green and has not been published or
+merged. Focused checks have repaired compact Rust array dependencies, native
+slice geometry, checked callback loan evidence, constructor-entry alignment,
+selected scalar preconditions and read-defined obligations, branch-prefix
+transport, and typed pointer-read identities. These results do not establish
+that the acceptance matrix is complete. The C++ pointer selection (run 56)
+passes 20 of 24 tests: constructor self-pointers, embedded self-pointers,
+nested qualified pointer fields and record-copy self-pointer claims still fail.
+The scalar unwind case also failed its earlier integration run and needs
+rechecking after the remaining repairs.
 
-A subsequent focused check passes the original Rust split-slice and chunk
-metadata proofs, including their bounded-work controls. Native slice signatures
-now retain backing geometry separately from ownership and initialization; empty
-slices permit identity formation but no element access. This is a focused result,
-not a new full-gate verdict. The indirect callback assignment path now retains
-its callee's checked loan evidence; the original callback expansion proof and
-address-only/active-loan rejection controls pass. A subsequent focused run of
-49 library and C++ integration tests passed 23 and failed 26. The original C++
-self-pointer constructor, embedded self-pointer and scalar unwind cases still
-fail; the checkpoint remains unready to publish.
+Pointer loads now have an intrinsic full-width kind distinct from numeric
+32-bit reads. Exact source/snapshot origin recovery and the narrow-read
+rejection controls pass. Remaining read-kind cleanup includes removing ignored
+width arguments and redundant width keys. Earlier resource-rewrite investigation
+identified lost native-prefix metadata after unfolding (heap differs,
+blocks/cells do not); its exact reconstruction must be repaired without relaxing
+memory equality. Temporary diagnostic probes have been removed.
 
-The next focused entry/branch run passed 28 of 53 tests and failed 25 (exit
-100). The original grouped resource closer and return-inside-an-open-scope
-proofs now pass, including expansion and rechecking: scalar preconditions use
-selected checked equalities, and defined-read obligations are independently
-checked against the selected state. The new branch-prefix kernel control passes,
-but the original branch fixture and all three C++ constructor/unwind cases still
-fail; the constructor-entry alignment control also exposes a remaining mismatch.
-This run excludes the in-progress pointer-read-kind and C array-row repairs.
+Checked integer-origin transport is implemented in the local integration:
+full-width runtime integer values retain the original full pointer separately
+from their numeric bits. Numeric equality no longer supplies object designation.
+Exact stores/loads and bounded tag operations preserve origin; partial byte
+writes and unsupported reconstruction discard it. The first complete focused
+run passes 36 tests (run 51f, exit 0), including original numeric-forgery rejection,
+ordinary/expanded/retained round trips, signed conversion and tag operations.
+The tests also exposed and now reject an escaped C inner-block local: explicit
+lexical scopes preserve its lifetime end in execution and proof checking.
+The final full library run (57) passes 5,729 of 5,751 tests with 22 failures
+and 139 skipped (exit 100). All kernel and language unit tests pass; remaining
+library failures are in Surface contracts, expansion, diagnostics and scaling.
+Formatting and the book build pass. This is not a green-tree verdict.
+The follow-up scope repair preserves enclosing locals across resumed
+`break`/`continue` paths and checks inner-scope retirement before `goto` targets.
+Run 55 passes 422 of 424 scope, loop, control-flow and origin tests, including
+the new ordinary/expanded/retained controls; its two failures are also present
+in run 57. Scope-exit bookkeeping no longer scans unexecuted suffixes. Loop-head
+source handling still has the existing full-body-per-condition cost; the added
+reentry comparison shares that bound. This checkpoint does not claim that
+broader source-cursor efficiency work is complete.
+See the object-model design for the modular-call boundary; numeric postconditions
+alone do not transfer origin across a call.
 
-The integrated follow-up ran 139 selected tests: 113 passed and 26 failed
-(exit 100, 10.557 seconds of test execution). Original branch-interface and
-hidden-record diagnostic proofs now pass, as do the original multidimensional
-struct-copy expansions and row-crossing rejection/control. Constructor entry
-alignment and logical numeric-address observations pass their direct controls.
-The three original C++ self-pointer/unwind cases still fail. The integrated
-copy guard also exposes an
-[aggregate-return completion regression](../bugs/aggregate-return-completion-rejects-declared-record-input.md).
-New row forwarding, unsigned finite-case and forgotten-wide-value controls
-remain failing. This larger selection is not directly comparable to the earlier
-53-test selection and is not a full gate.
+Slice entry now preserves its existing native extent when prefix bounds are
+undecided before preconditions are available. Actual call checks still require
+those bounds. The original slice-iteration and extent-scaling tests pass,
+alongside known-too-short, incompatible-type and expired-input rejection.
 
-A separate five-test pointer check passed four tests and failed the new
-full-width-origin control. Follow-up review found two remaining pointer-read
-sites still using the old scalar kind and stale producer fixtures; their narrow
-repair passed all six selected pointer tests (run 50b, exit 0), including
-original four-byte identity preservation after a full pointer read and exact
-origin recovery through a symbolic storage base. Related pointer-field
-expansions and the bounded pointer-read rewrite control also pass. The broader
-139-test selection has not been rerun after this narrow repair. Remaining
-read-kind cleanup includes removing ignored width arguments and redundant
-width keys. The selected
-resource-rewrite trace now identifies lost native-prefix metadata in the
-post-unfold state (heap differs, blocks/cells do not); exact reconstruction must
-be repaired without relaxing memory equality. Temporary probes remain, and
-nothing from this integration has been published or merged.
-
-The audit also reproduced
-[numeric equality recovering pointer access](../bugs/numeric-integer-equality-recovers-pointer-access.md)
-through integer and address-only pointer parameters. The explicit choice between
-checked integer-origin transport and restricting executable pointer–integer
-round trips is pending. Numeric equality must not grant object designation.
-
-Remaining reproduced integration failures include complete-width pointer naming,
-resource close/contract certification, branch pointer transport, and loaded-pointer
-contracts that still rely only on address equality. The confirmed C multidimensional-row defect also needs declared
-row identity preserved before scalar decay. Temporary test-only diagnostics are
-not part of the release implementation and must be removed. Validate original
-source proofs after repairs, not just reduced unit tests, and complete the full
-acceptance matrix before publishing or merging this checkpoint.
+Remaining reproduced integration failures include
+[aggregate-return completion](../bugs/aggregate-return-completion-rejects-declared-record-input.md),
+resource close/contract certification, branch pointer transport, and
+loaded-pointer contracts that still rely only on address equality. The original
+C row-crossing rejection and selected-row controls pass. Row-copy modular
+forwarding still loses needed ownership, and the unsigned row-selection proof
+stops at a finite-range arithmetic obligation before accessing the array.
+Validate original source proofs after repairs, not just reduced unit tests, and
+complete the full acceptance matrix before publishing or merging this checkpoint.
 
 Before activation of checked pointer designation, the returned composed-observer regression was repaired: proof-entry input names
 now use already checked explicit separation facts, without initializing raw

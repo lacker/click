@@ -2151,6 +2151,17 @@ pub(in crate::kernel) fn c_values_proven_equal_for_memory_resolution(
 ) -> bool {
     match (left, right) {
         (CValue::Void, CValue::Void) => true,
+        (CValue::PointerInteger(left), CValue::PointerInteger(right)) => {
+            // Numeric equations cannot exchange the retained source pointer.
+            // Stored-value matching requires the complete origin as well.
+            left.c_type() == right.c_type()
+                && left.origin() == right.origin()
+                && bitvector_terms_proven_equal_for_memory_resolution(
+                    left.bits(),
+                    right.bits(),
+                    assumptions,
+                )
+        }
         (CValue::Int8(left), CValue::Int8(right)) => {
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
         }
@@ -4603,7 +4614,9 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
             }
             index.as_ref()
         }
-        CValue::Void | CValue::UInt32(_) => return None,
+        // A numeric defining read accounts for the bits only. It cannot
+        // justify removing a materialized whole origin-bearing value.
+        CValue::PointerInteger(_) | CValue::Void | CValue::UInt32(_) => return None,
     };
     let load = match bits {
         Bitvector32Term::MemoryLoad(_, _, _) => bits.clone(),

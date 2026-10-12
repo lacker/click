@@ -243,12 +243,47 @@ as a byte pointer must not retain an inappropriate integer stride, and casting
 back must not manufacture a typed array. The separate C++ byte-traversal profile
 choice below still applies.
 
-The existing pointer/integer round-trip and tagged-address support also belong
-in this migration. A provenance-preserving integer representation must retain
-the source domain; converting it back cannot manufacture a new domain from its
-numeric address. Arithmetic that destroys the retained representation evidence
-cannot regain it by a later cast. Until these paths transport designation, the
-checked profile must refuse their use to recover an executable pointer.
+The approved bounded pointer/integer profile keeps a 64-bit runtime integer's
+numeric bits together with the full immutable pointer from which it originated.
+This includes designation, bounds, qualifiers and lifetime dependencies. A
+pointer-to-integer cast produces this carrier. Converting back checks that the
+bits equal that same origin's address, then restores that pointer with the
+requested pointee type. It neither selects another pointer by address equality
+nor renews lifetime or grants access permission. A plain integer can convert
+to a pointer only when it is proved zero.
+
+Numeric comparisons, integer specifications and `address(p)` expose only the
+number. Numeric equality never supplies an origin. Proof rewriting may rewrite
+the number while preserving the existing origin; structural binder substitution
+must traverse both parts using the existing full-pointer substitution rules.
+No new contract keywords are introduced.
+
+Exact full-width stores and loads preserve the carrier. Reading representation
+bytes exposes numeric bits; partial writes and reconstruction from bytes discard
+origin, even when the numeric result is unchanged. Same-width signedness casts
+preserve it. Add, subtract, OR and XOR retain a single origin-bearing operand
+(for subtraction, only the left operand); two origins do not select a winner.
+AND retains one origin only for a known 64-bit clearing mask whose high bit is
+set. Low-bit extraction and unsupported or narrowing operations discard it.
+All retained arithmetic still requires the original address to be restored
+before cast-back. These are bounded verifier rules, not a claim to model every
+implementation-defined native conversion.
+
+Runtime bindings can carry this value directly. A modular postcondition that
+states only numeric equality cannot transfer origin to a result or output cell.
+Such a boundary requires checked origin transport before it can be admitted;
+the initial profile refuses unsupported cases. Implementation and integration
+validation of this approved representation are in progress.
+
+Origin retention does not replace lexical lifetime tracking. Native standalone
+blocks must retain an explicit `Scope` boundary in the shared statement model.
+Its execution reuses the existing scope-exit rules: evaluate a return value
+while its locals are live, then retire the scope's automatic objects on each
+exit. Source stepping records the same selected lifetime ends, so expanded
+proofs cannot extend a local's lifetime by flattening its block. The current C
+goto profile already restricts labels to function-body level; admitted jumps
+from these inner scopes therefore leave them. This adds no contract syntax or
+new ownership policy.
 
 #### Equality and substitution
 
@@ -445,8 +480,9 @@ premise or definition evidence.
 
 A checked call with no applicable effect leaves
 its pointer result unresolved. Unknown pointer-cell reads through designated
-storage also retain an unresolved loaded pair. Designated pointer-to-integer
-casts refuse until the integer representation can retain the full carrier.
+storage also retain an unresolved loaded pair. Pointer/integer transport is
+being migrated to the full-carrier integer representation described above;
+numeric-only recovery remains unsupported.
 
 These checks do not yet complete the general interface migration. Bounded
 scalar/record span requirements, pointer-result effects and final pointer-member

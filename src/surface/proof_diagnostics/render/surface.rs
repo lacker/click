@@ -428,6 +428,7 @@ impl Printer<'_> {
             CValue::Bool(value) | CValue::Int64(value) | CValue::UInt64(value) => {
                 self.bitvector(value, depth + 1)
             }
+            CValue::PointerInteger(value) => self.cvalue(&value.numeric_value(), depth + 1),
             CValue::Int32(value) => self.comparison_operand(value, Some(true), depth + 1),
             CValue::UInt32(value) => self.comparison_operand(value, Some(false), depth + 1),
             CValue::Pointer(pointer) => {

@@ -35,6 +35,45 @@ fn scalar_uses_uint32(left: &CValue, right: &CValue) -> bool {
     matches!(left, CValue::UInt32(_)) || matches!(right, CValue::UInt32(_))
 }
 
+fn numeric_pointer_integer_value(value: CValue) -> CValue {
+    match value {
+        CValue::PointerInteger(value) => value.numeric_value(),
+        value => value,
+    }
+}
+
+fn single_pointer_integer_origin(
+    left: &CValue,
+    right: &CValue,
+) -> Option<std::sync::Arc<CPointerIntegerValue>> {
+    match (left, right) {
+        (CValue::PointerInteger(value), right) if !matches!(right, CValue::PointerInteger(_)) => {
+            Some(value.clone())
+        }
+        (left, CValue::PointerInteger(value)) if !matches!(left, CValue::PointerInteger(_)) => {
+            Some(value.clone())
+        }
+        _ => None,
+    }
+}
+
+fn retain_pointer_integer_origin(
+    mut paths: Vec<CExpressionPath>,
+    origin: Option<std::sync::Arc<CPointerIntegerValue>>,
+) -> Vec<CExpressionPath> {
+    if let Some(origin) = origin {
+        for path in &mut paths {
+            if let CExpressionOutcome::Value(value) = &path.outcome
+                && let Some(value) = origin.with_numeric_value(value.clone())
+            {
+                path.outcome =
+                    CExpressionOutcome::Value(CValue::PointerInteger(std::sync::Arc::new(value)));
+            }
+        }
+    }
+    paths
+}
+
 #[derive(Clone, Copy)]
 enum ScalarWidth {
     Int32,
@@ -273,6 +312,20 @@ pub(in crate::kernel) fn apply_c_add(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if matches!(&left, CValue::PointerInteger(_)) || matches!(&right, CValue::PointerInteger(_)) {
+        let origin = single_pointer_integer_origin(&left, &right);
+        let paths = apply_c_add(
+            state,
+            numeric_pointer_integer_value(left),
+            numeric_pointer_integer_value(right),
+            left_step_width,
+            right_step_width,
+            facts,
+            obligations,
+            assumptions,
+        );
+        return retain_pointer_integer_origin(paths, origin);
+    }
     if let Some((left, right, target_type, obligations)) =
         coerce_c_float_operands(&left, &right, &obligations, assumptions)
     {
@@ -736,6 +789,8 @@ pub(in crate::kernel) fn apply_c_multiply(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     if matches!(left, CValue::Int128(_)) || matches!(right, CValue::Int128(_)) {
         return apply_c_int128_multiply(left, right, facts, obligations, assumptions);
     }
@@ -1203,6 +1258,8 @@ pub(in crate::kernel) fn apply_c_divide(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     if matches!(left, CValue::Int128(_) | CValue::UInt128(_))
         || matches!(right, CValue::Int128(_) | CValue::UInt128(_))
     {
@@ -1255,6 +1312,8 @@ pub(in crate::kernel) fn apply_c_remainder(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     if matches!(left, CValue::Int128(_) | CValue::UInt128(_))
         || matches!(right, CValue::Int128(_) | CValue::UInt128(_))
     {
@@ -1296,6 +1355,32 @@ pub(in crate::kernel) fn apply_c_bitwise_binary(
     _assumptions: &PureFactContext,
     operation: CBitwiseOperation,
 ) -> Vec<CExpressionPath> {
+    if matches!(&left, CValue::PointerInteger(_)) || matches!(&right, CValue::PointerInteger(_)) {
+        let mut origin = single_pointer_integer_origin(&left, &right);
+        if matches!(operation, CBitwiseOperation::And) {
+            let mask = match (&left, &right) {
+                (CValue::PointerInteger(_), other) | (other, CValue::PointerInteger(_)) => {
+                    promote_c_uint64_path_value(numeric_pointer_integer_value(other.clone()))
+                        .and_then(|bits| bits.bitvector64_as_const())
+                }
+                _ => None,
+            };
+            // Reading low tag bits destroys the address representation.
+            // Only a known high-bit-preserving mask retains this origin.
+            if mask.is_none_or(|mask| mask & (1u64 << 63) == 0) {
+                origin = None;
+            }
+        }
+        let paths = apply_c_bitwise_binary(
+            numeric_pointer_integer_value(left),
+            numeric_pointer_integer_value(right),
+            facts,
+            obligations,
+            _assumptions,
+            operation,
+        );
+        return retain_pointer_integer_origin(paths, origin);
+    }
     let (left, right) = promote_c_bool_scalar_operands(left, right);
     if let Some(width @ (ScalarWidth::Int64 | ScalarWidth::UInt64)) = scalar_width(&left, &right) {
         let facts = facts;
@@ -1366,6 +1451,7 @@ pub(in crate::kernel) fn apply_c_bitwise_not(
     facts: ExecutionFacts,
     obligations: Vec<ProofObligation>,
 ) -> Vec<CExpressionPath> {
+    let value = numeric_pointer_integer_value(value);
     match value {
         CValue::Bool(value) => vec![CExpressionPath {
             outcome: CExpressionOutcome::Value(int32(Bitvector32Term::bitwise_not(value))),
@@ -1752,6 +1838,8 @@ fn apply_c_comparison(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     if matches!(left, CValue::Int128(_) | CValue::UInt128(_))
         || matches!(right, CValue::Int128(_) | CValue::UInt128(_))
     {
@@ -1907,6 +1995,27 @@ pub(in crate::kernel) fn apply_c_subtract(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if matches!(&left, CValue::PointerInteger(_)) || matches!(&right, CValue::PointerInteger(_)) {
+        let origin = match (&left, &right) {
+            (CValue::PointerInteger(origin), right)
+                if !matches!(right, CValue::PointerInteger(_)) =>
+            {
+                Some(origin.clone())
+            }
+            _ => None,
+        };
+        let paths = apply_c_subtract(
+            state,
+            numeric_pointer_integer_value(left),
+            numeric_pointer_integer_value(right),
+            left_step_width,
+            right_step_width,
+            facts,
+            obligations,
+            assumptions,
+        );
+        return retain_pointer_integer_origin(paths, origin);
+    }
     if let Some((left, right, target_type, obligations)) =
         coerce_c_float_operands(&left, &right, &obligations, assumptions)
     {
@@ -2105,6 +2214,9 @@ pub(super) fn pointer_index_term(
     assumptions: &PureFactContext,
 ) -> Option<(Bitvector32Term, bool, bool)> {
     match value {
+        CValue::PointerInteger(value) => {
+            pointer_index_term(value.numeric_value(), facts, assumptions)
+        }
         value @ (CValue::Bool(_)
         | CValue::Int8(_)
         | CValue::Int16(_)
@@ -3715,6 +3827,7 @@ fn apply_c_uint32_division_like(
 
 fn promote_c_shift_count(value: CValue) -> Option<(Bitvector32Term, bool, bool)> {
     match value {
+        CValue::PointerInteger(value) => promote_c_shift_count(value.numeric_value()),
         CValue::Bool(value) => Some((value, false, false)),
         CValue::UInt32(value) => Some((value, true, false)),
         CValue::Int32(value) => Some((value, false, false)),
@@ -3740,6 +3853,8 @@ pub(in crate::kernel) fn apply_c_shift_left(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     let facts = facts;
     let Some((right, unsigned_count, right_is_64_bit)) = promote_c_shift_count(right) else {
         return vec![c_type_mismatch_expression_path(facts, obligations)];
@@ -3833,7 +3948,8 @@ pub(in crate::kernel) fn apply_c_shift_left(
             right_is_64_bit,
             apply_c_int32_shift_left_valid_count,
         ),
-        CValue::Int128(_)
+        CValue::PointerInteger(_)
+        | CValue::Int128(_)
         | CValue::UInt128(_)
         | CValue::Void
         | CValue::Pointer(_)
@@ -3851,6 +3967,8 @@ pub(in crate::kernel) fn apply_c_shift_right(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     let facts = facts;
     let Some((right, unsigned_count, right_is_64_bit)) = promote_c_shift_count(right) else {
         return vec![c_type_mismatch_expression_path(facts, obligations)];
@@ -3984,7 +4102,8 @@ pub(in crate::kernel) fn apply_c_shift_right(
                 }]
             },
         ),
-        CValue::Int128(_)
+        CValue::PointerInteger(_)
+        | CValue::Int128(_)
         | CValue::UInt128(_)
         | CValue::Void
         | CValue::Pointer(_)
@@ -4650,6 +4769,8 @@ pub(in crate::kernel) fn apply_c_equal(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     if matches!(left, CValue::Int128(_) | CValue::UInt128(_))
         || matches!(right, CValue::Int128(_) | CValue::UInt128(_))
     {
@@ -4812,6 +4933,8 @@ pub(in crate::kernel) fn apply_c_not_equal(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    let left = numeric_pointer_integer_value(left);
+    let right = numeric_pointer_integer_value(right);
     if matches!(left, CValue::Int128(_) | CValue::UInt128(_))
         || matches!(right, CValue::Int128(_) | CValue::UInt128(_))
     {

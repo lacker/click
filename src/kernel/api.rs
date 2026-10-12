@@ -2766,6 +2766,15 @@ pub fn c_continue_with_step(step: CStatement) -> CStatement {
 pub fn c_for_body_with_step(body: CStatement, step: CStatement) -> CStatement {
     fn rewrite(statement: CStatement, step: &CStatement, scopes: &mut Vec<String>) -> CStatement {
         match statement {
+            CStatement::Scope { body } => {
+                let parent_len = scopes.len();
+                scopes.extend(crate::kernel::eval::scope_declared_names(&body));
+                let body = rewrite(*body, step, scopes);
+                scopes.truncate(parent_len);
+                CStatement::Scope {
+                    body: Box::new(body),
+                }
+            }
             CStatement::Continue => CStatement::ForStep {
                 step: Box::new(step.clone()),
                 exited_locals: scopes.clone(),

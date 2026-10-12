@@ -161,6 +161,7 @@ impl SnapshotLabels {
     fn legend_value(&mut self, value: &CValue) -> String {
         match value {
             CValue::Pointer(pointer) => self.pointer_value_name(pointer.pointer()),
+            CValue::PointerInteger(value) => self.legend_bits(value.bits()),
             CValue::Int32(bits)
             | CValue::UInt32(bits)
             | CValue::Int64(bits)

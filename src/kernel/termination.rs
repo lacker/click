@@ -1180,7 +1180,9 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
             initializer: None, ..
         }
         | CStatement::DeclareAggregate { .. } => false,
-        CStatement::ForStep { step, .. } => statement_takes_address_of(step, name),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            statement_takes_address_of(step, name)
+        }
         CStatement::Declare {
             initializer: Some(expression),
             ..
@@ -1586,7 +1588,9 @@ fn statement_calls_visiting(
                 statement_calls_visiting(&case.body, calls, visit);
             }
         }
-        CStatement::ForStep { step, .. } => statement_calls_visiting(step, calls, visit),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            statement_calls_visiting(step, calls, visit)
+        }
         CStatement::Skip
         | CStatement::EndAutomaticLifetimes { .. }
         | CStatement::Break
@@ -1647,7 +1651,9 @@ fn statement_declared_variables(statement: &CStatement, names: &mut BTreeSet<Str
                 statement_declared_variables(&case.body, names);
             }
         }
-        CStatement::ForStep { step, .. } => statement_declared_variables(step, names),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            statement_declared_variables(step, names)
+        }
         CStatement::Skip
         | CStatement::EndAutomaticLifetimes { .. }
         | CStatement::Break
@@ -1787,7 +1793,7 @@ fn walk_termination_paths<W: TerminationWalk>(
         walk_termination_paths(walk, statement, paths)
     };
     match statement {
-        CStatement::ForStep { step, .. } => descend(step, paths),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => descend(step, paths),
         CStatement::Return(_) | CStatement::Throw(_) => Ok(WalkPaths::none()),
         // A `break` leaves the innermost `switch` or loop and resumes after
         // it, carrying what it holds here. It does not reach the next
@@ -2430,6 +2436,7 @@ struct RankingMachineTerm {
 impl RankingMachineTerm {
     fn from_value(value: &CValue) -> Option<Self> {
         let (machine_type, term) = match value {
+            CValue::PointerInteger(value) => return Self::from_value(&value.numeric_value()),
             CValue::Bool(term)
             | CValue::Int8(term)
             | CValue::Int16(term)
@@ -3151,7 +3158,9 @@ fn loop_at_index<'a>(
             try_body, handler, ..
         } => loop_at_index(try_body, target, next_index)
             .or_else(|| loop_at_index(handler, target, next_index)),
-        CStatement::ForStep { step, .. } => loop_at_index(step, target, next_index),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            loop_at_index(step, target, next_index)
+        }
         // Spelled out, as in `check_loops`: the two walks number the same
         // loops only while they descend into the same statements, so a new
         // statement kind must be placed in both.
@@ -3184,6 +3193,9 @@ fn loop_at_index<'a>(
 /// must still be the exact loop shape from the source body.
 fn same_statement_shape(left: &CStatement, right: &CStatement) -> bool {
     match (left, right) {
+        (CStatement::Scope { body: left }, CStatement::Scope { body: right }) => {
+            same_statement_shape(left, right)
+        }
         (CStatement::Seq(left_first, left_second), CStatement::Seq(right_first, right_second)) => {
             same_statement_shape(left_first, right_first)
                 && same_statement_shape(left_second, right_second)
@@ -3462,7 +3474,9 @@ fn collect_loops<'a>(statement: &'a CStatement, loops: &mut Vec<&'a CStatement>)
                 collect_loops(&case.body, loops);
             }
         }
-        CStatement::ForStep { step, .. } => collect_loops(step, loops),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            collect_loops(step, loops)
+        }
         CStatement::Skip
         | CStatement::EndAutomaticLifetimes { .. }
         | CStatement::Break
@@ -3589,7 +3603,9 @@ fn contains_natural_control_loop(statement: &CStatement) -> bool {
         CStatement::Switch { cases, .. } => cases
             .iter()
             .any(|case| contains_natural_control_loop(&case.body)),
-        CStatement::ForStep { step, .. } => contains_natural_control_loop(step),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            contains_natural_control_loop(step)
+        }
         _ => false,
     }
 }
@@ -3724,7 +3740,7 @@ fn check_loops(
             }
             Ok(())
         }
-        CStatement::ForStep { step, .. } => check_loops(
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => check_loops(
             step,
             supplied,
             certified,
@@ -3997,7 +4013,9 @@ fn statement_function_addresses(statement: &CStatement, taken: &mut BTreeSet<Str
             visit(target);
             visit(operand);
         }
-        CStatement::ForStep { step, .. } => statement_function_addresses(step, taken),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            statement_function_addresses(step, taken)
+        }
         CStatement::Seq(first, second) => {
             statement_function_addresses(first, taken);
             statement_function_addresses(second, taken);
@@ -4334,7 +4352,9 @@ pub(super) fn statement_calls_function(statement: &CStatement, callee: &str) -> 
         CStatement::Switch { cases, .. } => cases
             .iter()
             .any(|case| statement_calls_function(&case.body, callee)),
-        CStatement::ForStep { step, .. } => statement_calls_function(step, callee),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            statement_calls_function(step, callee)
+        }
         CStatement::Skip
         | CStatement::EndAutomaticLifetimes { .. }
         | CStatement::Break
@@ -4413,7 +4433,9 @@ fn self_call_loop_indices(
                 descend(&case.body, next_index);
             }
         }
-        CStatement::ForStep { step, .. } => descend(step, next_index),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            descend(step, next_index)
+        }
         // Spelled out, as in `loop_at_index` and `check_loops`: these walks
         // number the same loops only while they descend into the same
         // statements, so a new statement kind must be placed in all of them.

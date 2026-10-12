@@ -4528,64 +4528,6 @@ impl<'a> Proof<'a> {
                 .into_iter()
                 .chain(proof.facts().algebraic_equalities_mentioning(&goal));
             for equality in equalities {
-                #[cfg(test)]
-                let bits64_probe = std::env::var_os("CLICK_BITS64_BRIDGE_PROBE").is_some()
-                    && matches!(
-                        &goal,
-                        Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(..), true)
-                    );
-                #[cfg(test)]
-                if bits64_probe {
-                    let load = |term: &Bitvector32Term| match term {
-                        Bitvector32Term::Variable(variable) => {
-                            crate::kernel::registered_load_origin_term_for_variable(variable)
-                        }
-                        Bitvector32Term::MemoryLoad(..) => Some(term.clone()),
-                        _ => None,
-                    };
-                    let endpoint = |term: &Bitvector32Term| match load(term) {
-                        Some(Bitvector32Term::MemoryLoad(memory, pointer, kind)) => {
-                            let bytes =
-                                crate::kernel::load_term_access_width(&memory, &pointer, kind);
-                            Some((memory.arena_id(), pointer.block.clone(), kind, bytes))
-                        }
-                        _ => None,
-                    };
-                    let endpoints = |proposition: &Proposition| match proposition {
-                        Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(a, b), true) => {
-                            Some((
-                                endpoint(a),
-                                endpoint(b),
-                                std::mem::discriminant(a.as_ref()),
-                                std::mem::discriminant(b.as_ref()),
-                            ))
-                        }
-                        _ => None,
-                    };
-                    let same_addresses = match (&goal, &equality) {
-                        (
-                            Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(a, b), true),
-                            Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(c, d), true),
-                        ) => {
-                            Some([(a, c), (a, d), (b, c), (b, d)].map(|(goal, candidate)| {
-                                match (load(goal), load(candidate)) {
-                                    (
-                                        Some(Bitvector32Term::MemoryLoad(_, a, _)),
-                                        Some(Bitvector32Term::MemoryLoad(_, b, _)),
-                                    ) => Some(a == b),
-                                    _ => None,
-                                }
-                            }))
-                        }
-                        _ => None,
-                    };
-                    eprintln!(
-                        "BITS64-CANDIDATE-PROBE goal={:?} candidate={:?} kind={:?} same-addresses={same_addresses:?}",
-                        endpoints(&goal),
-                        endpoints(&equality),
-                        std::mem::discriminant(&equality)
-                    );
-                }
                 let equality_has_literal_endpoint = matches!(
                     &equality,
                     Proposition::ConditionIs(
@@ -4607,16 +4549,8 @@ impl<'a> Proof<'a> {
                 let Some(surface) =
                     proof.available_surface_fact(surface_facts, premise_anchor, &equality)
                 else {
-                    #[cfg(test)]
-                    if bits64_probe {
-                        eprintln!("BITS64-CANDIDATE-PROBE surface=false");
-                    }
                     continue;
                 };
-                #[cfg(test)]
-                if bits64_probe {
-                    eprintln!("BITS64-CANDIDATE-PROBE surface=true");
-                }
                 // `available_surface_fact` has already resolved the spelling
                 // that still lowers to this fact, anchoring a stale constructor
                 // equality at function entry when the written form stopped
@@ -4660,17 +4594,6 @@ impl<'a> Proof<'a> {
                         return Err(Vec::new());
                     }
                     let rewrite = proof.apply_step(ProofStep::Rewrite(oriented));
-                    #[cfg(test)]
-                    if bits64_probe {
-                        eprintln!(
-                            "BITS64-CANDIDATE-PROBE rewrite={}",
-                            if rewrite.is_ok() {
-                                "accepted"
-                            } else {
-                                "rejected"
-                            }
-                        );
-                    }
                     let Ok(rewritten) = rewrite else {
                         continue;
                     };

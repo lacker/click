@@ -2451,7 +2451,8 @@ fn pure_mixed_linear_smart_script_expands_the_retained_proof_object_path() {
     );
     assert!(selected.contains("x >= 0;"), "{selected}");
     assert!(selected.contains("extract(x >= 0);"), "{selected}");
-    assert!(selected.contains("assumption();"), "{selected}");
+    // The checked application supplies both identical conjuncts directly.
+    assert!(!selected.contains("assumption();"), "{selected}");
     assert!(!selected.contains("apply(required(x));"), "{selected}");
     assert!(!selected.contains("simp();"), "{selected}");
     verify_click_theorems(&expanded)

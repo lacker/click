@@ -2803,7 +2803,17 @@ mod tests {
         else {
             panic!("pointer-typed load must produce a pointer value");
         };
-        assert_eq!(execution_value.pointer(), &scalar_indexed_address);
+        assert_ne!(execution_value.pointer(), &scalar_indexed_address);
+        let complete_pointer_address = Pointer::loaded(
+            p.block.clone(),
+            Bitvector32Term::MemoryLoad(
+                memory.clone(),
+                Box::new(p.clone()),
+                crate::kernel::LoadKind::Pointer,
+            ),
+            8,
+        );
+        assert_eq!(execution_value.pointer(), &complete_pointer_address);
 
         // A scalar read of the same cell may have a four-byte interpretation;
         // it cannot determine whether the distinct pointer-load name enters
@@ -2985,7 +2995,7 @@ mod tests {
             PointerBlock::Symbolic(crate::kernel::load_variable_for_cell_with_origin(
                 memory,
                 &address,
-                crate::kernel::LoadKind::Bits32,
+                crate::kernel::LoadKind::Pointer,
                 8,
                 memory,
             ))
@@ -3020,7 +3030,7 @@ mod tests {
                 PointerBlock::Symbolic(crate::kernel::load_variable_for_cell_with_origin(
                     &memory,
                     address,
-                    crate::kernel::LoadKind::Bits32,
+                    crate::kernel::LoadKind::Pointer,
                     8,
                     &memory,
                 )),
@@ -3050,9 +3060,7 @@ mod tests {
             block: PointerBlock::Heap(95_001),
             offset: PointerOffsetTerm::Constant(0),
         };
-        // Registered names retain their own width. The hand-built numeric
-        // projections also need the producer's address-level width record.
-        crate::kernel::eval::declare_load_access_width(&cell, 8);
+        // The complete pointer read has an immutable eight-byte kind.
         let other = at(symbolic(95_003), 0);
         let before = crate::kernel::CMemory::new().with_block(PointerBlock::Heap(95_001), 16);
         let after = before
@@ -3063,7 +3071,7 @@ mod tests {
             PointerBlock::Symbolic(crate::kernel::load_variable_for_cell_with_origin(
                 &memory,
                 &cell,
-                crate::kernel::LoadKind::Bits32,
+                crate::kernel::LoadKind::Pointer,
                 8,
                 &memory,
             ))
@@ -3086,13 +3094,12 @@ mod tests {
             };
             let (memory, address) =
                 crate::kernel::registered_load_origin_for_variable(variable).unwrap();
-            Bitvector32Term::MemoryLoad(memory, Box::new(address), crate::kernel::LoadKind::Bits32)
+            Bitvector32Term::MemoryLoad(memory, Box::new(address), crate::kernel::LoadKind::Pointer)
         };
         assert!(!crate::kernel::reasoning::memory_resolution::bitvector_terms_proven_equal_for_memory_resolution(
             &load(&left), &load(&right), &address_only,
         ));
-        // The registered origins retain an eight-byte access width, even
-        // though their numeric projection below is Bits32.
+        // Complete pointer observations retain their eight-byte span.
         let byte_range = |base, bytes| {
             crate::kernel::CMemoryRange::new_with_element_width(
                 base,
@@ -3157,7 +3164,7 @@ mod tests {
             PointerBlock::Symbolic(crate::kernel::load_variable_for_cell_with_origin(
                 memory,
                 &address,
-                crate::kernel::LoadKind::Bits32,
+                crate::kernel::LoadKind::Pointer,
                 8,
                 memory,
             ))
@@ -3197,7 +3204,7 @@ mod tests {
             PointerBlock::Symbolic(crate::kernel::load_variable_for_cell_with_origin(
                 memory,
                 address,
-                crate::kernel::LoadKind::Bits32,
+                crate::kernel::LoadKind::Pointer,
                 8,
                 memory,
             )),
@@ -3462,7 +3469,7 @@ mod tests {
     }
 
     #[test]
-    fn a_small_load_is_not_a_pointer_load_and_can_later_be_registered_as_one() {
+    fn a_small_load_stays_numeric_beside_a_distinct_complete_pointer_read() {
         let memory = crate::kernel::intern_c_memory(CMemory::new().with_block(symbolic(901), 16));
         let p = at(symbolic(902), 0);
         let q = at(symbolic(903), 0);
@@ -3481,8 +3488,22 @@ mod tests {
         classes.add_equality(&p, &q);
         assert!(!classes.are_equal(&small, &pointer));
         let widened = named_load(&memory, &p);
-        assert_eq!(small, widened);
+        assert_ne!(small, widened);
         assert!(classes.are_equal(&widened, &pointer));
+        assert!(!classes.are_equal(&small, &pointer));
+        let PointerBlock::Symbolic(variable) = &small.block else {
+            unreachable!()
+        };
+        let Some(Bitvector32Term::MemoryLoad(_, _, kind)) =
+            crate::kernel::registered_load_origin_term_for_variable(variable)
+        else {
+            panic!("the numeric read retains its exact origin")
+        };
+        assert_eq!(kind, crate::kernel::LoadKind::Bits32);
+        assert_eq!(
+            crate::kernel::registered_load_bytes_for_variable(variable),
+            Some(4)
+        );
     }
 
     #[test]

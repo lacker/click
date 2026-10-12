@@ -1834,6 +1834,19 @@ impl Bitvector32Term {
     }
 
     pub(crate) fn uint64_bitwise_xor(left: Self, right: Self) -> Self {
+        if left.uint64_as_const() == Some(0) {
+            return right;
+        }
+        if right.uint64_as_const() == Some(0) {
+            return left;
+        }
+        // Fold a trailing constant tag chain in the numeric representation.
+        // This is a bitvector identity; it does not create pointer origin.
+        if let (Self::UInt64BitwiseXor(base, tag), Some(next)) = (&left, right.uint64_as_const())
+            && let Some(tag) = tag.uint64_as_const()
+        {
+            return Self::uint64_bitwise_xor((**base).clone(), Self::UInt64Constant(tag ^ next));
+        }
         match (uint64_constant(&left), uint64_constant(&right)) {
             (Some(left), Some(right)) => Self::UInt64Constant(left ^ right),
             _ => Self::UInt64BitwiseXor(Box::new(left), Box::new(right)),
@@ -3127,6 +3140,7 @@ impl CType {
 
     pub(crate) fn accepts(self, value: &CValue) -> bool {
         match (self, value) {
+            (ty, CValue::PointerInteger(value)) => ty == value.c_type(),
             (Self::Int128, CValue::Int128(term)) => {
                 MachineIntegerType::Int128.accepts_wide_term(term)
             }
@@ -3319,6 +3333,7 @@ impl CValue {
             Self::UInt32(_) => CType::UInt32,
             Self::Int64(_) => CType::Int64,
             Self::UInt64(_) => CType::UInt64,
+            Self::PointerInteger(value) => value.c_type(),
             Self::Int128(_) => CType::Int128,
             Self::UInt128(_) => CType::UInt128,
             Self::Float32(_) => CType::Float32,
@@ -3339,6 +3354,7 @@ impl CValue {
             Self::UInt32(_) => 4,
             Self::Int64(_) => 8,
             Self::UInt64(_) => 8,
+            Self::PointerInteger(_) => 8,
             Self::Int128(_) | Self::UInt128(_) => 16,
             Self::Float32(_) => 4,
             Self::Float64(_) => 8,

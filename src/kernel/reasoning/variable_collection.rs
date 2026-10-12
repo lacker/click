@@ -503,7 +503,7 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             initializer: None, ..
         }
         | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ForStep { step, .. } => {
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
             collect_c_statement_bitvector_variables(step, variables);
         }
         CStatement::Declare {
@@ -1117,6 +1117,14 @@ fn collect_c_value_bound_identities(
     _integer_seen: &mut SeenTerms,
 ) {
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_integer_variables(value.bits(), variables);
+            collect_c_value_bound_identities(
+                &CValue::Pointer(value.origin().clone()),
+                variables,
+                _integer_seen,
+            );
+        }
         CValue::Void => {}
         CValue::Pointer(pointer) => {
             if let Some(designation) = pointer.designation() {
@@ -2703,6 +2711,14 @@ fn collect_c_value_integer_variables(
         return;
     }
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_integer_variables_seen(value.bits(), variables, seen);
+            collect_c_value_integer_variables(
+                &CValue::Pointer(value.origin().clone()),
+                variables,
+                seen,
+            );
+        }
         CValue::Void => {}
         CValue::Int8(value) => collect_bitvector_integer_variables_seen(value, variables, seen),
         CValue::Bool(value)
@@ -3317,6 +3333,14 @@ fn collect_capture_variables_in_c_value(
         return;
     }
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_capture_variables_seen(value.bits(), variables, integer_seen);
+            collect_capture_variables_in_c_value(
+                &CValue::Pointer(value.origin().clone()),
+                variables,
+                integer_seen,
+            );
+        }
         CValue::Void => {}
         CValue::Int8(bits) => {
             collect_bitvector_capture_variables_seen(bits, variables, integer_seen)
@@ -4004,6 +4028,14 @@ fn collect_c_value_scope_summary(
         return IntegerScopeSummary::default();
     }
     match value {
+        CValue::PointerInteger(value) => {
+            let mut summary = collect_bitvector_scope_summary(value.bits(), summaries);
+            summary.merge(collect_c_value_scope_summary(
+                &CValue::Pointer(value.origin().clone()),
+                summaries,
+            ));
+            summary
+        }
         CValue::Void => IntegerScopeSummary::default(),
         CValue::Int8(term) => collect_bitvector_scope_summary(term, summaries),
         CValue::Bool(term)
@@ -4680,6 +4712,20 @@ fn collect_binder_variables_in_c_value(
         return;
     }
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_binder_variables_seen(
+                value.bits(),
+                integer_variables,
+                bitvector_variables,
+                integer_seen,
+            );
+            collect_binder_variables_in_c_value(
+                &CValue::Pointer(value.origin().clone()),
+                integer_variables,
+                bitvector_variables,
+                integer_seen,
+            );
+        }
         CValue::Void => {}
         CValue::Int8(bits) => collect_bitvector_binder_variables_seen(
             bits,
@@ -5785,6 +5831,13 @@ pub(crate) fn collect_c_value_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_variables(value.bits(), variables);
+            collect_c_value_bitvector_variables(
+                &CValue::Pointer(value.origin().clone()),
+                variables,
+            );
+        }
         CValue::Void => {}
         CValue::Int8(bits) => collect_bitvector_variables(bits, variables),
         CValue::Bool(bits)

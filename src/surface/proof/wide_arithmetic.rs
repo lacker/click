@@ -216,6 +216,13 @@ fn order(lower: ContractExpression, upper: ContractExpression, strict: bool) -> 
 /// written as the Integer it is: the Integer certificate reads a premise as
 /// it is spelled, and `to_integer(2u64)` spelled out is an atom to it.
 fn to_integer(expression: &ContractExpression) -> ContractExpression {
+    if let ContractExpression::CFragment(CExpression::Value(CValue::PointerInteger(value))) =
+        expression
+    {
+        return to_integer(&ContractExpression::CFragment(CExpression::Value(
+            value.numeric_value(),
+        )));
+    }
     if let ContractExpression::CFragment(CExpression::Value(CValue::UInt64(value))) = expression
         && let Some(constant) = value.uint64_as_const()
     {
@@ -250,6 +257,12 @@ fn collect_operations(expression: &ContractExpression, operations: &mut Vec<Cont
 /// Integer claim may need.
 fn collect_atoms(expression: &ContractExpression, atoms: &mut Vec<ContractExpression>) {
     match expression {
+        ContractExpression::CFragment(CExpression::Value(CValue::PointerInteger(value))) => {
+            collect_atoms(
+                &ContractExpression::CFragment(CExpression::Value(value.numeric_value())),
+                atoms,
+            )
+        }
         ContractExpression::Add(left, right) | ContractExpression::Subtract(left, right) => {
             collect_atoms(left, atoms);
             collect_atoms(right, atoms);
@@ -291,6 +304,11 @@ fn linear(expression: &ContractExpression) -> bool {
 /// The 64-bit type a literal written in `expression` has, if one is.
 fn literal_carrier(expression: &ContractExpression) -> Option<Carrier> {
     match expression {
+        ContractExpression::CFragment(CExpression::Value(CValue::PointerInteger(value))) => {
+            literal_carrier(&ContractExpression::CFragment(CExpression::Value(
+                value.numeric_value(),
+            )))
+        }
         ContractExpression::Add(left, right) | ContractExpression::Subtract(left, right) => {
             literal_carrier(left).or_else(|| literal_carrier(right))
         }

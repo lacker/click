@@ -4968,6 +4968,7 @@ pub(crate) enum TacticApplicationRefusal {
 /// Whether a certified body runs no code: it is one `return;` of no value.
 fn body_runs_no_code(body: &CStatement) -> bool {
     match body {
+        CStatement::Scope { body } => body_runs_no_code(body),
         CStatement::Return(CExpression::Value(CValue::Void)) => true,
         CStatement::Seq(first, second) => {
             matches!(first.as_ref(), CStatement::Skip) && body_runs_no_code(second)
@@ -12129,6 +12130,7 @@ pub(crate) fn establish_resource_derived_loop_frames(
                     rewrite(&mut case.body, ranges);
                 }
             }
+            CStatement::Scope { body } => rewrite(body, ranges),
             CStatement::ForStep { step, .. } => rewrite(step, ranges),
             _ => {}
         }
@@ -12170,6 +12172,7 @@ pub(crate) fn validate_resource_derived_loop_frames(
             CStatement::Switch { cases, .. } => cases
                 .iter()
                 .any(|case| has_inherited_loop_frame(&case.body)),
+            CStatement::Scope { body } => has_inherited_loop_frame(body),
             CStatement::ForStep { step, .. } => has_inherited_loop_frame(step),
             _ => false,
         }
@@ -12232,6 +12235,7 @@ pub(crate) fn validate_resource_derived_loop_frames(
                 }
                 Ok(Ok(()))
             }
+            CStatement::Scope { body } => check_statement(body),
             CStatement::ForStep { step, .. } => check_statement(step),
             _ => Ok(Ok(())),
         }
@@ -14389,6 +14393,7 @@ fn spec_expression_constant(expression: &SpecExpression) -> Option<u32> {
         return None;
     };
     match value {
+        CValue::PointerInteger(value) => value.bits().as_const(),
         CValue::Int8(term) => term.as_const(),
         CValue::Int16(term)
         | CValue::Int32(term)
@@ -14583,6 +14588,9 @@ fn statement_writes_aggregate_parameter(
         } => {
             statement_writes_aggregate_parameter(try_body, parameter_name, writes, unknown_write);
             statement_writes_aggregate_parameter(handler, parameter_name, writes, unknown_write);
+        }
+        CStatement::Scope { body } => {
+            statement_writes_aggregate_parameter(body, parameter_name, writes, unknown_write);
         }
         CStatement::ForStep { step, .. } => {
             statement_writes_aggregate_parameter(step, parameter_name, writes, unknown_write);
@@ -15220,51 +15228,6 @@ fn add_verified_function_ensure_facts_selected_with_interface<'a>(
             budget,
         )?;
         for ensure_path in ensure_paths {
-            #[cfg(test)]
-            if std::env::var_os("CLICK_BITS64_BRIDGE_PROBE").is_some() {
-                let mut leaf = &ensure_path.proposition;
-                let mut implications = 0;
-                while let Proposition::Implies(_, body) = leaf {
-                    implications += 1;
-                    leaf = body;
-                }
-                let condition = match leaf {
-                    Proposition::ConditionIs(condition, _) => {
-                        Some(std::mem::discriminant(condition))
-                    }
-                    _ => None,
-                };
-                let endpoint = |term: &Bitvector32Term| {
-                    let load = match term {
-                        Bitvector32Term::Variable(variable) => {
-                            crate::kernel::eval::registered_load_origin_term_for_variable(variable)
-                        }
-                        Bitvector32Term::MemoryLoad(..) => Some(term.clone()),
-                        _ => None,
-                    };
-                    match load {
-                        Some(Bitvector32Term::MemoryLoad(memory, pointer, kind)) => {
-                            Some((memory.arena_id(), pointer.block.clone(), kind))
-                        }
-                        _ => None,
-                    }
-                };
-                let wide = match leaf {
-                    Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(a, b), _) => Some((
-                        endpoint(a),
-                        endpoint(b),
-                        std::mem::discriminant(a.as_ref()),
-                        std::mem::discriminant(b.as_ref()),
-                    )),
-                    _ => None,
-                };
-                eprintln!(
-                    "BITS64-ENSURE-PROBE leaf={:?} condition={condition:?} implications={implications} wide={wide:?} path-facts={} obligations={}",
-                    std::mem::discriminant(leaf),
-                    ensure_path.facts.len(),
-                    ensure_path.obligations.len()
-                );
-            }
             // Certified lowering facts are consequences of the selected
             // path, such as a checked count's entry-owned lower bound. Keep
             // their branch guards, but do not turn those consequences into
@@ -16925,6 +16888,7 @@ fn collect_c_memory_read_expressions(statement: &CStatement, reads: &mut Vec<CEx
             initializer: None, ..
         }
         | CStatement::DeclareAggregate { .. } => {}
+        CStatement::Scope { body } => collect_c_memory_read_expressions(body, reads),
         CStatement::ForStep { step, .. } => collect_c_memory_read_expressions(step, reads),
         CStatement::CopyAggregate { target, source, .. }
         | CStatement::InitializeScalarArray { target, source, .. } => {
@@ -19917,7 +19881,18 @@ mod aggregate_union_copy_tests {
                     .store(source.offset_by_bytes(offset), constant(7))
                     .store(destination.offset_by_bytes(offset), constant(99));
             }
-            let forgotten = written.without_field_cells(&source, 0, array_type);
+            // An unplaced write invalidates cached element values while the
+            // bytes previously written remain initialized. Unsupported-copy
+            // field clobbering would instead clear initialization deliberately.
+            let unplaced = Pointer {
+                block: source.block.clone(),
+                offset: PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Variable(Variable(925_002)),
+                    16,
+                ),
+            };
+            let forgotten =
+                written.without_possible_aliasing_cells(&unplaced, 16, &PureFactContext::new());
             assert!(forgotten.has_initialized_bytes_at(&source, 32));
             assert!(forgotten.known_value(&source).is_none());
             let copied =

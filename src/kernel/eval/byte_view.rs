@@ -96,7 +96,7 @@ fn integer_cell_width(value: &CValue) -> Option<u32> {
         CValue::Int8(_) | CValue::UInt8(_) => Some(1),
         CValue::Int16(_) | CValue::UInt16(_) => Some(2),
         CValue::Int32(_) | CValue::UInt32(_) => Some(4),
-        CValue::Int64(_) | CValue::UInt64(_) => Some(8),
+        CValue::Int64(_) | CValue::UInt64(_) | CValue::PointerInteger(_) => Some(8),
         CValue::Int128(_)
         | CValue::UInt128(_)
         | CValue::Void
@@ -174,6 +174,9 @@ pub(in crate::kernel) fn containing_integer_cell(
 /// Byte `byte` of an integer cell's little-endian representation, as the
 /// zero-extended 32-bit term of an `unsigned char`: `(v >> 8k) & 0xFF`.
 pub(in crate::kernel) fn integer_cell_byte(value: &CValue, byte: u32) -> Option<Bitvector32Term> {
+    if let CValue::PointerInteger(value) = value {
+        return integer_cell_byte(&value.numeric_value(), byte);
+    }
     let width = integer_cell_width(value)?;
     if byte >= width {
         return None;
@@ -241,6 +244,16 @@ pub(in crate::kernel) fn integer_cell_with_byte(
     cell: &ContainingIntegerCell,
     stored: &CValue,
 ) -> Option<CValue> {
+    if let CValue::PointerInteger(value) = &cell.value {
+        // Rebuilding even one byte updates the numeric representation only.
+        // Equal resulting bits do not preserve the original pointer origin.
+        let numeric = ContainingIntegerCell {
+            pointer: cell.pointer.clone(),
+            value: value.numeric_value(),
+            byte: cell.byte,
+        };
+        return integer_cell_with_byte(&numeric, stored);
+    }
     let width = integer_cell_width(&cell.value)?;
     if width <= 1 || cell.byte >= width {
         return None;

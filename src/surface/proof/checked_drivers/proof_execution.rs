@@ -2810,6 +2810,7 @@ fn describe_unfinished_preservation(
 /// wrote, so they are skipped. `None` when nothing but block ends remains.
 fn frontier_head_statement(statement: &CStatement) -> Option<&CStatement> {
     match statement {
+        CStatement::Scope { body } => frontier_head_statement(body),
         CStatement::Skip => None,
         CStatement::Seq(first, rest) => {
             frontier_head_statement(first).or_else(|| frontier_head_statement(rest))
@@ -2834,6 +2835,7 @@ fn count_leaves(leaves: &[Proof<'_>], control: LoopControlExit) -> usize {
 /// own, so this does not descend into one.
 fn remaining_body_exits(statement: &CStatement) -> (usize, usize) {
     match statement {
+        CStatement::Scope { body } => remaining_body_exits(body),
         CStatement::Break => (1, 0),
         CStatement::Continue
         | CStatement::ForStep {

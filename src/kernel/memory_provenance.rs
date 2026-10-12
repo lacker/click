@@ -64,6 +64,9 @@ pub(crate) fn c_resources_directly_match(
     }
     let values_match = |left: &CValue, right: &CValue| match (left, right) {
         (CValue::Void, CValue::Void) => true,
+        (CValue::PointerInteger(_), CValue::PointerInteger(_)) => {
+            c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
         (CValue::Int32(left), CValue::Int32(right)) => crate::instrumentation::measure_operation(
             "kernel",
             "resource context equality",
@@ -360,6 +363,16 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
                 CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(term)),
                 CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(term)),
                 CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(term)),
+                CValue::PointerInteger(value) => CValue::PointerInteger(std::sync::Arc::new(
+                    value.with_parts(
+                        canonicalize_atomic_loads(value.bits()),
+                        value
+                            .origin()
+                            .clone()
+                            .with_pointer(canonicalize_pointer_loads(value.origin().pointer()))
+                            .map_designation_pointers(canonicalize_pointer_loads),
+                    ),
+                )),
                 CValue::Int128(term) => CValue::Int128(canonicalize_atomic_loads(term)),
                 CValue::UInt128(term) => CValue::UInt128(canonicalize_atomic_loads(term)),
                 CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(term)),
@@ -418,6 +431,16 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
             CValue::UInt32(term) => CValue::UInt32(canonicalize_atomic_loads(term)),
             CValue::Int64(term) => CValue::Int64(canonicalize_atomic_loads(term)),
             CValue::UInt64(term) => CValue::UInt64(canonicalize_atomic_loads(term)),
+            CValue::PointerInteger(value) => CValue::PointerInteger(std::sync::Arc::new(
+                value.with_parts(
+                    canonicalize_atomic_loads(value.bits()),
+                    value
+                        .origin()
+                        .clone()
+                        .with_pointer(canonicalize_pointer_loads(value.origin().pointer()))
+                        .map_designation_pointers(canonicalize_pointer_loads),
+                ),
+            )),
             CValue::Int128(term) => CValue::Int128(canonicalize_atomic_loads(term)),
             CValue::UInt128(term) => CValue::UInt128(canonicalize_atomic_loads(term)),
             CValue::Float32(term) => CValue::Float32(canonicalize_atomic_loads(term)),
@@ -4621,6 +4644,7 @@ fn cell_integer_for_read(
         return None;
     }
     match cell {
+        CValue::PointerInteger(value) if value.bits() != load => Some(value.bits().clone()),
         crate::kernel::integer64_c_value!(value) if &value != load => Some(value),
         _ => None,
     }
@@ -4786,10 +4810,11 @@ fn wide_read_observations_have_value(
                 ))
             .then(|| value.clone())
         });
-        let Some(CValue::Int64(value) | CValue::UInt64(value)) = value else {
-            return false;
-        };
-        &value == other
+        match value {
+            Some(CValue::Int64(value) | CValue::UInt64(value)) => &value == other,
+            Some(CValue::PointerInteger(value)) => value.bits() == other,
+            _ => false,
+        }
     };
     stored_value_matches(left_origin, right) || stored_value_matches(right_origin, left)
 }
@@ -5788,6 +5813,7 @@ pub(crate) fn certified_store_equations(
                 | CValue::UInt64(term)
                 | CValue::Int128(term)
                 | CValue::UInt128(term) => term.clone(),
+                CValue::PointerInteger(value) => value.bits().clone(),
                 CValue::Void | CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => {
                     return None;
                 }
@@ -5824,6 +5850,7 @@ pub(crate) fn certified_store_loadability_facts(
                 CValue::Int16(_) | CValue::UInt16(_) => 2,
                 CValue::Int32(_) | CValue::UInt32(_) => 4,
                 CValue::Int64(_) | CValue::UInt64(_) => 8,
+                CValue::PointerInteger(_) => 8,
                 CValue::Int128(_) | CValue::UInt128(_) => 16,
                 CValue::Pointer(_) => 4,
                 CValue::Float32(_) => 4,
@@ -7570,7 +7597,7 @@ mod opaque_pointer_frame_tests {
         let (field, _, argument, _, separation) = setup();
         let before = intern_c_memory(CMemory::default().with_block("local:opaque-frame", 8));
         let read =
-            Bitvector32Term::MemoryLoad(before.clone(), Box::new(field.clone()), LoadKind::Bits32);
+            Bitvector32Term::MemoryLoad(before.clone(), Box::new(field.clone()), LoadKind::Pointer);
         let variable = crate::kernel::eval::load_variable_for_term(&read)
             .unwrap()
             .0;
@@ -7837,13 +7864,15 @@ mod pointer_store_endpoint_tests {
             );
             let cell = endpoint(memory.clone());
             let (value, work) = crate::instrumentation::measure_deterministic_work(|| {
-                pointer_value_at_stopping_store(&cell, &address, LoadKind::Bits32, 8, &context)
+                pointer_value_at_stopping_store(&cell, &address, LoadKind::Pointer, 8, &context)
             });
             assert_eq!(value.map(CPointerValue::into_pointer), Some(stored.clone()));
             samples.push(work);
             for (kind, bytes) in [
                 (LoadKind::Bits32, 4),
-                (LoadKind::Bits32, 16),
+                (LoadKind::Pointer, 4),
+                (LoadKind::Bits32, 8),
+                (LoadKind::Pointer, 16),
                 (LoadKind::Bits64, 8),
             ] {
                 assert!(
@@ -7855,7 +7884,7 @@ mod pointer_store_endpoint_tests {
                 pointer_value_at_stopping_store(
                     &cell,
                     &address,
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                     8,
                     &context.without_exact_fact(&alias)
                 )
@@ -7865,7 +7894,7 @@ mod pointer_store_endpoint_tests {
                 pointer_value_at_stopping_store(
                     &cell,
                     &address.offset_by_bytes(4),
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                     8,
                     &context
                 )
@@ -7876,7 +7905,7 @@ mod pointer_store_endpoint_tests {
                 pointer_value_at_stopping_store(
                     &cell,
                     &Pointer::symbolic(Variable(190_000 + count)).offset_by_bytes(8),
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                     8,
                     &context
                 )
@@ -7890,7 +7919,7 @@ mod pointer_store_endpoint_tests {
                 pointer_value_at_stopping_store(
                     &overwritten,
                     &address,
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                     8,
                     &context
                 ),
@@ -7900,7 +7929,7 @@ mod pointer_store_endpoint_tests {
                 pointer_value_at_stopping_store(
                     &overwritten,
                     &address,
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                     8,
                     &context
                 ),
@@ -7915,7 +7944,7 @@ mod pointer_store_endpoint_tests {
                     pointer_value_at_stopping_store(
                         &changed,
                         &address,
-                        LoadKind::Bits32,
+                        LoadKind::Pointer,
                         8,
                         &context
                     )

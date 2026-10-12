@@ -1195,6 +1195,9 @@ impl<'a> Proof<'a> {
             (Proposition::Exists { var, body, .. }, crate::kernel::integer_c_value!(value)) => {
                 substitute_int32_variable_in_proposition(body, *var, value.clone())
             }
+            (Proposition::Exists { var, body, .. }, CValue::PointerInteger(value)) => {
+                substitute_int32_variable_in_proposition(body, *var, value.bits().clone())
+            }
             (Proposition::Exists { var, body, .. }, CValue::Pointer(pointer)) => {
                 crate::kernel::substitute_pointer_variable_in_proposition(
                     body,

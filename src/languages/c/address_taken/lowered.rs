@@ -111,7 +111,9 @@ pub(super) fn summarize(function: &CFunction, summary: &mut AddressTakenSummary)
                 expressions.push((condition, false));
                 statements.push(body);
             }
-            CStatement::ForStep { step, .. } => statements.push(step),
+            CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+                statements.push(step)
+            }
         }
     }
     while let Some((expression, addressed)) = expressions.pop() {

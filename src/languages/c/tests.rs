@@ -2673,17 +2673,27 @@ fn c0_accepts_incomplete_outer_dimension_extern_scalar_arrays() {
     assert!(values.is_incomplete());
     assert_eq!(values.shape(), None);
     assert_eq!(values.incomplete_shape(), Some(&[3][..]));
-    assert!(matches!(
-        function.body(),
-        syntax::C0Statement::Return(syntax::C0Expression::Index(base, index), _)
-            if matches!(base.as_ref(), syntax::C0Expression::Variable(name) if name == "values")
-                && matches!(index.as_ref(), syntax::C0Expression::Add(left, right)
-                    if matches!(left.as_ref(), syntax::C0Expression::Multiply(multiplier, stride)
-                        if matches!(multiplier.as_ref(), syntax::C0Expression::Int32Literal(1))
-                            && matches!(stride.as_ref(), syntax::C0Expression::Int32Literal(3)))
-                    && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(2))
-                )
-    ));
+    let syntax::C0Statement::Return(syntax::C0Expression::Index(base, index), _) = function.body()
+    else {
+        panic!("the final scalar index should remain explicit");
+    };
+    assert_eq!(index.as_ref(), &syntax::C0Expression::Int32Literal(2));
+    let syntax::C0Expression::ArrayRowAddress {
+        array,
+        index,
+        element_type,
+        shape,
+    } = base.as_ref()
+    else {
+        panic!("the incomplete declaration must retain its row-selection recipe");
+    };
+    assert_eq!(
+        array.as_ref(),
+        &syntax::C0Expression::Variable("values".into())
+    );
+    assert_eq!(index.as_ref(), &syntax::C0Expression::Int32Literal(1));
+    assert_eq!(*element_type, syntax::C0Type::Int32);
+    assert_eq!(shape.as_ref(), &[1, 3]);
 }
 
 #[test]
@@ -5062,6 +5072,7 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
 
     fn contains_skip(statement: &syntax::C0Statement) -> bool {
         match statement {
+            syntax::C0Statement::Scope { body } => contains_skip(body),
             syntax::C0Statement::Skip => true,
             syntax::C0Statement::Seq(first, second) => {
                 contains_skip(first) || contains_skip(second)
@@ -9527,46 +9538,23 @@ fn c0_struct_byte_array_element_address_executes_at_byte_width() {
         }
         "#,
     )
-    .expect("address of an inline byte array element should parse")
-    .to_kernel_function();
-    let packet = crate::kernel::Pointer {
-        block: "packet".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(0),
-    };
-    let byte = crate::kernel::Pointer {
-        block: "packet".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(6),
-    };
-    let local_byte_pointer = crate::kernel::Pointer {
-        block: "local:byte_pointer".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(0),
-    };
+    .expect("address of an inline byte array element should parse");
+    let layout = function.structs()["packet"].to_kernel_aggregate_layout();
+    let function = function.to_kernel_function();
+    let (declared, carrier) = declared_row_record_fixture(layout);
+    let packet = carrier.pointer().clone();
     let resources = own_memory_context(packet.clone(), 0, 2);
-    let state = crate::kernel::CState::new()
-        .with_memory(crate::kernel::CMemory::new().with_block("packet", 8))
-        .with_resource_context(resources.clone());
-    let final_state = crate::kernel::CState::new()
-        .with_memory(
-            crate::kernel::CMemory::new()
-                .with_block("local:byte_pointer", 8)
-                .with_block("packet", 8)
-                .store(
-                    local_byte_pointer,
-                    crate::kernel::CValue::typed_pointer(
-                        byte.clone(),
-                        crate::kernel::CType::UInt8Pointer,
-                    ),
-                )
-                .store(byte, crate::kernel::uint8(9)),
-        )
-        .with_resource_context(resources);
-    let final_state = final_state.clone().with_memory(
-        final_state
+    let state = declared.with_resource_context(resources);
+    let final_state = state.clone().with_memory(
+        state
             .memory()
             .clone()
+            .store(packet.offset_by_bytes(6), crate::kernel::uint8(9))
             .without_local_block(&"local:byte_pointer".into()),
     );
-    let arguments = vec![crate::kernel::c_pointer_value(packet)];
+    let arguments = vec![crate::kernel::CExpression::Value(
+        crate::kernel::CValue::Pointer(carrier),
+    )];
     let theorem = crate::kernel::prove_symbolic_c_function_execution(
         state.clone(),
         function.clone(),
@@ -14318,5 +14306,93 @@ fn c_static_array_element_initializers_retain_the_declared_row_recipe() {
         &["inner", "values"],
         1,
         20,
+    );
+}
+
+#[test]
+fn standalone_c_block_retires_an_escaped_automatic_pointer() {
+    let function = syntax::parse_function(
+        "int32 probe() { int32* escaped; { int32 value = 7; escaped = &value; } return *escaped; }",
+    )
+    .expect("lexical block source should parse")
+    .to_kernel_function();
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function,
+        vec![],
+        Default::default(),
+    )
+    .expect("ended-object refusal should be a checked execution outcome");
+    assert!(matches!(
+        theorem.proposition(),
+        crate::kernel::Proposition::CFunctionExecutes {
+            outcome: crate::kernel::CFunctionOutcome::UndefinedBehavior(
+                crate::kernel::CUndefinedBehavior::InvalidMemory
+            ),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn standalone_c_block_preserves_outer_objects_and_live_inner_accesses() {
+    let function = syntax::parse_function(
+        "int32 probe() { int32 outer = 2; { int32 value = 7; int32* live = &value; outer = *live; } return outer; }",
+    ).expect("lexical block source should parse").to_kernel_function();
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function,
+        vec![],
+        Default::default(),
+    )
+    .expect("live inner read and outer object should execute");
+    assert!(
+        matches!(theorem.proposition(), crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. }, ..
+    } if value == &crate::kernel::int32(7))
+    );
+}
+
+#[test]
+fn standalone_c_block_retires_an_automatic_pointer_on_outgoing_goto() {
+    let source = "int32 probe() { int32* escaped; { int32 value = 7; escaped = &value; goto after; } after: return *escaped; }";
+    let function = syntax::parse_function(source)
+        .expect(source)
+        .to_kernel_function();
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function,
+        vec![],
+        Default::default(),
+    )
+    .expect("outgoing goto should preserve checked scope cleanup");
+    assert!(matches!(
+        theorem.proposition(),
+        crate::kernel::Proposition::CFunctionExecutes {
+            outcome: crate::kernel::CFunctionOutcome::UndefinedBehavior(
+                crate::kernel::CUndefinedBehavior::InvalidMemory
+            ),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn repeated_standalone_c_blocks_preserve_outer_objects_and_local_shadows() {
+    let source = "int32 probe() { int32 value = 2; int32 sum = 0; { int32 value = 3; sum = value; } { int32 value = 5; sum = sum + value; } return sum + value; }";
+    let function = syntax::parse_function(source)
+        .expect(source)
+        .to_kernel_function();
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        crate::kernel::CState::new(),
+        function,
+        vec![],
+        Default::default(),
+    )
+    .expect("separate shadow lifetimes should execute");
+    assert!(
+        matches!(theorem.proposition(), crate::kernel::Proposition::CFunctionExecutes {
+        outcome: crate::kernel::CFunctionOutcome::Return { value, .. }, ..
+    } if value == &crate::kernel::int32(10))
     );
 }

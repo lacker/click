@@ -943,7 +943,7 @@ fn target_directed_transport_preserves_pointer_field_across_disjoint_buffer_writ
         Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(old_memory),
             Box::new(field_pointer.clone()),
-            crate::kernel::LoadKind::Bits32,
+            crate::kernel::LoadKind::Pointer,
         ),
         4,
     );
@@ -951,11 +951,11 @@ fn target_directed_transport_preserves_pointer_field_across_disjoint_buffer_writ
         Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(current_memory),
             Box::new(field_pointer.clone()),
-            crate::kernel::LoadKind::Bits32,
+            crate::kernel::LoadKind::Pointer,
         ),
         4,
     );
-    // Bits32 projects this pointer-valued field's complete pointer word.
+    // Pointer reads intrinsically cover this field's complete eight-byte word.
     crate::kernel::eval::declare_load_access_width(&field_pointer, 8);
     let narrow_separation = Proposition::CResourceSeparate {
         left: Box::new(CResource::Memory(memory_range(field_pointer.clone(), 0, 1))),

@@ -229,6 +229,7 @@ impl PureFactContext {
             return None;
         };
         let value = match self.resolve_memory_load_value(memory, pointer, *kind)? {
+            CValue::PointerInteger(value) => value.bits().clone(),
             CValue::Int8(value) => value,
             CValue::Bool(value)
             | CValue::Int16(value)

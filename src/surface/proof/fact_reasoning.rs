@@ -364,6 +364,7 @@ fn describe_access_bound_prerequisite(
     let mut pending = vec![statement];
     while let Some(next) = pending.pop() {
         match next {
+            CStatement::Scope { body } => pending.push(body),
             CStatement::Seq(first, second) => {
                 pending.push(second);
                 pending.push(first);
@@ -410,6 +411,7 @@ fn describe_assertion_prerequisite(
     let mut pending = vec![statement];
     let condition = loop {
         match pending.pop()? {
+            CStatement::Scope { body } => pending.push(body),
             CStatement::Seq(first, second) => {
                 pending.push(second);
                 pending.push(first);

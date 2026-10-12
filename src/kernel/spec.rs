@@ -2471,6 +2471,10 @@ fn integer_carrier_in_bitvector(term: &Bitvector32Term, variable: Variable) -> b
 
 fn integer_carrier_in_c_value(value: &CValue, variable: Variable) -> bool {
     match value {
+        CValue::PointerInteger(value) => {
+            integer_carrier_in_bitvector(value.bits(), variable)
+                || integer_carrier_in_c_value(&CValue::Pointer(value.origin().clone()), variable)
+        }
         CValue::Pointer(pointer) => {
             integer_carrier_in_pointer(pointer.pointer(), variable)
                 || pointer.designation().is_some_and(|designation| {
@@ -2712,7 +2716,15 @@ fn evaluate_spec_integer_range_fold_indices_in(
                         continue;
                     };
                     // Each kind takes endpoints of its own type only.
-                    let index = match (start_path.value.clone(), end_path.value, unsigned64) {
+                    let numeric = |value: CValue| match value {
+                        CValue::PointerInteger(value) => value.numeric_value(),
+                        value => value,
+                    };
+                    let index = match (
+                        numeric(start_path.value.clone()),
+                        numeric(end_path.value),
+                        unsigned64,
+                    ) {
                         (CValue::Int32(start), CValue::Int32(end), false) => {
                             IntegerRangeFoldIndex::Int32 {
                                 start: SharedIntegerRangeEndpoint::intern(start),
@@ -7721,6 +7733,7 @@ fn array_ref_argument_memory(memory: &CMemory, pointer: &CValue) -> CMemory {
 
 pub(in crate::kernel) fn c_value_bitvector_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => Some(value.bits().clone()),
         CValue::Bool(term) => Some(term.clone()),
         CValue::Int8(term) => Some(term.clone()),
         CValue::Int16(term)
@@ -7801,7 +7814,11 @@ fn evaluate_spec_pointer_offset_paths_in(
             &element_assumptions,
             budget,
         )? {
-            let (elements, unsigned, wide) = match element_path.value {
+            let numeric = match &element_path.value {
+                CValue::PointerInteger(value) => value.numeric_value(),
+                value => value.clone(),
+            };
+            let (elements, unsigned, wide) = match numeric {
                 CValue::Int32(elements) => (elements, false, false),
                 CValue::Int64(elements) => (elements, false, true),
                 CValue::UInt64(elements) => (elements, true, true),
@@ -8472,6 +8489,16 @@ pub(super) fn c_value_comparison_proposition(
     operator: CComparisonOperator,
     right: &CValue,
 ) -> Option<Proposition> {
+    let left_numeric = match left {
+        CValue::PointerInteger(value) => Some(value.numeric_value()),
+        _ => None,
+    };
+    let right_numeric = match right {
+        CValue::PointerInteger(value) => Some(value.numeric_value()),
+        _ => None,
+    };
+    let left = left_numeric.as_ref().unwrap_or(left);
+    let right = right_numeric.as_ref().unwrap_or(right);
     // Boolean address observations retain the canonical condition so native
     // alignment witnesses see the same proposition as the source predicate.
     if matches!(
@@ -8691,6 +8718,7 @@ fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
         | CValue::UInt8(value)
         | CValue::UInt16(value)
         | CValue::UInt32(value) => Some(value.clone()),
+        CValue::PointerInteger(_) => None,
         CValue::Int128(_)
         | CValue::UInt128(_)
         | CValue::Void
@@ -8704,6 +8732,7 @@ fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
 
 fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => c_value_int64_term(&value.numeric_value()),
         CValue::Int64(value) => Some(value.clone()),
         CValue::Bool(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
         CValue::Int8(value) => Some(Bitvector32Term::int64_from_32(value.clone())),
@@ -8724,6 +8753,7 @@ fn c_value_int64_term(value: &CValue) -> Option<Bitvector32Term> {
 
 fn c_value_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => c_value_uint64_term(&value.numeric_value()),
         CValue::UInt64(value) => Some(value.clone()),
         CValue::Bool(value) => Some(Bitvector32Term::uint64_from_32(value.clone())),
         CValue::Int64(value) => Some(Bitvector32Term::uint64_from_int64(value.clone())),
@@ -10512,5 +10542,39 @@ mod integer_truncation_tests {
                 "{measured:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod pointer_integer_numeric_spec_tests {
+    use super::*;
+
+    #[test]
+    fn numeric_specification_compares_bits_without_transporting_pointer_origins() {
+        let address = Pointer::symbolic(Variable(983_211));
+        let value = |identity| {
+            let pointer = CPointerValue::new(address.clone(), CType::Int32Pointer)
+                .with_designation(PointerDesignation::Unresolved(Variable(identity)));
+            CValue::PointerInteger(std::sync::Arc::new(
+                CPointerIntegerValue::from_pointer(pointer, CType::UInt64).unwrap(),
+            ))
+        };
+        let left = value(983_212);
+        let right = value(983_213);
+        assert_ne!(left, right);
+        let CValue::PointerInteger(carrier) = &left else {
+            unreachable!()
+        };
+        assert_eq!(c_value_bitvector_term(&left), Some(carrier.bits().clone()));
+        assert_eq!(
+            c_value_comparison_proposition(&left, CComparisonOperator::Equal, &right),
+            c_value_comparison_proposition(
+                &carrier.numeric_value(),
+                CComparisonOperator::Equal,
+                &carrier.numeric_value()
+            ),
+        );
+        assert!(matches!(carrier.numeric_value(), CValue::UInt64(_)));
+        assert_ne!(left, right);
     }
 }

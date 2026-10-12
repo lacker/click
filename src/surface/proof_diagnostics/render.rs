@@ -92,6 +92,7 @@ impl SnapshotLabels {
                 | crate::kernel::CValue::UInt32(term)
                 | crate::kernel::CValue::Int64(term)
                 | crate::kernel::CValue::UInt64(term) => term,
+                crate::kernel::CValue::PointerInteger(value) => value.bits(),
                 _ => continue,
             };
             if let Bitvector32Term::Variable(variable) = term {
@@ -1691,6 +1692,7 @@ impl Renderer<'_> {
                 self.bitvector(v);
                 self.push(")");
             }
+            crate::kernel::CValue::PointerInteger(value) => self.cvalue(&value.numeric_value()),
             crate::kernel::CValue::Int64(v) => {
                 self.push("int64(");
                 self.bitvector(v);

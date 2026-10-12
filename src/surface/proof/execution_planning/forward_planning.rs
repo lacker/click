@@ -10,6 +10,15 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
 ) -> Result<Vec<PlanningExecutionContext>, ClickError> {
     match statement {
+        CStatement::Scope { body } => verify_execution_proofs_forward(
+            expansion_capture,
+            body,
+            contexts,
+            next_statement_index,
+            next_loop_index,
+            environment,
+            verified_loop_rules,
+        ),
         CStatement::Seq(first, second) => {
             let contexts = verify_execution_proofs_forward(
                 expansion_capture.as_deref_mut(),
@@ -726,7 +735,59 @@ fn advance_execution_proof_statement(
             })?;
             verified_loop_rules.push(loop_rule.with_loop_index(loop_index));
         }
-        for transition in transitions {
+        for mut transition in transitions {
+            let ended = environment.source_layout.automatic_exits(
+                statement_index,
+                !matches!(transition.outcome, CStatementOutcome::Normal(_)),
+            );
+            if !ended.is_empty() {
+                let state = match &mut transition.outcome {
+                    CStatementOutcome::Normal(state)
+                    | CStatementOutcome::Break(state)
+                    | CStatementOutcome::Continue(state)
+                    | CStatementOutcome::Jump { state, .. }
+                    | CStatementOutcome::Return { state, .. }
+                    | CStatementOutcome::Throw { state, .. } => Some(state),
+                    _ => None,
+                };
+                if let Some(state) = state {
+                    let (cleanup, _) = certified_statement_transitions(
+                        state,
+                        &transition.pure_facts,
+                        &CStatement::EndAutomaticLifetimes {
+                            names: ended.to_vec(),
+                        },
+                        environment.function_environment,
+                        Some(environment.spec_definitions.predicates),
+                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+                        &label,
+                        &mut context.next_opaque_call,
+                        &mut context.next_kernel_variable,
+                        StatementPrerequisitePolicy::Contextual,
+                        StatementFactTransportPolicy::Automatic,
+                        None,
+                    )?;
+                    let [cleanup] = cleanup.as_slice() else {
+                        return Err(ClickError::new(
+                            "automatic lifetime end did not produce one checked outcome",
+                        ));
+                    };
+                    match &cleanup.outcome {
+                        CStatementOutcome::Normal(after) => {
+                            *state = after.clone();
+                            transition.pure_facts = cleanup.pure_facts.clone();
+                        }
+                        CStatementOutcome::RuntimeError(error) => {
+                            transition.outcome = CStatementOutcome::RuntimeError(error.clone());
+                        }
+                        _ => {
+                            return Err(ClickError::new(
+                                "automatic lifetime end produced an unexpected outcome",
+                            ));
+                        }
+                    }
+                }
+            }
             let mut surface_propositions = context.surface_propositions.clone();
             let mut recorded_snapshots = context.recorded_snapshots.clone();
             if let CStatementOutcome::Normal(exit_state)

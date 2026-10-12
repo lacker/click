@@ -5,6 +5,7 @@ type Site = std::sync::Arc<syntax::C0StatementSite>;
 
 pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize {
     match statement {
+        syntax::C0Statement::Scope { body } => count_loops(body),
         syntax::C0Statement::Seq(first, second) => count_loops(first) + count_loops(second),
         syntax::C0Statement::If {
             then_branch,
@@ -36,6 +37,7 @@ pub(in crate::surface) fn count_loop_regions(function: &syntax::C0Function) -> u
     let mut count = 0;
     while let Some(statement) = pending.pop() {
         match statement {
+            CStatement::Scope { body } => pending.push(body),
             CStatement::Seq(a, b) => pending.extend([a.as_ref(), b.as_ref()]),
             CStatement::If {
                 then_branch,
@@ -339,6 +341,7 @@ impl SourceExecutionLayout {
                 layout.reads.push(*next_statement_index);
             }
             match statement {
+                CStatement::Scope { body } => visit(body, next_statement_index, layout),
                 CStatement::Seq(first, second) => {
                     visit(first, next_statement_index, layout)?;
                     visit(second, next_statement_index, layout)
@@ -534,6 +537,13 @@ impl SourceExecutionLayout {
             enclosing: Option<&Site>,
         ) -> usize {
             match statement {
+                syntax::C0Statement::Scope { body } => visit(
+                    body,
+                    next_statement_index,
+                    next_loop_index,
+                    layout,
+                    enclosing,
+                ),
                 syntax::C0Statement::Seq(first, second) => {
                     visit(
                         first,
@@ -1038,6 +1048,9 @@ fn collect_kernel_automatic_exits(source: &CStatement, layout: &mut SourceExecut
         scopes: &mut Vec<(Vec<String>, Option<usize>)>,
         layout: &mut SourceExecutionLayoutData,
     ) -> Vec<usize> {
+        if let CStatement::Scope { body } = s {
+            return scope(body, index, scopes, None, layout);
+        }
         if let CStatement::Seq(a, b) = s {
             visit(a, index, scopes, layout);
             return visit(b, index, scopes, layout);
@@ -1155,6 +1168,9 @@ fn collect_automatic_exits(source: &syntax::C0Statement, layout: &mut SourceExec
         scopes: &mut Vec<(Vec<String>, Option<usize>)>,
         layout: &mut SourceExecutionLayoutData,
     ) -> Vec<usize> {
+        if let S::Scope { body } = s {
+            return scope(body, index, scopes, None, layout);
+        }
         if let S::Seq(a, b) = s {
             visit(a, index, scopes, layout);
             return visit(b, index, scopes, layout);
@@ -1264,6 +1280,41 @@ mod source_execution_layout_tests {
                     .automatic_exits
                     .values()
                     .all(|names| !names.iter().any(|name| name == "root"))
+            );
+        }
+    }
+
+    #[test]
+    fn lexical_blocks_keep_source_indexes_and_selected_lifetime_exits() {
+        for source in [
+            "int32 f() {int32 root; root=0; {int32 child; child=1; root=child;} return root;}",
+            "int32 f() {int32 root; root=0; {int32 child; child=1; return child;} return root;}",
+        ] {
+            let function = syntax::parse_function(source).unwrap();
+            let typed = function
+                .clone()
+                .with_prelowered_kernel_function(function.to_kernel_function());
+            let c = SourceExecutionLayout::for_function(&function).unwrap();
+            let native = SourceExecutionLayout::for_function(&typed).unwrap();
+            assert_eq!(native.data.statements.len(), c.data.statements.len());
+            assert_eq!(native.data.automatic_exits, c.data.automatic_exits);
+            assert_eq!(
+                native.data.automatic_abrupt_exits,
+                c.data.automatic_abrupt_exits
+            );
+            assert!(
+                native
+                    .data
+                    .automatic_exits
+                    .values()
+                    .any(|names| names.iter().any(|name| name == "child"))
+            );
+            assert!(
+                native
+                    .data
+                    .automatic_exits
+                    .values()
+                    .all(|names| names.iter().all(|name| name != "root"))
             );
         }
     }

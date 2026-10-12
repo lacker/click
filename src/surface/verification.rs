@@ -4279,6 +4279,9 @@ pub(in crate::surface) fn c0_statement_calls(
             } => {
                 names.insert(name.clone());
             }
+            syntax::C0Statement::Scope { body } => {
+                collect_function_pointer_names(body, names);
+            }
             syntax::C0Statement::Seq(first, second) => {
                 collect_function_pointer_names(first, names);
                 collect_function_pointer_names(second, names);
@@ -4477,6 +4480,9 @@ pub(in crate::surface) fn c0_statement_calls(
             syntax::C0Statement::Goto { .. } => calls.push(BTreeSet::new()),
             syntax::C0Statement::Label { statement, .. } => {
                 visit(statement, calls, function_pointer_names)
+            }
+            syntax::C0Statement::Scope { body } => {
+                visit(body, calls, function_pointer_names);
             }
             syntax::C0Statement::Seq(first, second) => {
                 visit(first, calls, function_pointer_names);

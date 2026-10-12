@@ -2453,52 +2453,6 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
             )
             || !crate::kernel::api::population_observations_equal(before_state, &population_after)
         {
-            #[cfg(test)]
-            if std::env::var_os("CLICK_RESOURCE_REWRITE_PROBE").is_some() {
-                eprintln!(
-                    "resource-rewrite-probe name={name} concrete={} memory={} population={}",
-                    concrete_after == *before_state,
-                    crate::kernel::api::contract_certification::c_memories_definitionally_equal(
-                        native_baseline.memory(),
-                        after_state.memory(),
-                        assumptions,
-                    ),
-                    crate::kernel::api::population_observations_equal(
-                        before_state,
-                        &population_after
-                    ),
-                );
-                if name == "MaybeRaw" {
-                    let left = native_baseline.memory();
-                    let right = after_state.memory();
-                    eprintln!(
-                        "resource-rewrite-memory-probe heap={} blocks={} forgotten={} cells={}/{} union={}/{}",
-                        left.heap == right.heap,
-                        left.blocks == right.blocks,
-                        left.forgotten == right.forgotten,
-                        left.cells.len(),
-                        right.cells.len(),
-                        left.union_cells.len(),
-                        right.union_cells.len()
-                    );
-                    for (label, memory) in [("baseline", left), ("after", right)] {
-                        for (identity, row) in memory.heap.native_record_inputs.iter().take(4) {
-                            eprintln!("resource-rewrite-native-probe {label} {identity:?} {row:?}");
-                        }
-                        for (pointer, value) in memory.cells.iter().take(4) {
-                            eprintln!("resource-rewrite-cell-probe {label} {pointer:?} {value:?}");
-                            if let CValue::Int32(Bitvector32Term::Variable(variable)) = value {
-                                eprintln!(
-                                    "resource-rewrite-cell-origin-probe {label} {:?}",
-                                    crate::kernel::eval::registered_load_term_for_variable(
-                                        variable
-                                    )
-                                );
-                            }
-                        }
-                    }
-                }
-            }
             return Err(
                 "resource rewrite changed more than a definitional representation".to_string(),
             );
@@ -3861,15 +3815,22 @@ impl CheckedProofCaseJoin {
                 facts: (*facts).clone(),
                 events,
             };
-            let progress = check_evidence_events(
+            let progress = check_evidence_events_in_scopes(
                 walked.walked_events(),
                 facts,
                 start_state.clone(),
                 source.clone(),
+                parent.evidence_scope_exits.clone(),
+                parent.evidence_scope_loops.clone(),
             )
             .ok_or("a case-join arm trace does not follow its C source from the split")?;
             if progress.completed.is_some() {
                 return Err("a case-join arm has already completed its trace");
+            }
+            if progress.scope_exits != arm.evidence_scope_exits
+                || progress.scope_loops != arm.evidence_scope_loops
+            {
+                return Err("a case-join arm has mismatched lexical scope tracking");
             }
             if same_state && &progress.state != arm.reached_state() {
                 return Err("a case-join arm trace does not reach its recorded state");
@@ -3882,6 +3843,11 @@ impl CheckedProofCaseJoin {
                     }
                     if same_state && arm.reached_state() != first.reached_state() {
                         return Err("the case-join arms end in different states");
+                    }
+                    if arm.evidence_scope_exits != first.evidence_scope_exits
+                        || arm.evidence_scope_loops != first.evidence_scope_loops
+                    {
+                        return Err("the case-join arms end in different lexical scopes");
                     }
                     if arm.evidence_try_stack != first.evidence_try_stack {
                         return Err("the case-join arms end in different `try` regions");
@@ -4124,11 +4090,14 @@ impl CheckedProofCaseJoin {
         state: &CState,
         source: &Option<CStatement>,
         call_events: &CheckedCallEvents,
-    ) -> Option<Option<CStatement>> {
+        scopes: &ActiveScopeExits,
+        loops: &[ScopeLoopBoundary],
+    ) -> Option<(Option<CStatement>, ActiveScopeExits, Vec<ScopeLoopBoundary>)> {
         if state != &self.start_state {
             return None;
         }
-        let mut remaining: Option<Option<CStatement>> = None;
+        let mut remaining: Option<(Option<CStatement>, ActiveScopeExits, Vec<ScopeLoopBoundary>)> =
+            None;
         for arm in &self.arms {
             let (entered, cases, _) = case_join_arm_entry(&arm.events)?;
             if !Arc::ptr_eq(entered, &self.partition) || cases != arm.cases {
@@ -4140,6 +4109,8 @@ impl CheckedProofCaseJoin {
                 state.clone(),
                 source.clone(),
                 call_events.clone(),
+                scopes.clone(),
+                loops.to_vec(),
             )?;
             if progress.completed.is_some()
                 || (self.interface.is_none() && progress.state != self.joined_state)
@@ -4147,8 +4118,17 @@ impl CheckedProofCaseJoin {
                 return None;
             }
             match &remaining {
-                None => remaining = Some(progress.remaining),
-                Some(first) if *first == progress.remaining => {}
+                None => {
+                    remaining = Some((
+                        progress.remaining,
+                        progress.scope_exits,
+                        progress.scope_loops,
+                    ))
+                }
+                Some((first, exits, loops))
+                    if *first == progress.remaining
+                        && *exits == progress.scope_exits
+                        && *loops == progress.scope_loops => {}
                 Some(_) => return None,
             }
         }
@@ -4621,15 +4601,22 @@ impl CheckedExecutionBranch {
             ) {
                 return Err("a branch arm does not begin with its checked condition theorem");
             }
-            let progress = check_evidence_events(
+            let progress = check_evidence_events_in_scopes(
                 &events,
                 arm_facts[index],
                 split.state.clone(),
                 Some(full_source.clone()),
+                parent.scope_exits_at_current_source(function),
+                parent.evidence_scope_loops.clone(),
             )
             .ok_or("a branch arm theorem trace does not follow its exact C source")?;
             if progress.completed.is_some() || progress.remaining != split.continuation {
                 return Err("a branch arm theorem trace does not reach the shared continuation");
+            }
+            if progress.scope_exits != arm.evidence_scope_exits
+                || progress.scope_loops != arm.evidence_scope_loops
+            {
+                return Err("a branch arm has mismatched lexical scope tracking");
             }
             if &progress.state != arm.reached_state() {
                 return Err("a branch arm theorem trace does not reach its recorded state");
@@ -4739,15 +4726,22 @@ impl CheckedExecutionBranch {
             ) {
                 return Err("an interface arm does not begin with its checked condition theorem");
             }
-            let progress = check_evidence_events(
+            let progress = check_evidence_events_in_scopes(
                 &events,
                 arm_facts[index],
                 split.state.clone(),
                 Some(full_source.clone()),
+                parent.scope_exits_at_current_source(function),
+                parent.evidence_scope_loops.clone(),
             )
             .ok_or("an interface arm trace does not follow its exact C source")?;
             if progress.completed.is_some() || progress.remaining != split.continuation {
                 return Err("an interface arm trace does not reach the shared continuation");
+            }
+            if progress.scope_exits != arm.evidence_scope_exits
+                || progress.scope_loops != arm.evidence_scope_loops
+            {
+                return Err("an interface arm has mismatched lexical scope tracking");
             }
             if !crate::kernel::api::execution_evidence_states_match(
                 function,
@@ -6150,6 +6144,8 @@ pub(crate) struct ExecutionProofCore {
     /// the source is exhausted. Checks read this and never the driver's
     /// frontier once it is set.
     pub(crate) evidence_source: Option<Arc<CStatement>>,
+    evidence_scope_exits: ActiveScopeExits,
+    evidence_scope_loops: Vec<ScopeLoopBoundary>,
     /// Entered `try` bodies the evidence chain is descending into, innermost
     /// last. Pushed when an interior theorem is accepted against a `Try`
     /// head, popped when the body completes normally (offered matches the
@@ -6563,6 +6559,18 @@ fn checked_evidence_premises_hold_at(
 
 fn split_checked_evidence_statement(statement: CStatement) -> (CStatement, Option<CStatement>) {
     match statement {
+        CStatement::Scope { body } => {
+            let names = crate::kernel::eval::scope_declared_names(&body);
+            let body = if names.is_empty() {
+                *body
+            } else {
+                CStatement::Seq(
+                    Arc::new(*body),
+                    Arc::new(CStatement::EndAutomaticLifetimes { names }),
+                )
+            };
+            split_checked_evidence_statement(body)
+        }
         CStatement::Seq(first, second) => {
             let (head, first_tail) = split_checked_evidence_statement(Arc::unwrap_or_clone(first));
             let tail = match first_tail {
@@ -6581,6 +6589,20 @@ fn split_shared_source(
     source: &CStatement,
 ) -> (std::borrow::Cow<'_, CStatement>, Option<Arc<CStatement>>) {
     match source {
+        CStatement::Scope { body } => {
+            let names = crate::kernel::eval::scope_declared_names(body);
+            let (head, tail) = split_shared_source(body);
+            let tail = if names.is_empty() {
+                tail
+            } else {
+                let end = Arc::new(CStatement::EndAutomaticLifetimes { names });
+                Some(match tail {
+                    Some(tail) => Arc::new(CStatement::Seq(tail, end)),
+                    None => end,
+                })
+            };
+            (head, tail)
+        }
         CStatement::Seq(first, second) => {
             let (head, first_tail) = split_shared_source(first);
             let tail = match first_tail {
@@ -6591,6 +6613,133 @@ fn split_shared_source(
         }
         statement => (std::borrow::Cow::Borrowed(statement), None),
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ScopeLoopBoundary {
+    source: Arc<CStatement>,
+    scope_depth: usize,
+}
+
+fn checked_scope_loop_condition(
+    statement: &CStatement,
+    tail: Option<Arc<CStatement>>,
+    value: bool,
+    exits: &ActiveScopeExits,
+    loops: &mut Vec<ScopeLoopBoundary>,
+) {
+    if !matches!(statement, CStatement::While { .. }) {
+        return;
+    }
+    let reentry = loops.last().is_some_and(|boundary| {
+        statements_have_same_source(&split_shared_source(&boundary.source).0, statement)
+    });
+    if value && !reentry {
+        loops.push(ScopeLoopBoundary {
+            source: prepend_shared_source(Arc::new(statement.clone()), tail),
+            scope_depth: exits.len(),
+        });
+    } else if !value && reentry {
+        loops.pop();
+    }
+}
+
+fn scoped_loop_control_source(
+    continuing: bool,
+    exits: &ActiveScopeExits,
+    loops: &mut Vec<ScopeLoopBoundary>,
+) -> Option<Option<Arc<CStatement>>> {
+    let boundary = loops.last()?.clone();
+    let exiting = exits.get(boundary.scope_depth..)?;
+    let resumed = if continuing {
+        Some(boundary.source)
+    } else {
+        loops.pop();
+        split_shared_source(&boundary.source).1
+    };
+    Some(match pending_scope_exits(&exiting.to_vec()) {
+        Some(end) => Some(match resumed {
+            Some(resumed) => prepend_shared_source(end, Some(resumed)),
+            None => end,
+        }),
+        None => resumed,
+    })
+}
+
+type ActiveScopeExits = Vec<Arc<[String]>>;
+
+/// Register only lexical scopes entered at the current source head. Never
+/// inspect an unexecuted sibling or suffix to find a completing path's exits.
+fn enter_source_scopes(source: &CStatement, exits: &mut ActiveScopeExits) {
+    crate::instrumentation::record_deterministic_work(1);
+    match source {
+        CStatement::Scope { body } => {
+            let names = crate::kernel::eval::scope_declared_names(body);
+            if !names.is_empty() {
+                exits.push(names.into());
+            }
+            enter_source_scopes(body, exits);
+        }
+        CStatement::Seq(first, _) => enter_source_scopes(first, exits),
+        _ => {}
+    }
+}
+
+// A lexical exit remains in the checked source until exact independently
+// rechecked retirement (or a proved no-op) consumes its declared names.
+fn consume_checked_scope_exits(
+    mut source: Option<Arc<CStatement>>,
+    state: &CState,
+    retired: &[String],
+    exits: &mut ActiveScopeExits,
+) -> Option<Arc<CStatement>> {
+    let retired = retired
+        .iter()
+        .map(|name| {
+            crate::instrumentation::record_deterministic_work(1);
+            name
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    while let Some(current) = source.as_ref() {
+        let (head, tail) = split_shared_source(current);
+        if matches!(head.as_ref(), CStatement::Skip) && tail.is_some() {
+            source = tail;
+            continue;
+        }
+        let CStatement::EndAutomaticLifetimes { names } = head.as_ref() else {
+            break;
+        };
+        let covered = names.iter().all(|name| {
+            crate::instrumentation::record_deterministic_work(1);
+            retired.contains(name)
+        });
+        if !covered
+            && !crate::kernel::eval::end_scope_automatic_lifetimes(state, names)
+                .is_ok_and(|next| next == *state)
+        {
+            break;
+        }
+        if exits
+            .last()
+            .is_some_and(|active| active.as_ref() == names.as_slice())
+        {
+            exits.pop();
+        }
+        source = tail;
+    }
+    source
+}
+
+fn pending_scope_exits(exits: &ActiveScopeExits) -> Option<Arc<CStatement>> {
+    exits.iter().fold(None, |tail, names| {
+        crate::instrumentation::record_deterministic_work(1);
+        Some(prepend_shared_source(
+            Arc::new(CStatement::EndAutomaticLifetimes {
+                names: names.to_vec(),
+            }),
+            tail,
+        ))
+    })
 }
 
 fn prepend_shared_source(
@@ -6647,6 +6796,9 @@ fn statements_have_same_source(left: &CStatement, right: &CStatement) -> bool {
         }
     }
     match (left, right) {
+        (CStatement::Scope { body: left }, CStatement::Scope { body: right }) => {
+            statements_have_same_source(left, right)
+        }
         (CStatement::Seq(..), _) | (_, CStatement::Seq(..)) => {
             let mut left_statements = Vec::new();
             flatten(left, &mut left_statements);
@@ -6906,6 +7058,8 @@ struct CheckedEvidenceProgress {
     state: CState,
     remaining: Option<CStatement>,
     completed: Option<CStatementOutcome>,
+    scope_exits: ActiveScopeExits,
+    scope_loops: Vec<ScopeLoopBoundary>,
     /// Where the walk saw memory change, in order.
     memory_steps: Vec<CheckedMemoryStep>,
 }
@@ -6928,6 +7082,7 @@ struct CheckedMemoryStep {
 
 /// Checks a retained event tree by following kernel theorem conclusions
 /// through an exact source tree. This does not evaluate a C operation.
+#[cfg(test)]
 fn check_evidence_events(
     events: &[CheckedExecutionEvent],
     facts: &ProofFacts,
@@ -6940,6 +7095,27 @@ fn check_evidence_events(
         state,
         remaining,
         CheckedCallEvents::default(),
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+fn check_evidence_events_in_scopes(
+    events: &[CheckedExecutionEvent],
+    facts: &ProofFacts,
+    state: CState,
+    remaining: Option<CStatement>,
+    scopes: ActiveScopeExits,
+    loops: Vec<ScopeLoopBoundary>,
+) -> Option<CheckedEvidenceProgress> {
+    check_evidence_events_with_call_events(
+        events,
+        facts,
+        state,
+        remaining,
+        CheckedCallEvents::default(),
+        scopes,
+        loops,
     )
 }
 
@@ -6949,6 +7125,8 @@ fn check_evidence_events_with_call_events(
     mut state: CState,
     mut remaining: Option<CStatement>,
     mut call_events: CheckedCallEvents,
+    mut scope_exits: ActiveScopeExits,
+    mut scope_loops: Vec<ScopeLoopBoundary>,
 ) -> Option<CheckedEvidenceProgress> {
     let mut completed = None;
     let mut current_facts = facts.clone();
@@ -7027,6 +7205,13 @@ fn check_evidence_events_with_call_events(
             continue;
         }
         if let CheckedExecutionEvent::AutomaticLifetimeEnd(end) = event {
+            remaining = consume_checked_scope_exits(
+                remaining.map(Arc::new),
+                &end.before_state,
+                &end.names,
+                &mut scope_exits,
+            )
+            .map(Arc::unwrap_or_clone);
             if let Some(outcome) = &mut completed {
                 let returned = match outcome {
                     CStatementOutcome::Normal(state)
@@ -7055,7 +7240,13 @@ fn check_evidence_events_with_call_events(
                 continue;
             }
             CheckedExecutionEvent::ProofCaseJoin(join) => {
-                remaining = join.advance_checked(&state, &remaining, &call_events)?;
+                (remaining, scope_exits, scope_loops) = join.advance_checked(
+                    &state,
+                    &remaining,
+                    &call_events,
+                    &scope_exits,
+                    &scope_loops,
+                )?;
                 state = join.joined_state().clone();
                 // The walk runs under the facts its own path ends with, which
                 // extend whatever the join left. Only a walk that began
@@ -7141,8 +7332,21 @@ fn check_evidence_events_with_call_events(
             state = *next_state;
             continue;
         }
+        remaining =
+            consume_checked_scope_exits(remaining.map(Arc::new), &state, &[], &mut scope_exits)
+                .map(Arc::unwrap_or_clone);
         let source = remaining.take()?;
-        let (next_statement, tail) = split_checked_evidence_statement(source);
+        let whole_scope = matches!(&source, CStatement::Scope { .. } | CStatement::Seq(..))
+            && matches!(event, CheckedExecutionEvent::Statement(theorem)
+                if matches!(checked_evidence_conclusion(theorem),
+                    Proposition::CStatementExecutes { statement, .. }
+                    | Proposition::CStatementVerifies { statement, .. } if **statement == source));
+        let (next_statement, tail) = if whole_scope {
+            (source, None)
+        } else {
+            enter_source_scopes(&source, &mut scope_exits);
+            split_checked_evidence_statement(source)
+        };
         match event {
             CheckedExecutionEvent::Statement(theorem) => {
                 match checked_statement_event(
@@ -7161,8 +7365,29 @@ fn check_evidence_events_with_call_events(
                     | CStatementOutcome::Return { .. }
                     | CStatementOutcome::Throw { .. }
                     | CStatementOutcome::VerificationDiverges) => {
-                        if tail.is_some() {
-                            return None;
+                        if matches!(
+                            outcome,
+                            CStatementOutcome::Break(_) | CStatementOutcome::Continue(_)
+                        ) {
+                            if let Some(resumed) = scoped_loop_control_source(
+                                matches!(outcome, CStatementOutcome::Continue(_)),
+                                &scope_exits,
+                                &mut scope_loops,
+                            ) {
+                                state = match outcome {
+                                    CStatementOutcome::Break(state)
+                                    | CStatementOutcome::Continue(state) => *state,
+                                    _ => unreachable!(),
+                                };
+                                remaining = resumed.map(Arc::unwrap_or_clone);
+                                continue;
+                            }
+                        }
+                        if matches!(outcome, CStatementOutcome::VerificationDiverges) {
+                            scope_exits.clear();
+                            remaining = None;
+                        } else {
+                            remaining = pending_scope_exits(&scope_exits).map(Arc::unwrap_or_clone);
                         }
                         completed = Some(outcome);
                     }
@@ -7172,6 +7397,19 @@ fn check_evidence_events_with_call_events(
                 }
             }
             CheckedExecutionEvent::Condition(theorem) => {
+                if let Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::Value(value),
+                    ..
+                } = checked_evidence_conclusion(theorem)
+                {
+                    checked_scope_loop_condition(
+                        &next_statement,
+                        tail.as_ref().map(|tail| Arc::new(tail.clone())),
+                        *value,
+                        &scope_exits,
+                        &mut scope_loops,
+                    );
+                }
                 remaining = checked_condition_event(
                     theorem,
                     recorded,
@@ -7196,9 +7434,13 @@ fn check_evidence_events_with_call_events(
                         state.clone(),
                         Some(full_source.clone()),
                         call_events.clone(),
+                        scope_exits.clone(),
+                        scope_loops.clone(),
                     )?;
                     if arm.completed.is_some()
                         || arm.remaining != tail
+                        || arm.scope_exits != scope_exits
+                        || arm.scope_loops != scope_loops
                         || (branch.interface_successor_facts().is_none()
                             && arm.state != *branch.joined_state())
                     {
@@ -7240,10 +7482,32 @@ fn check_evidence_events_with_call_events(
             statement_effects: None,
         });
     }
+    if completed.is_some() {
+        let completed_state = match completed.as_ref()? {
+            CStatementOutcome::Normal(state)
+            | CStatementOutcome::Break(state)
+            | CStatementOutcome::Continue(state)
+            | CStatementOutcome::Return { state, .. }
+            | CStatementOutcome::Throw { state, .. } => state.as_ref(),
+            _ => &state,
+        };
+        remaining = consume_checked_scope_exits(
+            remaining.map(Arc::new),
+            completed_state,
+            &[],
+            &mut scope_exits,
+        )
+        .map(Arc::unwrap_or_clone);
+        if remaining.is_some() {
+            return None;
+        }
+    }
     Some(CheckedEvidenceProgress {
         state,
         remaining,
         completed,
+        scope_exits,
+        scope_loops,
         memory_steps,
     })
 }
@@ -7874,6 +8138,24 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
 }
 
 impl ExecutionProofCore {
+    fn scope_exits_at_current_source(&self, function: &CFunction) -> ActiveScopeExits {
+        let mut exits = self.evidence_scope_exits.clone();
+        if let Some(source) = self.current_source(function) {
+            enter_source_scopes(source, &mut exits);
+        }
+        exits
+    }
+
+    fn normalize_evidence_scope_source(&mut self) {
+        let state = self.reached_state().clone();
+        self.evidence_source = consume_checked_scope_exits(
+            self.evidence_source.clone(),
+            &state,
+            &[],
+            &mut self.evidence_scope_exits,
+        );
+    }
+
     pub(crate) fn register_current_call_views(&self, assumptions: &PureFactContext) {
         let Some(evidence_state) = &self.evidence_state else {
             return;
@@ -7932,6 +8214,8 @@ impl ExecutionProofCore {
             evidence_state: None,
             evidence_completed: false,
             evidence_source: None,
+            evidence_scope_exits: Vec::new(),
+            evidence_scope_loops: Vec::new(),
             evidence_try_stack: Vec::new(),
             frontier,
             effect_facts: Default::default(),
@@ -8067,6 +8351,7 @@ impl ExecutionProofCore {
         obligations: &[crate::kernel::ProofObligation],
         loan_evidence: &crate::kernel::loans::CheckedLoanCallEvidenceSequence,
     ) -> Result<(), EvidenceRefusal> {
+        self.normalize_evidence_scope_source();
         debug_assert_eq!(self.execution_evidence.len(), 1);
         let (outcome, source_after) = self.check_statement_evidence(
             function,
@@ -8076,6 +8361,14 @@ impl ExecutionProofCore {
             execution_facts,
             obligations,
         )?;
+        if let Some(source) = self.current_source_shared(function) {
+            let whole_scope = matches!(crate::kernel::api::proof_evidence_conclusion(&theorem),
+                Proposition::CStatementExecutes { statement, .. } | Proposition::CStatementVerifies { statement, .. }
+                if matches!(statement.as_ref(), CStatement::Scope { .. } | CStatement::Seq(..)) && statement.as_ref() == source.as_ref());
+            if !whole_scope {
+                enter_source_scopes(&source, &mut self.evidence_scope_exits);
+            }
+        }
         self.loan_evidence =
             crate::kernel::loans::concat_checked_loan_evidence(&self.loan_evidence, loan_evidence);
         let call_events = statement_call_havoc_views(&theorem)
@@ -8091,9 +8384,16 @@ impl ExecutionProofCore {
             }
             trace.push(CheckedExecutionEvent::StatementEffects(memory_effects));
         }
-        self.evidence_source = matches!(&outcome, CStatementOutcome::Normal(_))
-            .then_some(source_after.clone())
-            .flatten();
+        self.evidence_source = if matches!(&outcome, CStatementOutcome::Normal(_)) {
+            source_after.clone()
+        } else {
+            if matches!(&outcome, CStatementOutcome::VerificationDiverges) {
+                self.evidence_scope_exits.clear();
+                None
+            } else {
+                pending_scope_exits(&self.evidence_scope_exits)
+            }
+        };
         // A `break` or `continue` this frontier's own region owns, rather
         // than one belonging to a concretely executed loop it contains.
         let region_loop_control = if self.frontier.continuations.is_empty()
@@ -8171,13 +8471,29 @@ impl ExecutionProofCore {
             }
             CStatementOutcome::Break(state) => {
                 let source_after = self.advance_loop_control(false, source_after)?;
-                self.evidence_source = source_after;
+                self.evidence_source = scoped_loop_control_source(
+                    false,
+                    &self.evidence_scope_exits,
+                    &mut self.evidence_scope_loops,
+                )
+                .ok_or_else(|| {
+                    EvidenceRefusal::from("break has no checked lexical loop boundary")
+                })?;
+                let _ = source_after; // frontier movement separately checks its exact source continuation.
                 self.evidence_state = Some(*state);
                 self.evidence_completed = false;
             }
             CStatementOutcome::Continue(state) => {
                 let source_after = self.advance_loop_control(true, source_after)?;
-                self.evidence_source = source_after;
+                self.evidence_source = scoped_loop_control_source(
+                    true,
+                    &self.evidence_scope_exits,
+                    &mut self.evidence_scope_loops,
+                )
+                .ok_or_else(|| {
+                    EvidenceRefusal::from("continue has no checked lexical loop boundary")
+                })?;
+                let _ = source_after;
                 self.evidence_state = Some(*state);
                 self.evidence_completed = false;
             }
@@ -8205,7 +8521,11 @@ impl ExecutionProofCore {
                 self.frontier.position = FrontierPosition::StatementEntry {
                     remaining: target.remaining.clone(),
                 };
-                self.evidence_source = Some(target.remaining.clone());
+                self.evidence_source =
+                    Some(match pending_scope_exits(&self.evidence_scope_exits) {
+                        Some(exits) => prepend_shared_source(exits, Some(target.remaining.clone())),
+                        None => target.remaining.clone(),
+                    });
                 self.evidence_state = Some(*state);
                 self.evidence_completed = false;
             }
@@ -8528,7 +8848,11 @@ impl ExecutionProofCore {
         use std::borrow::Cow;
         let source = self.current_source(function)?;
         let (mut head, mut tail) = split_shared_source(source);
-        while matches!(*head, CStatement::Skip) {
+        while matches!(*head, CStatement::Skip)
+            || matches!(head.as_ref(), CStatement::EndAutomaticLifetimes { names }
+                if crate::kernel::eval::end_scope_automatic_lifetimes(self.reached_state(), names)
+                    .is_ok_and(|next| next == *self.reached_state()))
+        {
             let Some(rest) = tail else {
                 return Some((head, None));
             };
@@ -8879,10 +9203,12 @@ impl ExecutionProofCore {
                 }
                 None => None,
             }
-        } else if matches!(&**proved_statement, CStatement::Seq(..))
-            && self
-                .current_source(function)
-                .is_some_and(|source| *source == **proved_statement)
+        } else if matches!(
+            &**proved_statement,
+            CStatement::Seq(..) | CStatement::Scope { .. }
+        ) && self
+            .current_source(function)
+            .is_some_and(|source| *source == **proved_statement)
         {
             // A checked sequence may cover the entire remaining source. This
             // is exact structural identity, not a search through the suffix.
@@ -9317,6 +9643,7 @@ impl ExecutionProofCore {
         obligations: &[crate::kernel::ProofObligation],
     ) -> Result<(), EvidenceRefusal> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
+        self.normalize_evidence_scope_source();
         let (reached, source_after) = self.check_condition_evidence(
             function,
             arguments,
@@ -9333,6 +9660,25 @@ impl ExecutionProofCore {
             let fact = ExecutionPureFact::new(fact.clone());
             if !self.publication_case_facts.contains(&fact) {
                 self.publication_case_facts.push(fact);
+            }
+        }
+        if let Some(source) = self.current_source_shared(function) {
+            enter_source_scopes(&source, &mut self.evidence_scope_exits);
+        }
+        if let Some((head, tail)) = self.next_source_statement_and_tail(function) {
+            let head = head.into_owned();
+            if let Proposition::CConditionEvaluates {
+                outcome: CConditionOutcome::Value(value),
+                ..
+            } = crate::kernel::api::proof_evidence_conclusion(&theorem)
+            {
+                checked_scope_loop_condition(
+                    &head,
+                    tail,
+                    *value,
+                    &self.evidence_scope_exits,
+                    &mut self.evidence_scope_loops,
+                );
             }
         }
         self.evidence_state = Some(reached);
@@ -9398,6 +9744,8 @@ impl ExecutionProofCore {
         // remains for it is what its frontier says.
         self.evidence_source = first.current_source_shared(function);
         self.evidence_try_stack = first.evidence_try_stack.clone();
+        self.evidence_scope_exits = first.evidence_scope_exits.clone();
+        self.evidence_scope_loops = first.evidence_scope_loops.clone();
         self.evidence_completed = false;
         Ok(changed_execution)
     }
@@ -9452,6 +9800,8 @@ impl ExecutionProofCore {
         // remains for it is what its frontier says.
         self.evidence_source = arms[0].0.current_source_shared(function);
         self.evidence_try_stack = arms[0].0.evidence_try_stack.clone();
+        self.evidence_scope_exits = arms[0].0.evidence_scope_exits.clone();
+        self.evidence_scope_loops = arms[0].0.evidence_scope_loops.clone();
         self.evidence_completed = false;
         Ok(effect_facts)
     }
@@ -9897,6 +10247,12 @@ impl ExecutionProofCore {
         }
         let after_state = crate::kernel::eval::end_scope_automatic_lifetimes(state, names)?;
         if after_state == *state {
+            self.evidence_source = consume_checked_scope_exits(
+                self.evidence_source.clone(),
+                state,
+                names,
+                &mut self.evidence_scope_exits,
+            );
             return Ok(after_state);
         }
         if self.reached_state() != state {
@@ -9904,6 +10260,12 @@ impl ExecutionProofCore {
                 "automatic lifetime end does not start from the running state".into(),
             ));
         }
+        self.evidence_source = consume_checked_scope_exits(
+            self.evidence_source.clone(),
+            state,
+            names,
+            &mut self.evidence_scope_exits,
+        );
         let end = CheckedAutomaticLifetimeEnd {
             before_state: state.clone(),
             after_state: after_state.clone(),
@@ -10565,6 +10927,8 @@ impl ExecutionProofCore {
         self.checked_call_events = parent.checked_call_events.clone();
         self.evidence_state = Some(joined_state);
         self.evidence_source = source;
+        self.evidence_scope_exits = arms[0].evidence_scope_exits.clone();
+        self.evidence_scope_loops = arms[0].evidence_scope_loops.clone();
         self.evidence_completed = false;
         Ok(interface_effect_facts)
     }
@@ -10631,6 +10995,8 @@ impl ExecutionProofCore {
         self.checked_call_events = parent.checked_call_events.clone();
         self.evidence_state = Some(joined_state);
         self.evidence_source = source;
+        self.evidence_scope_exits = arms[0].evidence_scope_exits.clone();
+        self.evidence_scope_loops = arms[0].evidence_scope_loops.clone();
         self.evidence_completed = false;
         Ok(interface_effect_facts)
     }
@@ -15382,7 +15748,150 @@ mod loan_scaling_tests {
 #[cfg(test)]
 mod automatic_lifetime_tests {
     use super::*;
-    use crate::kernel::int32;
+    use crate::kernel::{CType, int32};
+
+    #[test]
+    fn checked_scope_trace_rejects_dropped_live_exit_event() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let initial = CState::new();
+        let declare = crate::kernel::c_declare_initialized(
+            "selected",
+            CType::Int32,
+            CExpression::Value(int32(5)),
+            false,
+            false,
+            false,
+            false,
+        );
+        let declared = crate::kernel::prove_symbolic_c_execution(
+            initial.clone(),
+            declare.clone(),
+            PureFactContext::new(),
+        )
+        .unwrap();
+        let Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Normal(live),
+            ..
+        } = crate::kernel::api::proof_evidence_conclusion(&declared)
+        else {
+            panic!("declaration did not execute");
+        };
+        let live = (**live).clone();
+        let returned = CStatement::Return(CExpression::Value(int32(0)));
+        let return_theorem = crate::kernel::prove_symbolic_c_execution(
+            live.clone(),
+            returned.clone(),
+            PureFactContext::new(),
+        )
+        .unwrap();
+        let source = CStatement::Scope {
+            body: Box::new(CStatement::Seq(
+                Arc::new(declare.clone()),
+                Arc::new(returned),
+            )),
+        };
+        let divergent =
+            crate::kernel::c_while(CExpression::Value(int32(1)), Vec::new(), CStatement::Skip);
+        let diverging_theorem = Theorem::new(Proposition::CStatementVerifies {
+            state: Box::new(live.clone()),
+            statement: Box::new(divergent.clone()),
+            outcome: CStatementOutcome::VerificationDiverges,
+        });
+        let divergent_source = CStatement::Scope {
+            body: Box::new(CStatement::Seq(
+                Arc::new(declare.clone()),
+                Arc::new(divergent),
+            )),
+        };
+        let divergent_progress = check_evidence_events(
+            &[
+                CheckedExecutionEvent::Statement(declared.clone()),
+                CheckedExecutionEvent::Statement(diverging_theorem),
+            ],
+            &ProofFacts::default(),
+            initial.clone(),
+            Some(divergent_source),
+        )
+        .expect("a diverging path does not leave its lexical scope");
+        assert!(matches!(
+            divergent_progress.completed,
+            Some(CStatementOutcome::VerificationDiverges)
+        ));
+        assert!(divergent_progress.scope_exits.is_empty());
+
+        let mut events = vec![
+            CheckedExecutionEvent::Statement(declared),
+            CheckedExecutionEvent::Statement(return_theorem),
+        ];
+        assert!(
+            check_evidence_events(
+                &events,
+                &ProofFacts::default(),
+                initial.clone(),
+                Some(source.clone())
+            )
+            .is_none(),
+            "live scope exit requires retirement evidence"
+        );
+        let names = vec!["selected".to_string()];
+        let after = crate::kernel::eval::end_scope_automatic_lifetimes(&live, &names).unwrap();
+        events.push(CheckedExecutionEvent::AutomaticLifetimeEnd(
+            CheckedAutomaticLifetimeEnd {
+                before_state: live.clone(),
+                after_state: after,
+                names,
+            },
+        ));
+        assert!(
+            check_evidence_events(&events, &ProofFacts::default(), initial, Some(source)).is_some()
+        );
+    }
+
+    #[test]
+    fn pending_scope_exit_navigation_ignores_unexecuted_return_siblings() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let exits: ActiveScopeExits = vec![Arc::from(["selected".to_string()])];
+        let mut samples = Vec::new();
+        for branches in [8, 16, 32, 64] {
+            // Each outcome has only its entered scope frame. Its remaining
+            // sibling source is deliberately never passed to navigation.
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                for _ in 0..branches {
+                    assert!(pending_scope_exits(&exits).is_some());
+                }
+            });
+            samples.push((branches, work));
+        }
+        assert!(samples[0].1 > 0);
+        for pair in samples.windows(2) {
+            assert!(pair[1].1 <= 2 * pair[0].1 + 2, "{samples:?}");
+        }
+    }
+
+    #[test]
+    fn checked_long_scope_exit_matches_retirement_names_once() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let mut samples = Vec::new();
+        for count in [8, 16, 32, 64] {
+            let names = (0..count)
+                .map(|index| format!("selected_{index}"))
+                .collect::<Vec<_>>();
+            let mut exits: ActiveScopeExits = vec![names.clone().into()];
+            let source = Some(Arc::new(CStatement::EndAutomaticLifetimes {
+                names: names.clone(),
+            }));
+            let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+                consume_checked_scope_exits(source, &CState::new(), &names, &mut exits)
+            });
+            assert!(remaining.is_none());
+            assert!(exits.is_empty());
+            samples.push((count, work));
+        }
+        assert!(samples[0].1 > 0);
+        for pair in samples.windows(2) {
+            assert!(pair[1].1 <= 2 * pair[0].1 + 2, "{samples:?}");
+        }
+    }
 
     #[test]
     fn automatic_lifetime_event_rejects_active_local_loan_and_forged_retirement() {

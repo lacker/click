@@ -34,7 +34,7 @@ fn native_statement_execution_clears_specification_pointer_observation() {
             CExpression::Value(CValue::Pointer(pointer.clone())),
             CType::UInt64,
         ),
-        c_pointer_offset_bytes(CExpression::Value(CValue::Pointer(pointer)), 4),
+        c_pointer_offset_bytes(CExpression::Value(CValue::Pointer(pointer.clone())), 4),
     ];
     let executable = PureFactContext::new();
     for observations in [
@@ -85,8 +85,9 @@ fn native_statement_execution_clears_specification_pointer_observation() {
                     .iter()
                     .all(|path| if matches!(expression, CExpression::Cast { .. }) {
                         matches!(
-                            path.outcome,
-                            CStatementOutcome::RuntimeError(CRuntimeError::PointerConversion(_))
+                            &path.outcome,
+                            CStatementOutcome::Return { value: CValue::PointerInteger(value), .. }
+                                if value.origin() == &pointer
                         )
                     } else {
                         matches!(path.outcome, CStatementOutcome::UndefinedBehavior(_))
@@ -112,8 +113,9 @@ fn native_statement_execution_clears_specification_pointer_observation() {
                 .unwrap();
                 assert!(!paths.is_empty());
                 assert!(paths.iter().all(|path| matches!(
-                    path.outcome,
-                    CFunctionOutcome::RuntimeError(CRuntimeError::PointerConversion(_))
+                    &path.outcome,
+                    CFunctionOutcome::Return { value: CValue::PointerInteger(value), .. }
+                        if value.origin() == &pointer
                 )));
             }
         }
@@ -1861,15 +1863,25 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
     let assumptions = PureFactContext::new();
     let mut obligations = Vec::new();
     for target in [CType::Int64, CType::UInt64] {
-        assert!(matches!(
-            crate::kernel::eval::cast_c_value_to_type(
-                CValue::Pointer(pointer.clone()),
-                target,
-                &mut obligations,
-                &assumptions
-            ),
-            Err(CRuntimeError::PointerConversion(_))
-        ));
+        let word = crate::kernel::eval::cast_c_value_to_type(
+            CValue::Pointer(pointer.clone()),
+            target,
+            &mut obligations,
+            &assumptions,
+        )
+        .unwrap();
+        let CValue::PointerInteger(carrier) = &word else {
+            panic!("an executable pointer cast must retain its full origin")
+        };
+        assert_eq!(carrier.origin(), &pointer);
+        let restored = crate::kernel::eval::cast_c_value_to_type(
+            word,
+            CType::Int32Pointer,
+            &mut obligations,
+            &assumptions,
+        )
+        .unwrap();
+        assert_eq!(restored, CValue::Pointer(pointer.clone()));
     }
     let CValue::Pointer(byte_view) = crate::kernel::eval::cast_c_value_to_type(
         CValue::Pointer(pointer.clone()),
@@ -4354,7 +4366,7 @@ fn unsigned_narrowing_distributes_constant_subtraction_modulo_the_low_word() {
 }
 
 #[test]
-fn pointer_alignment_observes_only_a_boolean_and_preserves_cast_refusal() {
+fn pointer_alignment_observes_only_a_boolean_and_keeps_integer_origin_separate() {
     let _session = crate::kernel::VerificationSession::enter();
     let variable = Variable(988_150);
     let address = Pointer::symbolic(variable);
@@ -4413,10 +4425,20 @@ fn pointer_alignment_observes_only_a_boolean_and_preserves_cast_refusal() {
         if assumptions.should_observe_pointer_addresses() {
             assert!(matches!(cast_paths.as_slice(), [path] if path.outcome ==
                 CExpressionOutcome::Value(CValue::UInt64(Bitvector32Term::pointer_address(address.clone())))));
+            assert!(matches!(
+                crate::kernel::eval::cast_c_value_to_type(
+                    CValue::UInt64(Bitvector32Term::pointer_address(address.clone())),
+                    CType::Int32Pointer,
+                    &mut Vec::new(),
+                    &assumptions,
+                ),
+                Err(CRuntimeError::PointerConversion(_))
+            ));
         } else {
-            assert!(cast_paths.iter().all(|path| matches!(
-                path.outcome,
-                CExpressionOutcome::RuntimeError(CRuntimeError::PointerConversion(_))
+            assert!(matches!(cast_paths.as_slice(), [path] if matches!(
+                &path.outcome,
+                CExpressionOutcome::Value(CValue::PointerInteger(value))
+                    if value.origin() == &carrier
             )));
         }
     }

@@ -426,6 +426,11 @@ pub(in crate::surface) fn simp_term(term: &Term) -> Term {
         Term::CValue(CValue::Int32(term)) => Term::CValue(CValue::Int32(simp_bitvector(term))),
         Term::CValue(CValue::Int64(term)) => Term::CValue(CValue::Int64(simp_bitvector(term))),
         Term::CValue(CValue::UInt64(term)) => Term::CValue(CValue::UInt64(simp_bitvector(term))),
+        Term::CValue(CValue::PointerInteger(value)) => {
+            Term::CValue(CValue::PointerInteger(std::sync::Arc::new(
+                value.with_parts(simp_bitvector(value.bits()), value.origin().clone()),
+            )))
+        }
         _ => term.clone(),
     }
 }

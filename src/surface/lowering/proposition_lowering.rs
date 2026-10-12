@@ -22,6 +22,14 @@ pub(in crate::surface) fn comparison_proposition(
     operator: ComparisonOperator,
     right: CValue,
 ) -> Result<Proposition, ClickError> {
+    let left = match left {
+        CValue::PointerInteger(value) => value.numeric_value(),
+        value => value,
+    };
+    let right = match right {
+        CValue::PointerInteger(value) => value.numeric_value(),
+        value => value,
+    };
     let pointer_and_null = match (&left, &right) {
         (CValue::Pointer(pointer), CValue::Int32(Bitvector32Term::Constant(0))) => {
             Some((pointer.pointer().clone(), Pointer::null()))
@@ -152,6 +160,7 @@ pub(in crate::surface) fn spec_range_membership_proposition(
 
 pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(_) => None,
         CValue::Int8(bits) => Some(simp_bitvector(bits)),
         CValue::Bool(bits)
         | CValue::Int16(bits)
@@ -172,6 +181,7 @@ pub(in crate::surface) fn promoted_int32_term(value: &CValue) -> Option<Bitvecto
 
 fn promoted_int64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => promoted_int64_term(&value.numeric_value()),
         CValue::Int64(bits) => Some(bits.clone()),
         CValue::Bool(bits) => Some(Bitvector32Term::int64_from_32(bits.clone())),
         CValue::Int8(bits) => Some(Bitvector32Term::int64_from_32(bits.clone())),
@@ -191,6 +201,7 @@ fn promoted_int64_term(value: &CValue) -> Option<Bitvector32Term> {
 
 fn promoted_uint64_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => promoted_uint64_term(&value.numeric_value()),
         CValue::UInt64(bits) => Some(bits.clone()),
         CValue::Bool(bits) => Some(Bitvector32Term::uint64_from_32(bits.clone())),
         CValue::Int64(bits) => Some(Bitvector32Term::uint64_from_int64(bits.clone())),

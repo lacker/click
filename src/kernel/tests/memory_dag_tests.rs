@@ -1927,7 +1927,7 @@ fn a_materialized_pointer_cell_is_named_at_its_source() {
         crate::kernel::eval::canonical_form_of_load(
             crate::kernel::intern_c_memory_ref(memory),
             pointer.clone(),
-            crate::kernel::LoadKind::Bits32,
+            crate::kernel::LoadKind::Pointer,
         )
     };
     let pointer_value = |index: Bitvector32Term, width: i64, c_type: CType| {
@@ -2653,6 +2653,11 @@ fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
             block: block.into(),
             offset: PointerOffsetTerm::Constant(0),
         };
+        let kind = if read_bytes == 4 {
+            LoadKind::Bits32
+        } else {
+            LoadKind::Pointer
+        };
         crate::kernel::eval::declare_load_access_width(&read, read_bytes);
         let base = CMemory::new().with_block(block, 32);
         let byte_written_at = |offset: i64| {
@@ -2669,7 +2674,7 @@ fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
                 &crate::kernel::intern_c_memory_ref(&base),
                 &crate::kernel::intern_c_memory_ref(after),
                 &read,
-                crate::kernel::LoadKind::Bits32,
+                kind,
                 &bare,
             )
         };
@@ -2677,7 +2682,7 @@ fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
             Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory_ref(memory),
                 Box::new(read.clone()),
-                crate::kernel::LoadKind::Bits32,
+                kind,
             )
         };
 
@@ -4008,16 +4013,18 @@ fn named_snapshot_alias_equality_does_not_depend_on_sibling_observation_origins(
                 &crate::kernel::proof::CheckedCallEvents::default(),
             ));
         }
-        // Widening a registered read must invalidate the retained 4-byte rule.
-        crate::kernel::eval::load_variable_for_cell_with_origin(
+        // A pointer read has its own immutable eight-byte identity. Registering
+        // it does not widen or invalidate the existing four-byte scalar rule.
+        let pointer_read = crate::kernel::eval::load_variable_for_cell_with_origin(
             &named,
             &right,
-            LoadKind::Bits32,
+            LoadKind::Pointer,
             8,
             &origins[1],
         );
-        assert!(!witness.checks(&assumptions));
-        assert!(!checked_origin_load_equality(
+        assert_ne!(Bitvector32Term::Variable(pointer_read), right_load);
+        assert!(witness.checks(&assumptions));
+        assert!(checked_origin_load_equality(
             &left_load,
             &right_load,
             &assumptions
@@ -4670,7 +4677,7 @@ fn local_lifetime_end_retains_complete_separated_range_evidence_and_scales() {
             Bitvector32Term::MemoryLoad(
                 memory,
                 Box::new(read.clone()),
-                crate::kernel::LoadKind::Bits32,
+                crate::kernel::LoadKind::Pointer,
             )
         };
         // Measure this selected cleanup edge's decision and certificate check,

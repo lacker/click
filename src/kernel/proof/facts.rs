@@ -1480,15 +1480,6 @@ impl ProofFacts {
     ) -> Vec<Arc<Proposition>> {
         let mut atoms = BTreeSet::new();
         collect_proposition_bitvector_atoms(proposition, &mut atoms);
-        #[cfg(test)]
-        if std::env::var_os("CLICK_BITS64_BRIDGE_PROBE").is_some()
-            && matches!(
-                proposition,
-                Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(..), true)
-            )
-        {
-            eprintln!("BITS64-QUERY-ATOMS-PROBE {atoms:?}");
-        }
         // One fact is filed under each of its operands' atoms; pointer
         // identity drops the repeat without comparing payloads.
         let mut seen = BTreeSet::new();
@@ -1854,15 +1845,6 @@ fn index_bitvector_equality_fact(
     let mut atoms = BTreeSet::new();
     for term in [left, right] {
         collect_bitvector_atoms(term, &mut atoms);
-    }
-    #[cfg(test)]
-    if std::env::var_os("CLICK_BITS64_BRIDGE_PROBE").is_some()
-        && matches!(
-            fact.as_ref(),
-            Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(..), true)
-        )
-    {
-        eprintln!("BITS64-FACT-ATOMS-PROBE {atoms:?}");
     }
     for key in atoms {
         let mut bucket = index.get(&key).cloned().unwrap_or_default();

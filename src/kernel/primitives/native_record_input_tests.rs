@@ -939,7 +939,7 @@ fn native_loaded_prefix_normalization_follows_only_full_stored_read_pairs() {
     crate::kernel::eval::symbolic_load_value(&before, &cell, CType::Int32Pointer).unwrap();
     let source = intern_c_memory_ref(&before);
     let Bitvector32Term::Variable(variable) =
-        canonical_form_of_load(source, cell.clone(), LoadKind::Bits32)
+        canonical_form_of_load(source, cell.clone(), LoadKind::Pointer)
     else {
         panic!("registered source")
     };
@@ -947,7 +947,7 @@ fn native_loaded_prefix_normalization_follows_only_full_stored_read_pairs() {
         crate::kernel::registered_load_bytes_for_variable(&variable),
         Some(8)
     );
-    let Some(Bitvector32Term::MemoryLoad(defining_memory, defining_cell, LoadKind::Bits32)) =
+    let Some(Bitvector32Term::MemoryLoad(defining_memory, defining_cell, LoadKind::Pointer)) =
         crate::kernel::registered_load_term_for_variable(&variable)
     else {
         panic!("immutable producer read")

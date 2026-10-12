@@ -3698,6 +3698,7 @@ pub(super) fn split_next_source_operation(
     statement: &CStatement,
 ) -> Result<(CStatement, Option<CStatement>), String> {
     match statement {
+        CStatement::Scope { body } => split_next_source_operation(body),
         CStatement::Seq(first, second) => {
             let (source_statement, first_remaining) = split_next_source_operation(first)?;
             let remaining = match first_remaining {
@@ -3715,6 +3716,7 @@ pub(super) fn flatten_top_level_sequence(
     statements: &mut Vec<CStatement>,
 ) -> Result<(), String> {
     match statement {
+        CStatement::Scope { body } => flatten_top_level_sequence(body, statements),
         CStatement::Seq(first, second) => {
             flatten_top_level_sequence(first, statements)?;
             flatten_top_level_sequence(second, statements)
@@ -3858,6 +3860,7 @@ fn describe_call_bindings(statement: &CStatement, environment: &CExecutionEnviro
 /// condition, a body by its operation.
 pub(super) fn describe_statement_head(statement: &CStatement) -> String {
     match statement {
+        CStatement::Scope { body } => describe_statement_head(body),
         CStatement::Seq(first, _) => describe_statement_head(first),
         CStatement::Skip => "skip".to_string(),
         CStatement::Break => "break".to_string(),

@@ -2217,7 +2217,8 @@ fn numeric_address_equation_cannot_recover_a_sibling_object_designation() {
         Ok(_) => panic!("numeric equality recovered a dereferenceable sibling designation"),
     };
     assert!(
-        error.message().contains("invalid memory access"),
+        error.message().contains("invalid memory access")
+            || error.message().contains("integer-to-pointer cast requires"),
         "{error:?}"
     );
 }
@@ -2241,11 +2242,10 @@ fn designated_pointer_address_postcondition_is_a_numeric_observation() {
             ensures result == address(p);
         } by { execute(); simp(); }
     "#;
-    let error = verify_c0_sources(source, &[("address.c", executable)]).unwrap_err();
-    assert!(
-        error
-            .message()
-            .contains("cannot yet preserve the object designation"),
-        "{error:?}"
-    );
+    let sources = [("address.c", executable)];
+    let verified = verify_c0_sources(source, &sources).unwrap();
+    verified[0].expanded_proof_certificate().unwrap();
+    let expanded =
+        expand_c0_claim_source_by_label(source, &sources, "read_address.ensures_0").unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
 }

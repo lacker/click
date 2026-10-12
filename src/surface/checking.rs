@@ -413,6 +413,7 @@ pub(super) fn apply_witness_tactic(
             CValue::Float32(_) => CType::Float32,
             CValue::Float64(_) => CType::Float64,
             CValue::Pointer(pointer) => pointer.c_type(),
+            CValue::PointerInteger(value) => value.c_type(),
         };
         return Err(ClickError::new(format!(
             "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: witness `{}` has the wrong type: expected {}, got {}",
@@ -426,6 +427,7 @@ pub(super) fn apply_witness_tactic(
         (sort, value) if sort.machine_integer_type().is_some() => {
             let value = match value {
                 crate::kernel::integer_c_value!(v) => v,
+                CValue::PointerInteger(value) => value.bits().clone(),
                 _ => unreachable!("witness type was checked above"),
             };
             substitute_int32_variable_in_proposition(&body, var, value)

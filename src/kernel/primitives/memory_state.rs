@@ -8673,6 +8673,11 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn symbolic_int64_load(&self, pointer: &Pointer) -> CValue {
+        if let Some(CValue::PointerInteger(value)) = self.known_value(pointer)
+            && value.c_type() == CType::Int64
+        {
+            return CValue::PointerInteger(value);
+        }
         CValue::Int64(Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
@@ -8681,6 +8686,11 @@ impl CMemory {
     }
 
     pub(in crate::kernel) fn symbolic_uint64_load(&self, pointer: &Pointer) -> CValue {
+        if let Some(CValue::PointerInteger(value)) = self.known_value(pointer)
+            && value.c_type() == CType::UInt64
+        {
+            return CValue::PointerInteger(value);
+        }
         CValue::UInt64(Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
@@ -12009,10 +12019,10 @@ mod scalar_array_layout_tests {
                 .declared_array_pointer(&address, CType::UInt32, 3)
                 .is_none()
         );
-        let fake_record =
-            CMemory::aggregate_input_pointer(address.clone(), &layout, CType::UInt8Pointer);
-        assert!(!memory.authenticated_pointer_domain_at_base(&fake_record));
         let legacy = CAggregateLayout::new(8, 4, Vec::new());
+        let fake_record =
+            CMemory::aggregate_input_pointer(address.clone(), &legacy, CType::UInt8Pointer);
+        assert!(!memory.authenticated_pointer_domain_at_base(&fake_record));
         assert!(
             memory
                 .declared_aggregate_pointer(&address, &legacy)

@@ -1371,6 +1371,7 @@ struct AllocationSize {
 /// cannot be safely narrowed into a memory block extent yet.
 fn allocation_size_value(value: CValue, assumptions: &PureFactContext) -> Option<AllocationSize> {
     match value {
+        CValue::PointerInteger(value) => allocation_size_value(value.numeric_value(), assumptions),
         CValue::Bool(term) => Some(AllocationSize {
             term,
             unsigned: true,
@@ -2639,8 +2640,7 @@ fn pending_allocation_outcome_paths(
 
 /// The automatic objects one scope declares for itself.
 ///
-/// C0 lowers a source block to a `Seq` tree, and the kernel has no statement
-/// that stands for the block itself, so a scope's own declarations are the
+/// A scope body has a `Seq` spine. Its own declarations are the
 /// ones reachable from its root through that tree. The walk stops at a nested
 /// scope — an `if` arm, a loop body, a `switch` body — because control leaving
 /// that scope retires what it declared, and stops at every other statement
@@ -2658,7 +2658,8 @@ fn collect_scope_declared_names(statement: &CStatement, names: &mut Vec<String>)
             collect_scope_declared_names(second, names);
         }
         // Nested scopes retire their own declarations.
-        CStatement::If { .. }
+        CStatement::Scope { .. }
+        | CStatement::If { .. }
         | CStatement::While { .. }
         | CStatement::Switch { .. }
         | CStatement::TryCatchInt32 { .. }
@@ -2833,6 +2834,19 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     } else {
         assumptions
     };
+    if let CStatement::Scope { body } = statement {
+        budget.consume_statement_step()?;
+        let declared = scope_declared_names(body);
+        let paths = execute_c_statement_paths(
+            state,
+            body,
+            assumptions,
+            environment,
+            execution_semantics,
+            budget,
+        )?;
+        return Ok(paths_after_scope_exit(paths, &declared));
+    }
     // Keep a source block's sequence spine out of the large leaf-operation
     // frame. Adding a fact index must not multiply stack use per statement.
     if let CStatement::Seq(first, second) = statement {
@@ -3361,7 +3375,9 @@ fn execute_c_statement_leaf_paths(
         CStatement::Assert { condition, label } => {
             execute_c_assert_paths(state, condition, label.as_deref(), assumptions, budget)?
         }
-        CStatement::Seq(_, _) => unreachable!("sequences dispatch before leaf execution"),
+        CStatement::Scope { .. } | CStatement::Seq(_, _) => {
+            unreachable!("scopes and sequences dispatch before leaf execution")
+        }
         CStatement::Return(CExpression::Value(CValue::Void)) => {
             let outcome = if let Some(refusal) = return_authority_refusal(state) {
                 refusal
@@ -5109,5 +5125,61 @@ mod automatic_domain_declaration_tests {
                 .declared_uint32_representation(word.locals().slot("word").unwrap()),
             Some(UInt32RepresentationProfile::LittleEndian)
         );
+    }
+}
+
+#[cfg(test)]
+mod lexical_scope_tests {
+    use super::*;
+    use crate::kernel::{c_assign, c_declare, c_int32_literal, c_return, c_seq, c_variable};
+
+    #[test]
+    fn lexical_scope_evaluates_return_before_retiring_its_local() {
+        let statement = CStatement::Scope {
+            body: Box::new(c_seq(
+                c_declare("inner", CType::Int32),
+                c_seq(
+                    c_assign("inner", c_int32_literal(7)),
+                    c_return(c_variable("inner")),
+                ),
+            )),
+        };
+        let paths = execute_c_statement_paths(
+            &CState::new(),
+            &statement,
+            &PureFactContext::new(),
+            &CExecutionEnvironment::new(),
+            CExecutionSemantics::EXECUTE_BODIES,
+            &mut ExecutionBudget::beside_live_state(),
+        )
+        .unwrap();
+        let CStatementOutcome::Return { value, state } = &paths[0].outcome else {
+            panic!("expected return");
+        };
+        assert_eq!(value, &CValue::Int32(Bitvector32Term::Constant(7)));
+        assert!(state.locals.slot("inner").is_none());
+    }
+
+    #[test]
+    fn lexical_scope_retires_locals_on_break_and_continue() {
+        for exit in [CStatement::Break, CStatement::Continue] {
+            let statement = CStatement::Scope {
+                body: Box::new(c_seq(c_declare("inner", CType::Int32), exit)),
+            };
+            let paths = execute_c_statement_paths(
+                &CState::new(),
+                &statement,
+                &PureFactContext::new(),
+                &CExecutionEnvironment::new(),
+                CExecutionSemantics::EXECUTE_BODIES,
+                &mut ExecutionBudget::beside_live_state(),
+            )
+            .unwrap();
+            let state = match &paths[0].outcome {
+                CStatementOutcome::Break(state) | CStatementOutcome::Continue(state) => state,
+                outcome => panic!("expected control exit: {outcome:?}"),
+            };
+            assert!(state.locals.slot("inner").is_none());
+        }
     }
 }

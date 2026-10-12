@@ -273,7 +273,7 @@ fn loaded_pointer_pair_substitution_rewrites_one_defining_load_and_preserves_dis
         let load = Bitvector32Term::MemoryLoad(
             intern_c_memory_ref(&memory),
             Box::new(cell.clone()),
-            LoadKind::Bits32,
+            LoadKind::Pointer,
         );
         let (variable, _) = crate::kernel::eval::load_variable_for_term(&load).unwrap();
         let Bitvector32Term::MemoryLoad(memory, cell, _) =
@@ -871,4 +871,60 @@ fn designation_raw_rewrite_modes_partition_shared_memos_under_caller_managed_bin
         PointerDomainSelection::Element(IntegerTerm::var(renamed).into())
     );
     rewrite.pop_integer_substitution_scope(scope);
+}
+
+#[test]
+fn numeric_rewriting_cannot_replace_pointer_integer_origin() {
+    let _session = VerificationSession::enter();
+    let original = value(
+        Pointer::symbolic(Variable(410_080)),
+        PointerDesignation::Unresolved(Variable(410_080)),
+    );
+    let other = value(
+        Pointer::symbolic(Variable(410_081)),
+        PointerDesignation::Unresolved(Variable(410_081)),
+    );
+    let encoded = CPointerIntegerValue::from_pointer(original.clone(), CType::UInt64).unwrap();
+    let from = encoded.bits().clone();
+    let to = Bitvector32Term::pointer_address(other.pointer().clone());
+    let mut rewrite = TermRewrite::for_bits(&from, &to);
+    let CValue::PointerInteger(rewritten) =
+        rewrite.value(&CValue::PointerInteger(std::sync::Arc::new(encoded)))
+    else {
+        panic!("rewriting preserves pointer-integer sort");
+    };
+    assert_eq!(rewrite.refusal(), None);
+    assert_eq!(rewritten.bits(), &to);
+    assert_eq!(rewritten.origin(), &original);
+    assert_ne!(rewritten.origin(), &other);
+    drop(rewrite);
+
+    // Plain integers never gain the origin of numerically equal pointer bits.
+    let mut rewrite = TermRewrite::for_bits(&from, &to);
+    assert_eq!(
+        rewrite.value(&CValue::UInt64(from.clone())),
+        CValue::UInt64(to.clone())
+    );
+}
+
+#[test]
+fn pointer_integer_rewrite_reserves_designation_only_variables() {
+    let _session = VerificationSession::enter();
+    let root = Pointer::symbolic(Variable(410_090));
+    let extent = Variable(410_091);
+    let origin = value(
+        root.clone(),
+        object(root, "member", IntegerTerm::var(extent)),
+    );
+    let encoded = CPointerIntegerValue::from_pointer(origin, CType::UInt64).unwrap();
+    // Even when numeric operations eliminate the address, its retained
+    // descriptor remains a source of freshness dependencies.
+    let encoded = encoded.with_parts(Bitvector32Term::UInt64Constant(0), encoded.origin().clone());
+    let mut variables = CarrierVariables::default();
+    collect_c_value_carriers(
+        &CValue::PointerInteger(std::sync::Arc::new(encoded)),
+        &mut variables,
+    );
+    assert!(variables.integer.contains(&extent));
+    assert!(variables.c.contains(&Variable(410_090)));
 }

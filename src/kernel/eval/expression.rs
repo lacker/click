@@ -145,6 +145,7 @@ fn float64_to_float32_bits(bits: u64) -> u32 {
 
 fn integer_constant_as_sign_magnitude(value: &CValue) -> Option<(bool, u128)> {
     match value {
+        CValue::PointerInteger(value) => integer_constant_as_sign_magnitude(&value.numeric_value()),
         CValue::Bool(bits) => Some((false, u128::from(bits.as_const()?))),
         CValue::Int8(bits) => {
             let value = bits.as_const()? as i32;
@@ -278,6 +279,9 @@ fn float64_to_integer_value(bits: u64, target_type: CType) -> Option<CValue> {
 }
 
 fn integer_to_float_value(value: CValue, target_type: CType) -> Option<CValue> {
+    if let CValue::PointerInteger(value) = value {
+        return integer_to_float_value(value.numeric_value(), target_type);
+    }
     let (source_name, term) = match &value {
         CValue::Bool(term) => ("bool", term),
         CValue::Int8(term) => ("int8", term),
@@ -293,7 +297,8 @@ fn integer_to_float_value(value: CValue, target_type: CType) -> Option<CValue> {
         | CValue::Void
         | CValue::Float32(_)
         | CValue::Float64(_)
-        | CValue::Pointer(_) => return None,
+        | CValue::Pointer(_)
+        | CValue::PointerInteger(_) => return None,
     };
     let target_name = match target_type {
         CType::Float32 => "float32",
@@ -577,7 +582,9 @@ pub(in crate::kernel) fn promote_c_int32_path_value(value: CValue) -> Option<Bit
         CValue::Int16(value) => Some(value),
         CValue::UInt8(value) => Some(value),
         CValue::UInt16(value) => Some(value),
-        CValue::UInt32(_) | CValue::Int64(_) | CValue::UInt64(_) => None,
+        CValue::UInt32(_) | CValue::Int64(_) | CValue::UInt64(_) | CValue::PointerInteger(_) => {
+            None
+        }
         CValue::Pointer(_) | CValue::Float32(_) | CValue::Float64(_) => None,
     }
 }
@@ -594,6 +601,7 @@ pub(in crate::kernel) fn promote_c_uint32_path_value(value: CValue) -> Option<Bi
         | CValue::Void
         | CValue::Int64(_)
         | CValue::UInt64(_)
+        | CValue::PointerInteger(_)
         | CValue::Pointer(_)
         | CValue::Float32(_)
         | CValue::Float64(_) => None,
@@ -602,6 +610,7 @@ pub(in crate::kernel) fn promote_c_uint32_path_value(value: CValue) -> Option<Bi
 
 pub(in crate::kernel) fn promote_c_int64_path_value(value: CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => promote_c_int64_path_value(value.numeric_value()),
         CValue::Int64(value) => Some(value),
         CValue::Bool(value) => Some(Bitvector32Term::int64_from_32(value)),
         CValue::Int8(value) => Some(Bitvector32Term::int64_from_32(value)),
@@ -622,6 +631,7 @@ pub(in crate::kernel) fn promote_c_int64_path_value(value: CValue) -> Option<Bit
 
 pub(in crate::kernel) fn promote_c_uint64_path_value(value: CValue) -> Option<Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => promote_c_uint64_path_value(value.numeric_value()),
         CValue::UInt64(value) => Some(value),
         CValue::Bool(value) => Some(Bitvector32Term::uint64_from_32(value)),
         CValue::UInt8(value) | CValue::UInt16(value) | CValue::UInt32(value) => {
@@ -647,6 +657,21 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
+    if let CValue::PointerInteger(carrier) = value {
+        let numeric = coerce_c_value_to_type(
+            carrier.numeric_value(),
+            target_type,
+            obligations,
+            assumptions,
+        )?;
+        return if matches!(target_type, CType::Int64 | CType::UInt64) {
+            Some(CValue::PointerInteger(std::sync::Arc::new(
+                carrier.with_numeric_value(numeric)?,
+            )))
+        } else {
+            Some(numeric)
+        };
+    }
     if target_type == CType::Bool && matches!(value.c_type(), CType::Int128 | CType::UInt128) {
         let source = MachineIntegerType::from_c_type(value.c_type())?;
         let observed = IntegerTerm::from_machine(source, c_value_bitvector_term(&value)?)?;
@@ -1087,6 +1112,17 @@ pub(in crate::kernel) fn cast_c_value_to_type(
             CValue::Pointer(pointer) => {
                 return Ok(CValue::Pointer(pointer.with_type(target_type)));
             }
+            CValue::PointerInteger(carrier)
+                if !matches!(target_type, CType::FunctionPointer(_)) =>
+            {
+                let pointer = super::pointer_tags::cast_pointer_integer_to_pointer(
+                    &carrier,
+                    assumptions,
+                    obligations,
+                )
+                .map_err(CRuntimeError::PointerConversion)?;
+                return Ok(CValue::Pointer(pointer.with_type(target_type)));
+            }
             // Integer-to-pointer conversion is accepted only for a 64-bit
             // value that is exactly the recorded address of an object
             // pointer, or a value proven zero. Zero needs no allocation
@@ -1103,20 +1139,9 @@ pub(in crate::kernel) fn cast_c_value_to_type(
                 {
                     return Ok(CValue::typed_pointer(Pointer::null(), target_type));
                 }
-                return match super::pointer_tags::cast_tagged_address_to_pointer(
-                    &term,
-                    assumptions,
-                    obligations,
-                ) {
-                    Ok(Some(pointer)) => Ok(CValue::typed_pointer(pointer, target_type)),
-                    Ok(None) => Err(CRuntimeError::PointerConversion(
-                        "integer-to-pointer cast requires a value that is a recorded pointer \
-                         address or zero; an integer without pointer origin cannot become a \
-                         pointer"
-                            .to_string(),
-                    )),
-                    Err(message) => Err(CRuntimeError::PointerConversion(message)),
-                };
+                return Err(CRuntimeError::PointerConversion(
+                    "integer-to-pointer cast requires a checked retained pointer origin or zero; numeric equality cannot issue pointer origin".to_string(),
+                ));
             }
             value => {
                 return coerce_c_value_to_type(value, target_type, obligations, assumptions)
@@ -1140,22 +1165,12 @@ pub(in crate::kernel) fn cast_c_value_to_type(
                 "function addresses do not convert to integers".to_string(),
             ));
         }
-        // The integer-address term currently retains only storage identity.
-        // Until its checked representation carries the complete designation,
-        // refusing this crossing prevents an integer round trip from erasing
-        // a scalar/member bound and returning an unrestricted legacy pointer.
-        if pointer.designation().is_some()
-            && !pointer.is_null()
-            && !assumptions.should_observe_pointer_addresses()
-        {
-            return Err(CRuntimeError::PointerConversion(
-                "pointer-to-integer conversion cannot yet preserve the object designation"
-                    .to_string(),
-            ));
+        if !pointer.is_null() && !assumptions.should_observe_pointer_addresses() {
+            let carrier = CPointerIntegerValue::from_pointer(pointer.clone(), target_type)
+                .ok_or(CRuntimeError::TypeMismatch)?;
+            return Ok(CValue::PointerInteger(std::sync::Arc::new(carrier)));
         }
-        // Logical address observation keeps only the numeric projection.
-        // Statement/function execution clears this observation mode before
-        // evaluating executable casts; it supplies no retained designation.
+        // Logical address observations expose numeric bits without an origin.
         let address = Bitvector32Term::pointer_address(pointer.pointer().clone());
         return Ok(match target_type {
             CType::UInt64 => CValue::UInt64(address),
@@ -2111,11 +2126,40 @@ fn evaluate_c_cast_paths(
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 let coerced = if integer_mode == CIntegerCastMode::Modulo {
-                    MachineIntegerType::from_c_type(target_type)
-                        .and_then(|destination| destination.convert_modulo_value(value))
-                        .ok_or(CRuntimeError::TypeMismatch)
+                    {
+                        let carrier = match &value {
+                            CValue::PointerInteger(carrier) => Some(carrier.clone()),
+                            _ => None,
+                        };
+                        let numeric = carrier
+                            .as_ref()
+                            .map_or(value, |carrier| carrier.numeric_value());
+                        MachineIntegerType::from_c_type(target_type)
+                            .and_then(|destination| destination.convert_modulo_value(numeric))
+                            .and_then(|numeric| match carrier {
+                                Some(carrier)
+                                    if matches!(target_type, CType::Int64 | CType::UInt64) =>
+                                {
+                                    carrier.with_numeric_value(numeric).map(|value| {
+                                        CValue::PointerInteger(std::sync::Arc::new(value))
+                                    })
+                                }
+                                _ => Some(numeric),
+                            })
+                            .ok_or(CRuntimeError::TypeMismatch)
+                    }
                 } else if integer_mode == CIntegerCastMode::UInt64BitsToInt64 {
                     match (target_type, value) {
+                        (CType::Int64, CValue::PointerInteger(carrier))
+                            if carrier.c_type() == CType::UInt64 =>
+                        {
+                            carrier
+                                .with_numeric_value(CValue::Int64(
+                                    Bitvector32Term::int64_from_uint64_bits(carrier.bits().clone()),
+                                ))
+                                .map(|value| CValue::PointerInteger(std::sync::Arc::new(value)))
+                                .ok_or(CRuntimeError::TypeMismatch)
+                        }
                         (CType::Int64, CValue::UInt64(bits)) => {
                             Ok(CValue::Int64(Bitvector32Term::int64_from_uint64_bits(bits)))
                         }
@@ -3188,6 +3232,9 @@ pub(in crate::kernel) fn c_truthiness_paths(
     assumptions: &PureFactContext,
 ) -> Vec<CTruthinessPath> {
     match value {
+        CValue::PointerInteger(value) => {
+            c_truthiness_paths(value.numeric_value(), facts, obligations, assumptions)
+        }
         CValue::Void => unreachable!("void truthiness must be rejected by the caller"),
         CValue::Bool(bits) => {
             let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));

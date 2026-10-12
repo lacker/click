@@ -1497,7 +1497,7 @@ fn materialized_pointer(source: &CMemory, cell: &Pointer) -> CValue {
                 crate::kernel::eval::canonical_form_of_load(
                     crate::kernel::intern_c_memory_ref(source),
                     cell.clone(),
-                    crate::kernel::LoadKind::Bits32,
+                    crate::kernel::LoadKind::Pointer,
                 ),
                 4,
             ),

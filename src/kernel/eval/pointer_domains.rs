@@ -1870,11 +1870,11 @@ mod tests {
         let Bitvector32Term::Variable(variable) = super::super::canonical_form_of_load(
             intern_c_memory_ref(&memory),
             cell,
-            LoadKind::Bits32,
+            LoadKind::Pointer,
         ) else {
             panic!("exact pointer read");
         };
-        let Some(Bitvector32Term::MemoryLoad(snapshot, cell, LoadKind::Bits32)) =
+        let Some(Bitvector32Term::MemoryLoad(snapshot, cell, LoadKind::Pointer)) =
             crate::kernel::registered_load_term_for_variable(&variable)
         else {
             panic!("immutable read definition");
@@ -2732,7 +2732,7 @@ mod tests {
             .store(cell.offset_by_bytes(8), CValue::Pointer(object));
         state.set_memory(memory.clone());
         let snapshot = intern_c_memory_ref(&memory);
-        let variable = load_variable_for_exact_cell(&snapshot, &cell, LoadKind::Bits32, 8);
+        let variable = load_variable_for_exact_cell(&snapshot, &cell, LoadKind::Pointer, 8);
         let origin = PointerLoadIdentity::new(snapshot.clone(), cell.clone());
         let context = PureFactContext::new();
         let symbolic = CPointerValue::new(Pointer::symbolic(variable), CType::Int32Pointer)

@@ -360,6 +360,7 @@ fn child_statements<'a>(
         }
         | C0Statement::DeclareStructValue { .. } => {}
         C0Statement::Label { statement, .. } => statements.push(statement),
+        C0Statement::Scope { body } => statements.push(body),
         C0Statement::Declare {
             initializer: Some(expression),
             ..

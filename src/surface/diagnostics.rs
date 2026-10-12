@@ -2530,6 +2530,7 @@ fn unresolved_load_kind(value: &CValue) -> Option<crate::kernel::LoadKind> {
         | CValue::UInt32(term)
         | CValue::Int64(term)
         | CValue::UInt64(term) => term,
+        CValue::PointerInteger(value) => value.bits(),
         _ => return None,
     };
     match term {
@@ -2570,6 +2571,7 @@ pub(super) fn unresolved_load(value: &CValue) -> Option<(SharedCMemory, Pointer)
         | CValue::UInt32(term)
         | CValue::Int64(term)
         | CValue::UInt64(term) => term,
+        CValue::PointerInteger(value) => value.bits(),
         _ => return None,
     };
     match term {
@@ -4579,6 +4581,9 @@ pub(super) fn describe_c_value(
             "f64",
         ),
         CValue::Pointer(pointer) => describe_pointer(pointer, parameters, arguments),
+        CValue::PointerInteger(value) => {
+            describe_c_value(&value.numeric_value(), parameters, arguments)
+        }
     }
 }
 
@@ -5077,6 +5082,7 @@ const MAX_STATEMENT_HEAD_BYTES: usize = 512;
 /// successors it is complaining about.
 pub(super) fn describe_c_statement_head(statement: &CStatement) -> String {
     let head = match statement {
+        CStatement::Scope { body } => describe_c_statement_head(body),
         CStatement::Skip => ";".to_string(),
         CStatement::Break => "break;".to_string(),
         CStatement::Continue => "continue;".to_string(),

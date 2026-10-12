@@ -335,6 +335,7 @@ pub(in crate::kernel) fn memory_range_anchor(range: &CMemoryRange) -> Option<Poi
 
 pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResource) -> bool {
     let values_match = |left: &CValue, right: &CValue| match (left, right) {
+        (CValue::PointerInteger(left), CValue::PointerInteger(right)) => left == right,
         (CValue::Int32(left), CValue::Int32(right))
         | (CValue::UInt8(left), CValue::UInt8(right)) => {
             terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
@@ -2139,6 +2140,21 @@ fn collect_cvalue_memory_loads(
     seen_integers: &mut BTreeSet<u64>,
 ) -> Result<(), String> {
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_memory_loads_with_width(
+                value.bits(),
+                current_memory,
+                loads,
+                Some(8),
+                seen_integers,
+            )?;
+            collect_cvalue_memory_loads(
+                &CValue::Pointer(value.origin().clone()),
+                current_memory,
+                loads,
+                seen_integers,
+            )
+        }
         CValue::Int128(term) | CValue::UInt128(term) => collect_bitvector_memory_loads_with_width(
             term,
             current_memory,

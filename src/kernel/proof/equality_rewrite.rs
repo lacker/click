@@ -557,6 +557,11 @@ fn rewrite_atomic_proposition_by_exact_equality(
         rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
     ) -> CValue {
         match value {
+            // Integer equality may rewrite the numeric spelling only. It
+            // cannot confer, replace, or retarget the retained pointer origin.
+            CValue::PointerInteger(value) => CValue::PointerInteger(std::sync::Arc::new(
+                value.with_parts(rewrite_term(value.bits()), value.origin().clone()),
+            )),
             CValue::Void => CValue::Void,
             CValue::Bool(term) => CValue::Bool(rewrite_term(term)),
             CValue::Int8(term) => CValue::Int8(rewrite_term(term)),

@@ -2888,6 +2888,9 @@ fn infer_c_expression_type(
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
         CExpression::Value(CValue::UInt16(_)) => Some(C0Type::UInt16),
         CExpression::Value(CValue::UInt32(_)) => Some(C0Type::UInt32),
+        CExpression::Value(CValue::PointerInteger(value)) => Some(
+            crate::surface::generics::c0_type_from_kernel(value.c_type()),
+        ),
         CExpression::Value(CValue::Int64(_)) => Some(C0Type::Int64),
         CExpression::Value(CValue::UInt64(_)) => Some(C0Type::UInt64),
         CExpression::Value(CValue::Float32(_)) => Some(C0Type::Float32),

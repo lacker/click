@@ -847,6 +847,9 @@ fn walk_c_state<S: VariableSubstitution + ?Sized>(state: &CState, s: &S) -> CSta
 
 fn walk_c_statement<S: VariableSubstitution + ?Sized>(statement: &CStatement, s: &S) -> CStatement {
     match statement {
+        CStatement::Scope { body } => CStatement::Scope {
+            body: Box::new(walk_c_statement(body, s)),
+        },
         CStatement::Skip
         | CStatement::EndAutomaticLifetimes { .. }
         | CStatement::Break
@@ -2437,6 +2440,10 @@ fn collect_sequence_bound_variables(sequence: &SequenceTerm, variables: &mut BTr
 
 fn collect_c_value_bound_variables(value: &CValue, variables: &mut BTreeSet<Variable>) {
     match value {
+        CValue::PointerInteger(value) => {
+            collect_bitvector_bound_variables(value.bits(), variables);
+            collect_c_value_bound_variables(&CValue::Pointer(value.origin().clone()), variables);
+        }
         CValue::Int8(bits) => collect_bitvector_bound_variables(bits, variables),
         CValue::Bool(bits)
         | CValue::Int16(bits)
@@ -2541,7 +2548,7 @@ pub(in crate::kernel) fn collect_c_statement_bound_variables(
             initializer: None, ..
         }
         | CStatement::DeclareAggregate { .. } => {}
-        CStatement::ForStep { step, .. } => {
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
             collect_c_statement_bound_variables(step, variables);
         }
         CStatement::Declare {
@@ -6102,6 +6109,19 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_value(
     to: &Bitvector32Term,
 ) -> CValue {
     match value {
+        CValue::PointerInteger(value) => {
+            let CValue::Pointer(origin) = substitute_bitvector_variable_in_c_value(
+                &CValue::Pointer(value.origin().clone()),
+                from,
+                to,
+            ) else {
+                unreachable!("pointer substitution preserves the full carrier")
+            };
+            CValue::PointerInteger(std::sync::Arc::new(value.with_parts(
+                substitute_bitvector_variable(value.bits(), from, to),
+                origin,
+            )))
+        }
         CValue::Void => CValue::Void,
         CValue::Bool(bits) => CValue::Bool(substitute_bitvector_variable(bits, from, to)),
         CValue::Int8(bits) => int8(substitute_bitvector_variable(bits, from, to)),
@@ -9398,5 +9418,58 @@ mod checked_singleton_substitution_tests {
                 .join()
                 .unwrap();
         });
+    }
+}
+
+#[cfg(test)]
+mod pointer_integer_structural_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_integer_substitution_preserves_exact_origin_and_its_dependencies() {
+        let numeric = Variable(983_201);
+        let identity = Variable(983_202);
+        let block = Variable(983_203);
+        let pointer = CPointerValue::new(
+            Pointer {
+                block: PointerBlock::Symbolic(block),
+                offset: PointerOffsetTerm::Int32Scaled {
+                    value: Bitvector32Term::Variable(numeric).into(),
+                    byte_width: 4,
+                },
+            },
+            CType::Int32Pointer,
+        )
+        .with_designation(PointerDesignation::Unresolved(identity));
+        let carrier = CPointerIntegerValue::from_pointer(pointer.clone(), CType::UInt64)
+            .unwrap()
+            .with_parts(Bitvector32Term::Variable(numeric), pointer);
+        let value = CValue::PointerInteger(std::sync::Arc::new(carrier));
+        let mut variables = BTreeSet::new();
+        collect_c_value_bitvector_variables(&value, &mut variables);
+        assert_eq!(variables, BTreeSet::from([numeric, identity, block]));
+
+        let rewritten = substitute_bitvector_variable_in_c_value(
+            &value,
+            numeric,
+            &Bitvector32Term::Constant(3),
+        );
+        let CValue::PointerInteger(rewritten) = rewritten else {
+            panic!("structural substitution retains the integer carrier")
+        };
+        assert_eq!(rewritten.c_type(), CType::UInt64);
+        assert_eq!(rewritten.bits(), &Bitvector32Term::Constant(3));
+        assert_eq!(
+            rewritten.origin().designation(),
+            Some(&PointerDesignation::Unresolved(identity))
+        );
+        assert_eq!(
+            rewritten.origin().pointer().block,
+            PointerBlock::Symbolic(block)
+        );
+        assert_eq!(rewritten.origin().pointer().offset.as_const(), Some(12));
+        let mut variables = BTreeSet::new();
+        collect_c_value_bitvector_variables(&CValue::PointerInteger(rewritten), &mut variables);
+        assert_eq!(variables, BTreeSet::from([identity, block]));
     }
 }

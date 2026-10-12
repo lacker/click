@@ -1782,6 +1782,7 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
                 initializer: None, ..
             }
             | CStatement::DeclareAggregate { .. } => {}
+            CStatement::Scope { body } => pending.push(body),
             CStatement::ForStep { step, .. } => pending.push(step),
             CStatement::Declare {
                 initializer: Some(expression),
@@ -1877,6 +1878,10 @@ fn c_statement_verification_source_steps(statement: &CStatement) -> usize {
     let mut pending = vec![statement];
     while let Some(statement) = pending.pop() {
         match statement {
+            CStatement::Scope { body } => {
+                steps = steps.saturating_add(1);
+                pending.push(body);
+            }
             CStatement::Seq(first, second) => {
                 pending.push(first);
                 pending.push(second);

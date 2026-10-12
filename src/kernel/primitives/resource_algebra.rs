@@ -9823,12 +9823,28 @@ impl CResourceFact {
     pub(in crate::kernel) fn may_refer_to_memory_block(&self, block: &PointerBlock) -> bool {
         match self.resource() {
             CResource::Memory(range) => &range.base().block == block,
-            CResource::Composite { arguments, .. } => arguments.iter().any(
-                |argument| matches!(argument, AlgebraicValue::C(CValue::Pointer(pointer)) if &pointer.block == block),
-            ),
+            CResource::Composite { arguments, .. } => {
+                arguments.iter().any(|argument| match argument {
+                    AlgebraicValue::C(CValue::Pointer(pointer)) => &pointer.block == block,
+                    AlgebraicValue::C(CValue::PointerInteger(value)) => {
+                        &value.origin().pointer().block == block
+                            || value.origin().designation().is_some_and(|designation| {
+                                designation
+                                    .pointer_terms()
+                                    .any(|pointer| &pointer.block == block)
+                            })
+                    }
+                    _ => false,
+                })
+            }
             CResource::Iterated(iterated) => iterated.blocks().contains(&block),
-            CResource::Token { .. } | CResource::PopulationAuthority(_)
-            | CResource::Instance(_) | CResource::MutexGuard(_) | CResource::MutexLive(_) | CResource::MutexUse(_) | CResource::Publication(_) => false,
+            CResource::Token { .. }
+            | CResource::PopulationAuthority(_)
+            | CResource::Instance(_)
+            | CResource::MutexGuard(_)
+            | CResource::MutexLive(_)
+            | CResource::MutexUse(_)
+            | CResource::Publication(_) => false,
         }
     }
 

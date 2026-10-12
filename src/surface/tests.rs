@@ -2785,3 +2785,5 @@ fn canonical_surface_record_pointer_identity_transports_declared_domain_modularl
 }
 
 mod array_row_tests;
+
+mod integer_origin_tests;

@@ -2688,6 +2688,11 @@ pub enum C0Statement {
         /// Where the source statement was written; see [`C0Site`].
         site: C0Site,
     },
+    /// A lexical compound statement whose automatic objects retire on every exit.
+    /// It carries no source operation or branch of its own.
+    Scope {
+        body: Box<C0Statement>,
+    },
     Seq(Box<C0Statement>, Box<C0Statement>),
     /// The returned expression and where the `return` was written.
     Return(C0Expression, C0Site),
@@ -4039,6 +4044,7 @@ impl C0Function {
 
 fn natural_cycle_statement_supported(statement: &C0Statement) -> bool {
     match statement {
+        C0Statement::Scope { .. } => false,
         C0Statement::Seq(first, second) => {
             natural_cycle_statement_supported(first) && natural_cycle_statement_supported(second)
         }
@@ -4065,6 +4071,7 @@ fn natural_cycle_statement_supported(statement: &C0Statement) -> bool {
 
 fn natural_cycle_statement_contains_goto(statement: &C0Statement) -> bool {
     match statement {
+        C0Statement::Scope { body } => natural_cycle_statement_contains_goto(body),
         C0Statement::Goto { .. } => true,
         C0Statement::Seq(first, second) => {
             natural_cycle_statement_contains_goto(first)
@@ -4084,6 +4091,7 @@ fn natural_cycle_statement_contains_goto(statement: &C0Statement) -> bool {
 
 fn collect_natural_cycle_goto_targets<'a>(statement: &'a C0Statement, targets: &mut Vec<&'a str>) {
     match statement {
+        C0Statement::Scope { body } => collect_natural_cycle_goto_targets(body, targets),
         C0Statement::Goto { target, .. } => targets.push(target),
         C0Statement::Seq(first, second) => {
             collect_natural_cycle_goto_targets(first, targets);
@@ -4987,7 +4995,8 @@ impl C0Statement {
             | Self::Continue
             | Self::Goto { .. }
             | Self::Label { .. }
-            | Self::Seq(_, _) => None,
+            | Self::Seq(_, _)
+            | Self::Scope { .. } => None,
         }
     }
 
@@ -5017,7 +5026,8 @@ impl C0Statement {
             | Self::Continue
             | Self::Goto { .. }
             | Self::Label { .. }
-            | Self::Seq(_, _) => None,
+            | Self::Seq(_, _)
+            | Self::Scope { .. } => None,
         }
     }
 
@@ -5145,6 +5155,9 @@ impl C0Statement {
             Self::Assert {
                 condition, label, ..
             } => crate::kernel::c_labeled_assert(condition.to_kernel_expression(), label.clone()),
+            Self::Scope { body } => crate::kernel::CStatement::Scope {
+                body: Box::new(body.to_kernel_statement_with_control_targets(targets)),
+            },
             Self::Seq(first, second) => crate::kernel::c_seq(
                 first.to_kernel_statement_with_control_targets(targets),
                 second.to_kernel_statement_with_control_targets(targets),
@@ -5697,6 +5710,22 @@ pub fn validate_header(source: &str, line_map: &ExpandedLineMap) -> Result<(), C
         .parse_header()
 }
 
+fn c0_scope_has_automatic_declaration(statement: &C0Statement) -> bool {
+    let mut pending = vec![statement];
+    while let Some(statement) = pending.pop() {
+        match statement {
+            C0Statement::Declare { .. } | C0Statement::DeclareStructValue { .. } => return true,
+            C0Statement::Seq(first, second) => {
+                pending.push(second);
+                pending.push(first);
+            }
+            C0Statement::Label { statement, .. } => pending.push(statement),
+            _ => {}
+        }
+    }
+    false
+}
+
 fn validate_function_returns(
     statement: &C0Statement,
     return_type: C0Type,
@@ -5721,7 +5750,8 @@ fn validate_function_returns(
             validate_function_returns(then_branch, return_type)?;
             validate_function_returns(else_branch, return_type)
         }
-        C0Statement::While { body, .. }
+        C0Statement::Scope { body }
+        | C0Statement::While { body, .. }
         | C0Statement::DoWhile { body, .. }
         | C0Statement::For { body, .. } => validate_function_returns(body, return_type),
         C0Statement::Switch { cases, .. } => cases
@@ -5768,6 +5798,7 @@ pub(crate) fn flatten_direct_c0_statements<'a>(
 /// condition and both arms before its continuation.
 fn c0_source_statement_width(statement: &C0Statement) -> usize {
     match statement {
+        C0Statement::Scope { body } => c0_source_statement_width(body),
         C0Statement::Seq(first, second) => {
             c0_source_statement_width(first) + c0_source_statement_width(second)
         }
@@ -5830,7 +5861,9 @@ fn validate_direct_forward_gotos(
                     pending.push(second);
                     pending.push(first);
                 }
-                C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
+                C0Statement::Scope { body }
+                | C0Statement::While { body, .. }
+                | C0Statement::DoWhile { body, .. } => {
                     pending.push(body);
                 }
                 C0Statement::For {
@@ -5893,6 +5926,9 @@ fn validate_direct_forward_gotos(
                 position: position.clone(),
                 direct_statement_index,
             }),
+            C0Statement::Scope { body } => {
+                collect_if_arm_gotos(body, direct_statement_index, gotos)?;
+            }
             C0Statement::Label { position, .. } => {
                 return Err(control_statement_error(
                     position,
@@ -6167,7 +6203,8 @@ fn statement_contains_control_transfer(statement: &C0Statement) -> bool {
             statement_contains_control_transfer(then_branch)
                 || statement_contains_control_transfer(else_branch)
         }
-        C0Statement::While { body, .. }
+        C0Statement::Scope { body }
+        | C0Statement::While { body, .. }
         | C0Statement::DoWhile { body, .. }
         | C0Statement::For { body, .. } => statement_contains_control_transfer(body),
         C0Statement::Switch { cases, .. } => cases
@@ -12753,6 +12790,13 @@ impl Parser {
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        self.parse_lexical_block_statement(false)
+    }
+
+    fn parse_lexical_block_statement(
+        &mut self,
+        standalone: bool,
+    ) -> Result<C0Statement, C0SyntaxError> {
         self.expect(Token::LBrace)?;
         if self.current_function_source_name.is_some() {
             self.function_block_depth += 1;
@@ -12768,6 +12812,13 @@ impl Parser {
         self.expect(Token::RBrace)?;
         let body = balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip);
         let body = self.lower_call_expressions(body)?;
+        let body = if standalone && c0_scope_has_automatic_declaration(&body) {
+            C0Statement::Scope {
+                body: Box::new(body),
+            }
+        } else {
+            body
+        };
         self.pop_scope();
         if self.current_function_source_name.is_some() {
             self.function_block_depth -= 1;
@@ -13158,7 +13209,7 @@ impl Parser {
 
     fn parse_statement_slow(&mut self) -> Result<C0Statement, C0SyntaxError> {
         match self.peek() {
-            Some(Token::LBrace) => self.parse_block_statement(),
+            Some(Token::LBrace) => self.parse_lexical_block_statement(true),
             Some(Token::Semicolon) => {
                 self.position += 1;
                 Ok(C0Statement::Skip)
@@ -16765,6 +16816,7 @@ impl Parser {
                         return true;
                     }
                 }
+                C0Statement::Scope { body } => statements.push(body),
                 C0Statement::Seq(first, second) => {
                     statements.push(first);
                     statements.push(second);
@@ -17327,6 +17379,9 @@ impl Parser {
                     C0Statement::HeapFree { pointer, site },
                 ))
             }
+            C0Statement::Scope { body } => Ok(C0Statement::Scope {
+                body: Box::new(self.lower_call_expressions(*body)?),
+            }),
             C0Statement::Seq(first, second) => Ok(C0Statement::Seq(
                 Box::new(self.lower_statement_calls(*first)?),
                 Box::new(self.lower_statement_calls(*second)?),
@@ -22036,6 +22091,7 @@ fn fill_missing_sites(statement: &mut C0Statement, site: &C0Site) {
                 pending.push(second);
                 pending.push(first);
             }
+            C0Statement::Scope { body } => pending.push(body),
             C0Statement::Label { statement, .. } => pending.push(statement),
             C0Statement::If {
                 then_branch,
@@ -22101,6 +22157,7 @@ fn prefix_has_non_assertion(prefix: &[C0Statement]) -> bool {
 /// `do ... while`, or `for` does not belong to the enclosing loop.
 fn statement_continues_enclosing_loop(statement: &C0Statement) -> bool {
     match statement {
+        C0Statement::Scope { body } => statement_continues_enclosing_loop(body),
         C0Statement::Continue => true,
         C0Statement::Seq(first, second) => {
             statement_continues_enclosing_loop(first) || statement_continues_enclosing_loop(second)
@@ -22155,6 +22212,13 @@ fn prepend_condition_check_before_loop_continues(
                 site: C0Site::NONE,
             },
         ),
+        C0Statement::Scope { body } => C0Statement::Scope {
+            body: Box::new(prepend_condition_check_before_loop_continues(
+                *body,
+                prefix,
+                loop_condition,
+            )?),
+        },
         C0Statement::Seq(first, second) => C0Statement::Seq(
             Box::new(prepend_condition_check_before_loop_continues(
                 *first,

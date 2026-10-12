@@ -485,6 +485,9 @@ fn synthesize_snapshot_local(term: &Bitvector32Term) -> Option<ContractExpressio
         let slot = slot.borrow();
         let (state, selector) = slot.as_ref()?;
         let (name, _) = state.locals().object_values().find(|(_, value)| {
+            if let CValue::PointerInteger(value) = value {
+                return value.bits() == term;
+            }
             matches!(
                 value,
                 crate::kernel::integer_c_value!(local)
@@ -2624,6 +2627,9 @@ fn synthesize_surface_bitvector(
         if matches!(value, CValue::Bool(_)) {
             crate::instrumentation::record_deterministic_work(1);
         }
+        if let CValue::PointerInteger(value) = value {
+            return value.bits() == term;
+        }
         matches!(
             value,
             CValue::Bool(local) | CValue::Int8(local) | CValue::Int16(local)
@@ -3404,6 +3410,7 @@ fn synthesize_local_struct_pointer_field(
                 continue;
             };
             let loaded = match loaded {
+                CValue::PointerInteger(value) => value.bits().clone(),
                 CValue::Int8(value) => value,
                 CValue::Bool(value)
                 | CValue::Int16(value)
@@ -3476,6 +3483,7 @@ fn synthesize_local_aggregate_field(
                         return None;
                     };
                     let value_term = match value {
+                        CValue::PointerInteger(value) => value.bits().clone(),
                         CValue::Int8(value) => value,
                         CValue::Bool(value)
                         | CValue::Int16(value)

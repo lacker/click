@@ -1754,6 +1754,9 @@ fn canonicalized_symbolic_load_value_with_identity(
     // opaque address alias. Only the symbolic value's coordinates change:
     // C access validity still checks the original pointer and its provenance.
     let address = logical_memory_load_address(memory, pointer.clone(), value_type, assumptions);
+    if let Some(value) = stored_pointer_integer_value(memory, &address, value_type, assumptions) {
+        return Some(value);
+    }
     let value = symbolic_load_value(memory, &address, value_type)?;
     // Terms are canonical at creation: an int or byte load evaluates to its
     // load variable, with the defining fact beside it, so every fact,
@@ -4460,6 +4463,11 @@ pub(in crate::kernel) fn symbolic_load_value_unrecorded(
     pointer: &Pointer,
     value_type: CType,
 ) -> Option<CValue> {
+    if let Some(value) =
+        stored_pointer_integer_value(memory, pointer, value_type, &PureFactContext::new())
+    {
+        return Some(value);
+    }
     match value_type {
         CType::Int128 | CType::UInt128 => {
             memory.symbolic_wide_integer_load(pointer, MachineIntegerType::from_c_type(value_type)?)
@@ -4551,6 +4559,44 @@ pub(in crate::kernel) fn symbolic_load_value_unrecorded(
     }
 }
 
+/// A numeric read never supplies an origin. Recover the whole carrier only
+/// from a stored, complete typed word through checked full-width cell history.
+fn stored_pointer_integer_value(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    if !matches!(value_type, CType::Int64 | CType::UInt64) {
+        return None;
+    }
+    if let Some(value) = memory.known_value(pointer) {
+        return match value {
+            CValue::PointerInteger(value) if value.c_type() == value_type => {
+                Some(CValue::PointerInteger(value))
+            }
+            _ => None,
+        };
+    }
+    let snapshot = crate::kernel::intern_c_memory_ref(memory);
+    let cell = crate::kernel::resource_tracker::cell_source::memory_dag_cell_source_with_hop_limit(
+        &snapshot,
+        pointer,
+        8,
+        assumptions,
+        64,
+    )?;
+    if !cell.has_only_typed_hops() || !cell.checks_walk_from(&snapshot, pointer, 8, assumptions) {
+        return None;
+    }
+    match cell.resolved_value(pointer, LoadKind::Bits64)? {
+        CValue::PointerInteger(value) if value.c_type() == value_type => {
+            Some(CValue::PointerInteger(value))
+        }
+        _ => None,
+    }
+}
+
 /// The value a symbolic static-storage cell of type `c_type` at `pointer`
 /// holds at function entry, where `memory` holds only the storage's block: a
 /// fresh symbolic pointer named by the cell's load for an object pointer (a
@@ -4569,6 +4615,11 @@ pub(in crate::kernel) fn cached_symbolic_storage_cell_value(
     pointer: &Pointer,
     c_type: CType,
 ) -> Option<CValue> {
+    if let Some(CValue::PointerInteger(value)) = memory.known_value(pointer)
+        && value.c_type() == c_type
+    {
+        return Some(CValue::PointerInteger(value));
+    }
     let (kind, wrap): (LoadKind, fn(Bitvector32Term) -> CValue) = match c_type {
         CType::Int8 => (LoadKind::Int8, CValue::Int8),
         CType::Int16 => (LoadKind::Int16, CValue::Int16),
@@ -4673,6 +4724,188 @@ pub(in crate::kernel) fn symbolic_storage_cell_value(
 mod tests {
     use super::*;
 
+    fn pointer_integer_fixture(c_type: CType, identity: u64) -> CValue {
+        let origin = CPointerValue::new(Pointer::symbolic(Variable(99_701)), CType::Int32Pointer)
+            .with_pointee_constant(true)
+            .with_pointee_volatile(true)
+            .with_designation(PointerDesignation::Unresolved(Variable(identity)));
+        CValue::PointerInteger(std::sync::Arc::new(
+            CPointerIntegerValue::from_pointer(origin, c_type).unwrap(),
+        ))
+    }
+
+    #[test]
+    fn pointer_integer_full_word_storage_preserves_origin_but_numeric_reads_do_not_issue_it() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let cell = Pointer {
+            block: "pointer-integer-cell".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let assumptions = PureFactContext::new();
+        for c_type in [CType::Int64, CType::UInt64] {
+            let value = pointer_integer_fixture(c_type, 99_702);
+            let memory = CMemory::new()
+                .with_block("pointer-integer-cell", 16)
+                .store(cell.clone(), value.clone());
+            assert_eq!(
+                symbolic_load_value(&memory, &cell, c_type),
+                Some(value.clone())
+            );
+            assert_eq!(
+                symbolic_storage_cell_value(&memory, &cell, c_type, true),
+                Some(value.clone())
+            );
+            assert_eq!(
+                cached_symbolic_storage_cell_value(&memory, &cell, c_type),
+                Some(value.clone())
+            );
+            let paths = evaluate_c_memory_load_paths(
+                &memory,
+                cell.clone(),
+                c_type,
+                ExecutionFacts::new(),
+                Vec::new(),
+                &assumptions,
+                true,
+                false,
+                None,
+                Some(ByteOrder::Little),
+            );
+            assert_eq!(paths.len(), 1);
+            assert_eq!(paths[0].outcome, CExpressionOutcome::Value(value.clone()));
+            let forced = canonicalized_symbolic_load_value_with_identity(
+                &memory,
+                &cell,
+                c_type,
+                &mut ExecutionFacts::new(),
+                &assumptions,
+                true,
+                None,
+                LoadPurpose::Logical,
+            )
+            .unwrap();
+            assert_eq!(forced, value);
+
+            let CValue::PointerInteger(tagged) = &value else {
+                unreachable!()
+            };
+            let numeric =
+                canonical_form_of_typed_load(intern_c_memory(memory.clone()), cell.clone(), c_type)
+                    .unwrap();
+            let Bitvector32Term::Variable(variable) = numeric else {
+                panic!("a typed read has a registered immutable name");
+            };
+            let defining = registered_load_term_for_variable(&variable).unwrap();
+            assert_eq!(registered_load_bytes_for_variable(&variable), Some(8));
+            let raw_read = Bitvector32Term::MemoryLoad(
+                intern_c_memory(memory.clone()),
+                Box::new(cell.clone()),
+                LoadKind::Bits64,
+            );
+            let bits = crate::kernel::memory_provenance::canonicalize_atomic_loads(tagged.bits());
+            assert_eq!(
+                crate::kernel::memory_provenance::canonicalize_atomic_loads(&defining),
+                bits,
+            );
+            assert_eq!(
+                crate::kernel::memory_provenance::canonicalize_atomic_loads(&raw_read),
+                bits,
+            );
+            let plain = CMemory::new().store(cell.clone(), tagged.numeric_value());
+            assert!(!matches!(
+                symbolic_load_value(&plain, &cell, c_type),
+                Some(CValue::PointerInteger(_))
+            ));
+            assert!(
+                stored_pointer_integer_value(&memory, &cell, CType::Int32, &assumptions).is_none()
+            );
+            let write = cell.offset_by_bytes(4);
+            // Raw `store` builds one selected map cell. Native writes first
+            // invalidate possibly overlapping cached cells, then insert it.
+            let overwritten = memory
+                .without_possible_aliasing_cells(&write, 4, &assumptions)
+                .store_with_context(write, CValue::UInt32(0u32.into()), &assumptions);
+            assert!(overwritten.known_value(&cell).is_none());
+            assert!(
+                stored_pointer_integer_value(&overwritten, &cell, c_type, &assumptions).is_none()
+            );
+            let changed = memory.store(cell.clone(), tagged.numeric_value());
+            assert!(stored_pointer_integer_value(&changed, &cell, c_type, &assumptions).is_none());
+        }
+    }
+
+    #[test]
+    fn pointer_integer_copy_byte_projection_and_matching_keep_whole_value_boundaries() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let cell = Pointer {
+            block: "pointer-integer-copy".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let value = pointer_integer_fixture(CType::UInt64, 99_703);
+        let other = pointer_integer_fixture(CType::UInt64, 99_704);
+        let CValue::PointerInteger(tagged) = &value else {
+            unreachable!()
+        };
+        let source = intern_c_memory(CMemory::new().store(cell.clone(), value.clone()));
+        let run = crate::kernel::primitives::CellRun::new_with_mode(
+            cell.offset_by_bytes(16),
+            8,
+            CType::UInt64,
+            1,
+            source.clone(),
+            crate::kernel::primitives::RunValueMode::Copy {
+                source_base: cell.clone(),
+            },
+            crate::kernel::primitives::IndexIntervals::default(),
+        );
+        assert_eq!(run.value(0), value);
+        let numeric_cell = ContainingIntegerCell {
+            pointer: cell.clone(),
+            value: value.clone(),
+            byte: 2,
+        };
+        assert_eq!(
+            integer_cell_byte(&value, 2),
+            integer_cell_byte(&tagged.numeric_value(), 2)
+        );
+        let replaced = integer_cell_with_byte(&numeric_cell, &CValue::UInt8(0u32.into())).unwrap();
+        assert!(matches!(replaced, CValue::UInt64(_)));
+        let facts = PureFactContext::new();
+        assert!(!c_values_proven_equal_for_memory_resolution(
+            &value, &other, &facts
+        ));
+        assert!(!c_values_proven_equal_for_memory_resolution(
+            &value,
+            &tagged.numeric_value(),
+            &facts
+        ));
+        assert!(c_values_proven_equal_for_memory_resolution(
+            &value, &value, &facts
+        ));
+
+        let mut previous = None;
+        for size in [16, 64, 256, 1024] {
+            let mut memory = CMemory::new().store(cell.clone(), value.clone());
+            for index in 0..size {
+                memory = memory.store(
+                    Pointer {
+                        block: format!("pointer-integer-unrelated-{index}").into(),
+                        offset: PointerOffsetTerm::Constant(0),
+                    },
+                    CValue::UInt64(Bitvector32Term::UInt64Constant(index)),
+                );
+            }
+            let (loaded, work) = crate::instrumentation::measure_deterministic_work(|| {
+                stored_pointer_integer_value(&memory, &cell, CType::UInt64, &facts)
+            });
+            assert_eq!(loaded, Some(value.clone()));
+            if let Some(previous) = previous {
+                assert!(work <= previous + 4, "{size}: {work} after {previous}");
+            }
+            previous = Some(work);
+        }
+    }
+
     #[test]
     fn load_width_substitution_preserves_typed_observations_without_inference() {
         let _session = crate::kernel::VerificationSession::enter();
@@ -4688,13 +4921,9 @@ mod tests {
                 PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(from), 4),
             ),
         };
-        let rewrite = |pointer: &Pointer| {
+        let rewrite = |pointer: &Pointer, kind| {
             crate::kernel::reasoning::substitute_bitvector_variable(
-                &Bitvector32Term::MemoryLoad(
-                    source.clone(),
-                    Box::new(pointer.clone()),
-                    LoadKind::Bits32,
-                ),
+                &Bitvector32Term::MemoryLoad(source.clone(), Box::new(pointer.clone()), kind),
                 from,
                 &Bitvector32Term::Constant(3),
             )
@@ -4706,7 +4935,7 @@ mod tests {
             (memory, pointer, kind)
         };
         let unknown = address(0);
-        let (memory, pointer, kind) = parts(rewrite(&unknown));
+        let (memory, pointer, kind) = parts(rewrite(&unknown, LoadKind::Pointer));
         assert_eq!(recorded_load_access_width(&memory, &pointer), None);
         assert_eq!(
             load_term_access_width(&memory, &pointer, kind),
@@ -4715,7 +4944,7 @@ mod tests {
 
         let typed = address(64);
         symbolic_load_value(&source, &typed, CType::Int32).unwrap();
-        let (memory, pointer, kind) = parts(rewrite(&typed));
+        let (memory, pointer, kind) = parts(rewrite(&typed, LoadKind::Bits32));
         assert_ne!(memory, source, "snapshot terms were substituted too");
         assert_eq!(load_term_access_width(&memory, &pointer, kind), 4);
         let replacement = Bitvector32Term::Variable(Variable(946_101));
@@ -4741,8 +4970,9 @@ mod tests {
             offset: PointerOffsetTerm::Constant(140),
         };
         symbolic_load_value(&source, &destination, CType::Int64).unwrap();
-        let (memory, pointer, kind) = parts(rewrite(&conflicting));
-        assert_eq!(load_term_access_width(&memory, &pointer, kind), 8);
+        let (memory, pointer, kind) = parts(rewrite(&conflicting, LoadKind::Bits32));
+        assert_eq!(recorded_load_access_width(&memory, &pointer), Some(8));
+        assert_eq!(load_term_access_width(&memory, &pointer, kind), 4);
         assert_eq!(recorded_load_access_width(&source, &destination), Some(8));
         let fixed_index = Bitvector32Term::Constant(3);
         let mut walker = crate::kernel::proof::term_rewrite::TermRewrite::for_bits_checked(
@@ -4757,7 +4987,8 @@ mod tests {
         assert!(walker.refusal().is_none());
         let (memory, pointer, kind) = parts(walked);
         assert_eq!(memory, source);
-        assert_eq!(load_term_access_width(&memory, &pointer, kind), 8);
+        assert_eq!(recorded_load_access_width(&memory, &pointer), Some(8));
+        assert_eq!(load_term_access_width(&memory, &pointer, kind), 4);
     }
 
     #[test]
@@ -5501,7 +5732,7 @@ mod tests {
                 let bits = Bitvector32Term::MemoryLoad(
                     crate::kernel::intern_c_memory_ref(&memory),
                     Box::new(cell.clone()),
-                    crate::kernel::LoadKind::Bits32,
+                    crate::kernel::LoadKind::Pointer,
                 );
                 let mut facts = crate::kernel::ExecutionFacts::new();
                 let cached = canonicalized_pointer_value_from_int_cell(
@@ -5721,7 +5952,7 @@ mod tests {
             let bits = Bitvector32Term::MemoryLoad(
                 crate::kernel::intern_c_memory_ref(&memory),
                 Box::new(cell.clone()),
-                crate::kernel::LoadKind::Bits32,
+                crate::kernel::LoadKind::Pointer,
             );
             let cached = canonicalized_pointer_value_from_int_cell(
                 &cell,
@@ -6468,7 +6699,7 @@ mod tests {
         let parent = Pointer::symbolic(Variable(95_601));
         let successor = Pointer::symbolic(Variable(95_602));
         let address = base.offset_by_bytes(16);
-        let load = canonical_form_of_load(snapshot, address.clone(), LoadKind::Bits32);
+        let load = canonical_form_of_load(snapshot, address.clone(), LoadKind::Pointer);
         let CValue::Pointer(stored) =
             crate::kernel::cell_run_value(&address, CType::Int64Pointer, load)
         else {
@@ -6555,7 +6786,7 @@ mod tests {
         let alias = Pointer::symbolic(Variable(95_401));
         let address = base.offset_by_bytes(16);
         let alias_address = alias.offset_by_bytes(16);
-        let load = canonical_form_of_load(snapshot, address.clone(), LoadKind::Bits32);
+        let load = canonical_form_of_load(snapshot, address.clone(), LoadKind::Pointer);
         let CValue::Pointer(seeded) =
             crate::kernel::cell_run_value(&address, CType::Int64Pointer, load)
         else {
@@ -6571,7 +6802,7 @@ mod tests {
                 let load = canonical_form_of_load(
                     intern_c_memory_ref(&memory),
                     unrelated.clone(),
-                    LoadKind::Bits32,
+                    LoadKind::Pointer,
                 );
                 crate::kernel::cell_run_value(&unrelated, CType::Int64Pointer, load);
             }
@@ -6652,7 +6883,7 @@ mod tests {
             let read = Bitvector32Term::MemoryLoad(
                 intern_c_memory_ref(&cached),
                 Box::new(selected.clone()),
-                LoadKind::Bits32,
+                LoadKind::Pointer,
             );
             assert_eq!(known_pointer_read_variable_for_term(&read), expected);
         }
@@ -6773,7 +7004,7 @@ mod tests {
 
             // A later projection may name the same cell by its scalar load.
             // The checked C pointer read must still denote the cached value.
-            let name = canonical_form_of_load(snapshot, address.clone(), LoadKind::Bits32);
+            let name = canonical_form_of_load(snapshot, address.clone(), LoadKind::Pointer);
             let projected = memory
                 .clone()
                 .materialize_named_cell(address.clone(), CValue::Int32(name));
@@ -7505,6 +7736,17 @@ mod tests {
         );
         let read = |memory: CMemory, address: &Pointer, variable, width| {
             record_load_access_width(&memory, address, width);
+            if width == 4 {
+                let scalar = canonical_form_of_load(
+                    intern_c_memory(memory),
+                    address.clone(),
+                    LoadKind::Bits32,
+                );
+                let Bitvector32Term::Variable(variable) = scalar else {
+                    panic!("immutable narrow producer");
+                };
+                return Pointer::symbolic(variable);
+            }
             let value = Pointer::symbolic(Variable(variable));
             empty.register_pointer_read(&value, &intern_c_memory(memory), address);
             value
@@ -7814,7 +8056,7 @@ mod tests {
         let original = Bitvector32Term::MemoryLoad(
             source.clone(),
             Box::new(address.clone()),
-            LoadKind::Bits32,
+            LoadKind::Pointer,
         );
         let projected = crate::kernel::memory_provenance::canonicalize_atomic_loads_deep(&original);
         let Bitvector32Term::MemoryLoad(projected, _, _) = projected else {

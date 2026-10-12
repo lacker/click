@@ -2072,6 +2072,7 @@ fn collect_local_pointer_element_types(body: &CStatement, types: &mut BTreeMap<S
                     types.insert(name.clone(), element);
                 }
             }
+            CStatement::Scope { body } => pending.push(body),
             CStatement::Seq(first, second) => pending.extend([first.as_ref(), second.as_ref()]),
             CStatement::If {
                 then_branch,
@@ -2514,6 +2515,9 @@ impl AnnotationLowerer<'_> {
     /// Attach the same checked loop clauses to compiler-lowered statements.
     fn lower_kernel_statement(&mut self, statement: &CStatement) -> Result<CStatement, ClickError> {
         Ok(match statement {
+            CStatement::Scope { body } => CStatement::Scope {
+                body: Box::new(self.lower_kernel_statement(body)?),
+            },
             CStatement::Seq(a, b) => c_seq(
                 self.lower_kernel_statement(a)?,
                 self.lower_kernel_statement(b)?,
@@ -2603,6 +2607,9 @@ impl AnnotationLowerer<'_> {
         control_targets: &BTreeMap<String, (crate::kernel::CControlTargetId, usize)>,
     ) -> Result<CStatement, ClickError> {
         Ok(match statement {
+            syntax::C0Statement::Scope { body } => CStatement::Scope {
+                body: Box::new(self.lower_statement(body, control_targets)?),
+            },
             syntax::C0Statement::Seq(first, second) => c_seq(
                 self.lower_statement(first, control_targets)?,
                 self.lower_statement(second, control_targets)?,
@@ -4535,10 +4542,14 @@ impl AnnotationLowerer<'_> {
                     .ok_or_else(|| {
                         "to_integer expects a signed or unsigned machine integer".to_string()
                     })?;
-                    let (crate::kernel::integer_c_value!(bits)) = value else {
-                        return Err(
-                            "to_integer expects a signed or unsigned machine integer".into()
-                        );
+                    let bits = match value {
+                        crate::kernel::integer_c_value!(bits) => bits,
+                        CValue::PointerInteger(value) => value.bits(),
+                        _ => {
+                            return Err(
+                                "to_integer expects a signed or unsigned machine integer".into()
+                            );
+                        }
                     };
                     // An already evaluated value carries no evaluation effects.
                     // Keep its observation in the shared Integer DAG so aliases

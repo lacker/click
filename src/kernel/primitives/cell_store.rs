@@ -553,6 +553,22 @@ impl CellRun {
     /// typed as the element and spelled as the run's mode says.
     fn named_value(&self, index: u32) -> CValue {
         let pointer = self.slot_pointer(index);
+        let source_pointer = match &self.mode {
+            RunValueMode::Load => Some(pointer.clone()),
+            RunValueMode::Copy { source_base } => {
+                Some(source_base.offset_by_bytes(index * self.element_width))
+            }
+            _ => None,
+        };
+        if matches!(self.element_type, CType::Int64 | CType::UInt64)
+            && let Some(source_pointer) = source_pointer
+            && let Some(CValue::PointerInteger(value)) = self.source.known_value(&source_pointer)
+            && value.c_type() == self.element_type
+        {
+            // A selected full-word run slot copies the complete stored value,
+            // rather than rebuilding an origin from its canonical numeric read.
+            return CValue::PointerInteger(value);
+        }
         match &self.mode {
             RunValueMode::Load => {
                 let load = crate::kernel::eval::canonical_form_of_typed_load(

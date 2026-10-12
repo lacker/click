@@ -2492,6 +2492,21 @@ pub(super) fn execute_c_statement_verification_paths(
         }
     }
     let paths = match statement {
+        CStatement::Scope { body } => {
+            let declared = scope_declared_names(body);
+            paths_after_scope_exit(
+                execute_c_statement_verification_paths(
+                    state,
+                    body,
+                    assumptions,
+                    environment,
+                    execution_semantics,
+                    budget,
+                    variables,
+                )?,
+                &declared,
+            )
+        }
         CStatement::Seq(first, second) => {
             let mut paths = Vec::new();
             for first_path in execute_c_statement_verification_paths(
@@ -2698,7 +2713,9 @@ pub(super) fn execute_c_statement_verification_paths(
                 CStatement::Update { .. } => "verification statement: update",
                 CStatement::While { .. } => "verification statement: while",
                 CStatement::Switch { .. } => "verification statement: switch",
-                CStatement::Seq(_, _) | CStatement::If { .. } => unreachable!(),
+                CStatement::Seq(_, _) | CStatement::If { .. } | CStatement::Scope { .. } => {
+                    unreachable!()
+                }
             };
             let paths = crate::instrumentation::measure_operation(
                 "kernel",
@@ -4587,6 +4604,7 @@ fn equation_states_nothing(equation: &Proposition) -> bool {
 /// The scalar term a C value carries, for the one-variable renaming above.
 fn scalar_bitvector(value: &CValue) -> Option<&Bitvector32Term> {
     match value {
+        CValue::PointerInteger(value) => Some(value.bits()),
         CValue::Int8(term) => Some(term),
         CValue::Bool(term)
         | CValue::Int16(term)
@@ -9967,7 +9985,9 @@ pub(super) fn statement_may_write_memory(state: &CState, statement: &CStatement)
             statement_may_write_memory(state, then_branch)
                 || statement_may_write_memory(state, else_branch)
         }
-        CStatement::ForStep { step, .. } => statement_may_write_memory(state, step),
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
+            statement_may_write_memory(state, step)
+        }
         CStatement::While { body, .. } => statement_may_write_memory(state, body),
         CStatement::Switch { cases, .. } => cases
             .iter()
@@ -10191,7 +10211,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
             collect_loop_modified_locals(then_branch, names);
             collect_loop_modified_locals(else_branch, names);
         }
-        CStatement::ForStep { step, .. } => {
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
             collect_loop_modified_locals(step, names);
         }
         CStatement::While { body, .. } => {
@@ -10378,7 +10398,7 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_locals(then_branch, names);
             collect_address_taken_locals(else_branch, names);
         }
-        CStatement::ForStep { step, .. } => {
+        CStatement::ForStep { step, .. } | CStatement::Scope { body: step } => {
             collect_address_taken_locals(step, names);
         }
         CStatement::While {
