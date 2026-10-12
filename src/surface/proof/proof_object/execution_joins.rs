@@ -855,9 +855,13 @@ impl<'a> Proof<'a> {
             .iter()
             .filter_map(|assertion| match assertion {
                 ProofAssertion::Fact(_) => None,
-                ProofAssertion::Resource(resource) => {
-                    Some(crate::surface::verification::resource_clause_to_resource_spec(resource))
-                }
+                ProofAssertion::Resource(resource) => Some(
+                    crate::surface::verification::branch_interface_resource_spec(
+                        resource,
+                        &arms[0].execution.core.state,
+                        context.parsed_function,
+                    ),
+                ),
             })
             .collect::<Result<Vec<_>, _>>()?;
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {

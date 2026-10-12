@@ -3,6 +3,19 @@
 //! them; actual calls and resource creation check the retained full carrier.
 use super::*;
 
+/// Transport only explicitly selected typed prefixes across an interface.
+/// The concrete arm proves geometry; admission names the successor's exact
+/// fresh carrier and contributes neither bytes nor initialized values.
+pub(crate) fn project_interface_native_spans(
+    arm: &CState,
+    successor: &CState,
+    specs: &[CResourceSpec],
+    assumptions: &PureFactContext,
+) -> Result<CState, String> {
+    check_native_span_specs(arm, specs, assumptions)?;
+    assume_native_span_specs(successor, specs, assumptions)
+}
+
 fn component(
     state: &CState,
     expression: &CExpression,
@@ -212,6 +225,68 @@ pub(super) fn assume_native_span_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_prefix_checks_each_arm_and_preserves_only_phi_geometry() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let arm = |name| {
+            let address = CMemory::local_pointer(name);
+            let memory =
+                CMemory::new().with_declared_scalar_block(address.block.clone(), 4, CType::Int32);
+            let pointer = memory
+                .declared_scalar_pointer(&address, CType::Int32)
+                .unwrap();
+            (
+                CState::new()
+                    .with_memory(memory)
+                    .with_local("p", CValue::Pointer(pointer.clone())),
+                pointer,
+            )
+        };
+        let (left, left_pointer) = arm("prefix-left");
+        let (right, _) = arm("prefix-right");
+        let identity = Variable(989_699);
+        let phi = CPointerValue::new(Pointer::symbolic(identity), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(identity));
+        let successor = CState::new().with_local("p", CValue::Pointer(phi.clone()));
+        let context = PureFactContext::new();
+        let specs = [span(c_variable("p"), 1)];
+        let joined_left =
+            project_interface_native_spans(&left, &successor, &specs, &context).unwrap();
+        let joined_right =
+            project_interface_native_spans(&right, &successor, &specs, &context).unwrap();
+        assert_eq!(joined_left, joined_right);
+        assert_eq!(joined_left.resources(), successor.resources());
+        assert_eq!(
+            joined_left.memory().cells.representation_len(),
+            successor.memory().cells.representation_len()
+        );
+        assert!(
+            !joined_left
+                .memory()
+                .has_initialized_bytes_under(phi.pointer(), 4, &context)
+        );
+        assert!(joined_left.memory().native_input_span(&phi).is_some());
+        assert!(
+            project_interface_native_spans(
+                &left,
+                &successor,
+                &[span(c_variable("p"), 2)],
+                &context
+            )
+            .is_err()
+        );
+        let past = left_pointer
+            .clone()
+            .with_pointer(left_pointer.pointer().offset_by_bytes(4));
+        let past_arm = left.clone().with_local("p", CValue::Pointer(past));
+        assert!(project_interface_native_spans(&past_arm, &successor, &specs, &context).is_err());
+        let legacy = left.with_local(
+            "p",
+            CValue::typed_pointer(left_pointer.pointer().clone(), CType::Int32Pointer),
+        );
+        assert!(project_interface_native_spans(&legacy, &successor, &specs, &context).is_err());
+    }
 
     fn span(carrier: CExpression, count: u32) -> CResourceSpec {
         CResourceSpec::owned_memory(CMemorySegment::new(

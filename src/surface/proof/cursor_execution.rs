@@ -142,6 +142,24 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         ))
     })?;
     let mut abstract_state = abstraction.state;
+    let interface_resource_specs = assertions
+        .iter()
+        .filter_map(|assertion| match assertion {
+            ProofAssertion::Resource(resource) => Some(
+                crate::surface::verification::branch_interface_resource_spec(
+                    resource,
+                    state,
+                    proof_context.parsed_function,
+                ),
+            ),
+            ProofAssertion::Fact(_) => None,
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    abstract_state = crate::kernel::project_interface_native_spans(
+        state, &abstract_state, &interface_resource_specs, concrete_facts.assumptions(),
+    ).map_err(|message| ClickError::new(format!(
+        "`{claim_label}` tactic {tactic_index}: interface typed prefix is not established: {message}"
+    )))?;
     let mut join_kernel_variable_mark = abstraction.next_kernel_variable;
 
     // Branch abstraction discards incidental source-boundary snapshots, but

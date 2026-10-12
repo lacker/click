@@ -19,6 +19,7 @@ pub(crate) mod independent_entry;
 pub(crate) use independent_entry::c_independent_function_input_state;
 mod native_record_inputs;
 mod native_span_inputs;
+pub(crate) use native_span_inputs::project_interface_native_spans;
 pub(crate) mod pointer_store_effects;
 pub(crate) use native_record_inputs::c_state_with_assumed_native_record_inputs;
 pub(crate) use native_record_inputs::{

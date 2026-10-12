@@ -8370,6 +8370,90 @@ pub(in crate::surface) fn resource_clause_to_resource_spec(
     )
 }
 
+/// An explicit interface range retains the declared type of its selected
+/// local carrier. Byte resources themselves never supply that type/domain.
+pub(in crate::surface) fn branch_interface_resource_spec(
+    resource: &ResourceClause,
+    state: &CState,
+    parsed: &syntax::C0Function,
+) -> Result<CResourceSpec, ClickError> {
+    let segments = match resource {
+        ResourceClause::OwnMemory(segment) | ResourceClause::ViewMemory(segment) => {
+            std::slice::from_ref(segment)
+        }
+        ResourceClause::MemoryAggregate { segments, .. } => segments,
+        ResourceClause::Named {
+            resource: inner, ..
+        } => {
+            let inner = branch_interface_resource_spec(inner, state, parsed)?;
+            return Ok(resource_clause_to_resource_spec(resource)?
+                .with_native_span_requirements(inner.native_span_requirements().to_vec()));
+        }
+        _ => return resource_clause_to_resource_spec(resource),
+    };
+    let mut spans = Vec::new();
+    for segment in segments {
+        let ContractSegmentSurface::Range { base, .. } = &segment.surface else {
+            continue;
+        };
+        let name = match base {
+            ContractExpression::Binding(name)
+            | ContractExpression::CBinding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name)) => name,
+            _ => continue,
+        };
+        // C's legacy scalar pointer carrier also represents record pointers.
+        // Only source declarations, never the pointer's numeric value, may
+        // distinguish those here.
+        if parsed.local_struct_pointers().contains_key(name)
+            || parsed.local_struct_values().contains_key(name)
+            || parsed
+                .parameters()
+                .iter()
+                .any(|parameter| parameter.name() == name && parameter.struct_name().is_some())
+            || state.global_object_type(name).is_some()
+        {
+            continue;
+        }
+        if segment.start != c_int32_literal(0) {
+            continue;
+        }
+        let count = match &segment.end {
+            CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))) => {
+                i32::try_from(*value)
+                    .ok()
+                    .and_then(|value| u64::try_from(value).ok())
+            }
+            CExpression::Value(CValue::UInt64(Bitvector32Term::UInt64Constant(value))) => {
+                Some(*value)
+            }
+            _ => None,
+        };
+        if count.is_none_or(|count| count == 0) {
+            continue;
+        }
+        let element_type = match state.local_object_type(name) {
+            Some(CType::Int32Pointer) => CType::Int32,
+            Some(CType::UInt32Pointer) => CType::UInt32,
+            Some(CType::Int64Pointer) => CType::Int64,
+            Some(CType::UInt8Pointer)
+                if state.typed_access_policy()
+                    == crate::kernel::CTypedAccessPolicy::NativeObjectOnly =>
+            {
+                CType::UInt8
+            }
+            _ => continue,
+        };
+        spans.push(crate::kernel::CNativeSpanRequirement {
+            carrier: c_variable(name),
+            count: segment.end.clone(),
+            element_type,
+            access_policy: state.typed_access_policy(),
+        });
+    }
+    Ok(resource_clause_to_resource_spec(resource)?.with_native_span_requirements(spans))
+}
+
 pub(in crate::surface) fn resource_access_to_kernel(
     access: ResourceAccessMode,
 ) -> CResourceAccessMode {

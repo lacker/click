@@ -4466,20 +4466,36 @@ fn check_interface_abstraction(
     let join_next_kernel_variable = arms[0]
         .next_kernel_variable
         .max(arms[1].next_kernel_variable);
-    let abstract_then = crate::kernel::abstract_c_state_for_interface_join_across(
+    let mut abstract_then = crate::kernel::abstract_c_state_for_interface_join_across(
         arms[0].reached_state(),
         &sibling_states,
         stable_join_locals,
         join_next_kernel_variable,
     )
     .map_err(|_| "the then interface state could not be abstracted")?;
-    let abstract_else = crate::kernel::abstract_c_state_for_interface_join_across(
+    let mut abstract_else = crate::kernel::abstract_c_state_for_interface_join_across(
         arms[1].reached_state(),
         &sibling_states,
         stable_join_locals,
         join_next_kernel_variable,
     )
     .map_err(|_| "the else interface state could not be abstracted")?;
+    // Reconstruct the prefix transfer independently for both incoming full
+    // carriers. The resource interface is no evidence of typed geometry.
+    abstract_then.state = crate::kernel::project_interface_native_spans(
+        arms[0].reached_state(),
+        &abstract_then.state,
+        interface_resource_specs,
+        arm_facts[0].assumptions(),
+    )
+    .map_err(|_| "the then interface typed prefix is not established")?;
+    abstract_else.state = crate::kernel::project_interface_native_spans(
+        arms[1].reached_state(),
+        &abstract_else.state,
+        interface_resource_specs,
+        arm_facts[1].assumptions(),
+    )
+    .map_err(|_| "the else interface typed prefix is not established")?;
     // Both abstractions derive from the memory at the split, so they are
     // compared by what each changed from it.
     if abstract_then.next_kernel_variable != abstract_else.next_kernel_variable
