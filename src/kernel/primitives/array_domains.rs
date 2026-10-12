@@ -797,8 +797,7 @@ mod tests {
             crate::kernel::functions::aggregate_copy_carrier(&state, &legacy, &layout, &context)
                 .is_some()
         );
-        let strict = state
-            .with_memory(memory.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly));
+        let strict = state.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
         assert!(
             crate::kernel::functions::aggregate_copy_carrier(&strict, &legacy, &layout, &context)
                 .is_none()

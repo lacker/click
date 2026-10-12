@@ -18970,8 +18970,7 @@ pub(in crate::kernel) fn aggregate_copy_carrier(
     assumptions: &PureFactContext,
 ) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
     if pointer.designation().is_none() {
-        return (state.memory().typed_access_policy()
-            == CTypedAccessPolicy::CAllocatedAccessAllowed)
+        return (state.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed)
             .then(|| (pointer.clone(), Vec::new()));
     }
     let mut pointer = pointer.clone();
@@ -19408,6 +19407,20 @@ fn copy_aggregate_fields(
                         CType::UInt32 => Some(uint32(0)),
                         CType::Int64 => Some(CValue::Int64(Bitvector32Term::Int64Constant(0))),
                         CType::UInt64 => Some(CValue::UInt64(Bitvector32Term::UInt64Constant(0))),
+                        CType::Int128 => MachineIntegerType::Int128.constant_value(
+                            MachineIntegerConstant::from_signed(
+                                MachineIntegerType::Int128.format(),
+                                0,
+                            )
+                            .unwrap(),
+                        ),
+                        CType::UInt128 => MachineIntegerType::UInt128.constant_value(
+                            MachineIntegerConstant::from_unsigned(
+                                MachineIntegerType::UInt128.format(),
+                                0,
+                            )
+                            .unwrap(),
+                        ),
                         CType::Float32 => Some(CValue::Float32(Bitvector32Term::Constant(0))),
                         CType::Float64 => Some(CValue::Float64(Bitvector32Term::UInt64Constant(0))),
                         _ => None,
@@ -19476,6 +19489,16 @@ fn copy_aggregate_fields(
                         LoadKind::of_type(element_type)?,
                     ))),
                     CType::UInt64 => Some(CValue::UInt64(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                        LoadKind::of_type(element_type)?,
+                    ))),
+                    CType::Int128 => Some(CValue::Int128(crate::kernel::canonical_form_of_load(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        source_field,
+                        LoadKind::of_type(element_type)?,
+                    ))),
+                    CType::UInt128 => Some(CValue::UInt128(crate::kernel::canonical_form_of_load(
                         crate::kernel::intern_c_memory(memory.clone()),
                         source_field,
                         LoadKind::of_type(element_type)?,
@@ -19851,6 +19874,81 @@ mod aggregate_union_copy_tests {
                 .known_union_value(&destination.offset_by_bytes(4), CType::Int32)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn copying_forgotten_wide_array_fields_retains_typed_snapshot_values() {
+        for (element_type, array_type, integer_type) in [
+            (
+                CType::Int128,
+                CType::Int128Array(2),
+                MachineIntegerType::Int128,
+            ),
+            (
+                CType::UInt128,
+                CType::UInt128Array(2),
+                MachineIntegerType::UInt128,
+            ),
+        ] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let source = CMemory::local_pointer("wide-array-source");
+            let destination = CMemory::local_pointer("wide-array-destination");
+            let layout =
+                CAggregateLayout::new(32, 16, vec![CAggregateField::new("values", 0, array_type)]);
+            let constant = |n| {
+                integer_type
+                    .constant_value(match integer_type {
+                        MachineIntegerType::Int128 => {
+                            MachineIntegerConstant::from_signed(integer_type.format(), n).unwrap()
+                        }
+                        _ => {
+                            MachineIntegerConstant::from_unsigned(integer_type.format(), n as u128)
+                                .unwrap()
+                        }
+                    })
+                    .unwrap()
+            };
+            let declared = CMemory::new()
+                .with_declared_aggregate_block(source.block.clone(), &layout)
+                .with_declared_aggregate_block(destination.block.clone(), &layout);
+            let mut written = declared.clone();
+            for offset in [0, 16] {
+                written = written
+                    .store(source.offset_by_bytes(offset), constant(7))
+                    .store(destination.offset_by_bytes(offset), constant(99));
+            }
+            let forgotten = written.without_field_cells(&source, 0, array_type);
+            assert!(forgotten.has_initialized_bytes_at(&source, 32));
+            assert!(forgotten.known_value(&source).is_none());
+            let copied =
+                copy_aggregate_fields_checked(forgotten.clone(), &source, &destination, &layout)
+                    .expect("written wide fields remain initialized after value forgetting");
+            for offset in [0, 16] {
+                let address = destination.offset_by_bytes(offset);
+                let value = copied
+                    .known_value(&address)
+                    .expect("typed unknown array element");
+                assert_eq!(value.c_type(), element_type);
+                assert!(element_type.accepts(&value));
+                assert_ne!(
+                    value,
+                    constant(99),
+                    "copy cannot keep stale destination data"
+                );
+                let overwritten = copied
+                    .clone()
+                    .store(source.offset_by_bytes(offset), constant(3));
+                assert_eq!(
+                    overwritten.known_value(&address),
+                    Some(value),
+                    "copied unknown value keeps its immutable source snapshot"
+                );
+            }
+            assert_eq!(
+                copy_aggregate_fields_checked(declared, &source, &destination, &layout).err(),
+                Some(CUndefinedBehavior::UninitializedRead)
+            );
+        }
     }
 
     #[test]

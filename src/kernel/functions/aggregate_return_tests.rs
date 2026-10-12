@@ -715,8 +715,13 @@ fn aggregate_copy_allocations_retain_their_complete_declarations() {
         );
     }
     let mut result_state = caller.clone();
-    let result = complete_aggregate_return(&mut result_state, &copy_function(), value)
-        .expect("checked return allocation");
+    let result = complete_aggregate_return(
+        &mut result_state,
+        &copy_function(),
+        value,
+        &PureFactContext::new(),
+    )
+    .expect("checked return allocation");
     assert_declared_aggregate(&result_state.memory, &pointer(&result), &layout);
     assert!(
         !result_state
@@ -1495,10 +1500,16 @@ fn aggregate_copy_return_preserves_self_pointer_through_two_materializations() {
         &mut state,
         &function,
         CValue::typed_pointer(source.clone(), CType::VoidPointer),
+        &PureFactContext::new(),
     )
     .expect("first copy result");
-    let second = complete_aggregate_return(&mut state, &function, first.clone())
-        .expect("second copy result");
+    let second = complete_aggregate_return(
+        &mut state,
+        &function,
+        first.clone(),
+        &PureFactContext::new(),
+    )
+    .expect("second copy result");
     assert_ne!(pointer(&first).block, source.block);
     assert_ne!(pointer(&second).block, pointer(&first).block);
     for result in [&first, &second] {
@@ -1555,6 +1566,7 @@ fn aggregate_copy_return_retirement_preserves_only_independently_live_backing() 
             &mut state,
             &function,
             CValue::typed_pointer(source.clone(), CType::VoidPointer),
+            &PureFactContext::new(),
         )
         .expect("copy result");
         set_function_result(&mut state, &function, result.clone());
@@ -1648,6 +1660,7 @@ fn aggregate_copy_return_refuses_partial_initialization_without_changing_state()
             &mut state,
             &copy_function(),
             CValue::typed_pointer(source, CType::VoidPointer),
+            &PureFactContext::new(),
         ),
         Err(AggregateReturnRefusal::UninitializedRead),
     );
@@ -1666,7 +1679,12 @@ fn symbolic_construction_storage_requires_written_fields_before_copy_return() {
         .with_memory(CMemory::new().with_uninitialized_block(source.block.clone(), 16));
     let value = CValue::typed_pointer(source.clone(), CType::VoidPointer);
     assert_eq!(
-        complete_aggregate_return(&mut state, &copy_function(), value.clone()),
+        complete_aggregate_return(
+            &mut state,
+            &copy_function(),
+            value.clone(),
+            &PureFactContext::new()
+        ),
         Err(AggregateReturnRefusal::UninitializedRead),
     );
     state.set_memory(state.memory.clone().store(
@@ -1674,14 +1692,22 @@ fn symbolic_construction_storage_requires_written_fields_before_copy_return() {
         CValue::typed_pointer(source.offset_by_bytes(8), CType::Int32Pointer),
     ));
     assert_eq!(
-        complete_aggregate_return(&mut state, &copy_function(), value.clone()),
+        complete_aggregate_return(
+            &mut state,
+            &copy_function(),
+            value.clone(),
+            &PureFactContext::new()
+        ),
         Err(AggregateReturnRefusal::UninitializedRead),
     );
     state.set_memory(state.memory.clone().store(
         source.offset_by_bytes(8),
         CValue::Int32(Bitvector32Term::Constant(37)),
     ));
-    assert!(complete_aggregate_return(&mut state, &copy_function(), value).is_ok());
+    assert!(
+        complete_aggregate_return(&mut state, &copy_function(), value, &PureFactContext::new())
+            .is_ok()
+    );
 }
 
 #[test]
