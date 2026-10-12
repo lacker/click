@@ -523,6 +523,7 @@ fn authenticated_domain(
             stride: *stride,
             count: count.clone(),
             prefix: false,
+            source_slice: false,
             authentication_guards: guards,
             paired_base: None,
         }));

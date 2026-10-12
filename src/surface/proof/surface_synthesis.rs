@@ -2792,6 +2792,12 @@ fn synthesize_surface_bitvector(
             }))
         }
         Bitvector32Term::MemoryLoad(memory, kernel_pointer, kind) => {
+            // A full pointer observation uses a bitvector proxy internally,
+            // but is not a scalar integer read. Pointer-valued synthesis owns
+            // its source spelling; never fall through to the int32 fallback.
+            if *kind == crate::kernel::LoadKind::Pointer {
+                return None;
+            }
             if *kind == crate::kernel::LoadKind::Bits32
                 && let Some(field) =
                     synthesize_owned_field_at_address(kernel_pointer, CType::Int32, state)
