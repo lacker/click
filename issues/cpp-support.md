@@ -75,8 +75,13 @@ remain failing. This larger selection is not directly comparable to the earlier
 A separate five-test pointer check passed four tests and failed the new
 full-width-origin control. Follow-up review found two remaining pointer-read
 sites still using the old scalar kind and stale producer fixtures; their narrow
-repair is being checked separately. Remaining read-kind cleanup includes
-removing ignored width arguments and redundant width keys. The selected
+repair passed all six selected pointer tests (run 50b, exit 0), including
+original four-byte identity preservation after a full pointer read and exact
+origin recovery through a symbolic storage base. Related pointer-field
+expansions and the bounded pointer-read rewrite control also pass. The broader
+139-test selection has not been rerun after this narrow repair. Remaining
+read-kind cleanup includes removing ignored width arguments and redundant
+width keys. The selected
 resource-rewrite trace now identifies lost native-prefix metadata in the
 post-unfold state (heap differs, blocks/cells do not); exact reconstruction must
 be repaired without relaxing memory equality. Temporary probes remain, and
