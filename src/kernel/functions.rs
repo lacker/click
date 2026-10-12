@@ -9329,6 +9329,7 @@ pub(in crate::kernel) fn typed_access_policy_refinement_compatible(
                 scalar(parameter.c_type()) && parameter.aggregate_layout().is_none()
             })
             && interface.scalar_object_inputs().is_empty()
+            && interface.native_span_inputs().is_empty()
             && interface.aggregate_object_inputs().is_empty()
             && interface.proof_parameters().is_empty()
             && interface.resource_requires().is_empty()

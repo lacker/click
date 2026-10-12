@@ -4690,6 +4690,15 @@ pub struct CScalarObjectInput {
     pub(crate) element_type: CType,
 }
 
+/// Source slice validity, independent of permissions and initialized bytes.
+/// The native length counts elements and the backing extent fits isize.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CNativeSpanInput {
+    pub(crate) parameter_index: usize,
+    pub(crate) length_parameter_index: usize,
+    pub(crate) element_type: CType,
+}
+
 /// Native record-reference validity, independent of storage permissions/init.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CAggregateObjectInput {
@@ -4715,6 +4724,7 @@ pub struct CFunctionContractInterface {
     pub(crate) aggregate_return_mode: CAggregateReturnMode,
     pub(crate) construction_parameter: Option<(usize, CAggregateLayout)>,
     pub(crate) scalar_object_inputs: Vec<CScalarObjectInput>,
+    pub(crate) native_span_inputs: Vec<CNativeSpanInput>,
     pub(crate) aggregate_object_inputs: Vec<CAggregateObjectInput>,
     pub(crate) exceptional_signature: CExceptionalSignature,
     pub(crate) parameters: Vec<CParameter>,
@@ -6638,6 +6648,12 @@ pub(crate) enum CNativeInputIdentity {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(in crate::kernel) enum CNativeInputKind {
+    /// An admitted source slice, including a valid nonnull empty carrier.
+    /// Its signature guarantees a byte extent bounded by isize::MAX.
+    TypedSlice {
+        element_type: CType,
+        count: SharedIntegerTerm,
+    },
     Record {
         layout: Arc<CAggregateLayout>,
     },

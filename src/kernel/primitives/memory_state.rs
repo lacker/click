@@ -3637,17 +3637,41 @@ impl CMemory {
         )
     }
 
+    /// Source admission only: the valid slice signature promises bounded
+    /// backing geometry, including a valid nonnull carrier for an empty slice.
+    pub(in crate::kernel) fn with_native_slice_input(
+        self,
+        pointer: CPointerValue,
+        element_type: CType,
+        count: SharedIntegerTerm,
+    ) -> Result<Self, String> {
+        self.admit_typed_input_span(pointer, element_type, count,
+            CTypedAccessPolicy::NativeObjectOnly, true)
+    }
+
     pub(in crate::kernel) fn with_typed_input_span(
-        mut self,
+        self,
         pointer: CPointerValue,
         element_type: CType,
         count: SharedIntegerTerm,
         policy: CTypedAccessPolicy,
     ) -> Result<Self, String> {
+        self.admit_typed_input_span(pointer, element_type, count, policy, false)
+    }
+
+    fn admit_typed_input_span(
+        mut self,
+        pointer: CPointerValue,
+        element_type: CType,
+        count: SharedIntegerTerm,
+        policy: CTypedAccessPolicy,
+        source_slice: bool,
+    ) -> Result<Self, String> {
         let width = element_type.byte_width();
         if width == 0
             || element_type.array_element_type().is_some()
             || element_type.pointer_to().is_none()
+            || (source_slice && pointer.c_type().pointee_type() != Some(element_type))
         {
             return Err("native input span requires a supported scalar element type".into());
         }
@@ -3680,10 +3704,10 @@ impl CMemory {
         }
         let row = CNativeRecordInput {
             origin: pointer,
-            kind: CNativeInputKind::TypedPrefix {
-                element_type,
-                count,
-                policy,
+            kind: if source_slice {
+                CNativeInputKind::TypedSlice { element_type, count }
+            } else {
+                CNativeInputKind::TypedPrefix { element_type, count, policy }
             },
         };
         if let Some(held) = self.heap.native_record_inputs.get(&identity) {
@@ -3744,12 +3768,11 @@ impl CMemory {
         &self,
         pointer: &CPointerValue,
     ) -> Option<CTypedAccessPolicy> {
-        let CNativeInputKind::TypedPrefix { policy, .. } =
-            &self.native_input_witness(pointer)?.kind
-        else {
-            return None;
-        };
-        Some(*policy)
+        match &self.native_input_witness(pointer)?.kind {
+            CNativeInputKind::TypedPrefix { policy, .. } => Some(*policy),
+            CNativeInputKind::TypedSlice { .. } => Some(CTypedAccessPolicy::NativeObjectOnly),
+            _ => None,
+        }
     }
 
     /// Allocation-backed scalar access is a producer property, not a live-map
@@ -3820,15 +3843,17 @@ impl CMemory {
         pointer: &CPointerValue,
     ) -> Option<(CPointerValue, CType, SharedIntegerTerm)> {
         let row = self.native_input_witness(pointer)?;
-        let CNativeInputKind::TypedPrefix {
-            element_type,
-            count,
-            ..
-        } = &row.kind
+        let (CNativeInputKind::TypedPrefix { element_type, count, .. }
+            | CNativeInputKind::TypedSlice { element_type, count }) = &row.kind
         else {
             return None;
         };
         Some((row.origin.clone(), *element_type, count.clone()))
+    }
+
+    pub(in crate::kernel) fn native_input_is_slice(&self, pointer: &CPointerValue) -> bool {
+        self.native_input_witness(pointer).is_some_and(|row|
+            matches!(row.kind, CNativeInputKind::TypedSlice { .. }))
     }
 
     pub(in crate::kernel) fn with_native_record_prefix(
@@ -4308,6 +4333,10 @@ impl CMemory {
                     } => CNativeInputKind::AllocatedScalar {
                         element_type: *element_type,
                         bytes: rewrite_count(bytes),
+                    },
+                    CNativeInputKind::TypedSlice { element_type, count } => CNativeInputKind::TypedSlice {
+                        element_type: *element_type,
+                        count: rewrite_count(count),
                     },
                     CNativeInputKind::TypedPrefix {
                         element_type,
@@ -4791,7 +4820,8 @@ impl CMemory {
                             .as_const()
                             .and_then(|bytes| u32::try_from(bytes).ok())
                             .filter(|bytes| *bytes > 0),
-                        CNativeInputKind::TypedPrefix {
+                        CNativeInputKind::TypedSlice { element_type, count }
+                        | CNativeInputKind::TypedPrefix {
                             element_type,
                             count,
                             ..

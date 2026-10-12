@@ -320,6 +320,7 @@ struct AuthenticatedDomain {
     count: SharedIntegerTerm,
     /// A witnessed native prefix never identifies the complete array end.
     prefix: bool,
+    source_slice: bool,
     authentication_guards: Vec<ConditionTerm>,
     paired_base: Option<CPointerValue>,
 }
@@ -433,6 +434,7 @@ fn authenticated_domain(
             // A native input's selected child does not implicitly admit
             // representation traversal through a differently typed cast.
             prefix: true,
+                source_slice: false,
             authentication_guards: guards,
             paired_base: None,
         }));
@@ -463,6 +465,7 @@ fn authenticated_domain(
                 stride,
                 count: count.into(),
                 prefix: true,
+                source_slice: false,
                 authentication_guards: Vec::new(),
                 paired_base: Some(origin),
             }));
@@ -478,6 +481,7 @@ fn authenticated_domain(
                 stride,
                 count,
                 prefix: true,
+                source_slice: false,
                 authentication_guards: Vec::new(),
                 paired_base: Some(origin),
             }));
@@ -499,6 +503,7 @@ fn authenticated_domain(
                 stride,
                 count,
                 prefix: true,
+                source_slice: state.memory().native_input_is_slice(pointer),
                 authentication_guards: Vec::new(),
                 paired_base: Some(origin),
             }));
@@ -517,6 +522,7 @@ fn authenticated_domain(
         stride: *stride,
         count: count.clone(),
         prefix: false,
+        source_slice: false,
         authentication_guards: Vec::new(),
         paired_base: None,
     }))
@@ -733,6 +739,7 @@ pub(in crate::kernel) fn domain_displacement(
 
 #[derive(Clone, Copy)]
 enum DomainQuery {
+    Formation,
     Executable,
     Span,
 }
@@ -768,7 +775,9 @@ fn position_guards(
         append_guard(
             guards,
             match query {
-                DomainQuery::Executable => {
+                DomainQuery::Formation if domain.source_slice =>
+                    domain_less_equal(IntegerTerm::constant_i64(0), count.clone()),
+                DomainQuery::Executable | DomainQuery::Formation => {
                     domain_less_than(IntegerTerm::constant_i64(0), count.clone())
                 }
                 DomainQuery::Span => domain_less_equal(IntegerTerm::constant_i64(0), count.clone()),
@@ -776,6 +785,9 @@ fn position_guards(
         );
         // Match wide held ranges: the byte extent fits isize::MAX, so every
         // selected native displacement is exact without modular multiplication.
+        // The source slice signature itself certifies its bounded extent.
+        // Resource prefixes retain their separate numeric proof obligation.
+        if !domain.source_slice {
         append_guard(
             guards,
             domain_less_equal(
@@ -783,6 +795,7 @@ fn position_guards(
                 IntegerTerm::constant_i64(native_prefix_element_limit(domain.stride)),
             ),
         );
+        }
     }
     // An opaque read may have either the original scaled-load spelling or
     // its typed read application. Only the identical full read pair permits
@@ -937,7 +950,7 @@ pub(in crate::kernel) fn checked_pointer_formation(
             pointer,
             &domain,
             view,
-            DomainQuery::Executable,
+            DomainQuery::Formation,
             &mut guards,
             assumptions,
         )?;

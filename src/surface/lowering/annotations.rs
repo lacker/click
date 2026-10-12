@@ -1149,6 +1149,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         &parsed_kernel_function,
     )?;
     let mut function = function
+        .with_native_span_inputs(parsed_kernel_function.contract_interface().native_span_inputs().to_vec())
         .with_scalar_object_inputs(scalar_object_inputs)
         .with_aggregate_object_inputs(aggregate_object_inputs_for_contract(
             function_block.requires(),

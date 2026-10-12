@@ -2946,7 +2946,8 @@ fn collect_shared_memory_bound_variables(
 fn collect_memory_bound_variables(memory: &CMemory, variables: &mut BTreeSet<Variable>) {
     for row in memory.heap.native_record_inputs.values() {
         collect_c_value_bound_variables(&CValue::Pointer(row.origin.clone()), variables);
-        if let CNativeInputKind::TypedPrefix { count, .. }
+        if let CNativeInputKind::TypedSlice { count, .. }
+        | CNativeInputKind::TypedPrefix { count, .. }
         | CNativeInputKind::RecordPrefix { count, .. }
         | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
         {

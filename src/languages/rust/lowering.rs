@@ -340,6 +340,22 @@ fn lower_function(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let native_span_inputs = f.parameters.iter().filter_map(|parameter| {
+        let element_type = match &parameter.value_type {
+            Type::ByteSlice { .. } => CType::UInt8,
+            Type::SharedScalarSlice { element } => match element.as_ref() {
+                Type::I32 => CType::Int32,
+                Type::U32 => CType::UInt32,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some(CNativeSpanInput {
+            parameter_index: kernel_parameter_indices[parameter.name.as_str()],
+            length_parameter_index: kernel_parameter_indices[format!("{}_len", parameter.name).as_str()],
+            element_type,
+        })
+    }).collect();
     let mut cx = Context {
         shared_array_iterators: BTreeMap::new(),
         shared_array_options: BTreeMap::new(),
@@ -376,7 +392,8 @@ fn lower_function(
         body,
     )
     .with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly)
-    .with_aggregate_object_inputs(native_record_inputs);
+    .with_aggregate_object_inputs(native_record_inputs)
+    .with_native_span_inputs(native_span_inputs);
     if let Some((_, layout)) = return_layout {
         kernel = kernel.with_return_aggregate_layout(layout.to_kernel_aggregate_layout());
     }

@@ -5313,7 +5313,8 @@ fn object_address_variables(pointer: &Pointer) -> BTreeSet<Variable> {
 fn native_record_input_variables(row: &CNativeRecordInput) -> BTreeSet<Variable> {
     let mut variables = BTreeSet::new();
     collect_c_value_bitvector_variables(&CValue::Pointer(row.origin.clone()), &mut variables);
-    if let CNativeInputKind::TypedPrefix { count, .. }
+    if let CNativeInputKind::TypedSlice { count, .. }
+        | CNativeInputKind::TypedPrefix { count, .. }
     | CNativeInputKind::RecordPrefix { count, .. }
     | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
     {
@@ -5753,7 +5754,8 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables_whole(
     }
     for row in memory.heap.native_record_inputs.values() {
         collect_c_value_bitvector_variables(&CValue::Pointer(row.origin.clone()), variables);
-        if let CNativeInputKind::TypedPrefix { count, .. }
+        if let CNativeInputKind::TypedSlice { count, .. }
+        | CNativeInputKind::TypedPrefix { count, .. }
         | CNativeInputKind::RecordPrefix { count, .. }
         | CNativeInputKind::AllocatedScalar { bytes: count, .. } = &row.kind
         {

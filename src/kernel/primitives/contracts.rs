@@ -739,6 +739,7 @@ impl CFunctionContractInterface {
             aggregate_return_mode: CAggregateReturnMode::Copy,
             construction_parameter: None,
             scalar_object_inputs: Vec::new(),
+            native_span_inputs: Vec::new(),
             aggregate_object_inputs: Vec::new(),
             exceptional_signature: CExceptionalSignature::None,
             parameters,
@@ -788,6 +789,10 @@ impl CFunctionContractInterface {
 
     pub fn scalar_object_inputs(&self) -> &[CScalarObjectInput] {
         &self.scalar_object_inputs
+    }
+
+    pub fn native_span_inputs(&self) -> &[CNativeSpanInput] {
+        &self.native_span_inputs
     }
 
     pub fn aggregate_object_inputs(&self) -> &[CAggregateObjectInput] {
@@ -1017,6 +1022,7 @@ impl CFunctionContractInterface {
             && self.aggregate_return_mode == other.aggregate_return_mode
             && self.construction_parameter == other.construction_parameter
             && self.scalar_object_inputs == other.scalar_object_inputs
+            && self.native_span_inputs == other.native_span_inputs
             && self.aggregate_object_inputs == other.aggregate_object_inputs
             && self.exceptional_signature == other.exceptional_signature
             && self.parameters == other.parameters
@@ -1054,6 +1060,7 @@ impl CFunctionContractInterface {
             && self.aggregate_return_mode == other.aggregate_return_mode
             && self.construction_parameter == other.construction_parameter
             && self.scalar_object_inputs == other.scalar_object_inputs
+            && self.native_span_inputs == other.native_span_inputs
             && self.aggregate_object_inputs == other.aggregate_object_inputs
             && self.exceptional_signature == other.exceptional_signature
             && self.parameters.len() == other.parameters.len()
@@ -1418,6 +1425,11 @@ impl CFunction {
     /// explicit typed clauses, never from a raw pointer parameter alone.
     pub(crate) fn with_scalar_object_inputs(mut self, inputs: Vec<CScalarObjectInput>) -> Self {
         self.contract_interface.scalar_object_inputs = inputs;
+        self
+    }
+
+    pub(crate) fn with_native_span_inputs(mut self, inputs: Vec<CNativeSpanInput>) -> Self {
+        self.contract_interface.native_span_inputs = inputs;
         self
     }
 

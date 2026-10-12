@@ -20,7 +20,8 @@ pub(super) fn same_native_record_obligations(
     left: &CFunctionContractInterface,
     right: &CFunctionContractInterface,
 ) -> bool {
-    if !crate::kernel::functions::typed_access_policy_refinement_compatible(left, right)
+    if left.native_span_inputs() != right.native_span_inputs()
+        || !crate::kernel::functions::typed_access_policy_refinement_compatible(left, right)
         || left.parameters().len() != right.parameters().len()
         || left
             .parameters()

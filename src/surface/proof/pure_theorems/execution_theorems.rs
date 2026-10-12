@@ -307,6 +307,7 @@ pub(super) fn verify_execution_theorem(
     let function = parsed
         .to_kernel_function()
         .with_typed_access_policy(target_interface.typed_access_policy())
+        .with_native_span_inputs(target_interface.native_span_inputs().to_vec())
         .with_scalar_object_inputs(target_interface.scalar_object_inputs().to_vec())
         .with_aggregate_object_inputs(target_interface.aggregate_object_inputs().to_vec());
     let parsed = parsed.with_prelowered_kernel_function(function);
