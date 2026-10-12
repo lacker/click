@@ -7042,6 +7042,8 @@ mod tests {
         .unwrap() else {
             panic!("pointer value");
         };
+        let value = crate::kernel::memory_provenance::legacy_stored_pointer_read(&value)
+            .expect("checked full-pointer producer retains its defining read");
         let Some(PointerDesignation::Loaded(origin)) = value.designation() else {
             panic!("complete pointer retains its defining read");
         };

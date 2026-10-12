@@ -2927,7 +2927,9 @@ pub(in crate::kernel) fn legacy_stored_pointer_read(
             let (memory, address) = crate::kernel::eval::registered_pointer_load(*identity)?;
             PointerLoadIdentity::new(memory, address)
         }
-        PointerBlock::Symbolic(variable) => registered(variable)?,
+        PointerBlock::Symbolic(variable) if registered(variable).is_some() => {
+            registered(variable)?
+        }
         _ => {
             let mut pending = vec![&pointer.offset];
             let mut origin = None;
