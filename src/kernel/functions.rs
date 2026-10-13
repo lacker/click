@@ -23593,9 +23593,14 @@ fn rewrite_resource_instance_selecting_children_unspelled(
         // The exact held instance authenticates its immediate selected body.
         // Expose it only while reading native carriers; a pointer field's full
         // cell must be readable before the dependent span can be admitted.
+        let carrier_specs = body_specs
+            .iter()
+            .filter(|spec| !matches!(spec.term(), CResourceTerm::PopulationAuthority { .. }))
+            .cloned()
+            .collect::<Vec<_>>();
         let scratch_body = evaluate_function_resource_context_with_normalization(
             &evaluation,
-            body_specs,
+            &carrier_specs,
             &[],
             assumptions,
             &mut budget,

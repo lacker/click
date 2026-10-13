@@ -136,6 +136,12 @@ check refusal in verification and expansion. Their C source and contract
 claims are preserved; positive audit coverage returns with explicit origin
 promises in that issue. No origin predicate is implemented in this checkpoint.
 
+The broader example check also reproduced a separate P1
+[rbtree context-helper refusal](../bugs/rbtree-change-child-refuses-original-context-proof.md),
+which still blocks publishing PR 646 as ready. A mutex-counter unfold failure
+was repaired by keeping unopened population authorities out of the scratch
+readable-carrier footprint; its unchanged frozen regression now passes.
+
 Run the complete C/Rust/C++ acceptance matrix after these repairs, then remove
 resolved bug documents and publish the coherent update to PR 646.
 
