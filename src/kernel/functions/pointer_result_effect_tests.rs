@@ -690,7 +690,8 @@ fn extra_entry_premise_cannot_authorize_a_universal_pointer_effect() {
         &rule.function,
         &arguments,
         &state,
-        &canonical
+        &canonical,
+        None,
     ));
     let specialized = canonical.assume_proposition(Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
@@ -700,7 +701,7 @@ fn extra_entry_premise_cannot_authorize_a_universal_pointer_effect() {
         true,
     ));
     assert!(
-        !independent_entry::matches(&rule.function, &arguments, &state, &specialized),
+        !independent_entry::matches(&rule.function, &arguments, &state, &specialized, None),
         "an additional caller fact is not a universally declared entry premise"
     );
 }
