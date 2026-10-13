@@ -23,5 +23,5 @@ int32 run(int32 value) {
 ```
 
 ```expect
-fail: left side evaluated to (value + 2), right side evaluated to (value + 1)
+fail: left side evaluated to value + 2, right side evaluated to value + 1
 ```

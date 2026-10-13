@@ -383,9 +383,7 @@ fn ordinary_requirement_errors_have_no_call_site_metadata() {
     let error = ClickError::new("ordinary requirement").with_unresolved_requirement(&obligation);
     assert!(error.report().contains("error kind: proof error"));
     assert!(
-        error
-            .report()
-            .contains("needed: predicate ordinary_requirement()"),
+        error.report().contains("needed: ordinary_requirement()"),
         "{}",
         error.report()
     );
@@ -1176,4 +1174,35 @@ fn synthesizes_dynamically_indexed_pointer_offset_equality() {
         } if matches!(left.as_ref(), CExpression::Variable(name) if name == "data")
             && matches!(right.as_ref(), CExpression::Variable(name) if name == "index")
     ));
+}
+
+/// The planning counter is live: a bare `step()` whose call precondition no
+/// fact states exactly (`memcmp`'s per-byte `defined` requirement, from the
+/// caller's `viewable` range) records the hidden derivation that
+/// `issues/simplify-step.md` removes. This keeps the counter's zero
+/// assertions elsewhere meaningful.
+#[test]
+fn bare_step_records_a_hidden_prerequisite_derivation() {
+    let c_source = r#"
+            int32 compare_self(uint8 bytes[]) {
+                return memcmp(bytes, bytes, 2);
+            }
+        "#;
+    let click_source = r#"
+            verifying "compare.c";
+
+            int32 compare_self(uint8 bytes[]) {
+                requires viewable(bytes[0..2]);
+                ensures 1 == 1 by { step(); step(); simp(); }
+            }
+        "#;
+    let (verified, planning_transitions) = collect_planning_statement_transitions(|| {
+        verify_c0_sources(click_source, &[("compare.c", c_source)])
+    });
+    verified.expect("the catalog memcmp call should verify");
+    assert_eq!(
+        planning_transitions,
+        vec![("compare_self.ensures_0".to_string(), 0, "step".to_string())],
+        "only the call step derives its precondition by search"
+    );
 }

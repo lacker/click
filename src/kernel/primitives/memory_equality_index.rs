@@ -1733,12 +1733,16 @@ impl ResourceContext {
             if !index.points_initialized {
                 return None;
             }
-            let entry =
-                if let Some(entry) = Self::sole_access_supplier(&index, selected_pointer, owned) {
-                    entry
-                } else {
-                    Self::sole_affine_supplier(&index, selected_pointer, owned)?
-                };
+            // A split suffix may be the unique owner beginning at the exact
+            // query even when several pieces share its base. Do not use this
+            // lookup for additive prefixes: they need not select that suffix.
+            let starting_owner = owned
+                .then(|| index.graph.address_class(selected_pointer))
+                .flatten()
+                .and_then(|class| index.symbolic.sole_owned_start(class));
+            let entry = starting_owner
+                .or_else(|| Self::sole_access_supplier(&index, selected_pointer, owned))
+                .or_else(|| Self::sole_affine_supplier(&index, selected_pointer, owned))?;
             MemoryAccessEntries::SingleSupplier(Some(entry))
         };
         Some(MemoryAccessCandidates {

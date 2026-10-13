@@ -924,7 +924,7 @@ extern int32 __click_constant_p_unknown() {
 // The C library's byte functions, with C's `size_t` counts. C converts
 // `memset`'s `int` fill value to `unsigned char`; Click models that narrowing
 // only for a representable value, so the value is required to be one.
-extern uint8* memcpy(uint8 destination[], uint8 source[], uint64 bytes) {
+extern uint8* memcpy(uint8 destination[], const uint8 source[], uint64 bytes) {
     requires viewable(source[0..bytes]);
     owns destination[0..bytes];
     requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
@@ -932,7 +932,7 @@ extern uint8* memcpy(uint8 destination[], uint8 source[], uint64 bytes) {
     ensures bytes_equal(destination, 0u64, old(source), 0u64, bytes);
 }
 
-extern int32 memcmp(uint8 left[], uint8 right[], uint64 bytes) {
+extern int32 memcmp(const uint8 left[], const uint8 right[], uint64 bytes) {
     requires viewable(left[0..bytes]);
     requires viewable(right[0..bytes]);
     requires forall (k: uint64) { k < bytes implies defined(left[k]) and defined(right[k]) };

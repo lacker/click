@@ -8,7 +8,7 @@ while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     found_path=true
     case "$path" in
-        README.md|docs/*|issues/*|examples/*/README.md)
+        README.md|docs/*|guide/*|issues/*|examples/*/README.md)
             ;;
         *)
             exit 1

@@ -1,8 +1,8 @@
 # Proof state and checked transitions
 
-A Click proof doesn't manipulate only a list of logical formulas. Its state
-also represents where symbolic C execution has reached and which memory and
-resource claims remain available.
+A Click proof state holds more than logical formulas: it also represents where
+symbolic C execution has reached and which memory and resource claims remain
+available.
 
 At a proof site, the state can contain:
 

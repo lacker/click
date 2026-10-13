@@ -1,6 +1,7 @@
 # What Click is
 
-Click is a verifier for existing C, C++, and Rust programs.
+This page states what a passing Click verification means and what it leaves
+out. Click is a verifier for existing C, C++, and Rust programs.
 
 You write ordinary C source files, then write `.click` sidecar files that say
 what the C functions are supposed to guarantee. Click checks those sidecars

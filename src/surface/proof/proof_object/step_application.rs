@@ -2161,6 +2161,17 @@ impl<'a> Proof<'a> {
                         result: signed_interval(*result),
                     }
                 }
+                SignedArithmeticStep::IntervalNarrowedCast {
+                    operand,
+                    source,
+                    destination,
+                    result,
+                } => SignedArithmeticNode::IntervalNarrowedCast {
+                    operand: *operand,
+                    source: *source,
+                    destination: *destination,
+                    result: signed_interval(*result),
+                },
                 SignedArithmeticStep::IntervalCompare {
                     left,
                     right,

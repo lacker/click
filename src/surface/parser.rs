@@ -1610,7 +1610,9 @@ impl Parser {
                 expression,
             ));
         }
-        let expression = self.parse_ensure_primary()?.to_kernel_expression();
+        let expression = self
+            .parse_ensure_primary()?
+            .to_kernel_specification_expression();
         // Keep the source spelling, but give a global array's pointer its
         // scalar element type. Resource lowering otherwise knows only
         // parameter types and would default a global byte slice to `int32`
@@ -8192,6 +8194,25 @@ impl Parser {
                     SignedArithmeticStep::IntervalBitwiseAnd {
                         operand,
                         mask,
+                        result: SignedInt32Interval { lower, upper },
+                    }
+                }
+                "interval_narrowed_cast" => {
+                    let operand = self.expect_index("operand interval")?;
+                    let cast_type = |parser: &mut Self, what: &str| {
+                        let name = parser.expect_ident(what)?;
+                        crate::surface::printing::machine_integer_type_from_name(&name)
+                            .ok_or_else(|| parser.error(format!("unknown integer type `{name}`")))
+                    };
+                    let source = cast_type(self, "conversion source type")?;
+                    let destination = cast_type(self, "conversion destination type")?;
+                    let lower = self.expect_signed_i64("interval lower bound")?;
+                    let upper = self.expect_signed_i64("interval upper bound")?;
+                    self.expect(Token::Semicolon)?;
+                    SignedArithmeticStep::IntervalNarrowedCast {
+                        operand,
+                        source,
+                        destination,
                         result: SignedInt32Interval { lower, upper },
                     }
                 }

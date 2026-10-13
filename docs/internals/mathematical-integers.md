@@ -287,7 +287,9 @@ Checked conversion preserves the numeric value or refuses it. Modulo conversion
 is a separately requested operation: it sign-extends a signed source, retains
 an unsigned source's value, and reduces modulo the destination width. This
 implements the constant policy of C++20 integral conversions and Rust integer
-`as`; a C importer must still select its target's signed narrowing policy.
+`as`, and of C as GCC and Clang compile it: C source conversions use the
+`CConversion` cast mode, which reduces modulo the destination width for
+signed destinations too. A specification's casts keep the checked policy.
 The ordinary reverse conversion from Integer always uses the checked operation.
 
 The runtime machine types use the shared format for their bounds,
@@ -358,10 +360,11 @@ format policy, and symbolic operands remain typed through substitution and
 proof rewriting. The existing 8–64-bit casts keep their current carriers.
 
 Wide integral widening and narrowing, including signedness changes, are
-supported at the kernel's explicit modulo boundary. Ordinary C conversions
-involving wide values retain the representable-range policy for signed
-destinations: both lower and upper bounds must be established unless the
-whole source range fits. Unsigned destinations use modulo conversion.
+supported at the kernel's explicit modulo boundary. C conversions involving
+wide values are modulo conversions for every destination. A specification's
+conversions retain the representable-range policy for signed destinations:
+both lower and upper bounds must be established unless the whole source range
+fits. Unsigned destinations use modulo conversion.
 Neither route loses the operand's definedness obligations.
 
 Exact Integer observation removes a widening cast only when every value of
@@ -377,12 +380,11 @@ reinterpretations, signed or unsigned widening, and narrowing still preserve
 the numeric value only inside the destination range. This recognition adds no
 arithmetic axiom or implicit range fact.
 
-Ordinary C now admits symbolic `uint64` to `int64` conversions once the native
-unsigned upper bound `value <= 9223372036854775807u64` is established. The result
-retains the same bits with signed interpretation. Unknown or out-of-range
-ordinary conversions remain unproved; the explicit modulo boundary retains its
-separate wrapping semantics. Both explicit casts and implicit returns use the
-same conversion check.
+C converts a symbolic `uint64` to `int64` by retaining the same bits with
+signed interpretation, for every value and owing no bound, as GCC and Clang
+do. Both explicit casts and implicit returns use the same conversion. A
+specification's `(int64)` of a `uint64` still owes
+`value <= 9223372036854775807u64`.
 
 The complete signed/unsigned 32/64-bit modulo matrix, ordinary C modular
 callers, missing bounds, forged endpoint references, false observations and
@@ -841,19 +843,22 @@ Nested conversions are compared with the canonical modulo cast of the source
 observation, including a narrowing cast that discards an intermediate cast.
 Unsigned byte readback also admits an exact low-bit mask: a `uint32` source
 masked by `255` for a `uint8` observation or `65535` for a `uint16` observation.
-Both forms require the same two range bounds. C narrowing into `int8`,
-`uint8`, `int16` or `uint16` keeps the source's 32-bit carrier, or the low
-word of a 64-bit source, without a cast node; the rule admits exactly those
-two carriers, again with bounds on the source observation inside the
-destination range. A different mask, operand, or destination is refused; widening after an intervening truncation cannot be
+Both forms require the same two range bounds. A specification's narrowing
+into `int8`, `uint8`, `int16` or `uint16` keeps the source's 32-bit carrier,
+or the low word of a 64-bit source, without a cast node; the rule admits
+exactly those two carriers, again with bounds on the source observation
+inside the destination range. C's narrowing into those types is a typed
+`MachineIntegerCast` node; the rule compares it with the canonical cast, and
+also looks through a C conversion from a 32-bit type that contains the
+destination (`(uint16)(int32)w`) to the carrier beneath it, under the same
+bounds. A different mask, operand, or destination is refused; widening after an intervening truncation cannot be
 mistaken for a direct cast of the original value. These forms connect native
 Rust narrowing stores to their full-width modulo results.
 
 This is a shared proof rule, not a change to C++ conversion semantics or an
 automatic range inference rule. Outside the destination range, native modulo
-casts remain defined and may change the mathematical value. Ordinary C signed
-conversion and proof-side checked conversions retain their existing range
-obligations. The certificate does not establish that its source arithmetic is
+casts remain defined and may change the mathematical value. Proof-side checked
+conversions retain their existing range obligations; C conversions owe none. The certificate does not establish that its source arithmetic is
 defined: observing a native quotient or remainder still requires its nonzero
 and signed overflow guards.
 

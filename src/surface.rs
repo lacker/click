@@ -192,6 +192,7 @@ pub fn accepted_proof_trace(
     have_body_contains: &dyn Fn(&str, &[usize], &crate::source::SourcePosition) -> bool,
     target: Option<&crate::source::SourcePosition>,
 ) -> Option<String> {
+    let _typed = proof_diagnostics::render::TypedNotationScope::enter();
     let mut labels = proof_diagnostics::render::SnapshotLabels::ambient();
     proof_trace::render_accepted(
         &mut labels,
@@ -5716,6 +5717,14 @@ pub enum SignedArithmeticStep {
         operand: usize,
         result: SignedInt32Interval,
     },
+    /// A C conversion of the operand into a one- or two-byte type, with the
+    /// operand's interval inside the destination range.
+    IntervalNarrowedCast {
+        operand: usize,
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
+        result: SignedInt32Interval,
+    },
     IntervalCompare {
         left: usize,
         right: usize,
@@ -8360,6 +8369,12 @@ impl ClickError {
     /// was attempted. `message()` stays the stable cause text used by tools
     /// that compare or aggregate diagnostics.
     pub fn report(&self) -> String {
+        // A requested proof trace keeps its typed notation throughout.
+        let _typed = self
+            .diagnostic
+            .as_ref()
+            .is_some_and(|diagnostic| proof_trace::enabled_for(&diagnostic.claim_label))
+            .then(proof_diagnostics::render::TypedNotationScope::enter);
         let mut snapshot_labels = proof_diagnostics::render::SnapshotLabels::ambient();
         let traced_message = self.diagnostic.as_ref().and_then(|diagnostic| {
             (self.kind == ClickErrorKind::Proof
@@ -8569,6 +8584,7 @@ impl ClickError {
         {
             return None;
         }
+        let _typed = proof_diagnostics::render::TypedNotationScope::enter();
         let mut labels = proof_diagnostics::render::SnapshotLabels::ambient();
         let context = proof_diagnostics::render_trace_context_labeled(
             diagnostic,

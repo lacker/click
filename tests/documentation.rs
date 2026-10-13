@@ -9,6 +9,9 @@ use click::cli::{
 use click::languages::c::syntax::C0_PUBLIC_FORMS;
 use click::surface::{PUBLIC_TACTIC_FORMS, SURFACE_CLICK_FORMS, SURFACE_CLICK_WORDS};
 
+#[path = "support/ai_reference.rs"]
+mod ai_reference;
+
 #[derive(Debug)]
 struct InventoryItem {
     id: String,
@@ -317,6 +320,31 @@ fn files_with_extension(directory: &Path, extension: &str, files: &mut Vec<PathB
 
 fn markdown_files(directory: &Path, files: &mut Vec<PathBuf>) {
     files_with_extension(directory, "md", files);
+}
+
+/// The rendered site's `llms.txt` and single-file bundle are generated, not
+/// committed. Generating them checks every page's opening sentence and every
+/// rewritten link; with `CLICK_AI_REFERENCE_OUT` set, the files are written
+/// there (`scripts/build-ai-reference.sh`).
+#[test]
+fn ai_reference_site_files_generate() {
+    let files = ai_reference::generate(&root()).unwrap_or_else(|error| panic!("{error}"));
+    let names = files
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"llms.txt") && names.contains(&"click-reference.md"));
+    let Some(output) = std::env::var_os(ai_reference::OUTPUT_VARIABLE) else {
+        return;
+    };
+    let output = PathBuf::from(output);
+    for (relative, contents) in files {
+        let path = output.join(&relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap_or_else(|error| panic!("{relative}: {error}"));
+        }
+        fs::write(&path, contents).unwrap_or_else(|error| panic!("{relative}: {error}"));
+    }
 }
 
 fn slug(heading: &str) -> String {
@@ -1495,11 +1523,16 @@ fn quoted_flags(source: &str) -> BTreeSet<String> {
 }
 
 #[test]
-fn technical_landing_page_discloses_ai_authorship() {
+fn landing_page_identifies_the_ai_reference_and_the_human_guide() {
     let source = fs::read_to_string(root().join("docs/index.md")).expect("read landing page");
-    assert!(source.contains("written and maintained by AI"));
+    assert!(source.contains("This is the AI reference"));
+    assert!(source.contains("Agents maintain it"));
     assert!(source.contains("human-written guide"));
-    assert!(source.contains("accurate, exhaustive, and mechanically checked"));
+    assert!(source.contains("https://github.com/clicklang/click/tree/master/guide"));
+    assert!(
+        root().join("guide/README.md").is_file(),
+        "the landing page points to guide/"
+    );
 }
 
 #[test]

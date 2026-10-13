@@ -397,12 +397,12 @@ fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
 
     let description = super::diagnostics::describe_execution_pure_facts(&facts);
 
+    assert!(description.contains("changed between"), "{description}");
     assert!(
-        description.contains("memory-mutates-only("),
+        description.contains("written range(s) between"),
         "{description}"
     );
-    assert!(description.contains("memory-effects("), "{description}");
-    assert!(description.contains("heap-freed("), "{description}");
+    assert!(description.contains("freed between"), "{description}");
     assert!(!description.contains("CMemory"), "{description}");
     assert!(
         !description.contains("diagnostic truncated"),
@@ -476,7 +476,7 @@ fn condition_certificate_search_reports_its_budget_without_dumping_snapshots() {
     assert!(
         error
             .message()
-            .contains("target: int32 =(value A, value B) is true"),
+            .contains("target: <unnamed A> == <unnamed B>"),
         "{error:?}"
     );
     assert!(
@@ -2159,8 +2159,10 @@ void f(struct node* p) {
             .message()
             .contains("argument 1 equality is not established")
     );
+    // The ordinary message spells its facts in source terms, with no
+    // kernel snapshot or value labels to define.
     assert!(
-        ordinary.message().contains("label definitions"),
+        !ordinary.message().contains("snapshot#") && !ordinary.message().contains("value#"),
         "{}",
         ordinary.message()
     );
@@ -2224,10 +2226,7 @@ fn fold_over_a_hidden_record_names_the_failed_fact() {
                   let { first: c } = unfold(x); execute(); let x = fold(pair(p), { first: c }); simp(); }";
     let error = verify_c0_sources(source, &[("f.c", c)]).unwrap_err();
     let report = error.concise_report();
-    assert!(
-        report.contains("required body fact: int32 =(-1,"),
-        "{report}"
-    );
+    assert!(report.contains("required body fact: -1 == "), "{report}");
     assert!(!report.contains("first.v == first.v"), "{report}");
 }
 
@@ -2502,24 +2501,27 @@ fn memory_history_diagnostic_names_the_store_and_limits_its_claim() {
     let mut labels = SnapshotLabels::default();
     let goal_text = render_proposition_labeled(&goal, &mut labels);
     let report = render_memory_history_check(&history, &mut labels).unwrap();
-    let write_name = labels.pointer_value_name(&written);
-    let read_name = labels.pointer_value_name(&read);
-    let stopped = labels.snapshot_name(&blocked);
+    let write_name = labels.unnamed_pointer(&written);
+    let read_name = labels.unnamed_pointer(&read);
+    let stopped = labels.state_phrase(&blocked);
     assert!(report.contains(&format!("stops at {stopped}")), "{report}");
     assert!(
-        report.contains(&format!("store: 8 bytes at address {write_name}")),
+        report.contains(&format!("store: 8 bytes at address `{write_name}`")),
         "{report}"
     );
     assert!(
         report.contains(&format!(
-            "read range checked: 16 bytes at address {read_name}"
+            "read range checked: 16 bytes at address `{read_name}`"
         )),
         "{report}"
     );
     assert!(goal_text.contains(&read_name), "{goal_text}");
     let legend = labels.trace_legend();
-    assert!(legend.contains(&format!("{stopped} = store")), "{legend}");
-    assert!(legend.contains(&format!("{write_name} =")), "{legend}");
+    assert!(
+        legend.contains(&format!("{stopped} is the memory after a store")),
+        "{legend}"
+    );
+    assert!(!legend.contains("value#"), "{legend}");
 }
 
 /// Long checked paths retain their beginning, late target, and added facts.
@@ -2621,11 +2623,8 @@ void call(int32* p, int32* q, int32* anchor) {
                 "{message}"
             );
             assert!(message.contains("held:"), "{message}");
-            assert!(message.contains("cursor(ptr<int32*>(q)"), "{message}");
-            assert!(
-                message.contains("required: owns cursor(ptr<int32*>(p)"),
-                "{message}"
-            );
+            assert!(message.contains("held: owns cursor(q"), "{message}");
+            assert!(message.contains("required: owns cursor(p"), "{message}");
         };
         if tracing {
             with_proof_trace("call", check);
@@ -2655,18 +2654,14 @@ fn call_resource_diagnostic_read_shows_snapshot_and_access() {
     };
     let rendered = super::diagnostics::describe_runtime_error(&error, ParameterBinding::default());
     assert!(
-        rendered.contains("argument read snapshot: snapshot#1"),
+        rendered.contains("arguments read in: function entry"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("required: views memory(value#1"),
+        rendered.contains("required: views selected_child_cell[0..1]"),
         "{rendered}"
     );
-    assert!(rendered.contains("selected_child_cell"), "{rendered}");
-    assert!(
-        rendered.contains("snapshot#1 = initial empty memory"),
-        "{rendered}"
-    );
+    assert!(!rendered.contains("snapshot#"), "{rendered}");
 }
 
 /// A budget refusal is still a failure at a checked source frontier. The

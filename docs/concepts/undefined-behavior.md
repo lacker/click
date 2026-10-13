@@ -1,6 +1,6 @@
 # Undefined behavior
 
-Click proves more than postconditions. It also checks that the modeled C
+Click proves more than postconditions: it also checks that the modeled C
 execution is safe under the function's requirements.
 
 For scalar code, signed overflow is often the first place this appears.

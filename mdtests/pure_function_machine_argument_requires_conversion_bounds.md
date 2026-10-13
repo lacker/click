@@ -10,5 +10,5 @@ theorem out_of_range() {
 ```
 
 ```expect
-fail: type mismatch
+fail: uint8 narrowing upper bound: 256 <= 255 is false
 ```

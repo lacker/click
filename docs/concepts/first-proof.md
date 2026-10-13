@@ -1,5 +1,8 @@
 # Your first proof
 
+This walkthrough writes a contract for a small C function, verifies it with
+`click verify`, and shows what a failing proof reports.
+
 Start with an ordinary C function that cannot fail, in `zero.c`:
 
 ```c filename=zero.c

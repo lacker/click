@@ -1,0 +1,55 @@
+# Projects whose sidecars form the auto eval's corpus, one per line,
+# relative to the repository root. Change the list deliberately and
+# rewrite the baseline in the same change (evals/auto.py --write-baseline).
+#
+# Left out: examples/multifile-registry (quarantined in tests/examples.rs)
+# and examples/basic-cpp (needs the C++ exporter and a prepare step).
+examples/allocated-linked-list
+examples/arena
+examples/basic-rust
+examples/binary-tree
+examples/borrowed-slice
+examples/bounded-pool
+examples/byte-representation
+examples/clamp
+examples/concurrency-fork-join
+examples/detachable-buffer
+examples/heap-object
+examples/input-cursor
+examples/jsonc-existing-source
+examples/jsonc-numeric
+examples/jsonc-refcount
+examples/linked-list
+examples/marked-linked-list
+examples/modeled-binary-tree
+examples/owned-segmented-buffer
+examples/owned-split-buffer
+examples/owned-string
+examples/owned-vector
+examples/perpetual-service
+examples/rbtree-augmented
+examples/rbtree-erase
+examples/rbtree-insert
+examples/rbtree-model
+examples/recursive-zero-list
+examples/refcount
+examples/ring-buffer
+examples/runtime-int32-allocation
+examples/rust-array-slices
+examples/rust-array-values
+examples/rust-arrays
+examples/rust-byte-sum
+examples/rust-chunks-exact
+examples/rust-field-borrow
+examples/rust-integer-conversions
+examples/rust-iter-references
+examples/rust-iterators
+examples/rust-loops
+examples/rust-move-drop
+examples/rust-slices
+examples/rust-split-at
+examples/rust-unsigned
+examples/rust-usize
+examples/sequence-transform
+examples/shared-refcount
+examples/vector-push

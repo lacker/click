@@ -44,11 +44,13 @@ Run from the repository root:
 cargo run --bin click -- verify examples/multifile-registry/registry.click
 ```
 
-The project does not verify yet. `click verify` and the examples gate agree:
-both stop at `registry_run`'s entry, which cannot evaluate
-`owns beta::record_beta::batches[0].value` (an owned field path into
-another module's function-local static struct array has no known pointee
-type), and past that point the cross-file caller needs static-state caller
-transport (`issues/static-state-caller-transport.md`). The examples gate
-quarantines the directory until then; `CLICK_EXAMPLE=multifile-registry` runs
-it.
+Ordinary function entry does not restore static initializers, so
+`registry_run` states every current value it relies on as a precondition,
+including the `name` fields it reports unchanged. Facts about one static
+object survive calls that update others, and each callee's postconditions
+carry the updated values to the next call's preconditions.
+
+One step, `have counters[0].value == 11;` after the first `record_alpha()`,
+restates a fact the call already established; `simp` does not yet derive
+the following bound from it on its own
+(`bugs/a-bound-after-a-call-ignores-the-calls-equality.md`).

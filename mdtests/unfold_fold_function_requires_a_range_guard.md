@@ -24,5 +24,5 @@ theorem icount_needs_a_range_guard(p: int32[], lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: found no listed guard that decides the range. The empty-range equation needs `hi <= lo`; the append-last-cell equation needs `(hi - 1) < 2147483647`
+fail: found no listed guard that decides the range. The empty-range equation needs `hi <= lo`; the append-last-cell equation needs `hi - 1 < 2147483647`
 ```

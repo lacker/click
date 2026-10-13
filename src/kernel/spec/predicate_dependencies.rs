@@ -5,230 +5,36 @@ use super::*;
 /// predicate memory arguments. This walk borrows the definition and is linear
 /// in its written body, without consulting unrelated definitions or proof facts.
 pub(in crate::kernel) fn observes_resource_state(proposition: &SpecProposition) -> bool {
-    enum Node<'a> {
-        Proposition(&'a SpecProposition),
-        Expression(&'a SpecExpression),
-        Integer(&'a SpecIntegerExpression),
-        Algebraic(&'a SpecAlgebraicExpression),
-        Sequence(&'a SpecSequenceExpression),
-        Argument(&'a SpecPureFunctionArgument),
-    }
-    let mut pending = vec![Node::Proposition(proposition)];
-    while let Some(node) = pending.pop() {
-        if crate::instrumentation::deadline_exceeded_with_work(1) {
-            // An incomplete walk cannot certify independence from the model.
-            return true;
-        }
-        match node {
-            Node::Proposition(proposition) => match proposition {
-                SpecProposition::Comparison { left, right, .. } => {
-                    pending.extend([Node::Expression(left), Node::Expression(right)]);
-                }
-                SpecProposition::IntegerComparison { left, right, .. } => {
-                    pending.extend([Node::Integer(left), Node::Integer(right)]);
-                }
-                SpecProposition::AlgebraicComparison { left, right, .. } => {
-                    pending.extend([Node::Algebraic(left), Node::Algebraic(right)]);
-                }
-                SpecProposition::SequenceComparison { left, right, .. } => {
-                    pending.extend([Node::Sequence(left), Node::Sequence(right)]);
-                }
-                SpecProposition::SequenceMembership { element, sequence } => {
-                    pending.extend([Node::Expression(element), Node::Sequence(sequence)]);
-                }
-                SpecProposition::ValidPlace {
-                    pointer: expression,
-                    ..
-                }
-                | SpecProposition::Defined(expression)
-                | SpecProposition::FloatClassification { expression, .. } => {
-                    pending.push(Node::Expression(expression));
-                }
-                SpecProposition::And(left, right)
-                | SpecProposition::Or(left, right)
-                | SpecProposition::Implies(left, right) => {
-                    pending.extend([Node::Proposition(left), Node::Proposition(right)]);
-                }
-                SpecProposition::Not(body)
-                | SpecProposition::ForAllMachineInteger { body, .. }
-                | SpecProposition::ForAllInt32 { body, .. }
-                | SpecProposition::ForAllInteger { body, .. }
-                | SpecProposition::ForAllAlgebraic { body, .. }
-                | SpecProposition::ForAllPointer { body, .. }
-                | SpecProposition::ExistsMachineInteger { body, .. }
-                | SpecProposition::ExistsInt32 { body, .. }
-                | SpecProposition::ExistsInteger { body, .. }
-                | SpecProposition::ExistsAlgebraic { body, .. }
-                | SpecProposition::ExistsPointer { body, .. } => {
-                    pending.push(Node::Proposition(body));
-                }
+    use super::walk::{SpecNode, Visit, WalkBudget, Walked, walk_spec};
+    let walked = walk_spec(
+        SpecNode::Proposition(proposition),
+        WalkBudget::Deadline,
+        |node| match node {
+            SpecNode::Proposition(
                 SpecProposition::Predicate {
-                    resource_state_dependent,
-                    arguments,
+                    resource_state_dependent: true,
                     ..
-                } => {
-                    if *resource_state_dependent {
-                        return true;
-                    }
-                    for argument in arguments {
-                        pending.push(Node::Expression(match argument {
-                            SpecPredicateArgument::Value(expression)
-                            | SpecPredicateArgument::ArrayRef {
-                                pointer: expression,
-                                ..
-                            } => expression,
-                        }));
-                    }
                 }
-                SpecProposition::MemoryInitialized { base, .. } => {
-                    pending.push(Node::Expression(base))
-                }
-                SpecProposition::MemoryLoadable {
-                    base, start, end, ..
-                } => {
-                    pending.extend([
-                        Node::Expression(base),
-                        Node::Expression(start),
-                        Node::Expression(end),
-                    ]);
-                }
-                SpecProposition::ResourceSeparate { .. }
-                | SpecProposition::ResourceContains { .. } => return true,
-            },
-            Node::Expression(expression) => match expression {
-                SpecExpression::CountedResourceCount { .. }
-                | SpecExpression::ResourceField { .. } => return true,
-                SpecExpression::PureFunctionApplication { arguments, .. } => {
-                    pending.extend(arguments.iter().map(Node::Argument));
-                }
-                SpecExpression::Value(_) | SpecExpression::CExpression(_) => {}
-                SpecExpression::IntegerToMachine { value, .. } => {
-                    pending.push(Node::Integer(value))
-                }
-                crate::kernel::binary_spec_expression!(left, right) => {
-                    pending.extend([Node::Expression(left), Node::Expression(right)]);
-                }
-                SpecExpression::BitwiseNot(inner)
-                | SpecExpression::Cast(inner, _)
-                | SpecExpression::LoopEntrySnapshot(inner) => pending.push(Node::Expression(inner)),
-                SpecExpression::MemoryLoad { pointer, .. }
-                | SpecExpression::AggregateFieldValue { pointer, .. } => {
-                    pending.push(Node::Expression(pointer))
-                }
-                SpecExpression::PointerOffset {
-                    pointer, elements, ..
-                } => {
-                    pending.extend([Node::Expression(pointer), Node::Expression(elements)]);
-                }
-                SpecExpression::If {
-                    condition,
-                    then_branch,
-                    else_branch,
-                } => {
-                    pending.extend([
-                        Node::Proposition(condition),
-                        Node::Expression(then_branch),
-                        Node::Expression(else_branch),
-                    ]);
-                }
-                SpecExpression::Let { value, body, .. } => {
-                    pending.extend([Node::Expression(value), Node::Expression(body)]);
-                }
-                SpecExpression::RangeFold {
-                    start,
-                    end,
-                    initial,
-                    body,
-                    ..
-                } => {
-                    pending.extend([
-                        Node::Expression(start),
-                        Node::Expression(end),
-                        Node::Expression(initial),
-                        Node::Expression(body),
-                    ]);
-                }
-                SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-                    pending.push(Node::Algebraic(scrutinee));
-                    pending.extend(arms.iter().map(|arm| Node::Expression(&arm.body)));
-                }
-            },
-            Node::Integer(integer) => match integer {
-                SpecIntegerExpression::ResourceField(_) => return true,
-                SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-                    pending.extend(arguments.iter().map(Node::Argument));
-                }
-                SpecIntegerExpression::Term(_) => {}
-                SpecIntegerExpression::FromMachine(expression) => {
-                    pending.push(Node::Expression(expression))
-                }
-                SpecIntegerExpression::Negate(inner) => pending.push(Node::Integer(inner)),
-                crate::kernel::binary_spec_integer_expression!(left, right) => {
-                    pending.extend([Node::Integer(left), Node::Integer(right)]);
-                }
-                SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-                    pending.push(Node::Algebraic(scrutinee));
-                    pending.extend(arms.iter().map(|arm| Node::Integer(&arm.body)));
-                }
-                SpecIntegerExpression::RangeFold {
-                    index,
-                    initial,
-                    body,
-                    ..
-                } => {
-                    pending.extend([Node::Integer(initial), Node::Integer(body)]);
-                    match index {
-                        SpecIntegerRangeFoldIndex::Int32 { start, end }
-                        | SpecIntegerRangeFoldIndex::UInt64 { start, end } => {
-                            pending.extend([Node::Expression(start), Node::Expression(end)]);
-                        }
-                        SpecIntegerRangeFoldIndex::Integer { start, end } => {
-                            pending.extend([Node::Integer(start), Node::Integer(end)]);
-                        }
-                    }
-                }
-            },
-            Node::Argument(argument) => pending.push(match argument {
-                SpecPureFunctionArgument::Value(expression)
-                | SpecPureFunctionArgument::ArrayRef {
-                    pointer: expression,
-                    ..
-                } => Node::Expression(expression),
-                SpecPureFunctionArgument::Integer(integer) => Node::Integer(integer),
-                SpecPureFunctionArgument::Algebraic(algebraic) => Node::Algebraic(algebraic),
-            }),
-            Node::Sequence(sequence) => match sequence {
-                SpecSequenceExpression::Literal(elements) => {
-                    pending.extend(elements.iter().map(Node::Expression));
-                }
-                SpecSequenceExpression::Concat(left, right) => {
-                    pending.extend([Node::Sequence(left), Node::Sequence(right)]);
-                }
-            },
-            Node::Algebraic(algebraic) => match &algebraic.node {
-                SpecAlgebraicExpressionNode::Variable(_)
-                | SpecAlgebraicExpressionNode::Binding(_) => {}
-                SpecAlgebraicExpressionNode::ResourceField(_) => return true,
-                SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-                    pending.extend(arguments.iter().map(Node::Argument));
-                }
-                SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-                    for field in fields {
-                        pending.push(match field {
-                            SpecAlgebraicValue::C(expression) => Node::Expression(expression),
-                            SpecAlgebraicValue::Integer(integer) => Node::Integer(integer),
-                            SpecAlgebraicValue::Algebraic(algebraic) => Node::Algebraic(algebraic),
-                        });
-                    }
-                }
-                SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-                    pending.push(Node::Algebraic(scrutinee));
-                    pending.extend(arms.iter().map(|arm| Node::Algebraic(&arm.body)));
-                }
-            },
-        }
-    }
-    false
+                | SpecProposition::ResourceSeparate { .. }
+                | SpecProposition::ResourceContains { .. },
+            )
+            | SpecNode::Expression(
+                SpecExpression::CountedResourceCount { .. } | SpecExpression::ResourceField { .. },
+            )
+            | SpecNode::Integer(SpecIntegerExpression::ResourceField(_)) => Visit::Stop(()),
+            SpecNode::Algebraic(algebraic)
+                if matches!(
+                    algebraic.node,
+                    SpecAlgebraicExpressionNode::ResourceField(_)
+                ) =>
+            {
+                Visit::Stop(())
+            }
+            _ => Visit::Descend,
+        },
+    );
+    // An incomplete walk cannot certify independence from the model.
+    !matches!(walked, Walked::Completed)
 }
 
 #[cfg(test)]

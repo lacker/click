@@ -81,6 +81,15 @@ compiler-import fixtures. Do not use it for `mdtests/` changes: those Markdown
 files are executable proof fixtures, not prose documentation. Code, scripts,
 configuration, and example implementation changes also require the full gate.
 
+The rendered site also serves `llms.txt` and `click-reference.md`, a bundle of
+the "Using Click" pages, generated from `docs/SUMMARY.md` and the pages it
+lists; they are not committed. The documentation test
+`ai_reference_site_files_generate` generates them in memory, so a page whose
+opening sentence is missing or ends in a colon, or a link the bundle can't
+resolve, fails the gate with the page named. The docs-only gate writes them
+into `target/click-docs/`; after a plain `scripts/mdbook-build.sh`, run
+`scripts/build-ai-reference.sh`.
+
 Run the markdown proof fixtures with:
 
 ```sh
@@ -683,7 +692,7 @@ gate.
 
 ### The key benchmark
 
-`scripts/benchmark.sh` is Click's headline performance number: nonblank
+`evals/speed.sh` is Click's headline performance number: nonblank
 `.click` lines verified per CPU second over a small fixed set of examples,
 "Click verifies the key benchmark at N lines/s". It is the number to move
 when optimizing for general speed, and the one to report before and after a
@@ -714,8 +723,17 @@ With `--work` the key benchmark charged 15,059,650 units, 1,537 units per
 line (`arena` 1,382, `rbtree-insert` 1,456, `owned-vector` 2,434;
 `rbtree-erase` 4,755).
 
-`scripts/benchmark-examples.sh` remains the whole-corpus survey: every
+`evals/speed-survey.sh` remains the whole-corpus survey: every
 example, wall time, so its number moves with the corpus.
+
+### The `auto` eval
+
+`evals/auto.py` measures, for a sample of the hand-written `have`
+statements in the examples, how many `auto` proves where they stand and how
+many can be deleted with the proof still verifying, against a committed
+baseline. A change to `auto`, `simp` or what they rely on quotes its result,
+sites gained and lost, in the pull request. `evals/README.md`
+describes the corpus, the sampling and the baseline.
 
 ### Hunting for steps that grow
 
@@ -791,6 +809,23 @@ land. A count that fell means a rejection cause was removed; lower the pin in
 the same change so the count cannot rise back. A filtered run
 (`MDTEST_FILTER`, `CLICK_EXAMPLE`) or a run with `CLICK_RUN_QUARANTINED=1`
 skips the comparison.
+
+## Hidden prerequisite ratchet
+
+A simple tactic must close each requirement by an exact or indexed check
+([`issues/simplify-step.md`](https://github.com/clicklang/click/blob/master/issues/simplify-step.md)).
+Where statement checking instead derives a prerequisite by a search whose
+result the proof does not retain, it counts the derivation by route and top
+rule (`instrumentation::HiddenPrerequisiteRoute`). The fixture harnesses take
+that census after an unfiltered run and compare it with
+`HIDDEN_PREREQUISITE_BASELINE` in `tests/mdtests.rs` and `tests/examples.rs`,
+exactly as the artifact reuse ratchet does: a count that rose must not land,
+and a count that fell lowers its pin in the same change. A partitioned CI
+shard (`MDTEST_PARTITION`, `EXAMPLE_PARTITION`) sees part of the corpus, so it
+fails only when its own count exceeds a whole-corpus pin; an unpartitioned
+run, such as a local `scripts/check.sh`, checks both directions. Library tests read
+the same events per step through `collect_planning_statement_transitions`,
+which records the claim and step of each hidden derivation.
 
 ## Quarantine
 

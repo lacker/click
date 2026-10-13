@@ -194,10 +194,13 @@ footprint.
 
 [Language coverage](../coverage.md#scalar-types) lists the admitted scalar
 types, and [Supported C](c.md) gives their spellings and operations. Integer
-promotions and the usual arithmetic conversions apply; fully general symbolic
-narrowing between unlike 64-bit and narrower integer types does not. A
-checked narrowing conversion requires the current pure facts to prove the
-value in range. A contract may cast a `void *` parameter to
+promotions and the usual arithmetic conversions apply, and every C integer
+conversion, constant or symbolic, reduces modulo 2^N as GCC and Clang do
+(`mdtests/constant_narrowing_initializer_wraps_modulo_256.md`). A narrowing
+cast written in a specification is checked instead: it requires the current
+pure facts to prove the value in range, and if a bound fails the diagnostic
+names the destination type's lower or upper bound and the converted value.
+A contract may cast a `void *` parameter to
 a struct pointer or convert a current object pointer explicitly through
 `void*` to a struct pointer. Other pointer casts, aggregate casts, and `void`
 objects or parameters remain unsupported.

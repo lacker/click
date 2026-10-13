@@ -42,5 +42,5 @@ int32 walk(int32 *a, int32 n) {
 ```
 
 ```expect
-fail: goal: (int32 <=((value A+1), 1073741823) is true ∧ ((int32 <=((value A+1), 1073741823) is true ⇒ viewable(
+fail: goal: <unnamed A> + 1 <= 1073741823 and ((<unnamed A> + 1 <= 1073741823 implies viewable(a[0..<unnamed A> + 1]))
 ```

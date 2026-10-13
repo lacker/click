@@ -8,6 +8,7 @@ pub(crate) mod projection;
 pub(crate) mod provenance;
 pub mod source;
 pub mod syntax;
+pub(crate) mod system_headers;
 pub mod target;
 pub mod thread_runtime;
 

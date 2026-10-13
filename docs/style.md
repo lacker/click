@@ -1,7 +1,6 @@
 # Click documentation style
 
-This page defines project-specific rules for the AI-written technical
-documentation. Follow the
+This page defines project-specific rules for the AI reference. Follow the
 [Google Developer Documentation Style Guide](https://developers.google.com/style/)
 when this page does not state a Click-specific rule.
 
@@ -13,10 +12,13 @@ structure, and fast lookup. Concept pages explain one mental model. Internal
 pages explain the implementation and the invariants a contributor must
 preserve.
 
-The technical reference, Concepts, and Internals are written and maintained by
-AI. A future human-written guide is a separate work. Do not blend its prose into
-this corpus or rewrite it into the technical-reference voice without explicit
-authorization.
+This is the AI reference, written for AI readers and maintained by agents. The
+human-written guide in the repository's `guide/` directory is the maintainer's;
+agents do not edit it or blend its prose into this corpus.
+
+Each page opens with a prose paragraph whose first sentence says what the page
+covers. That sentence is the page's description in the generated `llms.txt`, so
+it can't be a list or example lead-in ending in a colon.
 
 ## Source fidelity
 

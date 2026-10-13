@@ -73,7 +73,7 @@ fn fixed_state_failure_names_kernel_values_held_in_live_locals() {
         .expect("the available chunk size does not prove a zero remainder");
     let text = error.message();
     assert!(
-        text.contains("goal: (len % __rust_checked_94) == 0u64"),
+        text.contains("goal: len % __rust_checked_94 == 0u64"),
         "{text}"
     );
     assert!(text.contains("__rust_checked_94 == 22208u64"), "{text}");

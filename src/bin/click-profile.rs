@@ -47,7 +47,7 @@ defaults:
   --smart-threshold 2s      smart tactics in verified proofs are expansion candidates
   --simple-threshold 500ms  slow simple tactics are verifier bugs; do not expand them
   --control-threshold 2s    inspect slow control-tactic containers and their nested steps
-  --work-limit 50000000     deterministic work budget per project
+  --work-limit 50000000     deterministic work budget per sidecar, as click verify
   --time-limit 10m          crash containment per project, not a verdict
   --top 8                   maximum function/claim attribution rows per project
 
@@ -61,7 +61,7 @@ options:
   --time-limit <DURATION>
 
 The thresholds are reporting thresholds. What stops a run is deterministic:
-each tactic's work budget and the project's --work-limit. --time-limit only
+each tactic's work budget and each sidecar's --work-limit. --time-limit only
 contains a hung or CPU-starved run.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -517,17 +517,26 @@ fn profile_target(
     let project = target.path();
     let time_limit = limits.time;
     let started = Instant::now();
-    let ((verification, events), work_exhausted) = click::cli::within_run_limits(limits, || {
-        let collected = instrumentation::collect(|| match target {
-            ProfileTarget::Mdtest(path) => verify_mdtest(path),
+    // The deadline contains the whole target; the work budget is
+    // `click verify`'s, which each sidecar spends on its own.
+    let mut work_exhausted = false;
+    let (verification, events) = click::cli::within_containment_bound(time_limit, || {
+        instrumentation::collect(|| match target {
+            ProfileTarget::Mdtest(path) => {
+                within_work_limit(limits.work, &mut work_exhausted, || verify_mdtest(path))
+            }
             ProfileTarget::Sidecars {
                 project,
                 project_root,
                 sidecars,
-            } => verify_sidecars(project, project_root, sidecars),
-        });
-        let exhausted = instrumentation::run_work_used().is_some_and(|used| used > limits.work);
-        (collected, exhausted)
+            } => verify_sidecars(
+                project,
+                project_root,
+                sidecars,
+                limits.work,
+                &mut work_exhausted,
+            ),
+        })
     });
     let wall_elapsed = started.elapsed();
     let project_name = project
@@ -1666,10 +1675,28 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
 
 /// Verifies one selected project's sidecars in order, loading each exactly
 /// as `click verify` does.
+/// Runs `operation` under its own whole-run work budget of `limit` units,
+/// recording in `exhausted` whether it spent past it.
+fn within_work_limit(
+    limit: usize,
+    exhausted: &mut bool,
+    operation: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    click::cli::within_work_limit("click profile", limit, || {
+        let result = operation();
+        *exhausted |= instrumentation::run_work_used().is_some_and(|used| used > limit);
+        result
+    })
+}
+
+/// Verifies a project's sidecars as `click verify` does, each under its own
+/// `work_limit`.
 fn verify_sidecars(
     project: &Path,
     project_root: &Path,
     sidecars: &[PathBuf],
+    work_limit: usize,
+    work_exhausted: &mut bool,
 ) -> Result<(), String> {
     if sidecars.is_empty() {
         return Err(format!(
@@ -1682,20 +1709,18 @@ fn verify_sidecars(
         if instrumentation::enabled() {
             instrumentation::emit(VerificationEvent::Source(click_path.clone()));
         }
-        let result = match &inputs {
-            CInput::Bundle(sources) => verify_c0_project(&click_project, &source_refs(sources)),
-            CInput::Prepared(imports) => verify_c0_prepared_project(&click_project, imports),
-            CInput::PreparedProgram(import) => {
-                verify_program_prepared_project(&click_project, import)
+        within_work_limit(work_limit, work_exhausted, || {
+            match &inputs {
+                CInput::Bundle(sources) => verify_c0_project(&click_project, &source_refs(sources)),
+                CInput::Prepared(imports) => verify_c0_prepared_project(&click_project, imports),
+                CInput::PreparedProgram(import) => {
+                    verify_program_prepared_project(&click_project, import)
+                }
             }
-        };
-        result.map_err(|error| {
-            format!(
-                "example sidecar `{}` failed: {}",
-                click_path.display(),
-                error.report()
-            )
-        })?;
+            .map(|_| ())
+            .map_err(|error| error.report())
+        })
+        .map_err(|error| format!("example sidecar `{}` failed: {error}", click_path.display()))?;
     }
     Ok(())
 }

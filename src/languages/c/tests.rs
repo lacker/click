@@ -6540,7 +6540,7 @@ fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
     let kernel_expression = expression.to_kernel_expression();
     assert_eq!(
         kernel_expression,
-        crate::kernel::c_cast(
+        crate::kernel::c_source_integer_conversion(crate::kernel::c_cast(
             crate::kernel::c_add(
                 crate::kernel::c_add(
                     crate::kernel::c_add(
@@ -6552,7 +6552,7 @@ fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
                 crate::kernel::c_uint64_literal(8),
             ),
             crate::kernel::CType::Int32,
-        )
+        ))
     );
 }
 

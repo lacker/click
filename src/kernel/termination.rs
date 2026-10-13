@@ -1,4 +1,5 @@
 use super::prelude::*;
+use super::spec::walk::{SpecNode, Visit, WalkBudget, Walked, walk_spec};
 use std::sync::Arc;
 
 /// Charges `units` of termination work to the ambient deterministic-work
@@ -1328,14 +1329,15 @@ fn reject_address_escaped_ranking_component(
             let mut reads = MeasureReads::default();
             (
                 source,
-                collect_spec_expression_c_variables(expression, &mut reads).map(|()| reads),
+                collect_spec_c_variables(SpecNode::Expression(expression), &mut reads)
+                    .map(|()| reads),
             )
         }
         CRankingComponent::PureInteger { source, expression } => {
             let mut reads = MeasureReads::default();
             (
                 source,
-                collect_spec_integer_expression_c_variables(expression, &mut reads).map(|()| reads),
+                collect_spec_c_variables(SpecNode::Integer(expression), &mut reads).map(|()| reads),
             )
         }
     };
@@ -1364,170 +1366,97 @@ fn reject_address_escaped_ranking_component(
 /// The form a measure collection does not read, named for the refusal.
 type UncollectedForm = &'static str;
 
-fn collect_pure_function_arguments(
-    arguments: &[SpecPureFunctionArgument],
-    reads: &mut MeasureReads,
-) -> Result<(), UncollectedForm> {
-    for argument in arguments {
-        match argument {
-            SpecPureFunctionArgument::Value(value) => {
-                collect_spec_expression_c_variables(value, reads)?
-            }
-            SpecPureFunctionArgument::ArrayRef { pointer, .. } => {
-                reads.memory = true;
-                collect_spec_expression_c_variables(pointer, reads)?
-            }
-            SpecPureFunctionArgument::Integer(value) => {
-                collect_spec_integer_expression_c_variables(value, reads)?
-            }
-            SpecPureFunctionArgument::Algebraic(value) => {
-                collect_spec_algebraic_expression_c_variables(value, reads)?
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The same collection for a lowered algebraic specification expression.
+/// Collects the C locals one lowered specification subtree reads, or names
+/// the first form it contains that this collection does not cover.
 ///
-/// A resource field in this carrier is a binder's model, which is what marks
+/// Every machine, Integer and algebraic form is listed, so a new form is
+/// refused until it is reviewed here. A kernel `IntegerTerm` or a C value
+/// names no source local: a local a measure reads reaches the Integer carrier
+/// through `FromMachine`, or as a pure application's machine argument, and
+/// both are walked. A resource field reads the binder's instance, not a C
+/// local; in the algebraic carrier it is a binder's model, which is what marks
 /// the component a model measure. An algebraic variable or a match binding is
 /// a pure value, not a C local.
-fn collect_spec_algebraic_expression_c_variables(
-    expression: &SpecAlgebraicExpression,
-    reads: &mut MeasureReads,
-) -> Result<(), UncollectedForm> {
-    charge_termination_work(1);
-    match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => {
-            Ok(())
-        }
-        SpecAlgebraicExpressionNode::ResourceField(_) => {
-            reads.model = true;
-            Ok(())
-        }
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            for field in fields {
-                match field {
-                    SpecAlgebraicValue::C(value) => {
-                        collect_spec_expression_c_variables(value, reads)?
-                    }
-                    SpecAlgebraicValue::Integer(value) => {
-                        collect_spec_integer_expression_c_variables(value, reads)?
-                    }
-                    SpecAlgebraicValue::Algebraic(value) => {
-                        collect_spec_algebraic_expression_c_variables(value, reads)?
-                    }
-                }
-            }
-            Ok(())
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            collect_spec_algebraic_expression_c_variables(scrutinee, reads)?;
-            for arm in arms {
-                collect_spec_algebraic_expression_c_variables(&arm.body, reads)?;
-            }
-            Ok(())
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-            collect_pure_function_arguments(arguments, reads)
-        }
-    }
-}
-
-/// The same collection for a lowered Integer specification expression.
-///
-/// A kernel `IntegerTerm` names no source local: a local a measure reads
-/// reaches the Integer carrier through `FromMachine`, or as a pure
-/// application's machine argument, and both are walked here. That is why
-/// `Term` contributes no name rather than refusing, exactly as
-/// `SpecExpression::Value` does in the machine carrier.
-fn collect_spec_integer_expression_c_variables(
-    expression: &SpecIntegerExpression,
-    reads: &mut MeasureReads,
-) -> Result<(), UncollectedForm> {
-    charge_termination_work(1);
-    match expression {
-        SpecIntegerExpression::Term(_) => Ok(()),
-        // A resource field reads the binder's instance, not a C local.
-        SpecIntegerExpression::ResourceField(_) => Ok(()),
-        SpecIntegerExpression::FromMachine(value) => {
-            collect_spec_expression_c_variables(value, reads)
-        }
-        SpecIntegerExpression::Negate(inner) => {
-            collect_spec_integer_expression_c_variables(inner, reads)
-        }
-        crate::kernel::binary_spec_integer_expression!(left, right) => {
-            collect_spec_integer_expression_c_variables(left, reads)?;
-            collect_spec_integer_expression_c_variables(right, reads)
-        }
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-            collect_pure_function_arguments(arguments, reads)
-        }
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_spec_algebraic_expression_c_variables(scrutinee, reads)?;
-            for arm in arms {
-                collect_spec_integer_expression_c_variables(&arm.body, reads)?;
-            }
-            Ok(())
-        }
-        SpecIntegerExpression::RangeFold { .. } => Err("a range fold"),
-    }
-}
-
-/// Collects the C locals one lowered specification expression reads, or
-/// names the form it contains that this collection does not cover.
 ///
 /// Work is linear in the expression, which is the declared component; nothing
 /// ambient is scanned.
-fn collect_spec_expression_c_variables(
-    expression: &SpecExpression,
+fn collect_spec_c_variables(
+    root: SpecNode<'_>,
     reads: &mut MeasureReads,
 ) -> Result<(), UncollectedForm> {
-    charge_termination_work(1);
-    match expression {
-        SpecExpression::Value(_) => Ok(()),
-        SpecExpression::CExpression(expression) => {
-            collect_c_expression_variables(expression, &mut reads.variables);
-            Ok(())
-        }
-        crate::kernel::binary_spec_expression!(left, right)
-        | SpecExpression::PointerOffset {
-            pointer: left,
-            elements: right,
-            ..
-        } => {
-            collect_spec_expression_c_variables(left, reads)?;
-            collect_spec_expression_c_variables(right, reads)
-        }
-        SpecExpression::BitwiseNot(value) | SpecExpression::Cast(value, _) => {
-            collect_spec_expression_c_variables(value, reads)
-        }
-        SpecExpression::MemoryLoad { pointer, .. } => {
-            reads.memory = true;
-            collect_spec_expression_c_variables(pointer, reads)
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            collect_pure_function_arguments(arguments, reads)
-        }
-        SpecExpression::IntegerToMachine { value, .. } => {
-            collect_spec_integer_expression_c_variables(value, reads)
-        }
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_spec_algebraic_expression_c_variables(scrutinee, reads)?;
-            for arm in arms {
-                collect_spec_expression_c_variables(&arm.body, reads)?;
+    let walked = walk_spec(root, WalkBudget::Unmetered, |node| {
+        match node {
+            SpecNode::Expression(expression) => {
+                charge_termination_work(1);
+                match expression {
+                    SpecExpression::CExpression(expression) => {
+                        collect_c_expression_variables(expression, &mut reads.variables);
+                    }
+                    SpecExpression::MemoryLoad { .. } => reads.memory = true,
+                    SpecExpression::Value(_)
+                    | SpecExpression::ResourceField { .. }
+                    | crate::kernel::binary_spec_expression!(_, _)
+                    | SpecExpression::PointerOffset { .. }
+                    | SpecExpression::BitwiseNot(_)
+                    | SpecExpression::Cast(_, _)
+                    | SpecExpression::PureFunctionApplication { .. }
+                    | SpecExpression::IntegerToMachine { .. }
+                    | SpecExpression::AlgebraicMatch { .. } => {}
+                    SpecExpression::CountedResourceCount { .. } => {
+                        return Visit::Stop("a counted-resource count");
+                    }
+                    SpecExpression::If { .. } => {
+                        return Visit::Stop("a conditional `if` expression");
+                    }
+                    SpecExpression::RangeFold { .. } => return Visit::Stop("a range fold"),
+                    SpecExpression::Let { .. } => return Visit::Stop("a `let` expression"),
+                    SpecExpression::LoopEntrySnapshot(_) => {
+                        return Visit::Stop("a loop-entry snapshot");
+                    }
+                    SpecExpression::AggregateFieldValue { .. } => {
+                        return Visit::Stop("a by-value aggregate field");
+                    }
+                }
             }
-            Ok(())
+            SpecNode::Integer(integer) => {
+                charge_termination_work(1);
+                match integer {
+                    SpecIntegerExpression::Term(_)
+                    | SpecIntegerExpression::ResourceField(_)
+                    | SpecIntegerExpression::FromMachine(_)
+                    | SpecIntegerExpression::Negate(_)
+                    | crate::kernel::binary_spec_integer_expression!(_, _)
+                    | SpecIntegerExpression::PureFunctionApplication { .. }
+                    | SpecIntegerExpression::AlgebraicMatch { .. } => {}
+                    SpecIntegerExpression::RangeFold { .. } => return Visit::Stop("a range fold"),
+                }
+            }
+            SpecNode::Algebraic(algebraic) => {
+                charge_termination_work(1);
+                match &algebraic.node {
+                    SpecAlgebraicExpressionNode::ResourceField(_) => reads.model = true,
+                    SpecAlgebraicExpressionNode::Variable(_)
+                    | SpecAlgebraicExpressionNode::Binding(_)
+                    | SpecAlgebraicExpressionNode::Constructor { .. }
+                    | SpecAlgebraicExpressionNode::Match { .. }
+                    | SpecAlgebraicExpressionNode::PureFunctionApplication { .. } => {}
+                }
+            }
+            SpecNode::Argument(SpecPureFunctionArgument::ArrayRef { .. }) => reads.memory = true,
+            // Only a refused `if` reaches a proposition, and through it a
+            // sequence or a resource.
+            SpecNode::Argument(_)
+            | SpecNode::AlgebraicValue(_)
+            | SpecNode::Proposition(_)
+            | SpecNode::PredicateArgument(_)
+            | SpecNode::Sequence(_)
+            | SpecNode::Resource(_) => {}
         }
-        // A resource field reads the binder's instance, not a C local.
-        SpecExpression::ResourceField { .. } => Ok(()),
-        SpecExpression::CountedResourceCount { .. } => Err("a counted-resource count"),
-        SpecExpression::If { .. } => Err("a conditional `if` expression"),
-        SpecExpression::RangeFold { .. } => Err("a range fold"),
-        SpecExpression::Let { .. } => Err("a `let` expression"),
-        SpecExpression::LoopEntrySnapshot(_) => Err("a loop-entry snapshot"),
-        SpecExpression::AggregateFieldValue { .. } => Err("a by-value aggregate field"),
+        Visit::Descend
+    });
+    match walked {
+        Walked::Stopped(form) => Err(form),
+        Walked::Completed | Walked::OutOfTime => Ok(()),
     }
 }
 
@@ -7543,3 +7472,6 @@ mod checked_callee_certification_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod spec_walk_oracle_tests;

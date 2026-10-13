@@ -1,5 +1,8 @@
 # Resource arguments and mutex associations
 
+This design record covers how mutex contracts name the resources they protect
+by passing resource types as arguments.
+
 Status: resource types are accepted as mutex-use arguments. The earlier
 angle-bracket proposal is withdrawn; its syntax was never accepted by the parser.
 Acquiring and releasing helpers use these types with existing

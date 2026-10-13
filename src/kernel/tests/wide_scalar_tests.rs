@@ -379,10 +379,13 @@ fn wide_cast_runtime_preserves_modulo_policy_and_operand_definedness() {
         evaluated(c_cast(c_int128_literal(-1), CType::UInt64)),
         evaluated(c_uint64_literal(u64::MAX))
     );
-    assert!(matches!(
-        evaluated(c_cast(c_uint128_literal(u128::MAX), CType::Int64)),
-        CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-    ));
+    assert!(
+        prove_c_expression_evaluation(
+            CState::new(),
+            c_cast(c_uint128_literal(u128::MAX), CType::Int64),
+        )
+        .is_none()
+    );
     assert!(matches!(
         evaluated(c_integer_cast_modulo(
             c_divide(c_int64_literal(1), c_int64_literal(0)),
@@ -400,7 +403,29 @@ fn wide_cast_runtime_preserves_modulo_policy_and_operand_definedness() {
 }
 
 #[test]
-fn wide_cast_ordinary_signed_narrowing_keeps_both_range_obligations() {
+fn wide_cast_specification_signed_narrowing_keeps_both_range_obligations() {
+    let mut none = Vec::new();
+    assert!(
+        crate::kernel::eval::coerce_c_value_to_type(
+            CValue::Int128(Bitvector32Term::Variable(Variable(149_005))),
+            CType::Int64,
+            &mut none,
+            &PureFactContext::new(),
+        )
+        .is_some()
+            && none.is_empty()
+    );
+    // A specification's conversion owes the range; C's owes nothing.
+    let coerce_c_value_to_type =
+        |value, target, obligations: &mut Vec<ProofObligation>, assumptions: &PureFactContext| {
+            crate::kernel::eval::coerce_c_value_to_type_as(
+                value,
+                target,
+                crate::kernel::eval::IntegerConversion::Checked,
+                obligations,
+                assumptions,
+            )
+        };
     let value = CValue::Int128(Bitvector32Term::Variable(Variable(149_005)));
     let mut obligations = Vec::new();
     let result = coerce_c_value_to_type(
@@ -564,8 +589,30 @@ fn wide_cast_canonicalization_keeps_source_load_width_and_memory_dependencies() 
 }
 
 #[test]
-fn uint64_to_int64_ordinary_cast_requires_exact_representable_range() {
+fn uint64_to_int64_specification_cast_requires_exact_representable_range() {
     let bits = Bitvector32Term::Variable(Variable(149_100));
+    let mut none = Vec::new();
+    assert_eq!(
+        crate::kernel::eval::coerce_c_value_to_type(
+            CValue::UInt64(bits.clone()),
+            CType::Int64,
+            &mut none,
+            &PureFactContext::new(),
+        ),
+        Some(CValue::Int64(bits.clone()))
+    );
+    assert!(none.is_empty());
+    // A specification's conversion owes the range; C's owes nothing.
+    let coerce_c_value_to_type =
+        |value, target, obligations: &mut Vec<ProofObligation>, assumptions: &PureFactContext| {
+            crate::kernel::eval::coerce_c_value_to_type_as(
+                value,
+                target,
+                crate::kernel::eval::IntegerConversion::Checked,
+                obligations,
+                assumptions,
+            )
+        };
     let bound = Proposition::ConditionIs(
         ConditionTerm::uint64_less_equal(
             bits.clone(),
@@ -623,10 +670,14 @@ fn uint64_to_int64_ordinary_cast_requires_exact_representable_range() {
         );
     }
     for value in [(i64::MAX as u64) + 1, u64::MAX] {
-        assert!(matches!(
-            evaluated(c_cast(c_uint64_literal(value), CType::Int64)),
-            CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-        ));
+        assert!(
+            prove_c_expression_evaluation(
+                CState::new(),
+                c_cast(c_uint64_literal(value), CType::Int64),
+            )
+            .is_none(),
+            "an out-of-range checked cast cannot discharge its range obligation"
+        );
         assert_eq!(
             evaluated(c_integer_cast_modulo(c_uint64_literal(value), CType::Int64)),
             evaluated(c_int64_literal(value as i64))

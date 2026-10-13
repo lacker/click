@@ -3983,10 +3983,14 @@ fn fold_composite_resources_on_outcome_with_facts(
                     CFunctionOutcome::Return { state, .. } => state.resources().facts(),
                     _ => pre_state.resources().facts(),
                 };
-                let required_text = describe_pure_fact(&required, parameter_binding);
+                let required_text =
+                    crate::surface::diagnostics::pure_fact_shape(&required, parameter_binding);
                 let identically_printed = available_pure_facts
                     .iter()
-                    .filter(|fact| describe_pure_fact(fact, parameter_binding) == required_text)
+                    .filter(|fact| {
+                        crate::surface::diagnostics::pure_fact_shape(fact, parameter_binding)
+                            == required_text
+                    })
                     .count();
                 let snapshot_note = if identically_printed > 0 {
                     format!(

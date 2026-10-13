@@ -28,7 +28,7 @@ The only copy primitive is `memcpy` as declared in the embedded standard
 library (`stdlib/prelude.click`):
 
 ```text
-extern uint8* memcpy(uint8 destination[], uint8 source[], uint64 bytes) {
+extern uint8* memcpy(uint8 destination[], const uint8 source[], uint64 bytes) {
     requires viewable(source[0..bytes]);
     owns destination[0..bytes];
     requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));

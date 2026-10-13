@@ -6,7 +6,7 @@ use click::cli::{
     CInput, MdTestExpectation, prepare_mdtest_inputs, read_c_inputs_for_project,
     read_click_project, read_mdtest, read_mdtest_project_if_needed, source_refs,
 };
-use click::instrumentation::{self, ArtifactReuseRejection};
+use click::instrumentation::{self, ArtifactReuseRejection, HiddenPrerequisiteRoute};
 use click::surface::{
     c0_tactic_source_position, project_tactic_source_position, verify_c0_project,
     verify_c0_sources, verify_program_prepared_project,
@@ -36,6 +36,20 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// whole unfiltered corpus, by reason. A count may only fall; lower its pin
 /// when it does.
 const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[];
+
+/// The hidden prerequisite ratchet (`docs/internals/testing.md`): count the
+/// prerequisites simple statement checking derived by a search the proof does
+/// not retain, over the whole unfiltered corpus, by route and top rule. A
+/// count may only fall; `issues/simplify-step.md` drives it to zero.
+const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] = &[
+    ((HiddenPrerequisiteRoute::StepObligation, "And"), 22),
+    (
+        (HiddenPrerequisiteRoute::StepObligation, "ContextualAtomic"),
+        12,
+    ),
+    ((HiddenPrerequisiteRoute::StepObligation, "FiniteForAll"), 1),
+    ((HiddenPrerequisiteRoute::StepObligation, "Implies"), 12),
+];
 
 #[test]
 fn mdtests() {
@@ -122,6 +136,7 @@ fn mdtests() {
     } else {
         false
     };
+    let filtered_by_name = filtered;
     let filtered = filtered || partitioned;
 
     assert!(
@@ -136,10 +151,12 @@ fn mdtests() {
     // memory stays small: on 2026-09-11 the whole corpus peaked at 171 MB
     // serially and 291 MB on 8 workers.
     let _ = instrumentation::take_artifact_reuse_rejection_census();
+    let _ = instrumentation::take_hidden_prerequisite_census();
     let _ = instrumentation::take_backwards_memory_derivation_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = limits::run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
     let census = instrumentation::take_artifact_reuse_rejection_census();
+    let hidden_prerequisites = instrumentation::take_hidden_prerequisite_census();
     // Which producers still end a step on a snapshot older than itself, so
     // that the step is recorded on no history. A knowledge-losing forget
     // cannot: its mark makes the result a node no earlier snapshot can be
@@ -159,6 +176,16 @@ fn mdtests() {
             )
         {
             panic!("artifact reuse rejection ratchet (tests/mdtests.rs baselines):\n{mismatch}");
+        }
+        if !filtered_by_name
+            && std::env::var_os(RUN_QUARANTINED).is_none()
+            && let Some(mismatch) = instrumentation::hidden_prerequisite_census_mismatch(
+                &hidden_prerequisites,
+                HIDDEN_PREREQUISITE_BASELINE,
+                partitioned,
+            )
+        {
+            panic!("hidden prerequisite ratchet (tests/mdtests.rs baselines):\n{mismatch}");
         }
         return;
     }

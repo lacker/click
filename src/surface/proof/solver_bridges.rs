@@ -110,6 +110,36 @@ enum Establish {
     },
 }
 
+thread_local! {
+    // A bridge may ask for this operation's definedness or no-wrap bound.
+    // Proving that prerequisite can find the same operation among connected
+    // machine facts. Re-entering its bridge cannot establish new evidence.
+    static ACTIVE_OPERATION_BRIDGES: std::cell::RefCell<Vec<ContractExpression>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+struct OperationBridgeScope;
+
+impl OperationBridgeScope {
+    fn enter(operation: &ContractExpression) -> Option<Self> {
+        ACTIVE_OPERATION_BRIDGES.with(|active| {
+            let mut active = active.borrow_mut();
+            if active.contains(operation) {
+                return None;
+            }
+            active.push(operation.clone());
+            Some(Self)
+        })
+    }
+}
+
+impl Drop for OperationBridgeScope {
+    fn drop(&mut self) {
+        ACTIVE_OPERATION_BRIDGES.with(|active| {
+            active.borrow_mut().pop();
+        });
+    }
+}
+
 impl Carried {
     fn establish<'a>(&self, proof: &Proof<'a>) -> Result<Option<Proof<'a>>, ClickError> {
         match &self.establish {
@@ -142,15 +172,6 @@ impl Carried {
                         return Ok(Some(next));
                     }
                 }
-                // Not yet known to be defined: prove it, then observe.
-                if let Some(next) = proof.prove_stated_fact(&defined)? {
-                    for width in ["int32", "int64"] {
-                        let name = format!("{width}_{stem}_to_integer");
-                        if let Some(observed) = observe(&next, name, &defined) {
-                            return Ok(Some(observed));
-                        }
-                    }
-                }
                 // An unsigned operation that does not wrap.
                 let guard = if *subtract {
                     relate(to_integer(right), to_integer(left), Relation::LessEqual)
@@ -164,6 +185,21 @@ impl Carried {
                         Relation::LessEqual,
                     )
                 };
+                if let Some(next) = observe(proof, format!("uint64_{stem}_to_integer"), &guard) {
+                    return Ok(Some(next));
+                }
+                let Some(_operation_scope) = OperationBridgeScope::enter(operation) else {
+                    return Ok(None);
+                };
+                // Not yet known to be defined: prove it, then observe.
+                if let Some(next) = proof.prove_stated_fact(&defined)? {
+                    for width in ["int32", "int64"] {
+                        let name = format!("{width}_{stem}_to_integer");
+                        if let Some(observed) = observe(&next, name, &defined) {
+                            return Ok(Some(observed));
+                        }
+                    }
+                }
                 let Some(next) = proof.prove_stated_fact(&guard)? else {
                     return Ok(None);
                 };

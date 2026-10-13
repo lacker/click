@@ -179,6 +179,9 @@ pub(super) struct RangeSupports {
     bases: Suppliers,
     owned_bases: Suppliers,
     read_starts: Suppliers,
+    // Split owned ranges can share a base while having distinct symbolic starts.
+    // Selection at that exact start still leaves quantity and coverage to the checker.
+    owned_starts: Suppliers,
     nonempty_objects: Suppliers,
     symbolic_objects: Suppliers,
     object_classes: PersistentMap<Pointer, u64>,
@@ -247,6 +250,9 @@ impl RangeSupports {
             let start = range.start_pointer();
             if let Some(class) = graph.address_class(&start) {
                 self.read_starts.update(entry, insert, class, graph);
+                if fact.is_own() {
+                    self.owned_starts.update(entry, insert, class, graph);
+                }
             }
         }
         if Self::symbolic(range)
@@ -305,6 +311,9 @@ impl RangeSupports {
         };
         suppliers.classes.get(&class).cloned()
     }
+    pub(super) fn sole_owned_start(&self, class: u64) -> Option<ResourceEntryId> {
+        self.owned_starts.sole(class)
+    }
     pub(super) fn sole_base(&self, class: u64, owned: bool) -> Option<ResourceEntryId> {
         if owned {
             self.owned_bases.sole(class)
@@ -330,6 +339,7 @@ impl RangeSupports {
         self.nonempty_objects.merge(moved, kept);
         self.symbolic_objects.merge(moved, kept);
         self.read_starts.merge(moved, kept);
+        self.owned_starts.merge(moved, kept);
         self.bases.merge(moved, kept);
         self.owned_bases.merge(moved, kept);
         self.footprints.merge(moved, kept);

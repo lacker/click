@@ -2435,3 +2435,63 @@ fn typed_read_congruence_publishes_late_ownership_class_updates() {
     assert!(!resources.permits_memory_read(&y.offset_by_bytes(30), 4, &joined));
     assert!(!resources.permits_memory_read(&y.offset_by_bytes(8), 4, &empty));
 }
+
+#[test]
+fn symbolic_owned_suffix_start_checks_bounds_and_retained_authority() {
+    let base = Pointer::symbolic(Variable(989_000));
+    let split = Bitvector32Term::Variable(Variable(989_001));
+    let empty = PureFactContext::new();
+    let facts = empty.clone().assume_condition(
+        ConditionTerm::uint64_less_than(split.clone(), Bitvector32Term::UInt64Constant(32)),
+        true,
+    );
+    let prefix = CMemoryRange::new_wide(
+        base.clone(),
+        Bitvector32Term::UInt64Constant(0),
+        split.clone(),
+        1,
+    );
+    let suffix = CMemoryRange::new_wide(
+        base.clone(),
+        split.clone(),
+        Bitvector32Term::UInt64Constant(32),
+        1,
+    );
+    let owner = CResourceFact::own_memory(suffix.clone());
+    let resources = ResourceContext::new_with_equalities(&empty)
+        .unchecked_with_fact(CResourceFact::own_memory(prefix))
+        .unchecked_with_fact(CResourceFact::view_memory(suffix.clone()))
+        .unchecked_with_fact(owner.clone());
+    resources.synchronize_memory_equalities(&empty);
+    let query = suffix.start_pointer();
+    assert_eq!(
+        resources.memory_write_range(&query, 1, &facts),
+        Some(&suffix)
+    );
+    assert!(resources.memory_write_range(&query, 1, &empty).is_none());
+    assert!(resources.memory_write_range(&query, 2, &facts).is_none());
+    assert!(
+        resources
+            .memory_write_range(
+                &CMemoryRange::new_wide(
+                    base,
+                    Bitvector32Term::UInt64Constant(32),
+                    Bitvector32Term::UInt64Constant(33),
+                    1
+                )
+                .start_pointer(),
+                1,
+                &facts
+            )
+            .is_none()
+    );
+    let removed = resources
+        .clone()
+        .without_exact_representation(&owner)
+        .unwrap();
+    assert!(removed.memory_write_range(&query, 1, &facts).is_none());
+    assert_eq!(
+        resources.memory_write_range(&query, 1, &facts),
+        Some(&suffix)
+    );
+}

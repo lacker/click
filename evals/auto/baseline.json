@@ -1,0 +1,3158 @@
+{
+ "examples/arena/arena_cells.click::at(a2, arena->occupied[k]) == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::at(f2, arena->occupied[k]) == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::at(m3, first->arena->data) == at(m3, second->arena->data)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::at(m3, s0.live) == 2::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::combined->arena->data[r3.start + 3] == value::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::combined->end == at(z3, combined->end)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::first->end == at(f3, r1.end)::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::k < arena->capacity::4": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::k < m::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::not (result == 0)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::r1.end <= s0.capacity::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::r1.end == at(m4, r1.end)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::r2.start == at(z2, second->start)::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::result == 0 or result == 1::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::result == 0::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::result == 1 implies region->end == region->start + count::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::run.lo + run_length == i::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::s0.live == at(m4, s0.live)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/arena/arena_cells.click::second->arena->occupied[k] == at(w2, second->arena->occupied[k])::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/arena/arena_cells.click::st.live == old(st.live) + result::3": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::child_value == node->left[0]::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::child_value == node->right[0]::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::made == value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::node->left != 0 implies result == 0::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left != 0 implies result == 0::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right != 0 implies result == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right == 0 implies result == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right == 0 implies result == 1::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::node->left == left::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::node->right == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::node->right == right::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::observed == node->value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::result == ((node->value + node->left->value) + node->right->value)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::result == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->left == 0::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->right == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->right == 0::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::result == node->value::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/binary-tree/binary_tree.click::swapped == node->value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/bounded-pool/bounded_pool.click::0 <= to_integer(count(pool_slot(pool)))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::0 <= to_integer(count(pool_slot(source)))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::1 <= pool->checked_out::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::1 <= source->checked_out::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::count(pool_slot(pool)) == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(destination, _)) + 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(destination, _)) + 1)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(pool, _)) + 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(pool, _)) + 1)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_slot(pool)) + 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_slot(source)) + 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(pool->checked_out + count(pool_slot(pool)))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(pool->checked_out + count(pool_slot(pool)))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(pool->checked_out + count(pool_slot(pool)))::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::pool->capacity == count(pool_slot(pool)) + pool->checked_out::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::pool->capacity == pool->checked_out + count(pool_slot(pool))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/bounded-pool/bounded_pool.click::to_integer(destination->checked_out) + 1 >= -2147483648::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::to_integer(pool->capacity) == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool)))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::to_integer(pool->checked_out) + 1 >= -2147483648::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::to_integer(source->capacity) == to_integer(source->checked_out) + to_integer(count(pool_slot(source)))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/byte-representation/byte_representation.click::copied == -1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/concurrency-fork-join/fork_join.click::0 <= 0 - at(iteration, index) + job->end - 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/concurrency-fork-join/fork_join.click::0 <= at(iteration, index)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/concurrency-fork-join/fork_join.click::0 <= job->end::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/concurrency-fork-join/fork_join.click::job->begin <= index and index <= job->end::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/concurrency-fork-join/fork_join.click::k <= at(iteration, index)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/concurrency-fork-join/fork_join.click::k == index::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/detachable-buffer/detachable_buffer.click::data[0] == replacement::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/detachable-buffer/detachable_buffer.click::owner->data == data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/detachable-buffer/detachable_buffer.click::owner->len == length::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/detachable-buffer/detachable_buffer.click::result == replacement::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::0 < right->len::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/input-cursor/input_cursor.click::0 <= owner->pos::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::at(statement(5).entry, left->pos) == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::left->data == data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::left->data == data::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::left->pos < left->len::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/input-cursor/input_cursor.click::left->pos == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::left->pos == at(statement(5).entry, left->pos) + 1::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::owner->pos <= owner->len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->data == data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->data == data::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->data == data::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->data[right->pos] == data[0]::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/input-cursor/input_cursor.click::right->pos < right->len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->pos < right->len::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->pos == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right->pos == 0::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right_value == right->data[right->pos]::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::right_value == right->data[right->pos]::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/input-cursor/input_cursor.click::separate(memory(*right), memory(left->data[0..left->len]))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_left(sub.model) == HeapTree::Empty::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Empty, target) == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Node(node, value, left, right), target) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Node(node, value, left, right), target) == 1::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Node(node, value, left, right), target) == 1::2": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(l.model, target) != 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(left_model, target) == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(left_model, target) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(right, target) != 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_right(sub.model) == HeapTree::Empty::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_right(t.model) == right_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::not(node == target)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::plug(ctx.model, sub.model) == old(t.model)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::plug(ctx.model, sub.model) == old(t.model)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::plug(ctx.model, t.model) == old(t.model)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(old(t.model), target)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(old(t.model), target)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(old(t.model), target)::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(right_model, target)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::right_model != HeapTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->first_len::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->first_len::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->second_len::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->second_len::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 <= owner->second_len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::1 <= owner->first_len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::1 <= owner->second_len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::1 <= owner->second_len::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::first_data[0] == first_value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::ignored == first_len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::4": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_len == first_len::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->second_data == old(owner->first_data)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->second_data == second_data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::result == first_value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::second_data[0] == second_value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::1 < length::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::1 < owner->split::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::at(statement(5).entry, owner->split) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::c(result) == data[1]::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::data[1] == right_value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::data[1] == right_value::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->data == data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->data == data::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->len == length::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->len == length::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->len == owner->len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->split < owner->len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->split == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->split == 2::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->split == 2::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::owner->split == owner->split::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::(let data = old(owner->data); old(owner->data)[0]) == (let data = old(owner->data); old(old(owner->data)[0]))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::(let data = old(owner->data); old(owner->data)[0]) == (let data = old(owner->data); old(old(owner->data)[0]))::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::(owner->len - 1) < owner->len::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-string/owned_string.click::0 < owner->len::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::0 <= at(statement(4).entry, index)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::0 == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::at(statement(4).entry, owner->cap) == old(owner->cap)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::observed == first::1": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->cap == capacity::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->data[at(statement(3).entry, owner->len)] == first::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->data[owner->len] == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->len < owner->cap::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->len == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->len == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::result == at(statement(6).entry, observed)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::result == first::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::result == old(owner->data[(owner->len - 1)])::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::result == value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::terminated_at(owner->data, owner->len)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-string/owned_string.click::terminated_at(owner->data, owner->len)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::1 <= owner->cap::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::i == length::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::i >= 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::index < (index + 1)::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::not old(owner->len) < old(owner->cap)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::not replace != 0 implies selected == original::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::not replace != 0 implies selected == original::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::not replace != 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->cap < 2147483647::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::owner->cap == capacity::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->cap == old(owner->cap)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->data == old(owner->data)::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->data[0] == replacement::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->len <= owner->cap::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->len <= owner->cap::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->len == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->len == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->len == 1::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::owner->len == old(owner->len)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::result == owner->data[index]::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/perpetual-service/perpetual_service.click::owner->cell == old(owner->cell)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/perpetual-service/perpetual_service.click::owner->cell == old(owner->cell)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::ctx_consistent(deficit.model, RbTree::Empty, 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::ctx_node_is(deficit.model, rebalance) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::ctx_rb(deficit.model, Nat::Succ(Nat::Zero), Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::ctx_rb(deficit.model, Nat::Succ(black_height(RbTree::Empty)), Color::Black) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::deficit.model != Context::Top::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::deficit.model == old(up.model)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::erase_leaf_result(old(up.model), rb_color(old(tree.model))) == erase_flips_red_all_result(deficit.model, RbTree::Empty)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::erase_leaf_result(old(up.model), rb_color(old(tree.model))) == plug(deficit.model, RbTree::Empty)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::is_rb_root(plug(deficit.model, RbTree::Empty)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::is_rb_root(whole.model) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), RbTree::Empty))::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), RbTree::Empty))::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::rb_tree_parent_consistent(plug(deficit.model, hole.model)) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::rb_tree_parent_consistent(whole.model) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::rebalance == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::whole.model == erase_leaf_result(old(up.model), rb_color(old(tree.model)))::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::whole.model == erase_leaf_result(old(up.model), rb_color(old(tree.model)))::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-augmented/rbtree_erase_leaf.click::whole.model == plug(old(up.model), RbTree::Empty)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::ctx_node_is(Context::Left(identity, grandparent, color, sibling_model, outer_model), parent) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::ctx_node_is(Context::Left(identity, grandparent, color, sibling_model, outer_model), parent) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::ctx_node_is(Context::Right(identity, grandparent, color, sibling_model, outer_model), parent) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::ctx_node_is(Context::Right(identity, grandparent, color, sibling_model, outer_model), parent) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::ctx_node_is(Context::Top, parent) != 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::ctx_node_is(Context::Top, parent) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::identity->rb_left == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::old != 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::old != 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::old == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::parent == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::parent == identity::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::parent == identity::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::parent->rb_left != old::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_change_child.click::parent->rb_left == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase.click::(node->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::color == Color::Black::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::is_rb_root(remaining.model) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::is_rb_root(remaining.model) == 1::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::left_model == RbTree::Empty or right_model == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::node->__rb_parent_color == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase.click::node->rb_left != 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase.click::node->rb_left == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase.click::node->rb_right == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase.click::rb_erase_root_child(old(tree.model)) == left_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::rb_inorder(remaining.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::rb_inorder(remaining.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::rb_inorder(remaining.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::2": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::rb_left(tree.model) == left_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::rb_parent_is(RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::remaining.model == rb_reparent(rb_recolor(rb_erase_root_child(old(tree.model)), Color::Black), 0)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::remaining.model == rb_reparent(rb_recolor(rb_erase_root_child(old(tree.model)), Color::Black), 0)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::remaining.model == rb_reparent(rb_recolor(rb_erase_root_child(old(tree.model)), Color::Black), 0)::2": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase.click::separate(memory(*augment), memory(node->rb_left->__rb_parent_color))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase.click::separate(memory(*augment), memory(node->rb_right->__rb_parent_color))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::(node->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::color == Color::Black::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_consistent(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Empty, 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Empty, 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_consistent(up.model, RbTree::Node(id, parent, color, left, right), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_node_is(remaining.model, pid) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_node_is(remaining.model, pid) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_node_is(remaining.model, pid) == 1::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_node_is(remaining.model, result) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_node_is(remaining.model, result) == 1::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_node_is(remaining.model, result) == 1::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_rb(Context::Left(pid, gp, pc, sibling_model, above_model), Nat::Succ(Nat::Zero), Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::ctx_rb(Context::Right(pid, gp, pc, sibling_model, above_model), Nat::Succ(Nat::Zero), Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::left == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::result == pid::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::result == pid::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::result == pid::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_leaf.click::right == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::RbTree::Node(mid, mp, mc, RbTree::Empty, mr) != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::above.model == ctx_reroot(above.model, mid)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::context.model == ctx_concat(erase_context(old(c.model)), erase_anchor_context(anchor, old(base.model)))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::ctx_node_is(Context::Top, result) != 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::deficit.model != Context::Top::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::erase_spine_depth(path_tail.model) < erase_spine_depth(old(c.model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::left_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::link_frame.model == mu::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::moved_left.model == rb_reparent(left_model, mid)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::node->rb_left == lid::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::node->rb_left == lid::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::parent->rb_left == at(transplant, parent->rb_left)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::plug(erase_context(EraseSpine::Left(tid, tp, tc, tr, c.model)), tl) == rl::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::plug(erase_context(c.model), t.model) == rl::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::rb_parent_is(sibling_model, parent) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::rl != RbTree::Empty::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::successor == mid::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::successor == mid::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::tmp == mid::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine.click::tmp == parent_model::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::ctx_consistent(deficit.model, RbTree::Empty, 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::ctx_rb(deficit.model, Nat::Succ(black_height(RbTree::Empty)), Color::Black) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::deficit.model == erase_deep_context(old(tree.model), old(up.model))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::plug(deficit.model, RbTree::Empty) == plug(old(up.model), erase_deep_model(old(tree.model)))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::rb_inorder(plug(deficit.model, RbTree::Empty)) == rb_inorder(plug(old(up.model), erase_deep_model(old(tree.model))))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), erase_deep_model(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::whole.model == erase_flips_red_all_result(erase_deep_context(old(tree.model), old(up.model)), RbTree::Empty)::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::(node->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::Context::Top == ctx_reroot(Context::Top, 0)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::color == Color::Black::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::color_bit(Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::ctx_consistent(Context::Top, RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::ctx_consistent(deficit.model, hole.model, 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::ctx_node_is(Context::Top, 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::ctx_node_is(deficit.model, result) == 1::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::ctx_rb(deficit.model, Nat::Succ(Nat::Zero), Color::Black) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::is_rb(RbTree::Node(identity, parent, color, left_model, right_model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::left_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_color(right_model) == Color::Black::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_inorder(plug(deficit.model, hole.model)) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_left(right_model) == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_minimum(right_model) == RbMinimum::Found(sid, Color::Black, RbTree::Empty)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_parent_is(RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_parent_is(RbTree::Node(lid, sid, lc, ll, lr), old(node->rb_right)) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_right(right_model) == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::rb_right(tree.model) == right_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor.click::right_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::ctx_consistent(deficit.model, RbTree::Empty, 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::ctx_rb(deficit.model, Nat::Succ(black_height(RbTree::Empty)), Color::Black) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::deficit.model == rb_successor_context(old(node->rb_right), 0, Color::Black, rb_left(old(tree.model)), rb_right(old(tree.model)), Context::Top)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::rb_inorder(plug(deficit.model, RbTree::Empty)) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::rb_inorder(whole.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::whole.model == erase_flips_red_all_result(rb_successor_context(old(node->rb_right), 0, Color::Black, rb_left(old(tree.model)), rb_right(old(tree.model)), Context::Top), RbTree::Empty)::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::(node->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::color == Color::Black::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::color_bit(Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::is_rb(RbTree::Node(identity, parent, color, left_model, right_model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::is_rb_root(remaining.model) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::left_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::node->__rb_parent_color == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_inorder(remaining.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_left(right_model) == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_left(tree.model) == left_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_parent_consistent(RbTree::Node(identity, parent, color, left_model, right_model), parent) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_parent_consistent(rb_immediate_successor_child(sid, parent, color, left_model, sr), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_parent_is(RbTree::Node(sid, sp, sc, sl, sr), identity) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_right(right_model) != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rb_right(tree.model) == right_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::rebalance == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::remaining.model == rb_immediate_successor_child(sid, parent, color, left_model, sr)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::right_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::sl == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_child_successor.click::sr != RbTree::Empty::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::(parent->__rb_parent_color & 1) == color_bit(Color::Black)::8": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::Nat::Zero == Nat::Succ(height)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::aligned(id, 8)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::aligned(zid, 8)::5": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::at(focus_split, t.model) == t.model::4": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::at(iteration, c.model) == Context::Right(id, above, pc, RbTree::Node(sid, id, Color::Black, srm, slm), um)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::ctx_node_is(Context::Left(zid, sid, Color::Red, RbTree::Node(rid, zid, Color::Black, rrm, rlm), Context::Left(sid, above, Color::Black, srm, um)), zid) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::id->rb_right == node::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::is_rb_root(plug(nc.model, nt.model)) == 1::6": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::near.model == rb_reparent(slm, id)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::parent->__rb_parent_color == address(above) + color_bit(Color::Black)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::rb_root_black(RbTree::Node(node, parent, Color::Black, left, right)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::rb_root_black(sub.model) == 1::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::separate(memory(iid->rb_right), memory(tmp2->__rb_parent_color))::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::sid->__rb_parent_color == (address(iid) | 1)::4": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::sid->rb_left == tmp1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::sid->rb_right == rid::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::sub.model == RbTree::Node(id, above, Color::Black, RbTree::Node(sid, id, Color::Red, srm, slm), at(parent_fold, nt.model))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::tmp1->__rb_parent_color == (address(parent) | 1)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_color_flips_red_all.click::zid->rb_right == sibling->rb_right::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::child == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::ctx_consistent(remaining.model, hole.model, 0) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::ctx_consistent(remaining.model, hole.model, 0) == 1::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::ctx_node_is(Context::Top, parent_model) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::ctx_node_is(deficit.model, rebalance) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::deficit.model == old(up.model)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::erase_leaf_result(old(up.model), rb_color(old(tree.model))) == erase_flips_red_all_result(deficit.model, RbTree::Empty)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::erase_leaf_result(old(up.model), rb_color(old(tree.model))) == erase_flips_red_all_result(remaining.model, RbTree::Empty)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::erase_leaf_result(old(up.model), rb_color(old(tree.model))) == plug(old(up.model), RbTree::Empty)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::is_rb_root(plug(remaining.model, RbTree::Empty)) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::parent == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::parent_model != 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::parent_model == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::parent_model == pid::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), RbTree::Empty))::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::rb_tree_parent_consistent(whole.model) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::remaining.model != Context::Top::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::remaining.model != Context::Top::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::result != 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_leaf_wrapper.click::result == parent_model::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::0 <= ctx_depth(u.model)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::0 <= ctx_depth(u.model)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::cid->__rb_parent_color == (cid->__rb_parent_color & 1)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::color == Color::Black::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::color_bit(Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::ctx_consistent(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Node(id, parent, color, child, empty), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(cid, parent, Color::Black, cl, cr), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(id, parent, color, child, empty), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::ctx_consistent(Context::Top, RbTree::Node(cid, parent, Color::Black, cl, cr), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::ctx_depth(old(c.model)) == ctx_depth(up_model) + 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::ctx_depth(old(c.model)) == ctx_depth(up_model) + 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::is_rb_root(plug(up.model, rb_reparent(rb_recolor(child, Color::Black), parent))) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, old(t.model), sibling_model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), rb_left(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::rb_tree_parent_consistent(plug(u.model, sub.model)) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::replacement.model == rb_erase_one_child_model(old(tree.model))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::replacement.model == rb_erase_one_child_model(old(tree.model))::2": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::replacement.model == rb_erase_one_child_model(old(tree.model))::4": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::whole.model == plug(old(c.model), old(t.model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_left_child.click::whole.model == plug(old(c.model), old(t.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::(sid->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::Context::Right(pid, gp, pc, sibling_model, above_model) == ctx_reroot(Context::Right(pid, gp, pc, sibling_model, above_model), parent)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::Context::Right(pid, gp, pc, sibling_model, above_model) == ctx_reroot(Context::Right(pid, gp, pc, sibling_model, above_model), parent)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_consistent(Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model)), RbTree::Empty, 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_consistent(up.model, RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_node_is(Context::Right(pid, gp, pc, sibling_model, above_model), parent) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_node_is(Context::Right(pid, gp, pc, sibling_model, above_model), parent) == 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_node_is(deficit.model, result) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_node_is(deficit.model, result) == 1::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::ctx_rb(Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model)), Nat::Succ(Nat::Zero), Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::deficit.model == rb_erase_immediate_black_context(old(tree.model), old(up.model))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::left_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::plug(deficit.model, hole.model) == plug(old(up.model), rb_erase_immediate_leaf_model(old(tree.model)))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::plug(rb_successor_context(sid, parent, color, left_model, right_model, Context::Left(pid, gp, pc, sibling_model, above_model)), RbTree::Empty) == plug(Context::Left(pid, gp, pc, sibling_model, above_model), rb_successor_splice(sid, parent, color, left_model, right_model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::rb_left(tree.model) == left_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::rb_parent_is(RbTree::Node(lid, sid, lc, ll, lr), old(node->rb_right)) == 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::rb_right(tree.model) == right_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::rb_successor_context(sid, parent, color, left_model, right_model, Context::Left(pid, gp, pc, sibling_model, above_model)) == Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Left(pid, gp, pc, sibling_model, above_model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor.click::result == sid::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::ctx_consistent(deficit.model, RbTree::Empty, 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::ctx_rb(deficit.model, Nat::Succ(black_height(RbTree::Empty)), Color::Black) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::deficit.model == rb_erase_immediate_black_context(old(tree.model), old(up.model))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::plug(deficit.model, RbTree::Empty) == plug(old(up.model), rb_erase_immediate_leaf_model(old(tree.model)))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::rb_inorder(plug(deficit.model, RbTree::Empty)) == rb_inorder(plug(old(up.model), rb_erase_immediate_leaf_model(old(tree.model))))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), rb_erase_immediate_leaf_model(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_black_successor_wrapper.click::whole.model == erase_flips_red_all_result(rb_erase_immediate_black_context(old(tree.model), old(up.model)), RbTree::Empty)::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::color_bit(Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::ctx_depth(old(c.model)) == ctx_depth(up_model) + 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::ctx_depth(u.model) < ctx_depth(old(c.model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::ctx_depth(u.model) < ctx_depth(old(c.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::is_rb(RbTree::Node(identity, parent, color, left_model, right_model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::is_rb_root(plug(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), RbTree::Node(cid, sid, Color::Black, cl, cr)))) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::plug(Context::Top, old(t.model)) == old(t.model)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_inorder(rb_erase_immediate_child_model(old(tree.model))) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_left(tree.model) == left_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_parent_consistent(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), t.model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_parent_is(RbTree::Node(lid, sid, lc, ll, lr), sid) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_parent_is(RbTree::Node(lid, sid, lc, ll, lr), sid) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_parent_is(RbTree::Node(sid, sp, sc, sl, sr), identity) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rb_tree_parent_consistent(plug(u.model, sub.model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::rebalance == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::replacement.model == rb_erase_immediate_child_model(old(tree.model))::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::replacement.model == rb_immediate_successor_child(sid, parent, color, left_model, sr)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::replacement.model == rb_immediate_successor_child(sid, parent, color, left_model, sr)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_child_successor.click::whole.model == plug(old(c.model), old(t.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::0 <= ctx_depth(u.model)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::ctx_depth(old(c.model)) == ctx_depth(up_model) + 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::ctx_depth(u.model) < ctx_depth(old(c.model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::ctx_depth(u.model) < ctx_depth(old(c.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::is_rb_root(plug(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Node(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), RbTree::Empty))) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::plug(Context::Top, old(t.model)) == old(t.model)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::rb_inorder(replacement.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::rb_parent_is(RbTree::Empty, sid) == 1::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::rb_right(right_model) == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::rb_tree_parent_consistent(plug(remaining.model, replacement.model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::rb_tree_parent_consistent(plug(u.model, sub.model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::rb_tree_parent_consistent(whole.model) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::replacement.model == rb_erase_immediate_leaf_model(old(tree.model))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::replacement.model == rb_erase_immediate_leaf_model(old(tree.model))::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::replacement.model == rb_erase_immediate_leaf_model(old(tree.model))::3": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::replacement.model == rb_successor_splice(sid, parent, color, left_model, right_model)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::whole.model == plug(old(c.model), old(t.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::whole.model == plug(old(c.model), old(t.model))::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_nonroot_successor.click::whole.model == plug(old(up.model), rb_erase_immediate_leaf_model(old(tree.model)))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::(node->__rb_parent_color & 1) == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::color == Color::Red::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::ctx_consistent(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Empty, 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Empty, 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::ctx_consistent(up.model, RbTree::Node(id, parent, color, left, right), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::ctx_rb(Context::Left(pid, gp, pc, sibling_model, above_model), Nat::Zero, Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::ctx_rb(Context::Right(pid, gp, pc, sibling_model, above_model), Nat::Zero, Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::left == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_red_leaf.click::right == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::(node->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::cid->__rb_parent_color == address(parent) + (cid->__rb_parent_color & 1)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::color_bit(Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_consistent(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Node(cid, parent, Color::Black, cl, cr), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_consistent(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Node(id, parent, color, left, right), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(cid, parent, Color::Black, cl, cr), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_consistent(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(id, parent, color, left, right), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_consistent(Context::Top, RbTree::Node(cid, parent, Color::Black, cl, cr), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_consistent(up.model, RbTree::Node(id, parent, color, left, right), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::ctx_depth(u.model) < ctx_depth(old(c.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::is_rb_root(plug(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Node(cid, parent, Color::Black, cl, cr))) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::is_rb_root(plug(Context::Right(pid, gp, pc, sibling_model, above_model), RbTree::Node(cid, parent, Color::Black, cl, cr))) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::left == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, old(t.model), sibling_model))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::plug(Context::Right(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, old(t.model)))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::remaining.model == old(up.model)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::replacement.model == rb_erase_one_child_model(old(tree.model))::3": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::replacement.model == rb_erase_one_child_model(old(tree.model))::4": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::whole.model == plug(old(c.model), old(t.model))::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_right_child.click::whole.model == plug(old(c.model), old(t.model))::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::(child->__rb_parent_color & 1) == color_bit(rc)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::(mid->__rb_parent_color & 1) == color_bit(mc)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::child->__rb_parent_color == at(transplant, child->__rb_parent_color)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::cid->__rb_parent_color == (address(mp) | 1)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::context.model == old(up.model)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::erase_minimum_child(rb_minimum(right_model)) == mr::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::is_rb_root(plug(context.model, subtree.model)) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::link_frame.model == at(opened_spine, path.model)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::parent->rb_left != old::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::parent->rb_left == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::parent->rb_left == 0::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::parent->rb_left == child2::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::parent->rb_left == focus::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::plug(Context::Top, old(t.model)) == old(t.model)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::rb_parent_consistent(RbTree::Node(rid, rp, rc, rl, rr), identity) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::rb_parent_consistent(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), t.model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::rb_parent_is(RbTree::Node(lid, mid, lc, ll, lr), mid) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::successor == mid::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::t.model == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_spine.click::whole.model == plug(old(c.model), old(t.model))::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::(node->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::color == Color::Black::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::color_bit(Color::Black) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::ctx_consistent(Context::Top, RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::is_rb(RbTree::Node(identity, parent, color, left_model, right_model)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::is_rb_root(remaining.model) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::left_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_color(right_model) == Color::Red::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_inorder(remaining.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_left(tree.model) == left_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_minimum(right_model) == RbMinimum::Found(sid, Color::Red, RbTree::Empty)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_parent_consistent(remaining.model, 0) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_parent_is(RbTree::Empty, sid) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_parent_is(RbTree::Node(lid, sid, lc, ll, lr), sid) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rb_right(tree.model) == right_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::rebalance == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::right_model != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::sc == Color::Red::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::sl == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_erase_successor.click::sr == RbTree::Empty::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::(old->__rb_parent_color & ~3) == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::(old->__rb_parent_color & ~3) == address(id)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::at(words, old->__rb_parent_color) == address(new) + color::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::at(words, old->__rb_parent_color) == address(new) + color::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::ctx_node_is(Context::Top, parent) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::ctx_parent_word(d.model, old->__rb_parent_color) == 0::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::ctx_parent_word(d.model, old->__rb_parent_color) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::ctx_parent_word(d.model, old->__rb_parent_color) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::ctx_parent_word(d.model, old->__rb_parent_color) == 1::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::not(ctx_parent_word(d.model, old->__rb_parent_color) == 1)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old->__rb_parent_color == (address(new) | color)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old->__rb_parent_color == address(id) + 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old->__rb_parent_color == address(id) + 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old->__rb_parent_color == address(new) + color::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old->__rb_parent_color == address(new) + color::5": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::old->__rb_parent_color == at(words, old->__rb_parent_color)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::parent == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::parent == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_rotate_set_parents.click::parent->rb_left != old::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 0::1": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 1::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::after.model == rb_reparent(old(before.model), p)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::after.model == rb_reparent(old(before.model), p)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::color_bit(color) == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::color_bit(color) == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == (1 | address(p))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == (address(p) | 0)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == address(p) + 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == address(p) + 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::almost_rb_insert(RbTree::Node(cid, cgp, Color::Red, t.model, csib)) == 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::black_height(csib) == black_height(t.model)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::c.model == uup::2": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::cup == Context::Right(gparent, ugp, Color::Black, RbTree::Node(unid, gparent, Color::Red, unl, unr), uup)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::nparent == cid::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::nparent == cid::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::parent == cid::3": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_color_bit(RbTree::Node(gparent, ugp, Color::Red, RbTree::Node(unid, gparent, Color::Black, unl, unr), RbTree::Node(cid, gparent, Color::Black, RbTree::Node(nid, nparent, ncolor, nleft, nright), csib))) == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_parent_consistent(plug(c.model, t.model), 0) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_parent_is(RbTree::Node(nid, nparent, ncolor, nleft, nright), parent) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_parent_is(RbTree::Node(nid, nparent, ncolor, nleft, nright), parent) == 1::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_parent_is(rb_reparent(nleft, cid), cid) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_reparent(nright, cid) == RbTree::Empty::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_root_black(RbTree::Node(bx, bp, bcol, bl, br)) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_root_black(RbTree::Node(rx, rp, rcol, rl, rr)) == 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rb_root_black(usib) == 1::7": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::rn.model == rb_reparent(nleft, gparent)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::sn.model == rb_reparent(csib, gparent)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::ucolor == Color::Black::9": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-insert/rbtree_insert.click::unp == gparent::5": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::RbTree::Empty == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::RbTree::Empty == RbTree::Empty::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::black_height(rb_reparent(rb_recolor(child, Color::Black), parent)) == Nat::Succ(Nat::Zero)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::color == Color::Red::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::color_black(rb_color(rb_reparent(rb_recolor(child, Color::Black), parent))) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::ctx_rb(rb_min_context(tree, up), Nat::Succ(Nat::Zero), Color::Black) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::frame_black_height(color, black_height(left)) == Nat::Zero::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::is_rb(RbTree::Node(successor, successor, sc, RbTree::Empty, child)) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::is_rb(rb_reparent(right, successor)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(color_black(Color::Red) == 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(frame_black_height(Color::Black, height) == Nat::Zero)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(rb_color(RbTree::Empty) == Color::Red)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child))::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child))::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::not(rb_root_black(right) == 1)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::rb_color(right) == Color::Red::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::rb_minimum(left) == RbMinimum::Found(successor, min_color, child)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::rb_parent_consistent(rb_successor_child_splice(successor, parent, color, left, right), parent) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_child.click::rb_reparent(rb_recolor(RbTree::Empty, Color::Black), rb_min_parent(tree)) == RbTree::Empty::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_one_child.click::black_height(right) == black_height(left)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_one_child.click::black_height(right) == black_height(left)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_root.click::RbTree::Empty == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_root.click::left == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_root.click::right == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::RbTree::Empty == RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::RbTree::Empty == RbTree::Empty::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::RbTree::Empty == RbTree::Empty::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::RbTree::Empty == RbTree::Empty::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::RbTree::Empty == RbTree::Empty::4": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::black_height(rb_reparent(left, successor)) == black_height(rb_reparent(right, successor))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::ctx_rb(rb_min_context(tree, up), Nat::Zero, Color::Red) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::ctx_rb(up, frame_black_height(color, black_height(left)), color) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::ctx_rb(up, frame_black_height(min_color, Nat::Zero), min_color) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::is_rb(rb_reparent(left, successor)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::is_rb(rb_reparent(right, successor)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::is_rb(rb_reparent(right, successor)) == 1::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::not(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_color(RbTree::Node(node, parent, color, left, right)) == min_color::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_minimum(RbTree::Empty) != RbMinimum::Found(successor, color, child)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_minimum(left) == RbMinimum::Found(successor, color, child)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_minimum(left) == RbMinimum::Found(successor, min_color, RbTree::Empty)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_minimum(left) == RbMinimum::Found(successor, min_color, child)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_minimum(left) == RbMinimum::Found(successor, min_color, child)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_erase_splice.click::rb_parent_consistent(rb_successor_splice(successor, parent, color, left, right), parent) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::almost_rb_insert(RbTree::Node(node, parent, color, left, right)) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::almost_rb_insert(RbTree::Node(node, parent, color, left, right)) != 1::2": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(RbTree::Empty) == Nat::Zero::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(RbTree::Node(parent, above, Color::Black, RbTree::Node(sibling, parent, Color::Red, sl, sr), t)) == Nat::Succ(black_height(t))::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(a) == black_height(c)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(rb_reparent(c, parent)) == black_height(d)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(rb_reparent(rr, sibling)) == black_height(far)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rb_reparent(near, parent))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rb_reparent(rl, parent))::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rr)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::ctx_rb(up, frame_black_height(Color::Black, Nat::Succ(black_height(t))), Color::Black) == 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::is_rb(RbTree::Node(node, parent, color, left, right)) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::is_rb(rb_reparent(rl, parent)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::node_color_ok(Color::Red, Color::Black, Color::Red) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::node_color_ok(Color::Red, rb_color(RbTree::Node(sibling, parent, Color::Red, sl, sr)), Color::Black) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::node_color_ok(pcolor, rb_color(RbTree::Node(parent, sibling, Color::Black, t, rb_reparent(near, parent))), rb_color(RbTree::Node(red, sibling, Color::Black, rl, rr))) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::rb_node_is(a, b) != 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::rb_parent_consistent(RbTree::Node(node, parent, color, left, right), p) != 1::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::rb_root_black(a) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::rb_rotate_left(RbTree::Node(parent, above, pcolor, t, RbTree::Node(red, parent, Color::Red, rl, RbTree::Node(sibling, red, Color::Black, rb_reparent(rr, sibling), far)))) == RbTree::Node(red, above, Color::Red, RbTree::Node(parent, red, pcolor, t, rb_reparent(rl, parent)), RbTree::Node(sibling, red, Color::Black, rb_reparent(rr, sibling), far))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::(((word & 1) | address(p)) & 1) == (word & 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::RbTree::Node(identity, parent, color, tree, sibling) != RbTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::RbTree::Node(identity, parent, color, tree, sibling) != RbTree::Empty::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::RbTree::Node(identity, parent, color, tree, sibling) != RbTree::Empty::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::RbTree::Node(identity, parent, color, tree, sibling) != RbTree::Empty::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::erase_context(EraseSpine::Left(identity, parent, color, sibling, up)) == Context::Left(identity, parent, color, sibling, erase_context(up))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::parent == parent::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::plug(erase_context(EraseSpine::Top), tree) == tree::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::rb_parent_consistent(plug(Context::Left(identity, parent, color, sibling, erase_context(up)), tree), anchor) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_spine_model.click::rb_parent_consistent(plug(erase_context(up), RbTree::Node(identity, parent, color, tree, sibling)), anchor) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/successor_splice_checks.click::black_height(splice_black_leaf(successor, r)) == black_height(splice_black_leaf(far, r))::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/successor_splice_checks.click::is_rb(rb_reparent(splice_black_leaf(l, erased), successor)) == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/successor_splice_checks.click::not(black_height(rb_reparent(splice_black_leaf(l, erased), successor)) == Nat::Zero)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/refcount/refcount.click::amount < 1 + amount::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/refcount/refcount.click::amount < 2147483647::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/refcount/refcount.click::amount < obj->refs::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/refcount/refcount.click::defined(1 + amount)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/refcount/refcount.click::defined(obj->refs + amount)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/refcount/refcount.click::obj->refs == 1 + amount::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/refcount/refcount.click::obj->refs == 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/ring-buffer/ring_buffer.click::owner->data == old(owner->data)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/ring-buffer/ring_buffer.click::owner->data[0] == replacement::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/ring-buffer/ring_buffer.click::owner->head == old(owner->head)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/ring-buffer/ring_buffer.click::owner->tail == 4::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/ring-buffer/ring_buffer.click::result == replacement::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-byte-sum/sum.click::0 <= (int32)bytes[i] and 255 >= (int32)bytes[i]::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::0 <= to_integer(total + (int32)bytes[i])::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::0 <= to_integer(total)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::defined(bytes[i])::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::defined(total + (int32)bytes[i])::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::i < 18446744073709551615u64::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::i <= bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::i == bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::prefix(bytes, i + 1u64) == prefix(bytes, i) + to_integer((int32)bytes[i])::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::prefix(bytes, i) == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::prefix(bytes, i) == prefix(bytes, bytes.len())::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-byte-sum/sum.click::to_integer(total + (int32)bytes[i]) <= 255 * to_integer(i + 1u64)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::to_integer(total + (int32)bytes[i]) == prefix(bytes, i + 1u64)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-byte-sum/sum.click::to_integer(total) == prefix(bytes, bytes.len())::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::((bytes.len() - bytes.len() % 4u64) - iter_remaining) + 3u64 < bytes.len()::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::(bytes.len() - bytes.len() % 4u64) % 4u64 == 0u64::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::(bytes.len() - bytes.len() % 4u64) - at(iteration, iter_remaining) <= 18446744073709551611u64::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::(bytes.len() - bytes.len() % 4u64) - iter_remaining < bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::(bytes.len() - bytes.len() % 4u64) - iter_remaining == 0u64::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::4u64 <= iter_remaining::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::at(iteration, iter_cursor) + 4 == bytes + (((bytes.len() - bytes.len() % 4u64) - at(iteration, iter_remaining)) + 4u64)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::bytes.len() % 4u64 <= bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_cursor == bytes + ((bytes.len() - bytes.len() % 4u64) - iter_remaining)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_cursor == bytes + ((bytes.len() - bytes.len() % 4u64) - iter_remaining)::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_cursor == iter_tail::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining % 4u64 == 0u64::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining % 4u64 == 0u64::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining % 4u64 == iter_remaining::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining < 4u64::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining < at(iteration, iter_remaining)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining <= (bytes.len() - bytes.len() % 4u64)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining == 0u64::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining == at(iteration, iter_remaining) - 4u64::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rust-chunks-exact/chunks.click::iter_remaining == bytes.len() - bytes.len() % 4u64::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iter-references/sum.click::(bytes.len() - iter_remaining) < 1000u64::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::(bytes.len() - iter_remaining) < 18446744073709551615u64::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::(bytes.len() - iter_remaining) == (bytes.len() - at(iteration, iter_remaining)) + 1u64::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::(bytes.len() - iter_remaining) == bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::0 <= (int32)loaded_byte and 255 >= (int32)loaded_byte::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iter-references/sum.click::0 <= to_integer(total + (int32)loaded_byte)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::0 <= to_integer(total)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iter-references/sum.click::at(iteration, bytes[(bytes.len() - iter_remaining)]) == loaded_byte::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::at(iteration, to_integer((int32)bytes[(bytes.len() - iter_remaining)])) == to_integer((int32)loaded_byte)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::bytes.len() - iter_remaining < bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::defined(total + (int32)loaded_byte)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer((bytes.len() - iter_remaining) + 1u64) == to_integer((bytes.len() - iter_remaining)) + 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer((bytes.len() - iter_remaining)) + 1 <= 18446744073709551615::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer((bytes.len() - iter_remaining)) == at(iteration, to_integer((bytes.len() - iter_remaining) + 1u64))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer((int32)loaded_byte) <= 255::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer(total + (int32)loaded_byte) == to_integer(total) + to_integer((int32)loaded_byte)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer(total) <= 255 * to_integer((bytes.len() - iter_remaining))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer(total) <= 255000::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iter-references/sum.click::to_integer(total) == at(addition, to_integer(total + (int32)loaded_byte))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iter-references/sum.click::to_integer(total) == prefix(bytes, bytes.len())::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::(bytes.len() - iter_remaining) < 1000u64::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::0 <= to_integer((int32)byte)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::0 <= to_integer(total)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iterators/sum.click::at(iteration, to_integer((int32)bytes[(bytes.len() - iter_remaining)])) == to_integer((int32)byte)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::bytes.len() - iter_remaining < bytes.len()::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::defined(bytes[(bytes.len() - iter_remaining)])::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/rust-iterators/sum.click::iter_remaining <= bytes.len()::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::iter_remaining == 0u64::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::iter_remaining == bytes.len()::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iterators/sum.click::prefix(bytes, (bytes.len() - iter_remaining) + 1u64) == prefix(bytes, (bytes.len() - iter_remaining)) + to_integer((int32)bytes[(bytes.len() - iter_remaining)])::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::prefix(bytes, (bytes.len() - iter_remaining)) == prefix(bytes, bytes.len())::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::prefix(bytes, bytes.len() - iter_remaining) == 0::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer((bytes.len() - iter_remaining)) < to_integer(bytes.len())::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer((bytes.len() - iter_remaining)) <= 1000::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer((bytes.len() - iter_remaining)) == at(iteration, to_integer((bytes.len() - iter_remaining) + 1u64))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer((int32)byte) <= 255::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer(total) + to_integer((int32)byte) >= -2147483648::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer(total) <= 255000::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-iterators/sum.click::to_integer(total) == prefix(bytes, bytes.len() - iter_remaining)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-iterators/sum.click::to_integer(total) == prefix(bytes, bytes.len())::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rust-loops/loops.click::i == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-loops/loops.click::i == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/rust-loops/loops.click::i == 0::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::4": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::5": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(permit(obj)) >= 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(reference(obj)) == 0::2": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::count(reference(obj)) >= 1::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::defined(slack + 1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::obj->refs <= 2::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::obj->refs == refs::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::obj->refs == refs::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::slack == count(permit(obj))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(1) + to_integer(2) == 3::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(1) + to_integer(2) == 3::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(1) <= to_integer(refs)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(refs + 1) == to_integer(refs) + to_integer(1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(refs) + to_integer(slack) == 3::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(slack + 1) == to_integer(slack) + to_integer(1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(slack - 1) == to_integer(slack) - to_integer(1)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/vector-push/vector_push.click::0 == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::1 <= owner->len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::at(statement(5).entry, owner->len) < at(statement(5).entry, (owner->len + 1))::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->len)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::owner->cap == old(owner->cap)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::owner->data == old(owner->data)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::owner->data[old(owner->len)] == value::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::owner->len < owner->len + 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/vector-push/vector_push.click::owner->len <= owner->cap::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::owner->len <= owner->len::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::owner->len == (old(owner->len) + 1)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::result == (old(owner->len) + 1)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/vector-push/vector_push.click::separate(memory(*owner), memory(owner->data[0..owner->cap]))::0": {
+  "by_auto": true,
+  "deletable": true
+ }
+}

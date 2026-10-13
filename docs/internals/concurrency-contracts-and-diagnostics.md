@@ -1,5 +1,8 @@
 # Concurrency contracts and failure explanations
 
+This design proposes the contracts a reviewer reads for concurrent C code and
+how Click explains each unproved concurrency requirement.
+
 Status: evolving design; implemented surface forms and remaining proposals are marked below.
 
 The human review boundary is the C source, its contract, and an explanation of

@@ -7,25 +7,26 @@ fits into verification.
 ## Start here
 
 - [What Click proves](what-click-proves.md)
-- [Files and sidecars](sidecars.md)
+- [What Click trusts](trust.md)
 - [Your first proof](first-proof.md)
 - [Verify a function in your own project](own-project.md)
+- [Files and sidecars](sidecars.md)
+- [Reading Click](reading-click.md)
 - [Contracts](contracts.md)
 - [Propositions](propositions.md)
 - [Proof scripts](proof-scripts.md)
+- [Proof workflow](proof-workflow.md)
+- [Proof-failure triage](proof-failure-triage.md)
 
 ## Proof and execution models
 
-- [The verification pipeline](verification-pipeline.md)
-- [Proof state and checked transitions](proof-state.md)
-- [Smart and simple tactics](smart-and-simple-tactics.md)
-- [Proof workflow](proof-workflow.md)
-- [Surface Click and Kernel Click](surface-and-kernel.md)
-- [C fragments](c-fragments.md)
 - [Undefined behavior](undefined-behavior.md)
+- [C fragments](c-fragments.md)
 - [Loops and invariants](loops-and-invariants.md)
 - [Predicates](predicates.md)
 - [Pure functions](pure-functions.md)
+- [Proof state and checked transitions](proof-state.md)
+- [Smart and simple tactics](smart-and-simple-tactics.md)
 
 ## Memory and resources
 
@@ -37,14 +38,18 @@ fits into verification.
 
 ## Proof tooling
 
-- [Expansion](expansion.md)
-- [Profiling](profiling.md)
-- [Audit](audit.md)
 - [Performance tools](performance-tools.md)
-- [Proof-failure triage](proof-failure-triage.md)
+- [Profiling](profiling.md)
+- [Expansion](expansion.md)
+- [Audit](audit.md)
 
-## Broader context
+## Examples
 
-- [Proof landscape](proof-landscape.md)
-- [Reading Click](reading-click.md)
 - [Larger examples](larger-examples.md)
+
+## For Click developers
+
+Three concept pages are about how Click is built and sit in the "Developing
+Click" part: [the verification pipeline](verification-pipeline.md),
+[Surface Click and Kernel Click](surface-and-kernel.md), and the
+[proof landscape](proof-landscape.md).

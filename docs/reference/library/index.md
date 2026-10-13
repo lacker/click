@@ -2742,7 +2742,12 @@ predicate cstr_readable(bytes: uint8[]) {
 
 **Meaning:** States that the byte array has some dynamically viewable,
 null-terminated C-string prefix. The length remains existential; unfold the
-predicate when a proof needs to expose that witness.
+predicate when a proof needs to expose that witness. A caller can pass the same
+unchanged plain-`char` or signed-character pointer to a callee requiring this predicate:
+contract expansion retains the predicate's unsigned byte reads. The caller
+must supply the requirement; it does not cover an offset pointer or survive
+an arbitrary write to the string. See
+[`cstr_plain_char_caller_requirement_reaches_callee.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_plain_char_caller_requirement_reaches_callee.md).
 
 **Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
 
@@ -2846,7 +2851,7 @@ about the result beyond its being 0 or 1, and a proof covers both.
 ### `memcpy`
 
 ```click
-extern uint8* memcpy(uint8 destination[], uint8 source[], uint64 bytes) {
+extern uint8* memcpy(uint8 destination[], const uint8 source[], uint64 bytes) {
     requires viewable(source[0..bytes]);
     owns destination[0..bytes];
     requires separate(memory(destination[0..bytes]), memory(source[0..bytes]));
@@ -2871,7 +2876,7 @@ effect is bound to this declaration, not to the name `memcpy`.
 ### `memcmp`
 
 ```click
-extern int32 memcmp(uint8 left[], uint8 right[], uint64 bytes) {
+extern int32 memcmp(const uint8 left[], const uint8 right[], uint64 bytes) {
     requires viewable(left[0..bytes]);
     requires viewable(right[0..bytes]);
     requires forall (k: uint64) { k < bytes implies defined(left[k]) and defined(right[k]) };

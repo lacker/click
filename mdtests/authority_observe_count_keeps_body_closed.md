@@ -23,5 +23,5 @@ int32 probe(int32* p) {
 ```
 
 ```expect
-fail: left side evaluated to load(p), right side evaluated to 0
+fail: left side evaluated to old(p[0]), right side evaluated to 0
 ```

@@ -513,8 +513,8 @@ impl Drop for SpecificationReadScope {
 /// entry facts and a read value's path facts are one definition.
 ///
 /// The range is a consequence, not a premise: every producer of a narrow
-/// value already established it (a conversion's range obligation, a load of
-/// the narrow kind, a callee's return conversion), so the step's theorem
+/// value already established it (a conversion, which lands in the range, a
+/// load of the narrow kind, a callee's return conversion), so the step's theorem
 /// concludes it and no reader of the step owes a derivation of it. Being
 /// public, it reaches every check that reads path facts -- a prerequisite
 /// left to the proof, the owned-footprint check of a store. A range the
@@ -629,16 +629,47 @@ pub(in crate::kernel) fn promote_c_uint64_path_value(value: CValue) -> Option<Bi
     }
 }
 
+/// The rule an integer conversion to a narrower type, or to the other
+/// signedness of its width, follows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::kernel) enum IntegerConversion {
+    /// C's conversion as GCC and Clang compile it, implicit or written: the
+    /// value modulo 2^N of the destination width, owing nothing.
+    Modular,
+    /// A specification's conversion: it owes the destination's range in the
+    /// source's own type, and within that range is the source's value. A
+    /// constant outside the range is refused.
+    Checked,
+}
+
+/// Converts a C value at an implicit conversion boundary, by C's rule.
 pub(in crate::kernel) fn coerce_c_value_to_type(
     value: CValue,
     target_type: CType,
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
+    coerce_c_value_to_type_as(
+        value,
+        target_type,
+        IntegerConversion::Modular,
+        obligations,
+        assumptions,
+    )
+}
+
+pub(in crate::kernel) fn coerce_c_value_to_type_as(
+    value: CValue,
+    target_type: CType,
+    conversion: IntegerConversion,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
     if let CValue::PointerInteger(carrier) = value {
-        let numeric = coerce_c_value_to_type(
+        let numeric = coerce_c_value_to_type_as(
             carrier.numeric_value(),
             target_type,
+            conversion,
             obligations,
             assumptions,
         )?;
@@ -668,21 +699,28 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         } else {
             MachineIntegerType::from_c_type(value.c_type())?
         };
-        // Ordinary C signed conversion retains the existing representable
-        // range policy. Modulo casts use their separate explicit boundary.
-        if destination.format().is_signed() && !destination.format().contains(source.format()) {
+        // C's conversion is modulo 2^N for a signed destination too; a
+        // specification's owes the signed range. An unsigned destination is
+        // modulo 2^N under both.
+        if conversion == IntegerConversion::Checked
+            && destination.format().is_signed()
+            && !destination.format().contains(source.format())
+        {
             let observed = IntegerTerm::from_machine(source, c_value_bitvector_term(&value)?)?;
             let (min, max) = destination.format().bounds();
             for (condition, context) in [
                 (
-                    ConditionTerm::integer_greater_equal(
-                        observed.clone(),
-                        IntegerTerm::constant(min),
+                    ConditionTerm::IntegerGreaterEqual(
+                        observed.clone().into(),
+                        IntegerTerm::constant(min).into(),
                     ),
                     "signed narrowing lower bound",
                 ),
                 (
-                    ConditionTerm::integer_less_equal(observed, IntegerTerm::constant(max)),
+                    ConditionTerm::IntegerLessEqual(
+                        observed.into(),
+                        IntegerTerm::constant(max).into(),
+                    ),
                     "signed narrowing upper bound",
                 ),
             ] {
@@ -765,164 +803,25 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         (CType::UInt32, CValue::Int64(value) | CValue::UInt64(value)) => {
             Some(CValue::UInt32(Bitvector32Term::uint32_from_64(value)))
         }
-        (CType::Int32, CValue::Int64(value)) => {
-            for (condition, context) in [
-                (
-                    ConditionTerm::int64_signed_greater_equal(
-                        value.clone(),
-                        Bitvector32Term::Int64Constant(i64::from(i32::MIN)),
-                    ),
-                    "int32 narrowing lower bound",
-                ),
-                (
-                    ConditionTerm::int64_signed_less_equal(
-                        value.clone(),
-                        Bitvector32Term::Int64Constant(i64::from(i32::MAX)),
-                    ),
-                    "int32 narrowing upper bound",
-                ),
-            ] {
-                add_narrowing_bound_obligation(obligations, assumptions, condition, context)?;
-            }
-            Some(CValue::Int32(Bitvector32Term::uint32_from_64(value)))
-        }
-        (CType::Int32, CValue::UInt64(value)) => {
-            add_narrowing_bound_obligation(
-                obligations,
-                assumptions,
-                ConditionTerm::uint64_less_equal(
-                    value.clone(),
-                    Bitvector32Term::UInt64Constant(i32::MAX as u64),
-                ),
-                "int32 narrowing upper bound",
-            )?;
-            Some(CValue::Int32(Bitvector32Term::uint32_from_64(value)))
+        (CType::Int32, value @ (CValue::Int64(_) | CValue::UInt64(_))) => {
+            narrow_integer(value, target_type, conversion, obligations, assumptions)
         }
         (CType::UInt32, crate::kernel::int_promoted_c_value!(value)) => Some(CValue::UInt32(value)),
-        (CType::Int8, CValue::Int32(value) | CValue::Int16(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                i32::from(i8::MIN),
-                i32::from(i8::MAX),
-                "int8",
-            )?;
-            Some(CValue::Int8(value))
-        }
-        (CType::Int8, CValue::UInt8(value)) => {
-            // The unsigned-byte source already guarantees the lower bound.
-            add_narrowing_bound_obligation(
-                obligations,
-                assumptions,
-                ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(127)),
-                narrowing_context("int8", false),
-            )?;
-            Some(CValue::Int8(value))
-        }
-        (CType::Int16, CValue::Int32(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                i32::from(i16::MIN),
-                i32::from(i16::MAX),
-                "int16",
-            )?;
-            Some(CValue::Int16(value))
-        }
         (CType::Int16, CValue::Int8(value) | CValue::UInt8(value)) => Some(CValue::Int16(value)),
-        (CType::Int8, CValue::UInt16(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                i32::from(i8::MIN),
-                i32::from(i8::MAX),
-                "int8",
-            )?;
-            Some(CValue::Int8(value))
-        }
-        (CType::Int16, CValue::UInt16(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                i32::from(i16::MIN),
-                i32::from(i16::MAX),
-                "int16",
-            )?;
-            Some(CValue::Int16(value))
-        }
-        (CType::UInt16, CValue::Int32(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                0,
-                i32::from(u16::MAX),
-                "uint16",
-            )?;
-            Some(CValue::UInt16(value))
-        }
-        (CType::UInt16, CValue::Int8(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                0,
-                i32::from(u16::MAX),
-                "uint16",
-            )?;
-            Some(CValue::UInt16(value))
-        }
-        (CType::UInt16, CValue::Int16(value)) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                0,
-                i32::from(u16::MAX),
-                "uint16",
-            )?;
-            Some(CValue::UInt16(value))
-        }
         (CType::UInt16, CValue::UInt8(value)) => Some(CValue::UInt16(value)),
-        (CType::UInt8, CValue::Int8(value)) => {
-            // Every nonnegative signed byte fits in an unsigned byte.
-            add_narrowing_bound_obligation(
-                obligations,
-                assumptions,
-                ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
-                narrowing_context("uint8", true),
-            )?;
-            Some(CValue::UInt8(value))
-        }
-        (CType::UInt8, CValue::Int32(value)) => {
-            add_signed_narrowing_obligations(obligations, assumptions, &value, 0, 255, "uint8")?;
-            Some(CValue::UInt8(value))
-        }
         (
             target @ (CType::Int8 | CType::UInt8 | CType::Int16 | CType::UInt16),
-            value @ (CValue::Int16(_)
+            value @ (CValue::Int8(_)
+            | CValue::UInt8(_)
+            | CValue::Int16(_)
             | CValue::UInt16(_)
+            | CValue::Int32(_)
             | CValue::UInt32(_)
             | CValue::Int64(_)
             | CValue::UInt64(_)),
-        ) => narrow_to_subword_value(value, target, obligations, assumptions),
-        (CType::Int64, CValue::UInt64(value)) => {
-            add_narrowing_bound_obligation(
-                obligations,
-                assumptions,
-                ConditionTerm::uint64_less_equal(
-                    value.clone(),
-                    Bitvector32Term::UInt64Constant(i64::MAX as u64),
-                ),
-                "int64 narrowing upper bound",
-            )?;
-            Some(CValue::Int64(Bitvector32Term::int64_from_uint64_bits(
-                value,
-            )))
+        ) => narrow_integer(value, target, conversion, obligations, assumptions),
+        (CType::Int64, value @ CValue::UInt64(_)) => {
+            narrow_integer(value, target_type, conversion, obligations, assumptions)
         }
         (CType::Int64, CValue::Int64(value)) => Some(CValue::Int64(value)),
         (CType::Int64, crate::kernel::int_promoted_c_value!(value)) => {
@@ -1015,127 +914,126 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     }
 }
 
-/// Narrows a 16-, 32- or 64-bit integer into a one- or two-byte type that no
-/// earlier conversion arm covers. Each conversion owes the destination's range
-/// in the source's own interpretation; within that range the low word already
-/// is the destination's sign- or zero-extended carrier.
-fn narrow_to_subword_value(
+/// Converts an integer into a narrower type, or between the two
+/// signednesses of one width.
+///
+/// C's conversion ([`IntegerConversion::Modular`]) is what GCC and Clang do
+/// on every target Click models: the destination's value congruent to the
+/// source's modulo 2^N (C11 6.3.1.3p2 for an unsigned destination, GCC's
+/// documented implementation-defined choice for a signed one). It owes
+/// nothing. Into a one- or two-byte type the result is the typed conversion
+/// node, never a re-tagged carrier, so a value outside the destination range
+/// cannot masquerade as one inside it. Inside that range the node denotes
+/// its operand: the reasoning layer replaces it by the operand's carrier
+/// once the context proves the range (`narrowed_cast_identity`), in search
+/// and checker alike. A byte converted from an unsigned byte is the
+/// one-byte-one-name signed read of that byte, `Bitvector32Term::signed_byte`.
+/// Into `int32` the low word already is the value modulo 2^32, and into
+/// `int64` the same 64 bits read as signed.
+///
+/// A specification's conversion ([`IntegerConversion::Checked`]) files the
+/// same range conditions as obligations and is then the carrier itself.
+fn narrow_integer(
     value: CValue,
     target: CType,
+    conversion: IntegerConversion,
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
-    let (type_name, lower, upper) = match target {
-        CType::Int8 => ("int8", i32::from(i8::MIN), i32::from(i8::MAX)),
-        CType::UInt8 => ("uint8", 0, i32::from(u8::MAX)),
-        CType::Int16 => ("int16", i32::from(i16::MIN), i32::from(i16::MAX)),
-        CType::UInt16 => ("uint16", 0, i32::from(u16::MAX)),
+    let source = MachineIntegerType::from_c_type(value.c_type())?;
+    let destination = MachineIntegerType::from_c_type(target)?;
+    let term = match value {
+        crate::kernel::integer_c_value!(term) => term,
         _ => return None,
     };
-    let word = match value {
-        // Both carriers hold the exact 16-bit value as a 32-bit integer.
-        CValue::Int16(value) | CValue::UInt16(value) => {
-            add_signed_narrowing_obligations(
-                obligations,
-                assumptions,
-                &value,
-                lower,
-                upper,
-                type_name,
-            )?;
-            value
+    let checked = conversion == IntegerConversion::Checked;
+    match destination {
+        MachineIntegerType::Int32 => {
+            if checked {
+                let bounds = if source == MachineIntegerType::UInt64 {
+                    vec![(
+                        ConditionTerm::Bitvector64UnsignedLessEqual(
+                            term.clone().into(),
+                            Bitvector32Term::UInt64Constant(i32::MAX as u64).into(),
+                        ),
+                        "int32 narrowing upper bound",
+                    )]
+                } else {
+                    vec![
+                        (
+                            ConditionTerm::Bitvector64SignedGreaterEqual(
+                                term.clone().into(),
+                                Bitvector32Term::Int64Constant(i64::from(i32::MIN)).into(),
+                            ),
+                            "int32 narrowing lower bound",
+                        ),
+                        (
+                            ConditionTerm::Bitvector64SignedLessEqual(
+                                term.clone().into(),
+                                Bitvector32Term::Int64Constant(i64::from(i32::MAX)).into(),
+                            ),
+                            "int32 narrowing upper bound",
+                        ),
+                    ]
+                };
+                for (condition, context) in bounds {
+                    add_narrowing_bound_obligation(obligations, assumptions, condition, context)?;
+                }
+            }
+            Some(CValue::Int32(Bitvector32Term::uint32_from_64(term)))
         }
-        // An unsigned source is never below a destination lower bound.
-        CValue::UInt32(value) => {
-            add_narrowing_bound_obligation(
-                obligations,
-                assumptions,
-                ConditionTerm::unsigned_less_equal(
-                    value.clone(),
-                    Bitvector32Term::Constant(upper as u32),
-                ),
-                narrowing_context(type_name, false),
-            )?;
-            value
+        MachineIntegerType::Int64 => {
+            if checked {
+                add_narrowing_bound_obligation(
+                    obligations,
+                    assumptions,
+                    ConditionTerm::Bitvector64UnsignedLessEqual(
+                        term.clone().into(),
+                        Bitvector32Term::UInt64Constant(i64::MAX as u64).into(),
+                    ),
+                    "int64 narrowing upper bound",
+                )?;
+            }
+            Some(CValue::Int64(Bitvector32Term::int64_from_uint64_bits(term)))
         }
-        CValue::Int64(value) => {
-            for (condition, is_lower) in [
-                (
-                    ConditionTerm::int64_signed_greater_equal(
-                        value.clone(),
-                        Bitvector32Term::Int64Constant(i64::from(lower)),
-                    ),
-                    true,
-                ),
-                (
-                    ConditionTerm::int64_signed_less_equal(
-                        value.clone(),
-                        Bitvector32Term::Int64Constant(i64::from(upper)),
-                    ),
-                    false,
-                ),
-            ] {
+        _ if source == destination => Some(destination.value_from_term(term)),
+        // The node is the same whatever the context knows, so a smart search
+        // and the checked trace of its steps produce one term; the identity
+        // inside the range is reasoning (`narrowed_cast_identity`), never a
+        // context-dependent choice of representation here.
+        _ if !checked => Some(
+            destination.value_from_term(Bitvector32Term::machine_integer_cast(
+                source,
+                destination,
+                term,
+            )),
+        ),
+        _ => {
+            let (bounds, carrier) =
+                crate::kernel::assumptions::narrowed_cast_identity(&term, source, destination)?;
+            for bound in bounds {
+                let condition = bound.conditions.into_iter().next()?;
                 add_narrowing_bound_obligation(
                     obligations,
                     assumptions,
                     condition,
-                    narrowing_context(type_name, is_lower),
+                    narrowing_context(destination, bound.lower),
                 )?;
             }
-            Bitvector32Term::uint32_from_64(value)
+            Some(destination.value_from_term(carrier))
         }
-        CValue::UInt64(value) => {
-            add_narrowing_bound_obligation(
-                obligations,
-                assumptions,
-                ConditionTerm::uint64_less_equal(
-                    value.clone(),
-                    Bitvector32Term::UInt64Constant(upper as u64),
-                ),
-                narrowing_context(type_name, false),
-            )?;
-            Bitvector32Term::uint32_from_64(value)
-        }
-        _ => return None,
-    };
-    Some(MachineIntegerType::from_c_type(target)?.value_from_term(word))
+    }
 }
 
-fn add_signed_narrowing_obligations(
-    obligations: &mut Vec<ProofObligation>,
-    assumptions: &PureFactContext,
-    value: &Bitvector32Term,
-    lower: i32,
-    upper: i32,
-    type_name: &str,
-) -> Option<()> {
-    add_narrowing_bound_obligation(
-        obligations,
-        assumptions,
-        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(lower as u32)),
-        narrowing_context(type_name, true),
-    )?;
-    add_narrowing_bound_obligation(
-        obligations,
-        assumptions,
-        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(upper as u32)),
-        narrowing_context(type_name, false),
-    )
-}
-
-/// Files one bound of an integer narrowing conversion as the obligation the
-/// conversion owes.
+/// Files one bound of a checked integer narrowing conversion as the
+/// obligation the conversion owes.
 ///
 /// A bound the facts refute is filed as well: the conversion then yields its
 /// value under an obligation no proof discharges, and the proof reports that
-/// bound against the facts that refute it. Refusing the conversion here was
-/// reported as `type mismatch`, which names neither the range nor the
-/// value, and made a `return`'s outcome depend on how much its context
-/// reasons: the surface published the path as refuted while the checked
-/// trace, reasoning only exactly, filed the bound and returned, and the
-/// proof object reported the two outcomes' disagreement instead of either.
-/// A bound a constant fails on its own stays a refusal: that is a defect of
-/// the program text, decided without any fact of the proof.
+/// bound against the facts that refute it. Narrowing sites construct the
+/// comparison without constant folding, so a failed bound still spells its
+/// value and endpoint rather than just `false`; constants owe the same
+/// obligation.
 fn add_narrowing_bound_obligation(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
@@ -1152,23 +1050,20 @@ fn add_narrowing_bound_obligation(
     {
         return Some(());
     }
-    if PureFactContext::decide_intrinsically(&condition) == Some(false) {
-        return None;
-    }
     obligations.push(ProofObligation::condition(condition, true).with_context(context));
     Some(())
 }
 
-fn narrowing_context(type_name: &str, lower: bool) -> &'static str {
-    match (type_name, lower) {
-        ("uint8", true) => "uint8 narrowing lower bound",
-        ("uint8", false) => "uint8 narrowing upper bound",
-        ("int8", true) => "int8 narrowing lower bound",
-        ("int8", false) => "int8 narrowing upper bound",
-        ("int16", true) => "int16 narrowing lower bound",
-        ("int16", false) => "int16 narrowing upper bound",
-        ("uint16", true) => "uint16 narrowing lower bound",
-        ("uint16", false) => "uint16 narrowing upper bound",
+fn narrowing_context(destination: MachineIntegerType, lower: bool) -> &'static str {
+    match (destination, lower) {
+        (MachineIntegerType::UInt8, true) => "uint8 narrowing lower bound",
+        (MachineIntegerType::UInt8, false) => "uint8 narrowing upper bound",
+        (MachineIntegerType::Int8, true) => "int8 narrowing lower bound",
+        (MachineIntegerType::Int8, false) => "int8 narrowing upper bound",
+        (MachineIntegerType::Int16, true) => "int16 narrowing lower bound",
+        (MachineIntegerType::Int16, false) => "int16 narrowing upper bound",
+        (MachineIntegerType::UInt16, true) => "uint16 narrowing lower bound",
+        (MachineIntegerType::UInt16, false) => "uint16 narrowing upper bound",
         _ => "integer narrowing bound",
     }
 }
@@ -1176,6 +1071,7 @@ fn narrowing_context(type_name: &str, lower: bool) -> &'static str {
 pub(in crate::kernel) fn cast_c_value_to_type(
     value: CValue,
     target_type: CType,
+    conversion: IntegerConversion,
     obligations: &mut Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Result<CValue, CRuntimeError> {
@@ -1216,8 +1112,14 @@ pub(in crate::kernel) fn cast_c_value_to_type(
                 ));
             }
             value => {
-                return coerce_c_value_to_type(value, target_type, obligations, assumptions)
-                    .ok_or(CRuntimeError::TypeMismatch);
+                return coerce_c_value_to_type_as(
+                    value,
+                    target_type,
+                    conversion,
+                    obligations,
+                    assumptions,
+                )
+                .ok_or(CRuntimeError::TypeMismatch);
             }
         }
     }
@@ -1249,7 +1151,7 @@ pub(in crate::kernel) fn cast_c_value_to_type(
             _ => CValue::Int64(address),
         });
     }
-    coerce_c_value_to_type(value, target_type, obligations, assumptions)
+    coerce_c_value_to_type_as(value, target_type, conversion, obligations, assumptions)
         .ok_or(CRuntimeError::TypeMismatch)
 }
 
@@ -2176,7 +2078,7 @@ fn evaluate_c_cast_paths(
     for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
         let CExpressionPath {
             outcome,
-            facts,
+            mut facts,
             mut obligations,
         } = path;
         // Converting a freed pointer to an integer (or to `_Bool`) uses its
@@ -2197,6 +2099,13 @@ fn evaluate_c_cast_paths(
             CExpressionOutcome::Value(value) => {
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
+                // A cast C source wrote or its lowering inserted converts
+                // modulo 2^N; a specification's cast owes the range.
+                let conversion = if integer_mode == CIntegerCastMode::CConversion {
+                    IntegerConversion::Modular
+                } else {
+                    IntegerConversion::Checked
+                };
                 let coerced = if integer_mode == CIntegerCastMode::Modulo {
                     {
                         let carrier = match &value {
@@ -2248,6 +2157,7 @@ fn evaluate_c_cast_paths(
                         value => cast_c_value_to_type(
                             value,
                             target_type,
+                            conversion,
                             &mut obligations,
                             &effective_assumptions,
                         ),
@@ -2268,10 +2178,23 @@ fn evaluate_c_cast_paths(
                     cast_c_value_to_type(
                         value,
                         target_type,
+                        conversion,
                         &mut obligations,
                         &effective_assumptions,
                     )
                 };
+                // A C conversion into a narrow type lands in that type's
+                // range whatever its operand; file the range where the value
+                // is produced, as a narrow read does.
+                if let Ok(value) = &coerced
+                    && integer_mode == CIntegerCastMode::CConversion
+                    && matches!(
+                        crate::kernel::c_narrow_integer_range(value),
+                        Some((Bitvector32Term::MachineIntegerCast { .. }, _, _))
+                    )
+                {
+                    add_narrow_integer_range_execution_pure_facts(&mut facts, assumptions, value);
+                }
                 match coerced {
                     Ok(value) => {
                         // A cast the source wrote yields exactly the

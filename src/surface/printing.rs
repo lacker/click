@@ -1182,6 +1182,18 @@ fn write_signed_int32_certificate(
                 "interval_sign_bit_flip {operand} ({}) ({});",
                 result.lower, result.upper
             ),
+            SignedArithmeticStep::IntervalNarrowedCast {
+                operand,
+                source,
+                destination,
+                result,
+            } => format!(
+                "interval_narrowed_cast {operand} {} {} ({}) ({});",
+                machine_integer_type_name(*source),
+                machine_integer_type_name(*destination),
+                result.lower,
+                result.upper
+            ),
             SignedArithmeticStep::IntervalCompare {
                 left,
                 right,
@@ -1227,6 +1239,45 @@ fn write_signed_int32_certificate(
         &format!("conclusion {};", certificate.conclusion),
     );
     line(output, &prefix, "}");
+}
+
+/// The Click spelling of an integer type in certificate text.
+pub(in crate::surface) fn machine_integer_type_name(
+    ty: crate::kernel::MachineIntegerType,
+) -> &'static str {
+    use crate::kernel::MachineIntegerType as Ty;
+    match ty {
+        Ty::Int8 => "int8",
+        Ty::UInt8 => "uint8",
+        Ty::Int16 => "int16",
+        Ty::UInt16 => "uint16",
+        Ty::Int32 => "int32",
+        Ty::UInt32 => "uint32",
+        Ty::Int64 => "int64",
+        Ty::UInt64 => "uint64",
+        Ty::Int128 => "int128",
+        Ty::UInt128 => "uint128",
+    }
+}
+
+pub(in crate::surface) fn machine_integer_type_from_name(
+    name: &str,
+) -> Option<crate::kernel::MachineIntegerType> {
+    use crate::kernel::MachineIntegerType as Ty;
+    [
+        Ty::Int8,
+        Ty::UInt8,
+        Ty::Int16,
+        Ty::UInt16,
+        Ty::Int32,
+        Ty::UInt32,
+        Ty::Int64,
+        Ty::UInt64,
+        Ty::Int128,
+        Ty::UInt128,
+    ]
+    .into_iter()
+    .find(|ty| machine_integer_type_name(*ty) == name)
 }
 
 fn signed_comparison_name(comparison: SignedInt32Comparison) -> &'static str {

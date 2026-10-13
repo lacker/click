@@ -36,6 +36,6 @@ void mark_one(int32 a[], int32 n, int32 i, int32 m) {
 ```
 
 ```expect
-fail: equality: int32 =(load A=read<Bits32>(snapshot#1, pointer=value#1), 5) is true
-  goal: int32 =(load B=read<Bits32>(snapshot#2, pointer=value#1), 5) is true
+fail: equality: old(a[m]) == 5
+  goal: a[m] == 5
 ```

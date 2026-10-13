@@ -14016,12 +14016,12 @@ fn private_state_narrowing_call_expands() {
     check_private_state_expansion("private_state_narrowing_call.md", "main");
 }
 #[test]
-fn private_state_signed_bounds_expand() {
-    check_private_state_expansion("private_state_narrowing_bounds.md", "signed_value");
+fn wide_signed_low_word_narrowing_expands() {
+    check_private_state_expansion("wide_values_narrow_to_their_low_word.md", "signed_value");
 }
 #[test]
-fn private_state_unsigned_bounds_expand() {
-    check_private_state_expansion("private_state_narrowing_bounds.md", "unsigned_value");
+fn wide_unsigned_low_word_narrowing_expands() {
+    check_private_state_expansion("wide_values_narrow_to_their_low_word.md", "unsigned_value");
 }
 
 #[test]
@@ -14066,8 +14066,8 @@ fn private_state_wrappers_reject_invalid_ownership_and_effects() {
 }
 
 #[test]
-fn private_state_narrowing_rejects_unproved_bounds() {
-    let fixture_name = "private_state_narrowing_bounds.md";
+fn wide_values_narrow_to_their_low_word_without_bounds() {
+    let fixture_name = "wide_values_narrow_to_their_low_word.md";
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests")
         .join(fixture_name);
@@ -14079,14 +14079,17 @@ fn private_state_narrowing_rejects_unproved_bounds() {
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
     verify_c0_sources(source, &sources).unwrap();
-    for bound in [
-        "requires value >= -2147483648i64;",
-        "requires value <= 2147483647i64;",
-        "requires value <= 2147483647u64;",
+    for claim in [
+        "ensures result == 0;",
+        "ensures result == (uint32)value + 1u32;",
     ] {
         assert!(
-            verify_c0_sources(&source.replace(bound, ""), &sources).is_err(),
-            "missing bound accepted: {bound}"
+            verify_c0_sources(
+                &source.replacen("ensures result == (uint32)value;", claim, 1),
+                &sources
+            )
+            .is_err(),
+            "wrong low word accepted: {claim}"
         );
     }
 }

@@ -408,10 +408,10 @@ fn prove_claims_by_checked_tactics(
         .map_err(|error| error.at_declaration(function_block.signature().name()))?;
     // A shared context was built for an earlier claim; name this function's
     // parameters for diagnostics as building it would have.
-    crate::surface::proof_diagnostics::render::enter_ambient_naming(ParameterBinding::new(
-        parsed_function.parameters(),
-        &arguments,
-    ));
+    crate::surface::proof_diagnostics::render::enter_ambient_naming(
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
+        state.memory(),
+    );
     let entry_context = Arc::new(ProofEntryContext {
         state: state.clone(),
         arguments: arguments.clone(),
@@ -1265,6 +1265,18 @@ fn close_claim_directly_from_outcome<'a>(
         return Ok(Ok(completed));
     }
     check_verification_deadline()?;
+    // One label set for the whole report: a read of the outcome state is
+    // the bare place, a read of the entry memory is `old(...)`, and any
+    // other memory a value reads is a `<state A>` defined after the context.
+    let mut labels =
+        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+    if let CFunctionOutcome::Return { state, .. } | CFunctionOutcome::Throw { state, .. } = outcome
+    {
+        labels.register_current_state(state);
+    }
+    if let CFunctionOutcome::Return { value, .. } = outcome {
+        labels.source_value_type(value);
+    }
     // A comparison reports what each side evaluates to at the outcome, by
     // the same kernel evaluation every proof-side expression gets. Two
     // distinct load variables over one address render identically, so that
@@ -1290,8 +1302,20 @@ fn close_claim_directly_from_outcome<'a>(
             };
             match (evaluate(left), evaluate(right)) {
                 (Some(kernel_left), Some(kernel_right)) => {
-                    let rendered_left = describe_c_value(&kernel_left, parameter_binding);
-                    let rendered_right = describe_c_value(&kernel_right, parameter_binding);
+                    let rendered_left =
+                        crate::surface::proof_diagnostics::render::render_c_value_labeled(
+                            &kernel_left,
+                            &mut labels,
+                        );
+                    let rendered_right =
+                        crate::surface::proof_diagnostics::render::render_c_value_labeled(
+                            &kernel_right,
+                            &mut labels,
+                        );
+                    // Whether the two sides are reads of one address, which
+                    // the unqualified address spelling tells.
+                    let same_address = describe_c_value(&kernel_left, parameter_binding)
+                        == describe_c_value(&kernel_right, parameter_binding);
                     // Two reads of one address of different kinds are two
                     // values whatever happened in between: say that, and not
                     // which snapshot or store set them apart.
@@ -1318,7 +1342,7 @@ fn close_claim_directly_from_outcome<'a>(
                                 "the outcome state"
                             }
                         };
-                        if rendered_left == rendered_right && kernel_left != kernel_right {
+                        if same_address && kernel_left != kernel_right {
                             let surface_left = describe_contract_expression(left);
                             let surface_right = describe_contract_expression(right);
                             let left_role = snapshot_role(left);
@@ -1423,6 +1447,7 @@ fn close_claim_directly_from_outcome<'a>(
             CFunctionOutcome::Return { value, .. } => Some(value),
             _ => None,
         },
+        &mut labels,
     );
     let error = proof.step_error(format!(
         "`ensures {surface}` failed for `{claim_label}` path {path_index}: unclosed goal: {surface}{evaluated_sides}\n{context}"

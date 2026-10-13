@@ -1,7 +1,8 @@
 # Performance tools
 
-Click separates proof validity, cost diagnosis, proof expansion, and workflow
-auditing into distinct operations:
+This page orders Click's performance tools: verify first, then profile, expand,
+and audit. Click separates proof validity, cost diagnosis, proof expansion, and
+workflow auditing into distinct operations:
 
 1. Run `click verify` to establish ordinary correctness.
 2. Run `click profile` to attribute verifier work to source proof sites.

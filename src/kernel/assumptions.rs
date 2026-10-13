@@ -24,6 +24,7 @@ use std::cell::{Cell, RefCell};
 mod condition_reasoning;
 pub(in crate::kernel) mod variable_chains;
 pub(in crate::kernel) use condition_reasoning::cancel_common_offset_addends;
+pub(in crate::kernel) use condition_reasoning::narrowed_cast_identity;
 #[cfg(test)]
 pub(in crate::kernel) use condition_reasoning::with_order_walk_full_scan;
 mod constant_classes;
@@ -5454,6 +5455,24 @@ impl PureFactContext {
             && let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
         {
             self = self.assume_condition_uncharged(ConditionTerm::equal(left, right), value);
+        }
+        // An equality naming a C narrowing conversion whose operand this
+        // context already places inside the destination range also files the
+        // conversion's identity with its operand (`narrowed_cast_identity`),
+        // so equality reasoning relates `x == conv(y)` to `x == y`. One
+        // memoized decision per bound of each converted side; nothing else
+        // in the context is visited.
+        if value && let ConditionTerm::Bitvector32Equal(left, right) = &condition {
+            for side in [left.as_ref(), right.as_ref()] {
+                if matches!(side, Bitvector32Term::MachineIntegerCast { .. })
+                    && let Some(carrier) = self.narrowed_cast_carrier(side)
+                {
+                    let identity = ConditionTerm::equal(side.clone(), carrier);
+                    if identity != condition {
+                        self = self.assume_condition_uncharged(identity, true);
+                    }
+                }
+            }
         }
         if let ConditionTerm::PointerEqual(left, right) = &condition
             && left.block == right.block

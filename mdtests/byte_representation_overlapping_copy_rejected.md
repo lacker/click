@@ -31,5 +31,5 @@ int f() {
 ```
 
 ```expect
-fail:  separate memory(
+fail:  separate(buf[2..10], buf[0..8])
 ```

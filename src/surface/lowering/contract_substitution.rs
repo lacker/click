@@ -2979,7 +2979,7 @@ pub(in crate::surface) fn pure_function_parameter_argument(
 /// exactly the form the parser gives a written contract cast.
 ///
 /// This is how the C-string bridge is elaborated. A predicate or theorem
-/// parameter of `uint8` bytes may be passed a plain `char` pointer; where the
+/// parameter of `uint8` bytes may be passed a character pointer; where the
 /// target's plain `char` is signed, that pointer's bytes are `int8` reads,
 /// so the implicit conversion is made explicit as this byte view rather than
 /// left to textual substitution, which would read the bytes signed.
@@ -3026,7 +3026,7 @@ pub(in crate::surface) fn character_byte_view_name(
 
 /// Whether a value of C type `actual` passed where kernel type `expected`
 /// is read needs the explicit [`character_byte_view`]: `expected` is
-/// `uint8` bytes and `actual` is a signed plain `char` pointer or array.
+/// `uint8` bytes and `actual` is a signed character pointer or array.
 pub(in crate::surface) fn needs_character_byte_view(
     actual: C0Type,
     expected: crate::kernel::CType,
@@ -3037,13 +3037,16 @@ pub(in crate::surface) fn needs_character_byte_view(
         crate::kernel::CType::UInt8Pointer | crate::kernel::CType::UInt8Array(_)
     ) && matches!(
         actual,
-        C0Type::CharPointer(PlainChar::Signed) | C0Type::CharArray(PlainChar::Signed, _)
+        C0Type::CharPointer(PlainChar::Signed)
+            | C0Type::CharArray(PlainChar::Signed, _)
+            | C0Type::Int8Pointer
+            | C0Type::Int8Array(_)
     )
 }
 
 /// Elaborates the C-string bridge in the top-level predicate calls of a
-/// proposition: an argument that directly names a C value of signed plain
-/// `char` pointer type, passed to a parameter of `uint8` bytes, becomes the
+/// proposition: an argument that directly names a C value of signed
+/// character pointer type, passed to a parameter of `uint8` bytes, becomes the
 /// explicit [`character_byte_view`] of that value. `type_of` gives the C type
 /// of a name in scope. Calls under a binder are left alone, since a binder may
 /// shadow the name; their arguments still lower through the same view.

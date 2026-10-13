@@ -1974,6 +1974,58 @@ impl<'a> TermRewrite<'a> {
         }
     }
 
+    /// A narrowing conversion whose operand the cited conditions place in
+    /// the destination range is that operand's carrier
+    /// (`narrowed_cast_identity`), just as a conditional whose guard they
+    /// decide is its arm. Each bound must be a cited condition, about the
+    /// operand as written or as rewritten, or fold to true by itself; no
+    /// other fact is consulted. `conditional_guards` reports the bounds so
+    /// a search can cite them.
+    fn narrowed_cast_carrier(
+        &mut self,
+        original: &Bitvector32Term,
+        rewritten: &Bitvector32Term,
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
+    ) -> Option<Bitvector32Term> {
+        let (bounds, carrier) =
+            crate::kernel::assumptions::narrowed_cast_identity(rewritten, source, destination)?;
+        if let Some(collected) = &mut self.collected_conditions {
+            let (original_bounds, _) =
+                crate::kernel::assumptions::narrowed_cast_identity(original, source, destination)?;
+            collected.extend(
+                original_bounds
+                    .into_iter()
+                    .flat_map(|bound| bound.conditions),
+            );
+            collected.extend(
+                bounds
+                    .iter()
+                    .flat_map(|bound| bound.conditions.iter().cloned()),
+            );
+            return None;
+        }
+        let conditions = self.conditions?;
+        let (original_bounds, _) =
+            crate::kernel::assumptions::narrowed_cast_identity(original, source, destination)?;
+        let holds = |condition: &ConditionTerm| {
+            crate::instrumentation::record_deterministic_work(1);
+            conditions.get(condition) == Some(&true)
+                || folded_machine_condition(condition.clone()) == ConditionTerm::Constant(true)
+        };
+        bounds
+            .iter()
+            .zip(&original_bounds)
+            .all(|(bound, original)| {
+                bound
+                    .conditions
+                    .iter()
+                    .chain(&original.conditions)
+                    .any(holds)
+            })
+            .then_some(carrier)
+    }
+
     pub(crate) fn conditional_guards(proposition: &Proposition) -> Vec<ConditionTerm> {
         let empty = HashMap::new();
         let mut walker = TermRewrite::for_conditions(&empty);
@@ -4244,6 +4296,7 @@ impl<'a> TermRewrite<'a> {
                 source,
                 destination,
             } => {
+                let original = value;
                 let value = self.bits(value);
                 if self.integer_exact.is_some() {
                     // Exact Integer congruence preserves native syntax. Folding
@@ -4253,6 +4306,10 @@ impl<'a> TermRewrite<'a> {
                         source: *source,
                         destination: *destination,
                     }
+                } else if let Some(carrier) =
+                    self.narrowed_cast_carrier(original, &value, *source, *destination)
+                {
+                    carrier
                 } else {
                     Bitvector32Term::machine_integer_cast(*source, *destination, value)
                 }

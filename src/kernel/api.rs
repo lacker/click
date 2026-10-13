@@ -230,12 +230,13 @@ pub(crate) fn c_narrow_integer_range(value: &CValue) -> Option<(&Bitvector32Term
 /// value that is not a constant, as the facts every reader of the value may
 /// use.
 ///
-/// Click never truncates: each conversion into a narrow type owes the
-/// obligation that its operand is in the type's range, so a narrow value is
-/// in range wherever one exists. A parameter's entry value is one such value
-/// (the caller's argument was converted to the parameter's type), so its
-/// range is an entry fact of the function, stated once where the value is
-/// introduced instead of at each use.
+/// Every conversion into a narrow type lands in the type's range: C's
+/// conversion reduces its operand modulo 2^N into it, and a specification's
+/// owes the range. So a narrow value is in range wherever one exists. A
+/// parameter's entry value is one such value (the caller's argument was
+/// converted to the parameter's type), so its range is an entry fact of the
+/// function, stated once where the value is introduced instead of at each
+/// use.
 pub(crate) fn c_narrow_integer_range_facts(value: &CValue) -> Option<Vec<Proposition>> {
     let (term, lower, upper) = c_narrow_integer_range(value)?;
     if term.as_const().is_some() {
@@ -1976,9 +1977,21 @@ pub fn c_source_cast_with_pointee_qualifiers_and_struct(
     }
 }
 
+/// Marks a cast lowered from C source as C's integer conversion
+/// (`CIntegerCastMode::CConversion`). Any other cast is returned unchanged.
+pub fn c_source_integer_conversion(mut expression: CExpression) -> CExpression {
+    if let CExpression::Cast { integer_mode, .. } = &mut expression
+        && *integer_mode == CIntegerCastMode::Standard
+    {
+        *integer_mode = CIntegerCastMode::CConversion;
+    }
+    expression
+}
+
 /// Explicit modulo conversion between admitted machine integer types.
 /// The evaluator checks both runtime types. This policy is shared by Rust and
-/// C++20; ordinary C casts continue to use `c_cast` and its checked policy.
+/// C++20; C source conversions use `c_source_integer_conversion`, and a
+/// specification's casts keep `c_cast` and its checked policy.
 pub fn c_integer_cast_modulo(expression: CExpression, target_type: CType) -> CExpression {
     let mut result = c_cast(expression, target_type);
     if let CExpression::Cast { integer_mode, .. } = &mut result {

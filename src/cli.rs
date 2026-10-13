@@ -449,15 +449,61 @@ pub fn with_run_limits<R>(
         (result, crate::instrumentation::run_work_exhaustion())
     });
     let elapsed = started.elapsed();
-    match (result, exhausted) {
-        (Err(message), _) if elapsed >= limits.time => Err(format!(
+    match result {
+        Err(message) if elapsed >= limits.time => Err(format!(
             "{tool} was stopped after {} by {}; rerun on a less loaded machine or raise `--time-limit`\n{message}",
             format_fractional_duration(elapsed),
             crate::instrumentation::containment_bound_description(limits.time),
         )),
-        // A search that failed because the budget ran out can report an
-        // earlier alternative's failure instead; the budget is what stopped
-        // the run, so say so first. A run is never green past its budget.
+        result => report_work_exhaustion(tool, result, exhausted),
+    }
+}
+
+/// How a whole-run work budget's exhaustion is named, here and in
+/// `instrumentation`'s pending-limit message.
+const WHOLE_RUN_BUDGET_EXHAUSTED: &str = "exhausted its deterministic whole-run work budget";
+
+/// Installs both of `limits`' bounds around `operation`; [`with_run_limits`]
+/// is the ordinary route.
+pub fn within_run_limits<R>(limits: RunLimits, operation: impl FnOnce() -> R) -> R {
+    within_containment_bound(limits.time, || {
+        crate::instrumentation::with_run_work_limit(limits.work, operation)
+    })
+}
+
+/// Installs only the wall-clock crash-containment bound, for a tool that
+/// spends one bound over several work budgets and inspects the outcome
+/// itself (`click profile`, which contains a whole project while each
+/// sidecar spends its own [`within_work_limit`]).
+pub fn within_containment_bound<R>(time: Duration, operation: impl FnOnce() -> R) -> R {
+    crate::instrumentation::with_deadline(time, operation)
+}
+
+/// Runs `operation` under its own deterministic whole-run work budget of
+/// `limit` units, failing it if it spent past the budget as
+/// [`with_run_limits`] does.
+pub fn within_work_limit<R>(
+    tool: &str,
+    limit: usize,
+    operation: impl FnOnce() -> Result<R, String>,
+) -> Result<R, String> {
+    let (result, exhausted) = crate::instrumentation::with_run_work_limit(limit, || {
+        let result = operation();
+        (result, crate::instrumentation::run_work_exhaustion())
+    });
+    report_work_exhaustion(tool, result, exhausted)
+}
+
+/// Fails a run that spent past its whole-run budget. A search that failed
+/// because the budget ran out can report an earlier alternative's failure
+/// instead; the budget is what stopped the run, so say so first. A run is
+/// never green past its budget.
+fn report_work_exhaustion<R>(
+    tool: &str,
+    result: Result<R, String>,
+    exhausted: Option<(usize, usize)>,
+) -> Result<R, String> {
+    match (result, exhausted) {
         (result, Some((used, limit)))
             if result
                 .as_ref()
@@ -478,19 +524,6 @@ pub fn with_run_limits<R>(
         }
         (result, _) => result,
     }
-}
-
-/// How a whole-run work budget's exhaustion is named, here and in
-/// `instrumentation`'s pending-limit message.
-const WHOLE_RUN_BUDGET_EXHAUSTED: &str = "exhausted its deterministic whole-run work budget";
-
-/// Installs both of `limits`' bounds around `operation`, for a tool that
-/// inspects the outcome itself (`click profile`); [`with_run_limits`] is the
-/// ordinary route.
-pub fn within_run_limits<R>(limits: RunLimits, operation: impl FnOnce() -> R) -> R {
-    crate::instrumentation::with_deadline(limits.time, || {
-        crate::instrumentation::with_run_work_limit(limits.work, operation)
-    })
 }
 
 /// Parses a `--work-limit` value: a positive count of deterministic work

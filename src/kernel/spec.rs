@@ -2,6 +2,7 @@ use super::prelude::*;
 use super::{ResourceDescription, ResourceFieldSchema};
 
 pub(in crate::kernel) mod predicate_dependencies;
+pub(in crate::kernel) mod walk;
 
 type EvaluatedSpecResource = (CResource, ExecutionFacts, Vec<ProofObligation>);
 type SpecResourceBuilder = Box<dyn Fn(Vec<CValue>) -> Option<CResource>>;
@@ -7394,10 +7395,15 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
             assumptions,
             budget,
             |value, facts, mut obligations| {
-                let outcome =
-                    cast_c_value_to_type(value, *target_type, &mut obligations, assumptions)
-                        .map(CExpressionOutcome::Value)
-                        .unwrap_or_else(CExpressionOutcome::RuntimeError);
+                let outcome = cast_c_value_to_type(
+                    value,
+                    *target_type,
+                    crate::kernel::eval::IntegerConversion::Checked,
+                    &mut obligations,
+                    assumptions,
+                )
+                .map(CExpressionOutcome::Value)
+                .unwrap_or_else(CExpressionOutcome::RuntimeError);
                 vec![CExpressionPath {
                     outcome,
                     facts,
@@ -7915,6 +7921,75 @@ fn evaluate_spec_pointer_offset_paths_in(
     Ok(paths)
 }
 
+/// A specification cannot use the value of a conversion whose range bound
+/// is intrinsically false. Keep that bound's diagnostic before path merging
+/// removes the impossible value path; otherwise lowering reports only zero
+/// paths, losing both the destination range and the constant that failed it.
+fn refuted_narrowing_error(obligations: &[ProofObligation]) -> Option<CRuntimeError> {
+    for obligation in obligations {
+        let Some(context) = obligation
+            .context()
+            .filter(|context| context.contains("narrowing"))
+        else {
+            continue;
+        };
+        let Proposition::ConditionIs(condition, true) = obligation.proposition() else {
+            continue;
+        };
+        if PureFactContext::decide_intrinsically(condition) != Some(false) {
+            continue;
+        }
+        let comparison = match condition {
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+                let op = if matches!(condition, ConditionTerm::Bitvector32SignedLessEqual(..)) {
+                    "<="
+                } else {
+                    ">="
+                };
+                left.as_const()
+                    .zip(right.as_const())
+                    .map(|(left, right)| format!("{} {op} {}", left as i32, right as i32))
+            }
+            ConditionTerm::Bitvector64SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector64SignedGreaterEqual(left, right) => {
+                let op = if matches!(condition, ConditionTerm::Bitvector64SignedLessEqual(..)) {
+                    "<="
+                } else {
+                    ">="
+                };
+                left.int64_as_const()
+                    .zip(right.int64_as_const())
+                    .map(|(left, right)| format!("{left} {op} {right}"))
+            }
+            ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => left
+                .uint64_as_const()
+                .zip(right.uint64_as_const())
+                .map(|(left, right)| format!("{left} <= {right}")),
+            ConditionTerm::IntegerLessEqual(left, right)
+            | ConditionTerm::IntegerGreaterEqual(left, right) => {
+                let op = if matches!(condition, ConditionTerm::IntegerLessEqual(..)) {
+                    "<="
+                } else {
+                    ">="
+                };
+                left.as_const()
+                    .zip(right.as_const())
+                    .map(|(left, right)| format!("{left} {op} {right}"))
+            }
+            _ => None,
+        };
+        let reason = comparison.map_or_else(
+            || "the range prerequisite is false".to_string(),
+            |comparison| format!("{comparison} is false"),
+        );
+        return Some(CRuntimeError::FunctionContract(format!(
+            "{context}: {reason}"
+        )));
+    }
+    None
+}
+
 /// The value paths of a C-level evaluation, for a specification that reads
 /// them. A path that ended in a runtime error carries no value and is
 /// dropped. When every path did, the first error is recorded on the budget:
@@ -7929,6 +8004,10 @@ fn spec_value_paths_in(
     let mut first_error = None;
     let mut values = Vec::new();
     for path in paths {
+        if let Some(error) = refuted_narrowing_error(&path.obligations) {
+            first_error.get_or_insert(error);
+            continue;
+        }
         match path.outcome {
             CExpressionOutcome::Value(value) => values.push(SpecExpressionPath {
                 value,

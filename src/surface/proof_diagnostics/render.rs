@@ -50,6 +50,12 @@ pub(crate) struct SnapshotLabels {
     source_names: HashMap<Variable, String>,
     source_types: HashMap<Variable, crate::kernel::CType>,
     anonymous_names: HashMap<Variable, String>,
+    /// Memories a source spelling names only by a report-local `<state A>`,
+    /// defined after the report.
+    unknown_states: Vec<CMemory>,
+    /// Addresses a source spelling names only by a report-local
+    /// `<pointer A>`.
+    unnamed_pointers: HashMap<Pointer, String>,
     /// The parameters or locals a diagnostic spells addresses through, with
     /// their values, when the caller has them.
     naming: Option<std::rc::Rc<NamingTables>>,
@@ -118,7 +124,70 @@ impl SnapshotLabels {
             parameter_binding.parameters.to_vec(),
             parameter_binding.arguments.to_vec(),
         )));
+        labels.register_ambient_entry();
         labels
+    }
+
+    /// A read of the verified function's entry memory spells as `old(...)`,
+    /// against the parameters' entry values.
+    fn register_ambient_entry(&mut self) {
+        let Some((memory, tables)) = AMBIENT_ENTRY.with(|entry| entry.borrow().clone()) else {
+            return;
+        };
+        if self.source_memories.len() < MAX_SNAPSHOT_LABELS
+            && !self
+                .source_memories
+                .iter()
+                .any(|(_, point, _)| point == ENTRY_POINT)
+        {
+            self.source_memories
+                .push((memory, ENTRY_POINT.into(), tables));
+        }
+    }
+
+    /// A memory as a phrase: `this state`, `function entry`, a recorded
+    /// point, or a report-local `<state A>`.
+    pub(crate) fn state_phrase(&mut self, memory: &CMemory) -> String {
+        match self
+            .source_memory_context(memory)
+            .map(|(point, _)| point.to_owned())
+        {
+            Some(point) if point == "current" => "this state".into(),
+            Some(point) if point == ENTRY_POINT => "function entry".into(),
+            Some(point) => format!("`{point}`"),
+            None => self.state_label(memory),
+        }
+    }
+
+    /// The report-local name of a memory no recorded state names.
+    pub(crate) fn state_label(&mut self, memory: &CMemory) -> String {
+        if let Some(index) = self
+            .unknown_states
+            .iter()
+            .position(|known| known.same_storage_roots(memory) || known == memory)
+        {
+            return format!("<state {}>", alphabetic_label(index));
+        }
+        if self.unknown_states.len() >= MAX_SNAPSHOT_LABELS {
+            return "<another state>".into();
+        }
+        self.unknown_states.push(memory.clone());
+        format!(
+            "<state {}>",
+            alphabetic_label(self.unknown_states.len() - 1)
+        )
+    }
+
+    /// The report-local name of an address no source spelling names.
+    pub(crate) fn unnamed_pointer(&mut self, pointer: &Pointer) -> String {
+        let next = self.unnamed_pointers.len();
+        if next >= 128 && !self.unnamed_pointers.contains_key(pointer) {
+            return "<another pointer>".into();
+        }
+        self.unnamed_pointers
+            .entry(pointer.clone())
+            .or_insert_with(|| format!("<pointer {}>", alphabetic_label(next)))
+            .clone()
     }
 
     /// Current locals take precedence over entry values. This is diagnostic
@@ -137,14 +206,14 @@ impl SnapshotLabels {
             if names.iter().any(|local| local.name() == name)
                 && !current.source_names.contains_key(variable)
             {
-                *name = format!("at(function.entry, {name})");
+                *name = format!("old({name})");
             }
         }
         for (pointer, name) in &mut self.pointer_sources {
             if names.iter().any(|local| local.name() == name)
                 && !current.pointer_sources.contains_key(pointer)
             {
-                *name = format!("at(function.entry, {name})");
+                *name = format!("old({name})");
             }
         }
         for (pointer, name) in current.pointer_sources {
@@ -154,8 +223,27 @@ impl SnapshotLabels {
         for (variable, name) in current.source_names {
             self.source_names.entry(variable).or_insert(name);
         }
-        self.naming = current.naming;
-        self.source_state(state, "current".into());
+        // Names the state no longer holds -- a parameter after its frame
+        // ended, say -- still spell the addresses they held.
+        let mut merged = current.naming.as_deref().cloned().unwrap_or_default();
+        if let Some(previous) = self.naming.as_deref() {
+            for (parameter, argument) in previous.0.iter().zip(&previous.1) {
+                if !merged
+                    .0
+                    .iter()
+                    .any(|known| known.name() == parameter.name())
+                {
+                    merged.0.push(parameter.clone());
+                    merged.1.push(argument.clone());
+                }
+            }
+        }
+        let merged = std::rc::Rc::new(merged);
+        self.naming = Some(merged.clone());
+        if self.source_memories.len() < MAX_SNAPSHOT_LABELS {
+            self.source_memories
+                .push((state.memory().clone(), "current".into(), merged));
+        }
     }
 
     pub(crate) fn source_state(&mut self, state: &CState, point: String) {
@@ -167,14 +255,30 @@ impl SnapshotLabels {
     }
 
     fn source_memory_context(&self, memory: &CMemory) -> Option<(&str, &NamingTables)> {
-        self.source_memories
-            .iter()
-            .find_map(|(known, point, naming)| {
-                // Exact storage roots identify a state without walking memory.
-                known
-                    .same_storage_roots(memory)
-                    .then_some((point.as_str(), naming.as_ref()))
-            })
+        // Exact storage roots identify a state without walking memory. When
+        // one memory is both the current state and another recorded one,
+        // the unqualified current spelling wins.
+        let mut found = None;
+        for (known, point, naming) in &self.source_memories {
+            if known.same_storage_roots(memory) {
+                if point == "current" {
+                    return Some((point.as_str(), naming.as_ref()));
+                }
+                found.get_or_insert((point.as_str(), naming.as_ref()));
+            }
+        }
+        if found.is_none() && is_entry_memory(memory) {
+            // The memory every execution starts from, or that memory with
+            // its cells only named, holds the entry values.
+            let naming = self
+                .source_memories
+                .iter()
+                .find(|(_, point, _)| point == ENTRY_POINT)
+                .map(|(_, _, naming)| naming.as_ref())
+                .or(self.naming.as_deref())?;
+            return Some((ENTRY_POINT, naming));
+        }
+        found
     }
 
     /// Labels naming what the function being verified declares, when one is.
@@ -185,6 +289,72 @@ impl SnapshotLabels {
         let mut labels = Self::naming(ParameterBinding::new(&tables.0, &tables.1));
         labels.naming = Some(tables);
         labels
+    }
+
+    /// The definitions of the report-local states a source spelling used.
+    fn state_legend(&mut self) -> String {
+        if self.unknown_states.is_empty() {
+            return String::new();
+        }
+        let states = self.unknown_states.clone();
+        let mut output = String::from("\n  where");
+        for (index, memory) in states.iter().enumerate() {
+            output.push_str(&format!(
+                "\n    <state {}> is {}",
+                alphabetic_label(index),
+                self.describe_state(memory)
+            ));
+        }
+        output
+    }
+
+    /// One state in source terms: the program event that produced it.
+    fn describe_state(&mut self, memory: &CMemory) -> String {
+        use crate::kernel::{CMemoryConstructionKind, CMemoryDerivation};
+        if memory.is_initial_diagnostic_memory() {
+            return "the memory before the function runs".into();
+        }
+        let edge = match memory.diagnostic_construction() {
+            Some(CMemoryConstructionKind::Transition(edge)) => edge.clone(),
+            Some(CMemoryConstructionKind::Transform { .. }) => {
+                return "a memory derived from another state for one read".into();
+            }
+            None => match crate::kernel::intern_c_memory_ref(memory).derivation() {
+                Some(edge) => edge,
+                None => return "an intermediate memory".into(),
+            },
+        };
+        let tables = self.naming.clone();
+        let (parameters, arguments) = tables
+            .as_deref()
+            .map_or((&[][..], &[][..]), |(p, a)| (p.as_slice(), a.as_slice()));
+        let binding = ParameterBinding::new(parameters, arguments);
+        match edge.as_ref() {
+            CMemoryDerivation::Store { pointer, .. } => {
+                match crate::surface::diagnostics::diagnostic_source_cell(pointer, binding) {
+                    Some(cell) => format!("the memory after the store to `{cell}`"),
+                    None => "the memory after a store".into(),
+                }
+            }
+            CMemoryDerivation::BranchJoin { .. } => "the memory where branches join".into(),
+            CMemoryDerivation::CellsForgotten { .. } => {
+                "the memory after cached cells were forgotten".into()
+            }
+            CMemoryDerivation::CallHavoc { .. } => "the memory after a call".into(),
+            CMemoryDerivation::LoopHavoc { .. } => "the memory a loop may have changed".into(),
+            CMemoryDerivation::BlockDeclared { .. } => {
+                "the memory after a local was declared".into()
+            }
+            CMemoryDerivation::LocalLifetimeEnded { .. } => {
+                "the memory after a local's lifetime ended".into()
+            }
+            CMemoryDerivation::HeapAllocated { .. } => "the memory after an allocation".into(),
+            CMemoryDerivation::HeapFreed { .. } => "the memory after a `free`".into(),
+            CMemoryDerivation::CellsSeeded { .. } => {
+                "the memory before the function runs, with its cells named".into()
+            }
+            _ => format!("the memory after a `{}` step", edge.kind_name()),
+        }
     }
 
     pub(crate) fn naming_tables(
@@ -264,7 +434,7 @@ impl SnapshotLabels {
 #[cfg(test)]
 pub(crate) fn render_simple_click_fact_labeled(
     proposition: &Proposition,
-    labels: &SnapshotLabels,
+    labels: &mut SnapshotLabels,
 ) -> Option<String> {
     surface::render(proposition, labels)
 }
@@ -313,11 +483,22 @@ pub(crate) fn render_memory_history_check(
             ParameterBinding::new(parameters, arguments),
         )
         .map(|source| format!("`{source}`"))
-        .unwrap_or_else(|| format!("address {}", labels.pointer_value_name(pointer)))
+        .unwrap_or_else(|| {
+            if typed_notation() {
+                format!("address {}", labels.pointer_value_name(pointer))
+            } else {
+                format!("address `{}`", labels.unnamed_pointer(pointer))
+            }
+        })
     };
     let written = address(written, labels);
     let read = address(read, labels);
-    let snapshot = labels.snapshot_name(at.snapshot().memory());
+    let memory = at.snapshot().memory();
+    let snapshot = if typed_notation() {
+        labels.snapshot_name(memory)
+    } else {
+        labels.state_phrase(memory)
+    };
     Some(format!(
         "memory-history check stops at {snapshot}:\n    store: {} bytes at {written}\n    read range checked: {bytes} bytes at {read}",
         written_bytes,
@@ -338,25 +519,82 @@ type NamingTables = (
     Vec<crate::kernel::CExpression>,
 );
 
+/// Whether `memory` is the initial memory, or it with cells seeded from it:
+/// either holds exactly the values memory had before the code ran. A bounded
+/// walk, done only while printing a failure.
+fn is_entry_memory(memory: &CMemory) -> bool {
+    let mut current = memory.clone();
+    for _ in 0..8 {
+        if current.is_initial_diagnostic_memory() {
+            return true;
+        }
+        let edge = match current.diagnostic_construction() {
+            Some(crate::kernel::CMemoryConstructionKind::Transition(edge)) => edge.clone(),
+            Some(_) => return false,
+            None => match crate::kernel::intern_c_memory_ref(&current).derivation() {
+                Some(edge) => edge,
+                None => return false,
+            },
+        };
+        let crate::kernel::CMemoryDerivation::CellsSeeded { base, .. } = edge.as_ref() else {
+            return false;
+        };
+        current = base.memory().clone();
+    }
+    false
+}
+
+/// The recorded point a read of the function's entry memory names; it
+/// spells as `old(...)`.
+pub(crate) const ENTRY_POINT: &str = "function.entry";
+
 thread_local! {
     /// The parameters of the C function being verified and their entry
     /// values. Diagnostics only: nothing reads it to decide a proof.
     static AMBIENT_NAMING: std::cell::RefCell<Option<std::rc::Rc<NamingTables>>> =
         const { std::cell::RefCell::new(None) };
+    /// That function's entry memory, so a read of it spells as `old(...)`.
+    /// One retained handle per verified function; diagnostics only.
+    static AMBIENT_ENTRY: std::cell::RefCell<Option<(CMemory, std::rc::Rc<NamingTables>)>> =
+        const { std::cell::RefCell::new(None) };
+    /// Set while a `--trace-proof` trace is rendered: traces keep their
+    /// typed notation, which names each read's width and snapshot.
+    static TYPED_NOTATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Starts verifying a C function whose parameters hold `arguments`.
-pub(crate) fn enter_ambient_naming(parameter_binding: ParameterBinding<'_>) {
-    AMBIENT_NAMING.with(|naming| {
-        *naming.borrow_mut() = Some(std::rc::Rc::new((
-            parameter_binding.parameters.to_vec(),
-            parameter_binding.arguments.to_vec(),
-        )));
-    });
+/// Starts verifying a C function whose parameters hold `arguments` in the
+/// memory `entry`.
+pub(crate) fn enter_ambient_naming(parameter_binding: ParameterBinding<'_>, entry: &CMemory) {
+    let tables = std::rc::Rc::new((
+        parameter_binding.parameters.to_vec(),
+        parameter_binding.arguments.to_vec(),
+    ));
+    AMBIENT_NAMING.with(|naming| *naming.borrow_mut() = Some(tables.clone()));
+    AMBIENT_ENTRY.with(|slot| *slot.borrow_mut() = Some((entry.clone(), tables)));
 }
 
 pub(crate) fn clear_ambient_naming() {
     AMBIENT_NAMING.with(|naming| *naming.borrow_mut() = None);
+    AMBIENT_ENTRY.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// While alive, propositions render in the typed trace notation.
+pub(crate) struct TypedNotationScope(bool);
+
+impl TypedNotationScope {
+    pub(crate) fn enter() -> Self {
+        Self(TYPED_NOTATION.with(|typed| typed.replace(true)))
+    }
+}
+
+impl Drop for TypedNotationScope {
+    fn drop(&mut self) {
+        TYPED_NOTATION.with(|typed| typed.set(self.0));
+    }
+}
+
+fn typed_notation() -> bool {
+    TYPED_NOTATION.with(std::cell::Cell::get)
 }
 
 /// A bounded view of one exact resource representation for a proof trace.
@@ -366,6 +604,7 @@ pub(crate) fn render_resource_fact(fact: &CResourceFact) -> String {
     render_resource_fact_labeled(fact, &mut labels)
 }
 
+#[cfg(test)]
 pub(crate) fn render_resource_fact_labeled(
     fact: &CResourceFact,
     labels: &mut SnapshotLabels,
@@ -398,14 +637,19 @@ pub(crate) fn render_resource_fact_labeled(
     renderer.output
 }
 
-/// One proposition display policy for facts, requirements, and goals in both
-/// ordinary verifier errors and traces. Source-like spelling is used only when
-/// it preserves the checked identities; otherwise the typed renderer names
-/// each read's width, snapshot, and address with report-local labels.
+/// One proposition display policy for facts, requirements, and goals.
+/// Ordinary verifier errors spell every proposition in Click or source
+/// syntax (`surface::source`). A `--trace-proof` trace uses source spelling
+/// only when it preserves the checked identities; otherwise its typed
+/// renderer names each read's width, snapshot, and address with report-local
+/// labels.
 pub(crate) fn render_proposition_labeled(
     proposition: &Proposition,
     labels: &mut SnapshotLabels,
 ) -> String {
+    if !typed_notation() {
+        return surface::source(proposition, labels);
+    }
     labels.trace_labels = true;
     surface::display(proposition, labels)
         .unwrap_or_else(|| render_kernel_fact(proposition, labels, true))
@@ -425,6 +669,7 @@ pub(crate) fn render_trace_fact_labeled(
     proposition: &Proposition,
     labels: &mut SnapshotLabels,
 ) -> String {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     render_proposition_labeled(proposition, labels)
 }
 
@@ -462,8 +707,15 @@ fn render_kernel_fact(
 /// elimination, so its `Debug` reaches the same datatype schemas a
 /// proposition's does.
 pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
-    surface::integer(term, &SnapshotLabels::ambient())
-        .unwrap_or_else(|| "Integer term has no exact Click spelling at this frontier".into())
+    surface::integer(term, &mut SnapshotLabels::ambient())
+}
+
+/// One C value in source syntax, under the report's labels.
+pub(crate) fn render_c_value_labeled(
+    value: &crate::kernel::CValue,
+    labels: &mut SnapshotLabels,
+) -> String {
+    surface::source_value(value, labels)
 }
 
 /// Render `left operator right` under one set of labels, so two distinct
@@ -475,14 +727,10 @@ pub(crate) fn render_integer_comparison(
     operator: &str,
     right: &IntegerTerm,
 ) -> String {
-    let labels = SnapshotLabels::ambient();
-    match (
-        surface::integer(left, &labels),
-        surface::integer(right, &labels),
-    ) {
-        (Some(left), Some(right)) => format!("{left} {operator} {right}"),
-        _ => "Integer comparison has no exact Click spelling at this frontier".into(),
-    }
+    let mut labels = SnapshotLabels::ambient();
+    let left = surface::integer(left, &mut labels);
+    let right = surface::integer(right, &mut labels);
+    format!("{left} {operator} {right}")
 }
 
 /// Describe a refused Integer capture: which written subterm carries an
@@ -1832,7 +2080,7 @@ mod tests {
                 &proposition,
                 ParameterBinding::default()
             ),
-            "∃path:Path<Integer>. true is true"
+            "exists (path: Path<Integer>) { true }"
         );
     }
 
@@ -1850,11 +2098,11 @@ mod tests {
             )
         };
         assert_eq!(
-            render_simple_click_fact_labeled(&equality(Variable(7)), &labels),
+            render_simple_click_fact_labeled(&equality(Variable(7)), &mut labels),
             Some("r != 0".into())
         );
         assert_eq!(
-            render_simple_click_fact_labeled(&equality(Variable(8)), &labels),
+            render_simple_click_fact_labeled(&equality(Variable(8)), &mut labels),
             None
         );
     }

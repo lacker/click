@@ -12,5 +12,5 @@ uint32 caller() { ensures result == 200u32 by auto; }
 ```
 
 ```expect
-fail: uint32 =(value A, 4294967240)
+fail: pure facts: [<unnamed A> == 4294967240u32]
 ```

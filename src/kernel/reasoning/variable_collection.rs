@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::spec::walk::{SpecNode, Visit, WalkBudget, walk_spec};
 
 #[derive(Default)]
 struct SeenTerms {
@@ -639,264 +640,72 @@ pub(in crate::kernel) fn collect_c_ranking_component_variables(
     }
 }
 
-pub(in crate::kernel) fn collect_spec_memory_bitvector_variables(
-    _memory: &SpecMemory,
-    _variables: &mut BTreeSet<Variable>,
-) {
-    // A specification memory is an execution snapshot. Its blocks and cells
-    // are opaque to lexical variable collection; callers still visit the
-    // explicit pointer and expression payloads adjacent to this snapshot.
+/// Collects the free variables of a specification subtree, for premise
+/// indexing.
+///
+/// A quantifier's variable is removed once its body is collected; fold and
+/// match binders are kept. An Integer argument of a machine or algebraic
+/// application is not visited. A specification memory is an execution
+/// snapshot: its blocks and cells are opaque to lexical variable collection,
+/// and only the explicit pointer and expression payloads beside it are
+/// visited.
+fn collect_spec_bitvector_variables(root: SpecNode<'_>, variables: &mut BTreeSet<Variable>) {
+    walk_spec::<()>(root, WalkBudget::Unmetered, |node| {
+        use SpecNode as N;
+        match node {
+            N::Expression(SpecExpression::Value(value)) => {
+                collect_c_value_bitvector_variables(value, variables);
+            }
+            N::Expression(SpecExpression::CExpression(expression)) => {
+                collect_c_expression_bitvector_variables(expression, variables);
+            }
+            N::Integer(SpecIntegerExpression::Term(term)) => {
+                collect_integer_variables(term, variables);
+            }
+            N::Expression(SpecExpression::PureFunctionApplication { arguments, .. })
+            | N::Algebraic(SpecAlgebraicExpression {
+                node: SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. },
+                ..
+            }) => {
+                for argument in arguments {
+                    if !matches!(argument, SpecPureFunctionArgument::Integer(_)) {
+                        collect_spec_bitvector_variables(N::Argument(argument), variables);
+                    }
+                }
+                return Visit::Skip;
+            }
+            N::Proposition(proposition) => {
+                if let Some((variable, body)) = proposition.quantifier() {
+                    collect_spec_bitvector_variables(N::Proposition(body), variables);
+                    variables.remove(&variable);
+                    return Visit::Skip;
+                }
+            }
+            _ => {}
+        }
+        Visit::Descend
+    });
 }
 
 pub(in crate::kernel) fn collect_spec_expression_bitvector_variables(
     expression: &SpecExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    match expression {
-        SpecExpression::ResourceField { .. } => {}
-        SpecExpression::IntegerToMachine { value, .. } => {
-            collect_spec_integer_variables(value, variables);
-        }
-        SpecExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
-            for arm in arms {
-                collect_spec_expression_bitvector_variables(&arm.body, variables);
-            }
-        }
-        SpecExpression::CExpression(expression) => {
-            collect_c_expression_bitvector_variables(expression, variables);
-        }
-        SpecExpression::CountedResourceCount { arguments, .. } => {
-            for argument in arguments.iter().flatten() {
-                collect_spec_expression_bitvector_variables(argument, variables);
-            }
-        }
-        crate::kernel::binary_spec_expression!(left, right) => {
-            collect_spec_expression_bitvector_variables(left, variables);
-            collect_spec_expression_bitvector_variables(right, variables);
-        }
-        SpecExpression::BitwiseNot(expression) | SpecExpression::Cast(expression, _) => {
-            collect_spec_expression_bitvector_variables(expression, variables);
-        }
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_spec_proposition_bitvector_variables(condition, variables);
-            collect_spec_expression_bitvector_variables(then_branch, variables);
-            collect_spec_expression_bitvector_variables(else_branch, variables);
-        }
-        SpecExpression::RangeFold {
-            start,
-            end,
-            initial,
-            accumulator: _,
-            item: _,
-            body,
-        } => {
-            collect_spec_expression_bitvector_variables(start, variables);
-            collect_spec_expression_bitvector_variables(end, variables);
-            collect_spec_expression_bitvector_variables(initial, variables);
-            collect_spec_expression_bitvector_variables(body, variables);
-        }
-        SpecExpression::Let {
-            name: _,
-            value,
-            body,
-        } => {
-            collect_spec_expression_bitvector_variables(value, variables);
-            collect_spec_expression_bitvector_variables(body, variables);
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_function_argument_bitvector_variables(argument, variables);
-            }
-        }
-        SpecExpression::LoopEntrySnapshot(expression) => {
-            collect_spec_expression_bitvector_variables(expression, variables);
-        }
-        SpecExpression::PointerOffset {
-            pointer,
-            elements,
-            byte_width: _,
-        } => {
-            collect_spec_expression_bitvector_variables(pointer, variables);
-            collect_spec_expression_bitvector_variables(elements, variables);
-        }
-        SpecExpression::AggregateFieldValue { pointer, .. } => {
-            collect_spec_expression_bitvector_variables(pointer, variables);
-        }
-        SpecExpression::MemoryLoad {
-            memory, pointer, ..
-        } => {
-            collect_spec_memory_bitvector_variables(memory, variables);
-            collect_spec_expression_bitvector_variables(pointer, variables);
-        }
-    }
+    collect_spec_bitvector_variables(SpecNode::Expression(expression), variables);
 }
 
 pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
     proposition: &SpecProposition,
     variables: &mut BTreeSet<Variable>,
 ) {
-    match proposition {
-        SpecProposition::IntegerComparison { left, right, .. } => {
-            collect_spec_integer_variables(left, variables);
-            collect_spec_integer_variables(right, variables);
-        }
-        SpecProposition::AlgebraicComparison { left, right, .. } => {
-            collect_spec_algebraic_expression_bitvector_variables(left, variables);
-            collect_spec_algebraic_expression_bitvector_variables(right, variables);
-        }
-        SpecProposition::SequenceMembership { element, sequence } => {
-            collect_spec_expression_bitvector_variables(element, variables);
-            collect_spec_sequence_bitvector_variables(sequence, variables);
-        }
-        SpecProposition::SequenceComparison { left, right, .. } => {
-            collect_spec_sequence_bitvector_variables(left, variables);
-            collect_spec_sequence_bitvector_variables(right, variables);
-        }
-        SpecProposition::Comparison { left, right, .. } => {
-            collect_spec_expression_bitvector_variables(left, variables);
-            collect_spec_expression_bitvector_variables(right, variables);
-        }
-        SpecProposition::FloatClassification { expression, .. } => {
-            collect_spec_expression_bitvector_variables(expression, variables);
-        }
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            collect_spec_proposition_bitvector_variables(left, variables);
-            collect_spec_proposition_bitvector_variables(right, variables);
-        }
-        SpecProposition::Not(body) => {
-            collect_spec_proposition_bitvector_variables(body, variables);
-        }
-        SpecProposition::ForAllMachineInteger { variable, body, .. }
-        | SpecProposition::ForAllInt32 { variable, body, .. }
-        | SpecProposition::ForAllInteger { variable, body, .. }
-        | SpecProposition::ForAllAlgebraic { variable, body, .. }
-        | SpecProposition::ForAllPointer { variable, body, .. }
-        | SpecProposition::ExistsMachineInteger { variable, body, .. }
-        | SpecProposition::ExistsInt32 { variable, body, .. }
-        | SpecProposition::ExistsInteger { variable, body, .. }
-        | SpecProposition::ExistsAlgebraic { variable, body, .. }
-        | SpecProposition::ExistsPointer { variable, body, .. } => {
-            collect_spec_proposition_bitvector_variables(body, variables);
-            variables.remove(variable);
-        }
-        SpecProposition::Predicate { arguments, .. } => {
-            for argument in arguments {
-                match argument {
-                    SpecPredicateArgument::Value(expression) => {
-                        collect_spec_expression_bitvector_variables(expression, variables);
-                    }
-                    SpecPredicateArgument::ArrayRef { pointer, .. } => {
-                        collect_spec_expression_bitvector_variables(pointer, variables);
-                    }
-                }
-            }
-        }
-        SpecProposition::ResourceSeparate { left, right }
-        | SpecProposition::ResourceContains {
-            parent: left,
-            child: right,
-        } => {
-            collect_spec_resource_bitvector_variables(left, variables);
-            collect_spec_resource_bitvector_variables(right, variables);
-        }
-        SpecProposition::ValidPlace {
-            memory,
-            pointer: base,
-            ..
-        }
-        | SpecProposition::MemoryInitialized { memory, base, .. } => {
-            collect_spec_memory_bitvector_variables(memory, variables);
-            collect_spec_expression_bitvector_variables(base, variables);
-        }
-        SpecProposition::MemoryLoadable {
-            memory,
-            base,
-            start,
-            end,
-            ..
-        } => {
-            collect_spec_memory_bitvector_variables(memory, variables);
-            collect_spec_expression_bitvector_variables(base, variables);
-            collect_spec_expression_bitvector_variables(start, variables);
-            collect_spec_expression_bitvector_variables(end, variables);
-        }
-        SpecProposition::Defined(expression) => {
-            collect_spec_expression_bitvector_variables(expression, variables);
-        }
-    }
+    collect_spec_bitvector_variables(SpecNode::Proposition(proposition), variables);
 }
 
 pub(crate) fn collect_spec_integer_variables(
     expression: &SpecIntegerExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    let mut pending = vec![expression];
-    while let Some(expression) = pending.pop() {
-        match expression {
-            SpecIntegerExpression::ResourceField(_) => {}
-            SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-                collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
-                for arm in arms {
-                    collect_spec_integer_variables(&arm.body, variables);
-                }
-            }
-            SpecIntegerExpression::Term(term) => collect_integer_variables(term, variables),
-            SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-                for argument in arguments {
-                    match argument {
-                        SpecPureFunctionArgument::Value(value) => {
-                            collect_spec_expression_bitvector_variables(value, variables)
-                        }
-                        SpecPureFunctionArgument::Integer(value) => {
-                            collect_spec_integer_variables(value, variables)
-                        }
-                        SpecPureFunctionArgument::Algebraic(value) => {
-                            collect_spec_algebraic_expression_bitvector_variables(value, variables)
-                        }
-                        SpecPureFunctionArgument::ArrayRef { pointer, .. } => {
-                            collect_spec_expression_bitvector_variables(pointer, variables)
-                        }
-                    }
-                }
-            }
-            SpecIntegerExpression::FromMachine(value) => {
-                collect_spec_expression_bitvector_variables(value, variables)
-            }
-            SpecIntegerExpression::Negate(inner) => pending.push(inner),
-            crate::kernel::binary_spec_integer_expression!(left, right) => {
-                pending.push(left);
-                pending.push(right);
-            }
-            SpecIntegerExpression::RangeFold {
-                index,
-                initial,
-                body,
-                ..
-            } => {
-                match index {
-                    SpecIntegerRangeFoldIndex::Int32 { start, end }
-                    | SpecIntegerRangeFoldIndex::UInt64 { start, end } => {
-                        collect_spec_expression_bitvector_variables(start, variables);
-                        collect_spec_expression_bitvector_variables(end, variables);
-                    }
-                    SpecIntegerRangeFoldIndex::Integer { start, end } => {
-                        pending.push(start);
-                        pending.push(end);
-                    }
-                }
-                pending.push(initial);
-                pending.push(body);
-            }
-        }
-    }
+    collect_spec_bitvector_variables(SpecNode::Integer(expression), variables);
 }
 
 /// Collect every variable identity reachable from a specification-side
@@ -917,69 +726,7 @@ pub(crate) fn collect_spec_integer_bound_variables(
 ) {
     collect_spec_integer_variables(expression, variables);
     let mut integer_seen = SeenTerms::default();
-    collect_spec_integer_bound_variables_inner(expression, variables, &mut integer_seen);
-}
-
-fn collect_spec_integer_bound_variables_inner(
-    expression: &SpecIntegerExpression,
-    variables: &mut BTreeSet<Variable>,
-    integer_seen: &mut SeenTerms,
-) {
-    match expression {
-        SpecIntegerExpression::ResourceField(projection) => {
-            variables.insert(projection.identity);
-        }
-        SpecIntegerExpression::Term(term) => {
-            collect_integer_bound_identities(term, variables, integer_seen);
-        }
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_spec_algebraic_bound_identities(scrutinee, variables, integer_seen);
-            for arm in arms {
-                for variable in arm.binding_variables.iter().flatten() {
-                    variables.insert(*variable);
-                }
-                collect_spec_integer_bound_variables_inner(&arm.body, variables, integer_seen);
-            }
-        }
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_integer_bound_argument(argument, variables, integer_seen);
-            }
-        }
-        SpecIntegerExpression::FromMachine(expression) => {
-            collect_spec_integer_bound_expression(expression, variables, integer_seen);
-        }
-        SpecIntegerExpression::Negate(value) => {
-            collect_spec_integer_bound_variables_inner(value, variables, integer_seen);
-        }
-        crate::kernel::binary_spec_integer_expression!(left, right) => {
-            collect_spec_integer_bound_variables_inner(left, variables, integer_seen);
-            collect_spec_integer_bound_variables_inner(right, variables, integer_seen);
-        }
-        SpecIntegerExpression::RangeFold {
-            index,
-            initial,
-            accumulator,
-            item,
-            body,
-        } => {
-            variables.insert(*accumulator);
-            variables.insert(*item);
-            match index {
-                SpecIntegerRangeFoldIndex::Int32 { start, end }
-                | SpecIntegerRangeFoldIndex::UInt64 { start, end } => {
-                    collect_spec_integer_bound_expression(start, variables, integer_seen);
-                    collect_spec_integer_bound_expression(end, variables, integer_seen);
-                }
-                SpecIntegerRangeFoldIndex::Integer { start, end } => {
-                    collect_spec_integer_bound_variables_inner(start, variables, integer_seen);
-                    collect_spec_integer_bound_variables_inner(end, variables, integer_seen);
-                }
-            }
-            collect_spec_integer_bound_variables_inner(initial, variables, integer_seen);
-            collect_spec_integer_bound_variables_inner(body, variables, integer_seen);
-        }
-    }
+    collect_spec_bound_identities(SpecNode::Integer(expression), variables, &mut integer_seen);
 }
 
 fn collect_integer_bound_identities(
@@ -1187,116 +934,6 @@ fn collect_c_value_bound_identities(
     }
 }
 
-fn collect_spec_integer_bound_argument(
-    argument: &SpecPureFunctionArgument,
-    variables: &mut BTreeSet<Variable>,
-    integer_seen: &mut SeenTerms,
-) {
-    match argument {
-        SpecPureFunctionArgument::Value(value) => {
-            collect_spec_integer_bound_expression(value, variables, integer_seen);
-        }
-        SpecPureFunctionArgument::Integer(value) => {
-            collect_spec_integer_bound_variables_inner(value, variables, integer_seen);
-        }
-        SpecPureFunctionArgument::Algebraic(value) => {
-            collect_spec_algebraic_bound_identities(value, variables, integer_seen);
-        }
-        SpecPureFunctionArgument::ArrayRef {
-            memory, pointer, ..
-        } => {
-            collect_spec_memory_bound_identities(memory, variables, integer_seen);
-            collect_spec_integer_bound_expression(pointer, variables, integer_seen);
-        }
-    }
-}
-
-fn collect_spec_integer_bound_expression(
-    expression: &SpecExpression,
-    variables: &mut BTreeSet<Variable>,
-    integer_seen: &mut SeenTerms,
-) {
-    match expression {
-        SpecExpression::Value(value) => {
-            collect_c_value_bound_identities(value, variables, integer_seen);
-        }
-        SpecExpression::IntegerToMachine { value, .. } => {
-            collect_spec_integer_bound_variables_inner(value, variables, integer_seen);
-        }
-        SpecExpression::ResourceField { projection, .. } => {
-            variables.insert(projection.identity);
-        }
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_spec_algebraic_bound_identities(scrutinee, variables, integer_seen);
-            for arm in arms {
-                collect_spec_integer_bound_expression(&arm.body, variables, integer_seen);
-            }
-        }
-        SpecExpression::CExpression(expression) => {
-            collect_c_expression_bound_identities(expression, variables, integer_seen);
-        }
-        SpecExpression::CountedResourceCount { arguments, .. } => {
-            for argument in arguments.iter().flatten() {
-                collect_spec_integer_bound_expression(argument, variables, integer_seen);
-            }
-        }
-        crate::kernel::binary_spec_expression!(left, right) => {
-            collect_spec_integer_bound_expression(left, variables, integer_seen);
-            collect_spec_integer_bound_expression(right, variables, integer_seen);
-        }
-        SpecExpression::BitwiseNot(expression)
-        | SpecExpression::Cast(expression, _)
-        | SpecExpression::LoopEntrySnapshot(expression) => {
-            collect_spec_integer_bound_expression(expression, variables, integer_seen);
-        }
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_spec_proposition_bound_identities(condition, variables, integer_seen);
-            collect_spec_integer_bound_expression(then_branch, variables, integer_seen);
-            collect_spec_integer_bound_expression(else_branch, variables, integer_seen);
-        }
-        SpecExpression::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            collect_spec_integer_bound_expression(start, variables, integer_seen);
-            collect_spec_integer_bound_expression(end, variables, integer_seen);
-            collect_spec_integer_bound_expression(initial, variables, integer_seen);
-            collect_spec_integer_bound_expression(body, variables, integer_seen);
-        }
-        SpecExpression::Let { value, body, .. } => {
-            collect_spec_integer_bound_expression(value, variables, integer_seen);
-            collect_spec_integer_bound_expression(body, variables, integer_seen);
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_integer_bound_argument(argument, variables, integer_seen);
-            }
-        }
-        SpecExpression::PointerOffset {
-            pointer, elements, ..
-        } => {
-            collect_spec_integer_bound_expression(pointer, variables, integer_seen);
-            collect_spec_integer_bound_expression(elements, variables, integer_seen);
-        }
-        SpecExpression::AggregateFieldValue { pointer, .. } => {
-            collect_spec_integer_bound_expression(pointer, variables, integer_seen);
-        }
-        SpecExpression::MemoryLoad {
-            memory, pointer, ..
-        } => {
-            collect_spec_memory_bound_identities(memory, variables, integer_seen);
-            collect_spec_integer_bound_expression(pointer, variables, integer_seen);
-        }
-    }
-}
-
 fn collect_c_expression_bound_identities(
     expression: &CExpression,
     variables: &mut BTreeSet<Variable>,
@@ -1344,285 +981,63 @@ fn collect_c_expression_bound_identities(
     }
 }
 
-fn collect_spec_algebraic_bound_identities(
-    expression: &SpecAlgebraicExpression,
+/// Collects every variable identity in a specification subtree, bound or
+/// free, for freshness. Quantifier, Integer fold and Integer match-arm
+/// binders count; a specification memory is a captured execution snapshot,
+/// not lexical input, so only the explicit pointer and expression payloads
+/// beside it are visited.
+fn collect_spec_bound_identities(
+    root: SpecNode<'_>,
     variables: &mut BTreeSet<Variable>,
     integer_seen: &mut SeenTerms,
 ) {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(variable) => {
-            variables.insert(*variable);
-        }
-        SpecAlgebraicExpressionNode::Binding(_) | SpecAlgebraicExpressionNode::ResourceField(_) => {
-        }
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            for field in fields {
-                match field {
-                    SpecAlgebraicValue::C(value) => {
-                        collect_spec_integer_bound_expression(value, variables, integer_seen);
-                    }
-                    SpecAlgebraicValue::Integer(value) => {
-                        collect_spec_integer_bound_variables_inner(value, variables, integer_seen);
-                    }
-                    SpecAlgebraicValue::Algebraic(value) => {
-                        collect_spec_algebraic_bound_identities(value, variables, integer_seen);
-                    }
+    walk_spec::<()>(root, WalkBudget::Unmetered, |node| {
+        use SpecNode as N;
+        match node {
+            N::Expression(SpecExpression::Value(value)) => {
+                collect_c_value_bound_identities(value, variables, integer_seen);
+            }
+            N::Expression(SpecExpression::CExpression(expression)) => {
+                collect_c_expression_bound_identities(expression, variables, integer_seen);
+            }
+            N::Expression(SpecExpression::ResourceField { projection, .. })
+            | N::Integer(SpecIntegerExpression::ResourceField(projection)) => {
+                variables.insert(projection.identity);
+            }
+            N::Integer(SpecIntegerExpression::Term(term)) => {
+                collect_integer_bound_identities(term, variables, integer_seen);
+            }
+            N::Integer(SpecIntegerExpression::AlgebraicMatch { arms, .. }) => {
+                variables.extend(
+                    arms.iter()
+                        .flat_map(|arm| arm.binding_variables.iter().flatten().copied()),
+                );
+            }
+            N::Integer(SpecIntegerExpression::RangeFold {
+                accumulator, item, ..
+            }) => variables.extend([*accumulator, *item]),
+            N::Algebraic(SpecAlgebraicExpression {
+                node: SpecAlgebraicExpressionNode::Variable(variable),
+                ..
+            }) => {
+                variables.insert(*variable);
+            }
+            N::Proposition(proposition) => {
+                if let Some((variable, _)) = proposition.quantifier() {
+                    variables.insert(variable);
                 }
             }
+            _ => {}
         }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            collect_spec_algebraic_bound_identities(scrutinee, variables, integer_seen);
-            for arm in arms {
-                collect_spec_algebraic_bound_identities(&arm.body, variables, integer_seen);
-            }
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_integer_bound_argument(argument, variables, integer_seen);
-            }
-        }
-    }
-}
-
-fn collect_spec_sequence_bound_identities(
-    sequence: &SpecSequenceExpression,
-    variables: &mut BTreeSet<Variable>,
-    integer_seen: &mut SeenTerms,
-) {
-    match sequence {
-        SpecSequenceExpression::Literal(values) => {
-            for value in values {
-                collect_spec_integer_bound_expression(value, variables, integer_seen);
-            }
-        }
-        SpecSequenceExpression::Concat(left, right) => {
-            collect_spec_sequence_bound_identities(left, variables, integer_seen);
-            collect_spec_sequence_bound_identities(right, variables, integer_seen);
-        }
-    }
-}
-
-fn collect_spec_memory_bound_identities(
-    _memory: &SpecMemory,
-    _variables: &mut BTreeSet<Variable>,
-    _integer_seen: &mut SeenTerms,
-) {
-    // A SpecMemory is a captured execution snapshot, not lexical input to
-    // the expression.  Its blocks, cells, and union overlays are therefore
-    // opaque to freshness collection; callers recurse through explicit
-    // pointer and expression payloads adjacent to the snapshot instead.
-}
-
-fn collect_spec_resource_bound_identities(
-    resource: &SpecResource,
-    variables: &mut BTreeSet<Variable>,
-    integer_seen: &mut SeenTerms,
-) {
-    match resource {
-        SpecResource::Memory {
-            base, start, end, ..
-        } => {
-            collect_spec_integer_bound_expression(base, variables, integer_seen);
-            collect_spec_integer_bound_expression(start, variables, integer_seen);
-            collect_spec_integer_bound_expression(end, variables, integer_seen);
-        }
-        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_integer_bound_expression(argument, variables, integer_seen);
-            }
-        }
-    }
-}
-
-fn collect_spec_proposition_bound_identities(
-    proposition: &SpecProposition,
-    variables: &mut BTreeSet<Variable>,
-    integer_seen: &mut SeenTerms,
-) {
-    match proposition {
-        SpecProposition::IntegerComparison { left, right, .. } => {
-            collect_spec_integer_bound_variables_inner(left, variables, integer_seen);
-            collect_spec_integer_bound_variables_inner(right, variables, integer_seen);
-        }
-        SpecProposition::AlgebraicComparison { left, right, .. } => {
-            collect_spec_algebraic_bound_identities(left, variables, integer_seen);
-            collect_spec_algebraic_bound_identities(right, variables, integer_seen);
-        }
-        SpecProposition::SequenceMembership { element, sequence } => {
-            collect_spec_integer_bound_expression(element, variables, integer_seen);
-            collect_spec_sequence_bound_identities(sequence, variables, integer_seen);
-        }
-        SpecProposition::SequenceComparison { left, right, .. } => {
-            collect_spec_sequence_bound_identities(left, variables, integer_seen);
-            collect_spec_sequence_bound_identities(right, variables, integer_seen);
-        }
-        SpecProposition::Comparison { left, right, .. } => {
-            collect_spec_integer_bound_expression(left, variables, integer_seen);
-            collect_spec_integer_bound_expression(right, variables, integer_seen);
-        }
-        SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => {
-            collect_spec_integer_bound_expression(expression, variables, integer_seen);
-        }
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            collect_spec_proposition_bound_identities(left, variables, integer_seen);
-            collect_spec_proposition_bound_identities(right, variables, integer_seen);
-        }
-        SpecProposition::Not(body) => {
-            collect_spec_proposition_bound_identities(body, variables, integer_seen);
-        }
-        SpecProposition::ForAllMachineInteger { variable, body, .. }
-        | SpecProposition::ForAllInt32 { variable, body, .. }
-        | SpecProposition::ForAllInteger { variable, body, .. }
-        | SpecProposition::ForAllAlgebraic { variable, body, .. }
-        | SpecProposition::ForAllPointer { variable, body, .. }
-        | SpecProposition::ExistsMachineInteger { variable, body, .. }
-        | SpecProposition::ExistsInt32 { variable, body, .. }
-        | SpecProposition::ExistsInteger { variable, body, .. }
-        | SpecProposition::ExistsAlgebraic { variable, body, .. }
-        | SpecProposition::ExistsPointer { variable, body, .. } => {
-            variables.insert(*variable);
-            collect_spec_proposition_bound_identities(body, variables, integer_seen);
-        }
-        SpecProposition::Predicate { arguments, .. } => {
-            for argument in arguments {
-                match argument {
-                    SpecPredicateArgument::Value(value) => {
-                        collect_spec_integer_bound_expression(value, variables, integer_seen);
-                    }
-                    SpecPredicateArgument::ArrayRef { memory, pointer } => {
-                        collect_spec_memory_bound_identities(memory, variables, integer_seen);
-                        collect_spec_integer_bound_expression(pointer, variables, integer_seen);
-                    }
-                }
-            }
-        }
-        SpecProposition::ResourceSeparate { left, right }
-        | SpecProposition::ResourceContains {
-            parent: left,
-            child: right,
-        } => {
-            collect_spec_resource_bound_identities(left, variables, integer_seen);
-            collect_spec_resource_bound_identities(right, variables, integer_seen);
-        }
-        SpecProposition::ValidPlace {
-            memory,
-            pointer: base,
-            ..
-        }
-        | SpecProposition::MemoryInitialized { memory, base, .. } => {
-            collect_spec_memory_bound_identities(memory, variables, integer_seen);
-            collect_spec_integer_bound_expression(base, variables, integer_seen);
-        }
-        SpecProposition::MemoryLoadable {
-            memory,
-            base,
-            start,
-            end,
-            ..
-        } => {
-            collect_spec_memory_bound_identities(memory, variables, integer_seen);
-            collect_spec_integer_bound_expression(base, variables, integer_seen);
-            collect_spec_integer_bound_expression(start, variables, integer_seen);
-            collect_spec_integer_bound_expression(end, variables, integer_seen);
-        }
-    }
+        Visit::Descend
+    });
 }
 
 pub(crate) fn collect_spec_algebraic_expression_bitvector_variables(
     expression: &SpecAlgebraicExpression,
     variables: &mut BTreeSet<Variable>,
 ) {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::ResourceField(_) => {}
-        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => {}
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            for field in fields {
-                match field {
-                    SpecAlgebraicValue::C(field) => {
-                        collect_spec_expression_bitvector_variables(field, variables)
-                    }
-                    SpecAlgebraicValue::Integer(value) => {
-                        collect_spec_integer_variables(value, variables)
-                    }
-                    SpecAlgebraicValue::Algebraic(field) => {
-                        collect_spec_algebraic_expression_bitvector_variables(field, variables)
-                    }
-                }
-            }
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            collect_spec_algebraic_expression_bitvector_variables(scrutinee, variables);
-            for arm in arms {
-                collect_spec_algebraic_expression_bitvector_variables(&arm.body, variables);
-            }
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_function_argument_bitvector_variables(argument, variables);
-            }
-        }
-    }
-}
-
-fn collect_spec_function_argument_bitvector_variables(
-    argument: &SpecPureFunctionArgument,
-    variables: &mut BTreeSet<Variable>,
-) {
-    match argument {
-        SpecPureFunctionArgument::Integer(_) => {}
-        SpecPureFunctionArgument::Value(expression) => {
-            collect_spec_expression_bitvector_variables(expression, variables)
-        }
-        SpecPureFunctionArgument::Algebraic(expression) => {
-            collect_spec_algebraic_expression_bitvector_variables(expression, variables)
-        }
-        SpecPureFunctionArgument::ArrayRef {
-            memory, pointer, ..
-        } => {
-            collect_spec_memory_bitvector_variables(memory, variables);
-            collect_spec_expression_bitvector_variables(pointer, variables);
-        }
-    }
-}
-
-fn collect_spec_sequence_bitvector_variables(
-    sequence: &SpecSequenceExpression,
-    variables: &mut BTreeSet<Variable>,
-) {
-    match sequence {
-        SpecSequenceExpression::Literal(elements) => {
-            for element in elements {
-                collect_spec_expression_bitvector_variables(element, variables);
-            }
-        }
-        SpecSequenceExpression::Concat(left, right) => {
-            collect_spec_sequence_bitvector_variables(left, variables);
-            collect_spec_sequence_bitvector_variables(right, variables);
-        }
-    }
-}
-
-fn collect_spec_resource_bitvector_variables(
-    resource: &SpecResource,
-    variables: &mut BTreeSet<Variable>,
-) {
-    match resource {
-        SpecResource::Memory {
-            base, start, end, ..
-        } => {
-            collect_spec_expression_bitvector_variables(base, variables);
-            collect_spec_expression_bitvector_variables(start, variables);
-            collect_spec_expression_bitvector_variables(end, variables);
-        }
-        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
-            for argument in arguments {
-                collect_spec_expression_bitvector_variables(argument, variables);
-            }
-        }
-    }
+    collect_spec_bitvector_variables(SpecNode::Algebraic(expression), variables);
 }
 
 pub(in crate::kernel) fn collect_loop_effect_bitvector_variables(
@@ -6179,3 +5594,6 @@ mod heap_variable_projection_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod spec_walk_oracle_tests;

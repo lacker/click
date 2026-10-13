@@ -16,4 +16,6 @@ if ! command -v cargo-nextest >/dev/null 2>&1; then
     exit 1
 fi
 
-cargo nextest run --test documentation "$@"
+# The documentation test also writes the AI reference's generated site files
+# (llms.txt and the single-file bundle) into the rendered book.
+CLICK_AI_REFERENCE_OUT="$PWD/target/click-docs" cargo nextest run --test documentation "$@"

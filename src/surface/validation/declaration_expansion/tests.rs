@@ -160,6 +160,19 @@ fn standard_library_initialization_is_constant_across_verification_sizes() {
     }
 }
 
+/// The prelude parse charges the run that performs it. A run whose budget
+/// runs out mid-parse fails alone; the next run still gets the prelude.
+#[test]
+fn a_budget_exhausted_during_the_prelude_parse_is_not_cached() {
+    let exhausted =
+        crate::instrumentation::with_run_work_limit(1, || standard_library().map(|_| ()));
+    let after = standard_library();
+    assert!(
+        after.is_ok(),
+        "a later run must parse the prelude after {exhausted:?}: {after:?}"
+    );
+}
+
 #[test]
 fn standard_library_syntax_errors_name_the_prelude_file_and_line() {
     for source in ["\n\n/* an unclosed `quoted` comment", "\n\nfunction 42"] {

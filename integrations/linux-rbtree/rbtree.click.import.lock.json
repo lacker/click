@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "config_sha256": "751bbe21f17cc5dc8ff86cb2215aade313249a1978c4351afab73e2af97bbdc7",
   "target": "x86_64-linux-kernel",
   "compiler_path": "/usr/bin/x86_64-linux-gnu-gcc-13",
@@ -7,6 +7,7 @@
   "config_directory": "/home/lacker/click-wt/rb-16/integrations/linux-rbtree",
   "invocation_sha256": "69dc33fb95ef1d4ba06d2a0cc8013beb8186982a1dbc0dab551d82e67ef264dd",
   "option_profile": "linux-6.8-x86_64-kbuild",
+  "click_header_catalog_sha256": "c0931666d0a0d2fcbb7b9b8ed41e4a50d49de26fd36052f21dd6ed6ac9f2747a",
   "toolchain": {
     "driver_sha256": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
     "cc1_path": "/usr/libexec/gcc/x86_64-linux-gnu/13/cc1",
@@ -725,7 +726,7 @@
         "inputs/include/vdso/limits.h": "653708a73389bd7a9ef4dd85acf45f19227ac60f2dc133d6285af29cff774544",
         "inputs/include/vdso/math64.h": "913eb6ae15c7986b94d55bfe7e41bc92652068b699c783efdcdac361c7bd0769"
       },
-      "identity": "4a793354d351cfd4c483f7a65cddb96c40464c19e68398231fe5696ebd8a0ddd"
+      "identity": "83782d29ffad6cc4dbce1ebe7b938873bb8558dccd8d0a848a556a0d70114c79"
     }
   ]
 }

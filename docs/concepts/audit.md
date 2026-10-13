@@ -1,6 +1,6 @@
 # Audit
 
-Audit checks more than ordinary verification. It evaluates whether smart proof
+Audit checks more than ordinary verification: it evaluates whether smart proof
 sites remain discoverable, expandable into normally verifiable source, and
 within the project's performance policy.
 

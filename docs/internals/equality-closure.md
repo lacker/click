@@ -1,5 +1,9 @@
 # Equality closure design
 
+This is the design record for the kernel's equality closure: the persistent
+graph of pointer, offset, and integer equalities that memory and resource
+reasoning query.
+
 Status: bounded resource lookup migration complete, 2026-10-02. The trusted persistent graph
 maintains affine pointer classes, offset and int32 congruence, and registered
 same-snapshot pointer, four-byte scalar, and complete eight-byte scalar loads. Selected normalization,

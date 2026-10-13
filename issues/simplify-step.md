@@ -1,262 +1,201 @@
-# Make `step` simple across a call precondition
+# Make simple tactics fast: exact requirements, expandable `auto` for the rest
 
-Priority: P2.
+Priority: P1.
 
-Soundness: not soundness. This is the tactic architecture. Every derivation
-that `step()` performs is already kernel-checked. The change is which
-derivations are visible and retained.
+Soundness: not soundness. This is tactic architecture and performance. Every
+derivation a simple tactic performs today is already kernel-checked; the
+change is where the search runs, what it costs, and whether expansion shows it.
 
-## Objective
+## Why this is P1
 
-`step()` is a simple tactic, not a smart tactic. Remove unretained prerequisite
-derivation from its statement checking. A bare `step()` must either use an
-exactly stated prerequisite or return a structured unmet requirement. A smart
-caller such as `execute()` or `execute_until()` may construct an ordinary
-checked `have`, then retry the same step. Expansion must show that `have` and
-all of its witnesses,
-transports, branches, and simplifications; the expanded proof must verify
-cold without repeating hidden planning.
+The 2026-10-12 launch design review (critique W3, moved here) found that
+`step()` is labelled simple yet runs "with every fact in the proof context
+visible" (`docs/reference/tactics/index.md`), while the work to make it simple
+was paused. A launch audience reading the tactic reference would take the
+simple/smart split at its word. The review proposed finishing this issue or
+reclassifying `step()` as smart; [design-review.md](design-review.md) depends on
+this issue for that critique.
 
-This is a verifier change. Production C stays unchanged, and no proof-only C
-rewrite, no-op branch, or alternate implementation is acceptable.
+## Decision
 
-## Invariants and design constraints
+Decided 2026-10-13 by the maintainer, ruling on that critique: fix, without
+reclassifying `step()`. `step()` stays a simple tactic and
+`execute()` stays a sequence of steps plus the proof structure a single step
+cannot express (branches, path selectors, loop walks). What a simple tactic
+must be is fast: its checking is bounded by the selected operation, its
+explicit inputs, indexed context lookups, and the proof-state delta. It never
+searches the whole proof context.
 
-The proof engine must preserve exact source provenance at the two seams where
-the current representation loses it:
+The general rule, for every simple tactic and not only `step()`:
 
-1. the caller requirement whose entry facts are projected by `Choose`; and
-2. the C access occurrence that produced a generated load equation.
+1. A simple tactic has a set of *requirements*: every check that can fail for
+   it, including call preconditions, the condition fact that selects an `if`
+   arm or loop exit, memory safety of each access, and arithmetic that would
+   otherwise be undefined.
+2. Each requirement is first tried by the *fast path*: an exact or indexed
+   lookup, or a bounded local kernel decision about the affected operation.
+3. A requirement the fast path does not close is discharged by an implicit
+   `auto` at the tactic's pre-state. That `auto` cannot advance C.
+4. Expansion prints that proof attached to the tactic, so the expanded proof
+   needs no search and verifies cold with implicit `auto` disabled.
 
-These are presentation/planning metadata, not proof authority. They may select
-the source record that an ordinary checked operation names, but they may not
-make a fact available, equate snapshots, choose a logical branch, or discharge
-a goal.
+Every requirement must have a faithful Surface spelling that re-lowers to its
+exact kernel proposition. This is an invariant of the language, not a case a
+tactic handles by refusing: a requirement Click cannot spell is a defect, filed
+in `bugs/` and fixed by building the spelling where the requirement is created
+or, with maintainer approval, by adding syntax that names the value.
 
-Use typed identities with separate lifetimes:
+### Syntax
 
-```text
-CallerSourceOwnerId = (ordinary function, canonical source unit, declaration)
-RequirementSourceId = (CallerSourceOwnerId, outer requirement ordinal)
-LoadSourceId = (C source owner, source region, access occurrence ordinal)
+A tactic whose requirements leave exactly one obligation after the fast path
+takes a plain `by`, as `close_invariants by` does:
+
+```click
+step() by { arithmetic() using { ... }; }
 ```
 
-Actual arguments, binder substitutions, and memory snapshots are per-use
-validation data, not part of a declaration/access identity. IDs are minted
-before lowering erases the relevant distinction and are deterministic from
-canonical source ownership and documented declaration/occurrence order.
+When several remain, the tactic takes a block with one `requires` entry per
+obligation, the way `loop { ... }` takes `initialize by` and `preserve by`:
 
-All provenance lookups must be bounded and fail closed:
-
-- use shallow indexes with bounded candidate buckets; never scan unrelated
-  facts, requirements, functions, or memory history;
-- keep exact expressions and snapshots for collision validation, not as deep
-  hot-path map keys;
-- reject missing, duplicate, overfull, stale, wrong-owner, wrong-argument,
-  wrong-binder, wrong-epoch, or ambiguous provenance;
-- share immutable tables between proof branches and apply output-sized deltas
-  at forks and joins; and
-- keep IDs, tables, events, and resolutions out of proposition meaning,
-  contract/theorem identity, and ordinary certificate serialization.
-
-Expanded proofs contain only ordinary Surface Click operations. The ordinary
-checker remains the authority and must not consult source metadata to accept a
-certificate.
-
-## Status at the implementation pause
-
-The caller-requirement vertical is complete. The dynamic C-string path retains
-an ordinary checked proof using exact caller source identity rather than
-reconstructing a requirement from the final fact vector.
-
-The generated-load foundation is also landed and green:
-
-- parsed scalar field accesses have deterministic source identities;
-- exact generated-load/source observations travel through execution;
-- conflicting observations produce persistent ambiguity tombstones;
-- branch forks and joins retain output-sized event suffixes; and
-- only accepted cursor transitions commit source observations.
-
-The last green checkpoint is `266d0d44`. `scripts/check.sh` passed there with
-2,831 tests and all 14 fixture gates. There is no pending implementation diff.
-
-The next checkpoint is deliberately narrower than the rest of Phase 2: build
-an immutable per-function source-load plan. Given a `LoadSourceId`, it must
-return exactly one source field spelling, position, containing statement, and
-validation record for the source-side pointer/type/offset. It must be built
-alongside C lowering, shared between proof branches, and queried without an
-AST walk or ambient scan. The current event identity contains only source unit,
-function, and occurrence, so no load-equation consumer should land before this
-plan supplies and validates the missing region and spelling data.
-
-After that checkpoint, reassess the representation before implementing the
-`owned-string` and `bounded-pool` consumers. Do not combine the source-plan
-design, both consumers, and the Planning cutover into one change.
-
-## Phase 1 — caller requirement identity (complete)
-
-### Landed boundary
-
-The proof context now builds a caller requirement index while constructing the
-initial claim context. It preserves an `EntryFactOrigin` alongside lowered
-entry facts, so the source declaration is not reconstructed by comparing or
-slicing the final fact vector. The index record keeps distinct:
-
-- `RequirementSourceId` and outer declaration ordinal;
-- the lowered principal fact index and exact fact;
-- the bounded connective/projection token;
-- source arguments and the caller entry snapshot.
-
-The Phase 1 query is deliberately narrow:
-
-```text
-lookup_unique_caller_requirement(
-  owner, predicate, argument_slot, caller_parameter_slot,
-  source_arguments, expected_entry_snapshot
-) -> unique selection | none
+```click
+step() {
+    requires p != null by auto;
+    requires i < len by arithmetic() using { ... };
+}
 ```
 
-It supports an ordinary caller function, a direct concrete call, and a
-top-level predicate requirement whose selected argument is a direct caller
-parameter. It resolves the exact callee source clause already selected by the
-unmet carrier, substitutes the checked call arguments, and maps that argument
-to the caller's parsed parameter. It does not infer the caller ordinal from a
-callee ordinal or from the generated kernel proposition.
+- Each `requires P by ...` must match exactly one remaining obligation; a
+  proposition that matches none or more than one fails where it is written.
+- An obligation not written is closed by the fast path, then implicit `auto`.
+- A plain `by` when more than one obligation remains fails and lists each
+  remaining obligation in Surface syntax, ready to copy into `requires` lines.
+  A plain `by` or `requires` entry when the fast path already closes every
+  obligation fails as superfluous, as an unneeded `close_invariants by` does.
+- `requires name: P by ...` is accepted where a label helps; no obligation
+  needs one.
+- Expansion prints plain `by` when exactly one obligation needed `auto`, and
+  `requires` entries when several did.
 
-`Choose` remains proof authority: it revalidates the selected source ordinal,
-fact, binder substitution, and active entry snapshot, then retains the
-projection. Source IDs only make that exact ordinary operation constructible.
-Unsupported labels, nested/resource/generated forms, callbacks, generic
-wrappers, ambiguous candidates, and stale positions fail with the original
-structured requirement.
+Which obligations remain depends on the context, so a context change can turn
+a plain `by` into a refusal. That failure is prompt and names the new
+obligation; the meaning of a proof never changes silently. This fragility is
+accepted.
 
-The dynamic C-string regression retains a checked `have` containing ordinary
-`Choose`, `Witness`, explicit transport, and coverage operations. It uses a
-nonzero requirement ordinal, unrelated entry facts, and an alternate pointer
-name. Its expansion contains no smart operations and verifies cold without
-logical Planning.
+## Current state
 
-## Phase 2 — generated-load source occurrence identity (foundation complete)
+Measured on `aa30a5f`.
 
-Continue from the landed runtime event channel on a fresh integration branch.
-The remaining `bounded-pool` and `owned-string` obligations need faithful
-source expressions for equations such as:
+A bare `step()` is checked under `StatementPrerequisitePolicy::Retained` with
+the whole proof context (`src/surface/proof/proof_object/execution_statements.rs`).
+Three routes derive prerequisites without retaining them:
 
-```text
-Var(load_variable) == load(snapshot, pointer)
-```
+- **Call and access obligations.** A non-exact obligation falls back to
+  `derive_proposition`
+  (`src/surface/proof/execution_planning/transition_certification.rs`), the
+  general search in `src/surface/planning/proposition_search.rs`: conjunction
+  and disjunction projection, implication, `forall` instantiation, and
+  bounded case splits. The checked derivation is stored in
+  `prerequisite_derivations`, which nothing reads.
+- **Condition prerequisites.** A boolean `proves()` over the same context,
+  with no derivation recorded.
+- **In-step re-run.** A refusal whose antecedent is a retained `have` is
+  re-checked as `Contextual` (`src/surface/proof/checked_drivers/statement_step.rs`).
 
-`LoadSourceId` is now minted before C access syntax is erased, and the
-evaluated load emits a source event when it mints the exact
-`GeneratedLoadBinding`. Events travel through the ephemeral expression,
-argument, statement, and transition paths into a persistent transition-local
-resolution:
+Smart execution retries a refused step after constructing a `have`
+(`retry_statement_after_refusal` in `src/surface/proof/smart_closures.rs`),
+but `requirement_uses_planning_compatibility` sends every unsupported shape
+back through the hidden search.
 
-```text
-Variable -> Unique(exact binding, source use) | Ambiguous
-```
+Earlier work toward the previous design is landed and reusable:
 
-The variable is only a shallow lookup key. A different binding or source for
-the same variable creates a permanent ambiguity tombstone; identical pairs
-are idempotent. Forks share roots, joins consume arm suffixes, and failed
-retries record nothing. The source-independent `GeneratedLoadBinding` type
-does not change.
+- Caller-requirement identity (`src/surface/source_registry.rs`):
+  `RequirementSourceId`, `EntryFactOrigin`, and
+  `lookup_unique_caller_requirement`, with `Choose` revalidating the
+  selection. This spells the caller-requirement shape of obligation.
+- Generated-load source events (`src/kernel/primitives.rs`): `LoadSourceId`,
+  `GeneratedLoadSourceEvent`, and per-transition `Unique`/`Ambiguous`
+  resolution. No consumer reads them yet, and `LoadSourceId` has no region or
+  spelling. It is the starting point for spelling load equations, if the
+  census shows they need it.
 
-What remains is the aligned source plan beside the kernel
-expression/statement. Every shape-changing rewrite, including synthetic
-nodes, must create or explicitly omit its plan node at the same time. A
-reconstructed preorder walk is not acceptable.
+## Plan
 
-A Surface consumer must validate variable, binding, source owner/region/
-occurrence, instantiated spelling, statement-entry selector, memory identity,
-and exact re-lowering before constructing the ordinary `have`. Missing or
-stale provenance, conflicting accesses, wrong epochs, synthetic/misaligned
-nodes, or an unfaithful spelling fail closed. No pointer/name/hash heuristic
-or ambient proposition scan is an alternate route.
+Each step is its own pull request.
 
-Root owns the lowering/event interfaces and generated-binding integration. A
-Luna task may own only source-plan propagation and deterministic scaling
-tests; after integration, another Luna task may own only the Surface sidecar
-consumer and reduced real obligations. An independent Luna review must audit
-ambiguity, epochs, cold expansion, and output-sized fork/join behavior before
-the vertical commit is merged.
+### 1. Census (landed)
 
-Required evidence is one unchanged real obligation from each load-equation
-example, with a faithful equation that lowers to the exact proposition at the
-correct memory point, expands to an ordinary retained `have`, and verifies
-cold. Identical-looking accesses at different locations, conflicting source
-occurrences, stale provenance, and another epoch must fail closed.
+`instrumentation::HiddenPrerequisiteRoute` counts each hidden derivation by
+route and top derivation rule, and both fixture harnesses ratchet it
+(`docs/internals/testing.md`). Library tests read the same events per step
+through `collect_planning_statement_transitions`, which had recorded nothing
+since the old `Planning` policy was removed.
 
-## Phase 3 — orchestration and census
+Baseline on the unfiltered corpus, all under `StepObligation`:
 
-Root owns this serial phase because it changes retry routing and the smart
-execution state machine.
+| Rule | mdtests | examples |
+| --- | --- | --- |
+| `And` | 22 | 4 |
+| `Implies` | 12 | 0 |
+| `ContextualAtomic` | 12 | 0 |
+| `FiniteForAll` | 1 | 0 |
 
-1. Re-run the hidden-`Planning` census on the current integration base,
-   including logical derivations reachable through `Contextual`; do not rely
-   on historical counts.
-2. Route every supported requirement through exact evidence or one of the two
-   source-identity paths. Every smart success must retain an ordinary proof.
-3. Cover disjunctive, sequential, and multi-requirement calls, selected
-   contracts/callbacks, branches, `execute_until`, scoped execution, and
-   ordinary explicit `step`. A bare step in the minimal disjunction regression
-   must return the structured obligation without logical Planning.
-4. Keep legitimate exact condition evaluation and explicit transport. Unsupported
-   shapes must fail promptly with the original structured requirement.
+The 47 mdtest derivations come from 24 files, nearly all
+`authority_*`/`population_*` counting and `shared_heap_*` lifecycle tests, plus
+`strlen_of_an_empty_string_and_memcmp_use_the_catalog_contracts`. Condition
+prerequisites, loop-phase `Contextual` checking, and the retained-`have`
+re-run record none. Still uncounted: the kernel's own condition evaluation
+under `Retained`, which does not defer non-exact condition reasoning
+(`certified_condition_transitions`), and the spellability and work of each
+derivation. Add those before cutting over the routes they affect.
 
-Luna work in this phase is review and targeted regression additions only; no
-parallel agent may change the shared retry policy while root is integrating
-the census results.
+### 2. Requirement driver and syntax
 
-## Phase 4 — cutover and removal
+One shared driver per simple tactic: build each obligation with its Surface
+spelling where the obligation is created (a callee clause with the call's
+argument expressions substituted, an access expression at its program point),
+try the fast path, then implicit `auto`, and record the expandable proof.
+Implement `Tactic() by { ... }` and `Tactic() { requires P by ...; }` for
+`step()` and the call forms first. Smart execution's retry and the in-step
+`Contextual` re-run move onto this driver. A debug assertion checks that each
+spelling re-lowers exactly.
 
-Only after Phases 1--3 are green on one base:
+### 3. Cut over by shape
 
-1. Remove unretained logical prerequisite derivation from simple call
-   checking, preserving exact checks and explicit transport that do not search
-   for propositions.
-2. Verify that simple `step()` either finds an exact prerequisite or returns
-   the structured refusal, while only smart callers construct retained proofs.
-3. Expand and cold-reverify the complete affected corpus, including dynamic
-   C-string and both load-equation examples.
-4. Run the unfiltered gate with the body-rerun census at zero.
+Most frequent census shapes first. Each shape that moves to the driver
+lowers the census baseline. A shape without a spelling is a bug fixed as
+described above. Extend the driver to the other simple tactics with
+prerequisites.
 
-Root owns the cutover, final authority-boundary audit, merge, and push. A Luna
-reviewer examines the exact green commit read-only immediately before merge.
+### 4. Remove the hidden search
+
+Delete the remaining hidden derivation from simple checking, the
+compatibility escape hatch, and the in-step re-run. Add deterministic scaling
+regressions showing simple-tactic cost does not grow with unrelated context
+facts. Cold-check the expanded corpus with implicit `auto` disabled, and run
+`scripts/check.sh` unfiltered.
+
+Implicit `auto` has its own budget, and profiling attributes its work to
+`auto`, not to the simple tactic, so a slow `auto` is not reported as a slow
+step.
 
 ## Acceptance criteria
 
-- Bare `step()` performs no unretained logical prerequisite derivation or
-  Planning search.
-- Smart execution retains every constructed prerequisite as an ordinary
-  `have` before the owning call.
-- Expansion exposes all proof operations and verifies cold through the normal
-  entry point.
-- Removing a required generated `have` or transport fails in a minimal
-  regression.
-- Caller requirements and generated loads use typed, exact, fail-closed
-  provenance with no ambient scans or semantic source heuristics.
-- Wrong owner, argument, binder mapping, source occurrence, or memory epoch
-  cannot authorize a proof; alpha-renamed binders remain valid.
-- Production C remains unchanged.
-- The affected corpus passes with no hidden prerequisite derivation,
-  `scripts/check.sh` passes unfiltered, and both fixture harnesses report zero
-  body reruns.
-- Verification remains approximately linear, up to indexed lookup factors,
-  in source and certificate size.
-
-## Stop and revise
-
-Pause the phase and redesign if implementation requires ambient scans,
-first-match selection, display names, pointer/hash inference, merged epochs,
-deep hot-path keys, metadata that grants facts, a new trusted proof rule, an
-unverifiable certificate, expansion that disagrees with ordinary checking, or
-unexpectedly slow verification. Restore the worktree to the last green
-checkpoint before changing direction.
+- No simple tactic performs a search over the proof context; its cost is
+  bounded by its operation, explicit inputs, indexed lookups, and delta.
+- Every requirement has a Surface spelling that re-lowers exactly; the census
+  of unspellable requirements is zero.
+- A requirement the fast path does not close is proved by implicit `auto`, and
+  expansion prints it as `by` or `requires P by` on the tactic.
+- The expanded corpus verifies with implicit `auto` disabled.
+- Removing a required `by` body or `requires` entry from an expanded proof
+  fails at that obligation in a minimal regression.
+- `docs/reference/tactics/index.md` documents the requirement rule, the fast
+  path, and both syntax forms, each backed by an mdtest.
+- Production C is unchanged. `scripts/check.sh` passes, and both fixture
+  harnesses report a zero hidden-derivation census.
 
 ## Not in scope
 
-- recursive-call `decreases` obligations;
-- completeness of smart proof search;
-- proof syntax introduced only to recover source identity; and
-- changes to verified C made only to simplify a proof.
+- Recursive-call `decreases` obligations.
+- Completeness of `auto`.
+- Changes to verified C made only to simplify a proof.

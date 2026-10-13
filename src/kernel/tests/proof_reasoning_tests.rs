@@ -10697,6 +10697,207 @@ fn native_loadability_prefix_coverage_preserves_lifetime_and_base() {
 }
 
 #[test]
+fn native_loadability_window_checks_offset_end_and_retirement() {
+    let memory = CMemory::new();
+    let source = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(17),
+    };
+    let range = |memory: CMemory, base: Pointer, bytes| Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes: Bitvector32Term::UInt64Constant(bytes),
+        wide: true,
+    };
+    let context =
+        PureFactContext::new().assume_proposition(range(memory.clone(), source.clone(), 16));
+    for (offset, length, expected) in [
+        (0i64, 16, true),
+        (1, 15, true),
+        (3, 13, true),
+        (-1, 1, false),
+        (1, 16, false),
+        (17, 1, false),
+    ] {
+        let goal = range(
+            memory.clone(),
+            Pointer {
+                block: source.block.clone(),
+                offset: PointerOffsetTerm::Constant(17 + offset),
+            },
+            length,
+        );
+        let proof = context.derive_atomic_proposition(&goal);
+        assert_eq!(
+            proof.is_some(),
+            expected,
+            "offset {offset}, length {length}"
+        );
+        if let Some(proof) = proof {
+            assert!(proof.check(&context));
+        }
+    }
+    let root = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let large = 1u64 << 32;
+    let goal_base = Pointer {
+        block: root.block.clone(),
+        offset: PointerOffsetTerm::Int64Scaled {
+            value: Box::new(Bitvector32Term::UInt64Constant(large)),
+            byte_width: 1,
+            unsigned: true,
+        },
+    };
+    let context =
+        PureFactContext::new().assume_proposition(range(memory.clone(), root.clone(), large + 8));
+    let goal = range(memory.clone(), goal_base.clone(), 8);
+    assert!(
+        context
+            .derive_atomic_proposition(&goal)
+            .unwrap()
+            .check(&context)
+    );
+    assert!(
+        context
+            .derive_atomic_proposition(&range(memory, goal_base, 9))
+            .is_none()
+    );
+    let live = CMemory::new()
+        .with_heap_allocation_claim(root.clone(), Bitvector32Term::Constant(16))
+        .unwrap();
+    let dead = live
+        .clone()
+        .free_heap_block(&root, &PureFactContext::new())
+        .unwrap();
+    let context = PureFactContext::new().assume_proposition(range(live, root.clone(), 16));
+    assert!(
+        context
+            .derive_atomic_proposition(&range(dead, root.offset_by_bytes(1), 4))
+            .is_none()
+    );
+}
+
+#[test]
+fn native_loadability_window_requires_every_full_width_guard() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let held = Bitvector32Term::Variable(Variable(973_201));
+    let offset = Bitvector32Term::Variable(Variable(973_202));
+    let requested = Bitvector32Term::Variable(Variable(973_203));
+    let target = Pointer {
+        block: base.block.clone(),
+        offset: PointerOffsetTerm::Int64Scaled {
+            value: Box::new(offset.clone()),
+            byte_width: 1,
+            unsigned: true,
+        },
+    };
+    let source = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base,
+        bytes: held.clone(),
+        wide: true,
+    };
+    let goal = Proposition::CMemoryLoadable {
+        memory,
+        base: target,
+        bytes: requested.clone(),
+        wide: true,
+    };
+    let le =
+        |left, right| Proposition::ConditionIs(ConditionTerm::uint64_less_equal(left, right), true);
+    let guards = [
+        le(
+            offset.clone(),
+            Bitvector32Term::UInt64Constant(i64::MAX as u64),
+        ),
+        le(offset.clone(), held.clone()),
+        le(requested, Bitvector32Term::uint64_subtract(held, offset)),
+    ];
+    let full = guards.iter().cloned().fold(
+        PureFactContext::new().assume_proposition(source.clone()),
+        PureFactContext::assume_proposition,
+    );
+    let proof = full.derive_atomic_proposition(&goal).unwrap();
+    assert!(proof.check(&full));
+    for omitted in 0..guards.len() {
+        let context = guards
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != omitted)
+            .map(|(_, p)| p.clone())
+            .fold(
+                PureFactContext::new().assume_proposition(source.clone()),
+                PureFactContext::assume_proposition,
+            );
+        assert!(!proof.check(&context));
+        assert!(
+            context.derive_atomic_proposition(&goal).is_none(),
+            "omitted guard {omitted}"
+        );
+    }
+}
+
+#[test]
+fn native_loadability_window_query_work_ignores_unrelated_views() {
+    let memory = CMemory::new();
+    let root = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let target = root.offset_by_bytes(1);
+    let mut expected = None;
+    for count in [16, 64, 256, 1024] {
+        let mut context = PureFactContext::new();
+        for index in 0..count {
+            context = context.assume_proposition(Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: root.offset_by_bytes(4 * (index + 1)),
+                bytes: Bitvector32Term::UInt64Constant(16),
+                wide: true,
+            });
+        }
+        context = context.assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: root.clone(),
+            bytes: Bitvector32Term::UInt64Constant(16),
+            wide: true,
+        });
+        // Construct the address index once before measuring hot queries.
+        assert!(context.proves_native_memory_loadable(
+            &memory,
+            &root,
+            &Bitvector32Term::UInt64Constant(16)
+        ));
+        let (answers, work) = crate::instrumentation::measure_deterministic_work(|| {
+            (
+                context.proves_native_memory_loadable(
+                    &memory,
+                    &target,
+                    &Bitvector32Term::UInt64Constant(15),
+                ),
+                context.proves_native_memory_loadable(
+                    &memory,
+                    &target,
+                    &Bitvector32Term::UInt64Constant(16),
+                ),
+            )
+        });
+        assert_eq!(answers, (true, false));
+        if let Some(prior) = expected {
+            assert_eq!(work, prior);
+        } else {
+            expected = Some(work);
+        }
+    }
+}
+
+#[test]
 fn native_loadability_prefix_coverage_ignores_unrelated_addresses() {
     let memory = CMemory::new();
     let base = Pointer {

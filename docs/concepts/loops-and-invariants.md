@@ -1,5 +1,8 @@
 # Loops and invariants
 
+This page explains how Click proves C loops: invariants, termination measures,
+loops over memory, and the loop proof tactics.
+
 A loop that no contract-admitted path reaches needs no ranking measure. Exact
 checked execution retains this fact even when ownership adds an inherited
 frame check to the source loop; reachable summarized loops still require their

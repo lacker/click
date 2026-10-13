@@ -68,6 +68,7 @@ int32 bump_shared() {
     requires shared.value < 1000;
     owns shared.value;
     ensures result == old(shared.value) + 1 by auto;
+    ensures shared.value == old(shared.value) + 1 by auto;
 }
 
 int32 increment_local() {
@@ -117,11 +118,11 @@ int32 run() {
     have private_file::increment_local::local.ready == 0 by simp;
     step();
     have private_file::file_private.value < 1000 by simp;
-    step();
+    execute();
     simp();
 }
 ```
 
 ```expect
-fail: run.contract
+pass
 ```

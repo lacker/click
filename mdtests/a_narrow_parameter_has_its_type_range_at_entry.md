@@ -2,13 +2,14 @@
 
 A `uint8` parameter is in `[0, 255]` from the function's first statement:
 the caller's argument was converted to the parameter's type, and that
-conversion owes the range. The range is an entry fact of the function, as a
+conversion lands in the range, modulo 256 when the argument is outside it.
+The range is an entry fact of the function, as a
 `_Bool` parameter's `flag == 0 or flag == 1` is, so a claim may name the
 parameter though the body never reads it.
 `mdtests/a_uint8_parameter_claimed_below_its_range_at_entry_is_refused.md` and
 `mdtests/an_int8_parameter_claimed_above_its_lower_bound_at_entry_is_refused.md`
 are the negatives, and
-`mdtests/a_wide_argument_to_a_narrow_parameter_owes_its_range.md` is the
+`mdtests/a_wide_argument_to_a_narrow_parameter_wraps_into_its_range.md` is the
 caller's side.
 
 ```c filename=a_narrow_parameter_has_its_type_range_at_entry.c

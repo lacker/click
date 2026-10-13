@@ -2,7 +2,7 @@
 authors = ["Click contributors"]
 language = "en"
 src = "docs"
-title = "Click documentation"
+title = "Click reference"
 
 [build]
 build-dir = "target/click-docs"

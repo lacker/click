@@ -63,5 +63,5 @@ int32 loop_writes_union() {
 ```
 
 ```expect
-fail: left side evaluated to load((char *)&source + 8), right side evaluated to 3
+fail: left side evaluated to at(<state A>, *(int32 *)((char *)&source + 8)), right side evaluated to 3
 ```

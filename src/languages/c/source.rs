@@ -347,7 +347,7 @@ fn push_blank_line(expanded: &mut String, line_map: &mut ExpandedLineMap) {
 /// The object-like macros of Click's built-in `<limits.h>` for the LP64
 /// layout every supported target selects. `CHAR_MIN` and `CHAR_MAX` follow
 /// the target's plain `char` and are listed by [`char_limits_macros`].
-const LIMITS_MACROS: &[(&str, &str)] = &[
+pub(super) const LIMITS_MACROS: &[(&str, &str)] = &[
     ("CHAR_BIT", "8"),
     ("SCHAR_MIN", "(-128)"),
     ("SCHAR_MAX", "127"),
@@ -368,7 +368,9 @@ const LIMITS_MACROS: &[(&str, &str)] = &[
 
 /// `CHAR_MIN` and `CHAR_MAX` for the target's plain `char`, spelled as the
 /// `SCHAR_` or `UCHAR_` values they equal.
-fn char_limits_macros(target: super::target::CTarget) -> [(&'static str, &'static str); 2] {
+pub(super) fn char_limits_macros(
+    target: super::target::CTarget,
+) -> [(&'static str, &'static str); 2] {
     match target.plain_char() {
         super::target::PlainChar::Unsigned => [("CHAR_MIN", "0"), ("CHAR_MAX", "255")],
         super::target::PlainChar::Signed => [("CHAR_MIN", "(-128)"), ("CHAR_MAX", "127")],

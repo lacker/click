@@ -45,5 +45,5 @@ int32 pick(void (*callback)(int32*), int32 x) {
 ```
 
 ```expect
-fail: available pure facts: [predicate __click_function_contract::SetsZero(state(snapshot#1), ptr<void (*)()>(callback)),
+fail: available pure facts: [SetsZero(callback), x < 0]
 ```

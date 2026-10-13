@@ -1570,10 +1570,10 @@ pub(super) fn initial_claim_context_with_caller_owner(
             &authority_definitions,
         )?
     };
-    crate::surface::proof_diagnostics::render::enter_ambient_naming(ParameterBinding::new(
-        parsed_function.parameters(),
-        &arguments,
-    ));
+    crate::surface::proof_diagnostics::render::enter_ambient_naming(
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
+        state.memory(),
+    );
     let mut observed_population_families = BTreeSet::new();
     let mut pending_predicates = BTreeSet::new();
     for requirement in function_block.requires() {

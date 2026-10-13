@@ -28,5 +28,5 @@ int32 f() {
 ```
 
 ```expect
-fail: result == 0; left side evaluated to load
+fail: result == 0; left side evaluated to at(<state A>, *<pointer A>), right side evaluated to 0
 ```

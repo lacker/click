@@ -27,11 +27,33 @@ pub(super) fn check(
     let Proposition::ConditionIs(ConditionTerm::IntegerEqual(a, b), true) = result else {
         return Err(invalid());
     };
-    let cast = |observed: &IntegerTerm, original: &IntegerTerm| {
+    fn cast(
+        observed: &IntegerTerm,
+        original: &IntegerTerm,
+    ) -> Option<crate::kernel::primitives::MachineIntegerFormat> {
         let (IntegerTerm::Machine(machine), IntegerTerm::Machine(operand)) = (observed, original)
         else {
             return None;
         };
+        // A C conversion node over a 32-bit carrier whose type contains the
+        // destination (`(uint16)(int32)w`) is transparent here: every value
+        // of the destination has the same word in both types, so once the
+        // inner carrier is shown below to be the source's value inside the
+        // destination range, the conversion leaves that word unchanged.
+        // The same bounds are still required.
+        if let Bitvector32Term::MachineIntegerCast {
+            value: inner,
+            source: through,
+            destination,
+        } = machine.value()
+            && *destination == machine.ty()
+            && through.format().bits() <= 32
+            && through.format().contains(destination.format())
+            && let Some(peeled) = IntegerTerm::from_machine(machine.ty(), inner.as_ref().clone())
+            && let Some(format) = cast(&peeled, original)
+        {
+            return Some(format);
+        }
         if !operand.ty().accepts_cast_operand(operand.value()) {
             return None;
         }
@@ -138,7 +160,7 @@ pub(super) fn check(
             }
         }
         None
-    };
+    }
     let (original, destination) = if let Some(destination) = cast(a, b) {
         (b, destination)
     } else if let Some(destination) = cast(b, a) {

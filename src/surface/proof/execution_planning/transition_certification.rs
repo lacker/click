@@ -336,7 +336,14 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         )? {
                             return Err(missing_condition_prerequisite_error(context_label, obligation, state));
                         }
-                        if prerequisite_assumptions.proves(obligation.proposition()) {
+                        if exact_fact_is_available(obligation.proposition(), pure_facts)
+                            || prerequisite_assumptions.states_required_goal(obligation.proposition())
+                        {
+                        } else if prerequisite_assumptions.proves(obligation.proposition()) {
+                            crate::instrumentation::record_hidden_prerequisite(
+                                hidden_prerequisite_route(prerequisite_policy, true),
+                                "proves",
+                            );
                         } else {
                             return Err(missing_condition_prerequisite_error(context_label, obligation, state));
                         }
@@ -381,6 +388,21 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
             }
         })
         .collect()
+}
+
+/// The census route of a prerequisite derived by search under `policy`.
+fn hidden_prerequisite_route(
+    policy: StatementPrerequisitePolicy,
+    condition: bool,
+) -> crate::instrumentation::HiddenPrerequisiteRoute {
+    use crate::instrumentation::HiddenPrerequisiteRoute as Route;
+    match (policy, condition) {
+        (StatementPrerequisitePolicy::Retained, false) => Route::StepObligation,
+        (StatementPrerequisitePolicy::Retained, true) => Route::StepCondition,
+        (StatementPrerequisitePolicy::Explicit, true) => Route::ExplicitCondition,
+        (_, false) => Route::ContextualObligation,
+        (_, true) => Route::ContextualCondition,
+    }
 }
 
 pub(in crate::surface) fn certified_statement_transitions(
@@ -877,6 +899,10 @@ fn certified_transitions_from_execution(
                             .derive_proposition(proposition)
                             .filter(|derivation| derivation.check(&prerequisite_assumptions))
                         {
+                            crate::instrumentation::record_hidden_prerequisite(
+                                hidden_prerequisite_route(prerequisite_policy, false),
+                                derivation.rule_name(),
+                            );
                             Some(derivation)
                         } else {
                             return Err(missing_prerequisite_error(
@@ -1339,7 +1365,12 @@ mod condition_transition_tests {
             Err(error) => error,
         };
 
-        assert!(error.message().contains("missing condition prerequisite: `viewable(memory=snapshot#1, base=p, bytes:uint32=4)"), "{error:?}");
+        assert!(
+            error
+                .message()
+                .contains("missing condition prerequisite: `viewable(p[0..1])`"),
+            "{error:?}"
+        );
     }
 
     #[test]

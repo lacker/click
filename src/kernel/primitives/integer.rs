@@ -828,6 +828,16 @@ impl IntegerTerm {
             return None;
         }
         let value = match value {
+            // A conversion's result is a carrier of its destination type,
+            // and a wider type that contains that type observes the same
+            // value in it: a promoted converted byte is still the byte.
+            Bitvector32Term::MachineIntegerCast { destination, .. }
+                if destination != ty
+                    && ty.format().bits() <= 32
+                    && ty.format().contains(destination.format()) =>
+            {
+                return Self::from_machine(destination, value);
+            }
             Bitvector32Term::MachineIntegerCast { destination, .. } if destination != ty => {
                 return None;
             }

@@ -1968,8 +1968,15 @@ pub enum CIntegerCastMode {
     #[default]
     Standard,
     /// Preserve the numeric value modulo the destination width. Used by
-    /// Rust integer casts and C++20 integer conversions; never implicit in C.
+    /// Rust integer casts and C++20 integer conversions.
     Modulo,
+    /// C's integer conversion, written or inserted by lowering, as GCC and
+    /// Clang compile it: also the value modulo the destination width, owing
+    /// no range. A narrower result is the typed conversion node, which the
+    /// reasoning layer identifies with its operand inside the destination
+    /// range (`narrowed_cast_identity`). `Standard` remains the
+    /// specification's checked conversion.
+    CConversion,
     /// Legacy exact uint64-to-int64 boundary.
     UInt64BitsToInt64,
 }

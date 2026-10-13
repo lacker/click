@@ -231,6 +231,7 @@ impl ChildArgumentTrace {
     }
 
     pub(super) fn render(&self, labels: &mut SnapshotLabels) -> String {
+        let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
         let actual = self.value(&self.actual, labels);
         let required = self.value(&self.required, labels);
         let mut output = format!(
@@ -576,6 +577,7 @@ pub(super) fn render(
     have_body_contains: &dyn Fn(&[usize], &SourcePosition) -> bool,
     target: Option<&SourcePosition>,
 ) -> Option<String> {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     CAPTURE.with(|slot| {
         let slot = slot.borrow();
         let capture = slot.as_ref()?;
@@ -636,6 +638,7 @@ pub(crate) fn render_accepted(
     have_body_contains: &dyn Fn(&str, &[usize], &SourcePosition) -> bool,
     target: Option<&SourcePosition>,
 ) -> Option<String> {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     CAPTURE.with(|slot| {
         let slot = slot.borrow();
         let capture = slot.as_ref()?;
@@ -1027,6 +1030,7 @@ fn append_added_facts(
     labels: &mut SnapshotLabels,
     indent: &str,
 ) {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     for fact in facts {
         if !visible_checked_fact(&fact.kernel) {
             continue;
@@ -1039,6 +1043,7 @@ fn append_added_facts(
 }
 
 pub(super) fn append_legend(trace: &mut String, labels: &mut SnapshotLabels) {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     let legend = labels.trace_legend();
     if legend.is_empty() {
         return;
@@ -1226,19 +1231,28 @@ mod tests {
             goal.contains("read<Bits64>(snapshot#1, pointer=value#1)"),
             "{goal}"
         );
-        assert!(ordinary.contains(&format!("goal: {goal}")), "{ordinary}");
+        // The ordinary report spells the same read in source terms, one
+        // spelling for the goal, the requirement and the premise alike.
+        let ordinary_goal = ordinary
+            .lines()
+            .find_map(|l| l.trim_start().strip_prefix("goal: "))
+            .unwrap();
+        assert!(!ordinary_goal.contains("snapshot#"), "{ordinary}");
         assert!(
-            ordinary.contains(&format!("required: {goal}")),
+            ordinary.contains(&format!("required: {ordinary_goal}")),
             "{ordinary}"
         );
-        assert!(ordinary.contains(&format!("\n    {goal}")), "{ordinary}");
+        assert!(
+            ordinary.contains(&format!("\n    {ordinary_goal}")),
+            "{ordinary}"
+        );
         assert!(added.contains(&format!("adds: {goal}")), "{added}");
         assert!(
             added.contains("read<Bits64>(snapshot#2, pointer=value#1)"),
             "{added}"
         );
         assert!(
-            ordinary.contains("snapshot#1 = initial empty memory"),
+            ordinary.contains("<state A> is the memory before the function runs"),
             "{ordinary}"
         );
     }

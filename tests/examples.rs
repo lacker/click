@@ -13,7 +13,7 @@ use click::cli::{
     CInput, files_with_extension, project_sidecars, read_c_inputs_for_project,
     read_click_project_at_root, read_verifying_sources, source_refs,
 };
-use click::instrumentation::{self, ArtifactReuseRejection};
+use click::instrumentation::{self, ArtifactReuseRejection, HiddenPrerequisiteRoute};
 use click::languages::refresh_compiler_import;
 use click::surface::{
     c0_tactic_source_position, project_tactic_source_position, verify_c0_prepared_project,
@@ -35,18 +35,18 @@ const SOURCE_METADATA: &str = "SOURCE.md";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "multifile-registry",
-    "`registry_run`'s entry cannot evaluate an owned field path into another module's \
-     function-local static struct array (`owns beta::record_beta::batches[0].value`: \
-     no known pointee type, the gap mdtests/initialized_aggregate_static_arrays.md pins); \
-     past it, ordinary-entry static-state transport does not yet certify its cross-file \
-     caller (issues/static-state-caller-transport.md)",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 /// The artifact reuse rejection ratchet (`docs/internals/testing.md`) over
 /// every example project; see `tests/mdtests.rs` for the rule.
 const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[];
+
+/// The hidden prerequisite ratchet (`docs/internals/testing.md`): count the
+/// prerequisites simple statement checking derived by a search the proof does
+/// not retain, over the whole unfiltered corpus, by route and top rule. A
+/// count may only fall; `issues/simplify-step.md` drives it to zero.
+const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] =
+    &[((HiddenPrerequisiteRoute::StepObligation, "And"), 4)];
 
 #[test]
 #[ignore = "nightly: 4s in the parallel gate"]
@@ -206,6 +206,7 @@ fn example_projects() {
     // CI splits the examples across jobs to stay inside the gate's time
     // budget: `EXAMPLE_PARTITION=k/n` keeps every n-th project from the k-th,
     // over the sorted names, so the shards cover them exactly once.
+    let partitioned = std::env::var_os("EXAMPLE_PARTITION").is_some();
     if let Ok(partition) = std::env::var("EXAMPLE_PARTITION") {
         let (shard, total) = partition
             .split_once('/')
@@ -254,6 +255,7 @@ fn example_projects() {
     // correctness, so concurrency cannot change a verdict; the test runner
     // owns hang containment.
     let _ = instrumentation::take_artifact_reuse_rejection_census();
+    let _ = instrumentation::take_hidden_prerequisite_census();
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let failures = limits::run_parallel(&projects, workers, |project| {
         // One line as each project starts and one as it finishes, on stderr
@@ -284,6 +286,7 @@ fn example_projects() {
         panic!("{message}");
     }
     let census = instrumentation::take_artifact_reuse_rejection_census();
+    let hidden_prerequisites = instrumentation::take_hidden_prerequisite_census();
     if requested.is_none()
         && !run_quarantined
         && !skipped_cpp
@@ -293,6 +296,17 @@ fn example_projects() {
         )
     {
         panic!("artifact reuse rejection ratchet (tests/examples.rs baselines):\n{mismatch}");
+    }
+    if requested.is_none()
+        && !run_quarantined
+        && !skipped_cpp
+        && let Some(mismatch) = instrumentation::hidden_prerequisite_census_mismatch(
+            &hidden_prerequisites,
+            HIDDEN_PREREQUISITE_BASELINE,
+            partitioned,
+        )
+    {
+        panic!("hidden prerequisite ratchet (tests/examples.rs baselines):\n{mismatch}");
     }
 }
 
@@ -2503,9 +2517,8 @@ fn own_project_guide_sessions_match_the_label_example() {
         "label.h",
         "label_fit.c",
         "label_copy.c",
-        "label_fit.click",
-        "label_fit.click.import.json",
-        "label_copy.click",
+        "label.click",
+        "label.click.import.json",
     ] {
         let checked_in = fs::read_to_string(example.join(name)).unwrap();
         assert!(
@@ -2522,4 +2535,22 @@ fn own_project_guide_sessions_match_the_label_example() {
 fn first_proof_tutorial_sessions_match_the_verifier() {
     let files = run_documented_session("docs/concepts/first-proof.md");
     assert!(files["increment.click"].contains("requires x < 2147483647;"));
+}
+
+/// The markdown harness uses enlarged verifier-thread stacks. Keep this
+/// reproduction in the real CLI too, where main has the ordinary OS stack.
+#[test]
+fn uint64_successor_auto_answers_on_the_normal_cli_stack() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output = Command::new(env!("CARGO_BIN_EXE_click"))
+        .arg("verify")
+        .arg(root.join("mdtests/uint64_successor_auto_with_additional_bound.md"))
+        .output()
+        .expect("run the verifier on its ordinary process stack");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 selected proof verified"));
 }

@@ -39,5 +39,5 @@ int32 inline_after_read(int32 v) {
 ```
 
 ```expect
-fail: left side evaluated to (5 + v)
+fail: left side evaluated to 5 + v,
 ```

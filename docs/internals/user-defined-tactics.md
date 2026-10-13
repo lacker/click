@@ -1,5 +1,8 @@
 # User-defined tactics (design)
 
+This design record covers user-defined tactics: proof procedures declared in
+Click, certified once, and applied in C proofs.
+
 Status: delivery steps 1, 2, and 5 are implemented: declarations,
 certification, application in C proofs before function exit, self-recursion
 ranked by an expression measure (see

@@ -1,6 +1,7 @@
 # Click language reference
 
-Click files are sidecar specifications for C sources.
+This page is the complete reference for Surface Click, the language of `.click`
+sidecar files. Click files are sidecar specifications for C sources.
 
 They may begin with local specification imports such as
 `import "../models/common.click";`. Imports contribute declarations but do not

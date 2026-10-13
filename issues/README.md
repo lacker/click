@@ -47,7 +47,7 @@ reproduced. To move a file off `unsound`, the reproduction must stop
 verifying. Narrowing the documented claim does not count. Re-check the label
 whenever the file's reproduction or scope changes.
 
-## P1: before launch (4)
+## P1: before launch (5)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -117,11 +117,10 @@ Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
 - [SMT-backed automation with kernel-checked certificates](smt-auto.md)
-- [Launch design review: open critiques, each to be fixed or ruled wontfix](design-review.md) (depends on smt-auto.md)
+- [Make simple tactics fast: exact requirements, expandable `auto` for the rest](simplify-step.md)
+- [Launch design review: open critiques, each to be fixed or ruled wontfix](design-review.md) (depends on smt-auto.md and simplify-step.md)
 
-## P2: after launch (17)
-
-- [Make `step` simple across a call precondition](simplify-step.md)
+## P2: after launch (14)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
 it turns out to block that claim: if P1 work exposes one of the tooling
@@ -134,11 +133,9 @@ C language coverage:
 - [Extend static-storage initializers and string-literal coverage](global-variables.md)
 - [Import kernel-scale preprocessed translation units](kernel-scale-preprocessing.md)
 - [Verify Linux rbtree inline helpers from the pinned headers](linux-rbtree-inline-helpers.md)
-- [Transport current static state through cross-file callers](static-state-caller-transport.md)
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
 - [Verify unchanged PCG wrappers that pass private static storage to helpers](private-static-helper-ownership.md)
 - [Extend bounded control flow](control-flow.md)
-- [Resolve linked initializers in their defining file](linked-initializer-private-names.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
 
 Additional languages:

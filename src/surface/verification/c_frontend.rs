@@ -503,6 +503,73 @@ pub(super) fn link_c_units(
             "aggregate global array `{name}` is declared `extern` but has no definition"
         )));
     }
+    // An externally linked pointer's initializer may name an object private
+    // to its defining unit (`static int value; int *exposed = &value;`).
+    // Resolve it there, where that name is visible, and let every other unit
+    // read the resolved address rather than re-evaluate the initializer
+    // against its own names.
+    for source_path in units.keys() {
+        let definitions = globals_by_source[source_path]
+            .iter()
+            .filter(|(_, global)| {
+                !global.is_file_static()
+                    && global.is_initialized_definition()
+                    && global.c_type().is_pointer()
+            })
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        let array_definitions = global_arrays_by_source[source_path]
+            .iter()
+            .filter(|(_, array)| {
+                !array.is_file_static()
+                    && array.is_initialized_definition()
+                    && array.element_type().is_pointer()
+            })
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+        if definitions.is_empty() && array_definitions.is_empty() {
+            continue;
+        }
+        let context = unit_storage_context(
+            source_path,
+            &globals_by_source,
+            &globals,
+            &global_arrays_by_source,
+            &global_arrays,
+            &global_aggregates_by_source,
+            &global_aggregates,
+            &global_aggregate_arrays_by_source,
+            &global_aggregate_arrays,
+        );
+        for name in definitions {
+            let linked = &globals[&name];
+            let resolved = context
+                .resolve_linked_pointer_initializer(linked)
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "failed to resolve static initializer in `{source_path}`: {error}"
+                    ))
+                })?;
+            if let Some(address) = resolved {
+                let linked = linked.clone().with_resolved_address(address);
+                globals.insert(name, linked);
+            }
+        }
+        for name in array_definitions {
+            let linked = &global_arrays[&name];
+            let resolved = context
+                .resolve_linked_pointer_array(linked)
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "failed to resolve static initializer in `{source_path}`: {error}"
+                    ))
+                })?;
+            if let Some(resolved) = resolved {
+                let linked = linked.clone().with_resolved(resolved);
+                global_arrays.insert(name, linked);
+            }
+        }
+    }
     parsed = parsed
         .into_iter()
         .map(|(name, (source_path, function))| {
@@ -586,67 +653,17 @@ pub(super) fn link_c_units(
         // function body or its whole visible global map at startup.
         let main_source = &parsed["main"].0;
         for source_path in units.keys().filter(|path| *path != main_source) {
-            let visible_globals = globals_by_source[source_path]
-                .iter()
-                .map(|(name, object)| {
-                    (
-                        name.clone(),
-                        if object.is_file_static() {
-                            object
-                        } else {
-                            &globals[name]
-                        }
-                        .clone(),
-                    )
-                })
-                .collect();
-            let visible_arrays = global_arrays_by_source[source_path]
-                .iter()
-                .map(|(name, object)| {
-                    (
-                        name.clone(),
-                        if object.is_file_static() {
-                            object
-                        } else {
-                            &global_arrays[name]
-                        }
-                        .clone(),
-                    )
-                })
-                .collect();
-            let visible_aggregates = global_aggregates_by_source[source_path]
-                .iter()
-                .map(|(name, object)| {
-                    (
-                        name.clone(),
-                        if object.is_file_static() {
-                            object
-                        } else {
-                            &global_aggregates[name]
-                        }
-                        .clone(),
-                    )
-                })
-                .collect();
-            let visible_aggregate_arrays = global_aggregate_arrays_by_source[source_path]
-                .iter()
-                .map(|(name, object)| {
-                    (
-                        name.clone(),
-                        if object.is_file_static() {
-                            object
-                        } else {
-                            &global_aggregate_arrays[name]
-                        }
-                        .clone(),
-                    )
-                })
-                .collect();
-            let storage = syntax::C0Function::external(syntax::C0Type::Void, String::new(), vec![])
-                .with_globals(visible_globals)
-                .with_global_arrays(visible_arrays)
-                .with_global_aggregates(visible_aggregates)
-                .with_global_aggregate_arrays(visible_aggregate_arrays);
+            let storage = unit_storage_context(
+                source_path,
+                &globals_by_source,
+                &globals,
+                &global_arrays_by_source,
+                &global_arrays,
+                &global_aggregates_by_source,
+                &global_aggregates,
+                &global_aggregate_arrays_by_source,
+                &global_aggregate_arrays,
+            );
             storage
                 .validate_static_initializers()
                 .map_err(|error| ClickError::new(error.to_string()))?;
@@ -671,6 +688,63 @@ pub(super) fn link_c_units(
         }
     }
     Ok(parsed)
+}
+
+/// One translation unit's view of file-scope storage: its own private
+/// objects and the linked externally visible ones. It names that unit's
+/// objects without any function, so data-only files have one too.
+#[allow(clippy::too_many_arguments)]
+fn unit_storage_context(
+    source_path: &str,
+    globals_by_source: &BTreeMap<String, BTreeMap<String, syntax::C0Global>>,
+    globals: &BTreeMap<String, syntax::C0Global>,
+    global_arrays_by_source: &BTreeMap<String, BTreeMap<String, syntax::C0GlobalArray>>,
+    global_arrays: &BTreeMap<String, syntax::C0GlobalArray>,
+    global_aggregates_by_source: &BTreeMap<String, BTreeMap<String, syntax::C0GlobalAggregate>>,
+    global_aggregates: &BTreeMap<String, syntax::C0GlobalAggregate>,
+    global_aggregate_arrays_by_source: &BTreeMap<
+        String,
+        BTreeMap<String, syntax::C0GlobalAggregateArray>,
+    >,
+    global_aggregate_arrays: &BTreeMap<String, syntax::C0GlobalAggregateArray>,
+) -> syntax::C0Function {
+    fn visible<T: Clone>(
+        own: &BTreeMap<String, T>,
+        linked: &BTreeMap<String, T>,
+        is_file_static: impl Fn(&T) -> bool,
+    ) -> BTreeMap<String, T> {
+        own.iter()
+            .map(|(name, object)| {
+                let object = if is_file_static(object) {
+                    object
+                } else {
+                    &linked[name]
+                };
+                (name.clone(), object.clone())
+            })
+            .collect()
+    }
+    syntax::C0Function::external(syntax::C0Type::Void, String::new(), vec![])
+        .with_globals(visible(
+            &globals_by_source[source_path],
+            globals,
+            |object| object.is_file_static(),
+        ))
+        .with_global_arrays(visible(
+            &global_arrays_by_source[source_path],
+            global_arrays,
+            |object| object.is_file_static(),
+        ))
+        .with_global_aggregates(visible(
+            &global_aggregates_by_source[source_path],
+            global_aggregates,
+            |object| object.is_file_static(),
+        ))
+        .with_global_aggregate_arrays(visible(
+            &global_aggregate_arrays_by_source[source_path],
+            global_aggregate_arrays,
+            |object| object.is_file_static(),
+        ))
 }
 
 /// The layouts, nameable objects and per-function tables of the verifying C

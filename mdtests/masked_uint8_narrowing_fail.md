@@ -1,7 +1,9 @@
-# A nine-bit mask cannot justify byte narrowing
+# A nine-bit mask does not make byte narrowing exact
 
-Masking with 511 clears the sign bit but permits values above 255.
-The byte narrowing upper bound must fail.
+Masking with 511 clears the sign bit but permits values above 255, so the
+conversion to `unsigned char` drops the ninth bit: for `value & 511` in
+`256..511` the result is 256 less. Claiming the masked word is refused.
+`mdtests/masked_uint8_narrowing.md` is the eight-bit mask that is exact.
 
 ```c filename=masked_uint8_narrowing.c
 unsigned char low_byte(unsigned value) {
@@ -17,5 +19,5 @@ uint8 low_byte(uint32 value) {
 ```
 
 ```expect
-fail: uint8 narrowing upper bound
+fail: `ensures ((uint32)result) == (value & 511u32)` failed
 ```

@@ -1601,6 +1601,21 @@ thread_local! {
     };
 }
 
+/// Records a statement step whose checking derived a prerequisite by a
+/// search the proof does not retain (`issues/simplify-step.md`).
+#[cfg(test)]
+pub(in crate::surface::proof) fn record_planning_statement_transition(
+    claim: &str,
+    tactic_index: usize,
+    tactic: &str,
+) {
+    PLANNING_STATEMENT_TRANSITIONS.with(|transitions| {
+        transitions
+            .borrow_mut()
+            .push((claim.to_string(), tactic_index, tactic.to_string()));
+    });
+}
+
 #[cfg(test)]
 pub(super) fn count_planning_statement_transitions<R>(operation: impl FnOnce() -> R) -> (R, usize) {
     let before = PLANNING_STATEMENT_TRANSITIONS.with(|transitions| transitions.borrow().len());

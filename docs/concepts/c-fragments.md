@@ -1,5 +1,8 @@
 # C fragments
 
+This page separates the program being verified from the C fragments, C-like
+expressions, that appear inside Click specs.
+
 Click verifies existing C, C++, and Rust. Its coverage of each language is
 incomplete: some constructs are not modeled yet and are refused with a
 diagnostic rather than approximated. [Supported C](../reference/language/c.md)

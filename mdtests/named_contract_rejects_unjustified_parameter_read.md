@@ -32,5 +32,5 @@ contract void AugmentRotate(struct node* old, struct node* new) {
 ```
 
 ```expect
-fail: missing pure fact: viewable(memory=snapshot#1, base=old, bytes:uint32=8)
+fail: missing pure fact: viewable(old[0..2])
 ```

@@ -530,6 +530,9 @@ impl PureFactContext {
                 }
                 let simplified = self.simplify_condition_under_assumptions(condition);
                 if simplified != *condition {
+                    if let Some(value) = simplified.reflexive_value() {
+                        return Some(value);
+                    }
                     return match simplified {
                         ConditionTerm::Constant(value) => Some(value),
                         simplified => self
@@ -1904,6 +1907,21 @@ impl PureFactContext {
                     ),
                 }
             }
+            // A narrowing conversion inside its destination range is its
+            // operand's carrier (`narrowed_casts`); otherwise it stays the
+            // conversion of its simplified operand.
+            Bitvector32Term::MachineIntegerCast {
+                value,
+                source,
+                destination,
+            } => match self.narrowed_cast_carrier(term) {
+                Some(carrier) => self.simplify_bitvector_under_assumptions(&carrier),
+                None => Bitvector32Term::machine_integer_cast(
+                    *source,
+                    *destination,
+                    self.simplify_bitvector_under_assumptions(value),
+                ),
+            },
             Bitvector32Term::If {
                 condition,
                 then_term,

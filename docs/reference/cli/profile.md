@@ -40,7 +40,7 @@ proofs.
 | `--simple-threshold DURATION` | `500ms` | Report a slow simple tactic as a verifier performance defect. |
 | `--control-threshold DURATION` | `2s` | Report a slow control-tactic container and its nested work. |
 | `--threshold DURATION` | none | Set all three tactic-class thresholds together. It cannot be combined with a class-specific threshold. |
-| `--work-limit UNITS` | `50000000` | Set the deterministic work budget for each project, `click verify`'s whole-run budget. |
+| `--work-limit UNITS` | `50000000` | Set the deterministic work budget for each sidecar and each markdown test, the same whole-run budget `click verify` gives each sidecar, so a project `click verify` accepts can be profiled. |
 | `--time-limit DURATION` | `10m` | Set the wall-clock crash-containment bound for each project. It stops a hung or CPU-starved run and is not a verdict about the proof. |
 | `--top COUNT` | `8` | Limit each function and claim attribution ranking to a positive number of rows. |
 | `-h`, `--help` | none | Print command help and exit successfully. |

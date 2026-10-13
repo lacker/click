@@ -1,6 +1,6 @@
 # Aliasing and frames
 
-C pointer parameters may alias by default. Click follows that model.
+C pointer parameters may alias by default, and Click follows that model.
 
 If a function takes two pointers:
 

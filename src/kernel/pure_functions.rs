@@ -31,9 +31,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::primitives::{
     AlgebraicTerm, AlgebraicType, CExpression, CState, CType, CValue, ExecutionBudget,
     PureFactContext, PureFunctionArgument, SpecAlgebraicExpression, SpecAlgebraicExpressionNode,
-    SpecAlgebraicValue, SpecExpression, SpecIntegerExpression, SpecIntegerRangeFoldIndex,
-    SpecPredicateArgument, SpecProposition, SpecPureFunctionArgument,
+    SpecExpression, SpecIntegerExpression, SpecProposition,
 };
+use super::spec::walk::{SpecNode, Visit, WalkBudget, Walked, walk_spec};
 
 /// One parameter of a registered pure function: the name its body refers to
 /// and the sort the evaluation binds it in.
@@ -110,7 +110,7 @@ impl CPureFunctionDefinition {
             })
             .collect::<Vec<_>>();
         let mut reads = BodyReads::default();
-        if collect_body_reads(&self.body, &mut bound, &mut reads).is_err() {
+        if collect_body_reads(SpecNode::Expression(&self.body), &mut bound, &mut reads).is_err() {
             // A form the check does not inspect: the classification stands
             // on its own, as it did before the check existed.
             return None;
@@ -154,89 +154,133 @@ fn with_bound<T>(
     result
 }
 
+/// Collects what a body subtree reads besides the names in `bound`, or names
+/// the first form the check does not inspect. A binder's names are bound only
+/// around the subtrees it scopes: a match arm's body, and a fold's or `let`'s
+/// body.
 fn collect_body_reads(
-    expression: &SpecExpression,
+    root: SpecNode<'_>,
     bound: &mut Vec<String>,
     reads: &mut BodyReads,
 ) -> Result<(), UninspectedForm> {
-    match expression {
-        // A resource field reads the binder's instance, not a C name.
-        SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => Ok(()),
-        SpecExpression::CExpression(expression) => {
-            collect_c_expression_reads(expression, bound, reads);
-            Ok(())
-        }
-        SpecExpression::IntegerToMachine { value, .. } => {
-            collect_integer_body_reads(value, bound, reads)
-        }
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_algebraic_body_reads(scrutinee, bound, reads)?;
-            for arm in arms {
-                with_bound(bound, arm.bindings.iter().cloned(), |bound| {
-                    collect_body_reads(&arm.body, bound, reads)
-                })?;
+    fn scoped(
+        names: &[String],
+        body: SpecNode<'_>,
+        bound: &mut Vec<String>,
+        reads: &mut BodyReads,
+    ) -> Result<(), UninspectedForm> {
+        with_bound(bound, names.iter().cloned(), |bound| {
+            collect_body_reads(body, bound, reads)
+        })
+    }
+    let walked = walk_spec(root, WalkBudget::Unmetered, |node| {
+        use SpecNode as N;
+        let binder = match node {
+            N::Expression(SpecExpression::AlgebraicMatch { scrutinee, arms }) => {
+                collect_body_reads(N::Algebraic(scrutinee), bound, reads).and_then(|()| {
+                    arms.iter().try_for_each(|arm| {
+                        scoped(&arm.bindings, N::Expression(&arm.body), bound, reads)
+                    })
+                })
             }
-            Ok(())
+            N::Integer(SpecIntegerExpression::AlgebraicMatch { scrutinee, arms }) => {
+                collect_body_reads(N::Algebraic(scrutinee), bound, reads).and_then(|()| {
+                    arms.iter().try_for_each(|arm| {
+                        scoped(&arm.bindings, N::Integer(&arm.body), bound, reads)
+                    })
+                })
+            }
+            N::Algebraic(SpecAlgebraicExpression {
+                node: SpecAlgebraicExpressionNode::Match { scrutinee, arms },
+                ..
+            }) => collect_body_reads(N::Algebraic(scrutinee), bound, reads).and_then(|()| {
+                arms.iter().try_for_each(|arm| {
+                    scoped(&arm.bindings, N::Algebraic(&arm.body), bound, reads)
+                })
+            }),
+            N::Expression(SpecExpression::RangeFold {
+                start,
+                end,
+                initial,
+                accumulator,
+                item,
+                body,
+            }) => [start, end, initial]
+                .into_iter()
+                .try_for_each(|value| collect_body_reads(N::Expression(value), bound, reads))
+                .and_then(|()| {
+                    scoped(
+                        &[accumulator.clone(), item.clone()],
+                        N::Expression(body),
+                        bound,
+                        reads,
+                    )
+                }),
+            N::Expression(SpecExpression::Let { name, value, body }) => {
+                collect_body_reads(N::Expression(value), bound, reads).and_then(|()| {
+                    scoped(
+                        std::slice::from_ref(name),
+                        N::Expression(body),
+                        bound,
+                        reads,
+                    )
+                })
+            }
+            N::Expression(SpecExpression::CExpression(expression)) => {
+                collect_c_expression_reads(expression, bound, reads);
+                return Visit::Descend;
+            }
+            N::Expression(SpecExpression::MemoryLoad { .. }) => {
+                reads.memory = true;
+                return Visit::Descend;
+            }
+            N::Expression(SpecExpression::AggregateFieldValue { parameter, .. }) => {
+                note_c_name(parameter, bound, reads);
+                return Visit::Descend;
+            }
+            N::Expression(SpecExpression::CountedResourceCount { .. }) => {
+                Err(UninspectedForm("a counted-resource count"))
+            }
+            N::Expression(SpecExpression::LoopEntrySnapshot(_)) => {
+                Err(UninspectedForm("a loop-entry snapshot"))
+            }
+            // Quantifiers, sequences, resources and loadability do not occur
+            // in a memory-independent body; a body that has one is not
+            // inspected.
+            N::Proposition(
+                SpecProposition::ForAllMachineInteger { .. }
+                | SpecProposition::ForAllInt32 { .. }
+                | SpecProposition::ForAllInteger { .. }
+                | SpecProposition::ForAllAlgebraic { .. }
+                | SpecProposition::ForAllPointer { .. }
+                | SpecProposition::ExistsMachineInteger { .. }
+                | SpecProposition::ExistsInt32 { .. }
+                | SpecProposition::ExistsInteger { .. }
+                | SpecProposition::ExistsAlgebraic { .. }
+                | SpecProposition::ExistsPointer { .. }
+                | SpecProposition::SequenceMembership { .. }
+                | SpecProposition::SequenceComparison { .. }
+                | SpecProposition::ResourceSeparate { .. }
+                | SpecProposition::ResourceContains { .. }
+                | SpecProposition::MemoryLoadable { .. },
+            ) => Err(UninspectedForm(
+                "a proposition form the closedness check does not inspect",
+            )),
+            // A resource field reads the binder's instance, and an algebraic
+            // binding is a parameter or a match binding of the algebraic sort,
+            // never a C name. An array reference carries its own snapshot as
+            // an argument; only the pointer expression is a read of this
+            // body's scope.
+            _ => return Visit::Descend,
+        };
+        match binder {
+            Ok(()) => Visit::Skip,
+            Err(form) => Visit::Stop(form),
         }
-        SpecExpression::CountedResourceCount { .. } => {
-            Err(UninspectedForm("a counted-resource count"))
-        }
-        crate::kernel::binary_spec_expression!(left, right)
-        | SpecExpression::PointerOffset {
-            pointer: left,
-            elements: right,
-            ..
-        } => {
-            collect_body_reads(left, bound, reads)?;
-            collect_body_reads(right, bound, reads)
-        }
-        SpecExpression::BitwiseNot(inner) | SpecExpression::Cast(inner, _) => {
-            collect_body_reads(inner, bound, reads)
-        }
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_proposition_body_reads(condition, bound, reads)?;
-            collect_body_reads(then_branch, bound, reads)?;
-            collect_body_reads(else_branch, bound, reads)
-        }
-        SpecExpression::RangeFold {
-            start,
-            end,
-            initial,
-            accumulator,
-            item,
-            body,
-        } => {
-            collect_body_reads(start, bound, reads)?;
-            collect_body_reads(end, bound, reads)?;
-            collect_body_reads(initial, bound, reads)?;
-            with_bound(bound, [accumulator.clone(), item.clone()], |bound| {
-                collect_body_reads(body, bound, reads)
-            })
-        }
-        SpecExpression::Let { name, value, body } => {
-            collect_body_reads(value, bound, reads)?;
-            with_bound(bound, [name.clone()], |bound| {
-                collect_body_reads(body, bound, reads)
-            })
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            collect_argument_body_reads(arguments, bound, reads)
-        }
-        SpecExpression::LoopEntrySnapshot(_) => Err(UninspectedForm("a loop-entry snapshot")),
-        SpecExpression::MemoryLoad { pointer, .. } => {
-            reads.memory = true;
-            collect_body_reads(pointer, bound, reads)
-        }
-        SpecExpression::AggregateFieldValue {
-            parameter, pointer, ..
-        } => {
-            note_c_name(parameter, bound, reads);
-            collect_body_reads(pointer, bound, reads)
-        }
+    });
+    match walked {
+        Walked::Stopped(form) => Err(form),
+        Walked::Completed | Walked::OutOfTime => Ok(()),
     }
 }
 
@@ -312,165 +356,6 @@ fn collect_c_expression_reads(expression: &CExpression, bound: &[String], reads:
             collect_c_expression_reads(left, bound, reads);
             collect_c_expression_reads(right, bound, reads);
         }
-    }
-}
-
-fn collect_integer_body_reads(
-    expression: &SpecIntegerExpression,
-    bound: &mut Vec<String>,
-    reads: &mut BodyReads,
-) -> Result<(), UninspectedForm> {
-    match expression {
-        SpecIntegerExpression::ResourceField(_) | SpecIntegerExpression::Term(_) => Ok(()),
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-            collect_argument_body_reads(arguments, bound, reads)
-        }
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            collect_algebraic_body_reads(scrutinee, bound, reads)?;
-            for arm in arms {
-                with_bound(bound, arm.bindings.iter().cloned(), |bound| {
-                    collect_integer_body_reads(&arm.body, bound, reads)
-                })?;
-            }
-            Ok(())
-        }
-        SpecIntegerExpression::FromMachine(value) => collect_body_reads(value, bound, reads),
-        SpecIntegerExpression::Negate(inner) => collect_integer_body_reads(inner, bound, reads),
-        crate::kernel::binary_spec_integer_expression!(left, right) => {
-            collect_integer_body_reads(left, bound, reads)?;
-            collect_integer_body_reads(right, bound, reads)
-        }
-        // The fold's accumulator and item are variables, not names.
-        SpecIntegerExpression::RangeFold {
-            index,
-            initial,
-            body,
-            ..
-        } => {
-            match index {
-                SpecIntegerRangeFoldIndex::Int32 { start, end }
-                | SpecIntegerRangeFoldIndex::UInt64 { start, end } => {
-                    collect_body_reads(start, bound, reads)?;
-                    collect_body_reads(end, bound, reads)?;
-                }
-                SpecIntegerRangeFoldIndex::Integer { start, end } => {
-                    collect_integer_body_reads(start, bound, reads)?;
-                    collect_integer_body_reads(end, bound, reads)?;
-                }
-            }
-            collect_integer_body_reads(initial, bound, reads)?;
-            collect_integer_body_reads(body, bound, reads)
-        }
-    }
-}
-
-fn collect_algebraic_body_reads(
-    expression: &SpecAlgebraicExpression,
-    bound: &mut Vec<String>,
-    reads: &mut BodyReads,
-) -> Result<(), UninspectedForm> {
-    match &expression.node {
-        // An algebraic binding is a parameter or a match binding of the
-        // algebraic sort, never a C name.
-        SpecAlgebraicExpressionNode::Variable(_)
-        | SpecAlgebraicExpressionNode::Binding(_)
-        | SpecAlgebraicExpressionNode::ResourceField(_) => Ok(()),
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            for field in fields {
-                match field {
-                    SpecAlgebraicValue::C(value) => collect_body_reads(value, bound, reads)?,
-                    SpecAlgebraicValue::Integer(value) => {
-                        collect_integer_body_reads(value, bound, reads)?
-                    }
-                    SpecAlgebraicValue::Algebraic(value) => {
-                        collect_algebraic_body_reads(value, bound, reads)?
-                    }
-                }
-            }
-            Ok(())
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            collect_algebraic_body_reads(scrutinee, bound, reads)?;
-            for arm in arms {
-                with_bound(bound, arm.bindings.iter().cloned(), |bound| {
-                    collect_algebraic_body_reads(&arm.body, bound, reads)
-                })?;
-            }
-            Ok(())
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-            collect_argument_body_reads(arguments, bound, reads)
-        }
-    }
-}
-
-fn collect_argument_body_reads(
-    arguments: &[SpecPureFunctionArgument],
-    bound: &mut Vec<String>,
-    reads: &mut BodyReads,
-) -> Result<(), UninspectedForm> {
-    for argument in arguments {
-        match argument {
-            // An array reference carries its own snapshot as an argument;
-            // only the pointer expression is a read of this body's scope.
-            SpecPureFunctionArgument::Value(value)
-            | SpecPureFunctionArgument::ArrayRef { pointer: value, .. } => {
-                collect_body_reads(value, bound, reads)?
-            }
-            SpecPureFunctionArgument::Integer(value) => {
-                collect_integer_body_reads(value, bound, reads)?
-            }
-            SpecPureFunctionArgument::Algebraic(value) => {
-                collect_algebraic_body_reads(value, bound, reads)?
-            }
-        }
-    }
-    Ok(())
-}
-
-fn collect_proposition_body_reads(
-    proposition: &SpecProposition,
-    bound: &mut Vec<String>,
-    reads: &mut BodyReads,
-) -> Result<(), UninspectedForm> {
-    match proposition {
-        SpecProposition::Comparison { left, right, .. } => {
-            collect_body_reads(left, bound, reads)?;
-            collect_body_reads(right, bound, reads)
-        }
-        SpecProposition::IntegerComparison { left, right, .. } => {
-            collect_integer_body_reads(left, bound, reads)?;
-            collect_integer_body_reads(right, bound, reads)
-        }
-        SpecProposition::AlgebraicComparison { left, right, .. } => {
-            collect_algebraic_body_reads(left, bound, reads)?;
-            collect_algebraic_body_reads(right, bound, reads)
-        }
-        SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => collect_body_reads(expression, bound, reads),
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            collect_proposition_body_reads(left, bound, reads)?;
-            collect_proposition_body_reads(right, bound, reads)
-        }
-        SpecProposition::Not(body) => collect_proposition_body_reads(body, bound, reads),
-        SpecProposition::Predicate { arguments, .. } => {
-            for argument in arguments {
-                match argument {
-                    SpecPredicateArgument::Value(value)
-                    | SpecPredicateArgument::ArrayRef { pointer: value, .. } => {
-                        collect_body_reads(value, bound, reads)?
-                    }
-                }
-            }
-            Ok(())
-        }
-        // Quantifiers, sequences, resources and loadability do not occur in
-        // a memory-independent body; a body that has one is not inspected.
-        _ => Err(UninspectedForm(
-            "a proposition form the closedness check does not inspect",
-        )),
     }
 }
 
@@ -614,3 +499,6 @@ pub(crate) fn arguments_with_algebraic_substitution(
     *slot = PureFunctionArgument::Algebraic(value);
     Some(arguments)
 }
+
+#[cfg(test)]
+mod spec_walk_oracle_tests;

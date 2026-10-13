@@ -345,7 +345,7 @@ impl PureFactContext {
         self.proves_memory_loadable(memory, pointer, &Bitvector32Term::Constant(byte_width))
     }
 
-    /// Carry a native liveness range, or a checked same-base prefix, through
+    /// Carry a native liveness range, or a checked subrange, through
     /// memory snapshots. Counts are compared as complete unsigned 64-bit
     /// values; this does not transport byte values. Retirement is checked at
     /// the evidence's address, just as for ordinary read ranges.
@@ -394,7 +394,8 @@ impl PureFactContext {
         {
             return true;
         }
-        self.memory_loadable_exact_candidates_for_base(base)
+        let prefix = self
+            .memory_loadable_exact_candidates_for_base(base)
             .any(|fact| {
                 let Proposition::CMemoryLoadable {
                     memory: before,
@@ -414,7 +415,83 @@ impl PureFactContext {
                         )) == Some(true))
                     && before.read_region_identity(source_base) == memory.read_region_identity(base)
                     && memory_range_still_available(before, memory, source_base, self)
-            })
+            });
+        if prefix {
+            return true;
+        }
+        // A cursor commonly advances from an exact parent offset, or from
+        // offset zero in its symbolic block. Query only those structural
+        // anchors; do not enumerate the other views in the block.
+        let mut offsets = vec![base.offset.clone(), PointerOffsetTerm::Constant(0)];
+        if let PointerOffsetTerm::Add(left, right) = &base.offset {
+            offsets.push(left.as_ref().clone());
+            offsets.push(right.as_ref().clone());
+        }
+        let mut seen = Vec::new();
+        for offset in offsets {
+            if seen.contains(&offset) {
+                continue;
+            }
+            seen.push(offset.clone());
+            let anchor = Pointer {
+                block: base.block.clone(),
+                offset,
+            };
+            if self
+                .memory_loadable_exact_candidates_for_base(&anchor)
+                .any(|fact| self.native_loadable_subrange_from(fact, memory, base, bytes))
+            {
+                return true;
+            }
+        }
+        // Explicit transport selects one source view. A lone source can
+        // therefore cover a shifted constant base even when normalization
+        // has removed the structural parent. Inspect at most two entries to
+        // recognize this case, never scan an ambient block's ranges.
+        let mut candidates = self.memory_loadable_candidates_for_base(base);
+        let first = candidates.next();
+        match (first, candidates.next()) {
+            (Some(source), None) => self.native_loadable_subrange_from(source, memory, base, bytes),
+            _ => false,
+        }
+    }
+
+    fn native_loadable_subrange_from(
+        &self,
+        fact: &Proposition,
+        memory: &CMemory,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        let Proposition::CMemoryLoadable {
+            memory: before,
+            base: source,
+            bytes: held,
+            wide: true,
+        } = fact
+        else {
+            return false;
+        };
+        let Some(delta) = self.wide_element_index_of_access(base, source, 1) else {
+            return false;
+        };
+        // The signed pointer displacement must represent this exact
+        // nonnegative byte offset, and subtraction must not underflow.
+        self.decide(&ConditionTerm::uint64_less_equal(
+            delta.clone(),
+            Bitvector32Term::UInt64Constant(i64::MAX as u64),
+        )) == Some(true)
+            && self.decide(&ConditionTerm::uint64_less_equal(
+                delta.clone(),
+                held.clone(),
+            )) == Some(true)
+            && self.decide(&ConditionTerm::uint64_less_equal(
+                bytes.clone(),
+                Bitvector32Term::uint64_subtract(held.clone(), delta),
+            )) == Some(true)
+            && before.read_region_identity(source) == memory.read_region_identity(source)
+            && memory_range_still_available(before, memory, source, self)
     }
 
     pub(crate) fn proves_memory_loadable(

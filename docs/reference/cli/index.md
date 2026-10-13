@@ -1,6 +1,7 @@
 # Command-line interface
 
-The `click` executable provides five subcommands:
+This page lists the `click` subcommands, their shared exit statuses, and
+where each is documented. The `click` executable provides five subcommands:
 
 ```text
 click verify   Verify a sidecar, proof unit, project, or examples directory.

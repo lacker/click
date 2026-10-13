@@ -37,5 +37,5 @@ contract void AugmentRotate(struct node* old, struct node* new) {
 ```
 
 ```expect
-fail: could not address resource clause `old->left->augmented` (resource clause 1 of 3): missing pure fact: viewable(memory=snapshot#1, base=old, bytes:uint32=8)
+fail: could not address resource clause `old->left->augmented` (resource clause 1 of 3): missing pure fact: viewable(old[0..2])
 ```

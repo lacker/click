@@ -29,5 +29,5 @@ theorem narrowed_byte_range_owes_its_extent(v: uint8[], lo: int32, n: int32, k: 
 ```
 
 ```expect
-fail: `0 <= (k - lo)` is not an available fact
+fail: `0 <= k - lo` is not an available fact
 ```

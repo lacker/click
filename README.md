@@ -138,9 +138,11 @@ Set `CLICK_HOME` to choose a different install directory. Set
 
 ## Documentation
 
-The technical documentation lives in [docs/](docs/); start with
-[Click documentation](docs/index.md). It is AI-written; a human-written guide
-will follow as a separate work. Useful entry points:
+The AI reference lives in [docs/](docs/); start with
+[Start here](docs/index.md). It is written for AI agents that use or develop
+Click and is maintained by agents. The rendered reference also serves
+`llms.txt` and a one-file bundle of the "Using Click" part. The human-written guide will live in
+[guide/](guide/). Useful entry points:
 
 - [What Click proves](docs/concepts/what-click-proves.md): what a verified
   claim means and what it assumes.

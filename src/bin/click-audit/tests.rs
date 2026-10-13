@@ -923,7 +923,7 @@ fn prepared_audit_reuses_validated_inputs_across_sites() {
     .unwrap();
     fs::write(&path, "verifying \"unit.c\";\nint32 identity(int32 x) { ensures result == x; } by { execute(); simp(); }\n").unwrap();
     fs::write(&config, serde_json::to_vec(&serde_json::json!({
-        "schema": 1, "target": "x86_64-linux-kernel", "compiler": "/usr/bin/gcc", "working_directory": ".",
+        "schema": 1, "target": "x86_64-linux-userspace", "compiler": "/usr/bin/gcc", "working_directory": ".",
         "environment": {"allow": {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}},
         "sources": [{"logical_source": "unit.c", "path": "unit.c", "args": [], "artifact": "unit.i"}]
     })).unwrap()).unwrap();

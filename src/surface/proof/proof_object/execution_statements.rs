@@ -897,7 +897,21 @@ impl<'a> Proof<'a> {
         &self,
         step: ProofStep,
     ) -> Result<Self, ClickError> {
-        self.apply_execution_statement_step_with_policy(step, StatementPrerequisitePolicy::Retained)
+        #[cfg(test)]
+        let hidden_before = crate::instrumentation::hidden_prerequisites_on_thread();
+        let result = self.apply_execution_statement_step_with_policy(
+            step,
+            StatementPrerequisitePolicy::Retained,
+        );
+        #[cfg(test)]
+        if crate::instrumentation::hidden_prerequisites_on_thread() > hidden_before {
+            crate::surface::proof::cursor_execution::record_planning_statement_transition(
+                self.context.claim_label(),
+                self.node.depth,
+                "step",
+            );
+        }
+        result
     }
 
     pub(in crate::surface::proof) fn apply_execution_statement_step_with_policy(

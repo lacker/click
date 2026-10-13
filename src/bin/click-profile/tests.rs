@@ -679,6 +679,48 @@ fn project_and_examples_directories_profile_every_sidecar() {
     );
 }
 
+/// `--work-limit` is `click verify`'s whole-run budget, which each sidecar
+/// spends on its own, so a project `click verify` accepts can be profiled.
+/// Once the process has parsed the prelude, each of `jsonc-refcount`'s three
+/// sidecars costs about 2,500 units, so 5,000 fits each sidecar but not the
+/// project, and 1,000 fits none.
+#[test]
+fn each_sidecar_spends_its_own_work_budget() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let targets = profile_targets(&manifest.join("examples/jsonc-refcount"))
+        .expect("the project should select its sidecars");
+    let profile = |work| {
+        profile_target(
+            &targets[0],
+            Thresholds::default(),
+            RunLimits {
+                work,
+                time: DEFAULT_TIME_LIMIT,
+            },
+        )
+        .expect("the project should profile")
+    };
+    // The first run in a process also pays for the prelude parse.
+    assert_eq!(profile(DEFAULT_WORK_LIMIT).verification_failure, None);
+
+    let below_one_sidecar = profile(1_000);
+    let failure = below_one_sidecar
+        .verification_failure
+        .expect("a budget below one sidecar's cost should stop it");
+    assert!(
+        failure.contains("whole-run work budget"),
+        "the failure should name the exhausted budget: {failure}"
+    );
+    assert!(
+        below_one_sidecar.timed_out,
+        "an exhausted budget leaves the run incomplete"
+    );
+
+    let within_each_sidecar = profile(5_000);
+    assert_eq!(within_each_sidecar.verification_failure, None);
+    assert!(!within_each_sidecar.timed_out);
+}
+
 /// Quarantine is a property of the gate, not of the file, so the profiler
 /// must be able to extract and profile a quarantined mdtest.
 #[test]

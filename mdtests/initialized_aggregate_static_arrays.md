@@ -91,7 +91,7 @@ int32 run() {
     requires private_file::increment_private::local_table[0].value == 2;
     requires private_file::increment_private::local_table[0].value > -1000;
     requires private_file::increment_private::local_table[0].value < 1000;
-    ensures result == 5;
+    ensures result == 4;
 } by {
     have shared_table[1].value == 2 by simp;
     have shared_table[1].value < 1000 by simp;
@@ -125,5 +125,5 @@ int32 run() {
 ```
 
 ```expect
-fail: run.contract
+pass
 ```

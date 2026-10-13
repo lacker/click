@@ -1,5 +1,8 @@
 # Mutex operations as resource contracts
 
+This design describes mutex operations as ordinary Click resource contracts:
+initialization, locking, unlocking, and destruction.
+
 Status: named lifecycle operations, typed protected-state transport, and
 same-thread acquiring/releasing helpers are implemented for the subset below.
 Named storage transfer and destruction's named state output remain proposals.

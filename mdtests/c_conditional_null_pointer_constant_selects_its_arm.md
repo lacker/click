@@ -22,5 +22,5 @@ struct node* drop(struct node* node, int32 pick) {
 ```
 
 ```expect
-fail: left side evaluated to NULL, right side evaluated to node
+fail: left side evaluated to 0, right side evaluated to node
 ```

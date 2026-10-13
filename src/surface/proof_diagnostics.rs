@@ -176,6 +176,7 @@ pub(crate) fn render_trace_context_labeled(
     search_failures: &[ProofSearchFailure],
     labels: &mut render::SnapshotLabels,
 ) -> String {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     render_diagnostic_labeled(None, diagnostic, search_failures, labels)
 }
 
@@ -371,9 +372,12 @@ mod tests {
         let mut labels = render::SnapshotLabels::default();
         let report = render_failed_requirement(&state, &mut labels);
         assert!(report.contains("unproved prerequisite"), "{report}");
-        assert!(report.contains("snapshot#1"), "{report}");
+        assert!(
+            report.contains("defined(at(<state A>, *<pointer A>))"),
+            "{report}"
+        );
         let legend = labels.trace_legend();
-        assert!(legend.contains("snapshot#1 ="), "{legend}");
+        assert!(legend.contains("<state A> is "), "{legend}");
         assert!(
             !report.contains("unsupported conditional proof"),
             "{report}"

@@ -1,5 +1,8 @@
 # Resource invariants, counting, and synchronization
 
+This is the design record for resource invariants and mutex-protected
+resources; its counted-population design is superseded.
+
 **Status: superseded for populations.** This record's counted-population
 design, a body shared by all equal units and accessed implicitly, was replaced
 by explicit population authority: `authorized` families with bodyless members

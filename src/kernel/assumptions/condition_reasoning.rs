@@ -3,6 +3,8 @@ use super::*;
 mod bounds;
 mod decision;
 mod memory_conditions;
+mod narrowed_casts;
+pub(in crate::kernel) use narrowed_casts::narrowed_cast_identity;
 mod order_paths;
 pub(in crate::kernel) use order_paths::cancel_common_offset_addends;
 pub(in crate::kernel) use order_paths::wide_order_fact;

@@ -1174,6 +1174,7 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
         target: Option<&crate::source::SourcePosition>,
     ) -> Option<String> {
+        let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
         if !crate::surface::proof_trace::enabled_for(claim) {
             return None;
         }

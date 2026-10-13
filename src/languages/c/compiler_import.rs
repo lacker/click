@@ -18,12 +18,16 @@ use sha2::{Digest, Sha256};
 use super::option_profile::OptionProfile;
 use super::provenance::CSourceMap;
 use super::syntax::PromiseAttributes;
+use super::system_headers::{self, HeaderKind};
 use super::target::CTarget;
 use crate::cli::write_file_atomically;
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
 
 const SCHEMA: u32 = 1;
-const LOCK_SCHEMA: u32 = 2;
+const LOCK_SCHEMA: u32 = 3;
+/// Locks written before compiler imports searched Click's system headers.
+/// Their artifacts opened none, so they still load under their own identity.
+const LEGACY_LOCK_SCHEMA: u32 = 2;
 const MAX_CONFIG_BYTES: usize = 1 << 20;
 const MAX_SOURCES: usize = 4096;
 const MAX_ARGUMENTS: usize = 4096;
@@ -179,6 +183,10 @@ struct Lock {
     /// vectors it admitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     option_profile: Option<String>,
+    /// [`system_headers::catalog_digest`] of the Click header set the
+    /// compiler searched. Absent only from a legacy lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    click_header_catalog_sha256: Option<String>,
     toolchain: ToolchainIdentity,
     sources: Vec<LockedSource>,
 }
@@ -207,6 +215,10 @@ struct LockedSource {
     artifact_bytes: usize,
     dependencies: BTreeMap<String, String>,
     local_dependencies: BTreeMap<String, String>,
+    /// The Click system headers the compiler opened, by header name, with
+    /// the SHA-256 of the text it read.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    click_headers: BTreeMap<String, String>,
     identity: String,
 }
 
@@ -221,13 +233,31 @@ struct Preprocessed {
     artifact: Vec<u8>,
     dependencies: BTreeMap<String, String>,
     local_dependencies: BTreeMap<String, String>,
+    click_headers: BTreeMap<String, String>,
     source_sha256: String,
     identity: String,
+}
+
+/// Click's system headers for one target, written to a private directory
+/// for the duration of a lock refresh and removed afterwards.
+#[derive(Debug)]
+struct ClickHeaderDir {
+    root: PathBuf,
+    root_text: String,
+    kinds: BTreeMap<&'static str, HeaderKind>,
+    catalog_sha256: String,
+}
+
+impl Drop for ClickHeaderDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 #[derive(Clone, Debug)]
 struct Context<'a> {
     config: &'a Config,
+    click_headers: &'a ClickHeaderDir,
     invocation_sha256: String,
     toolchain: ToolchainIdentity,
     toolchain_generation: BTreeMap<String, FileState>,
@@ -281,6 +311,14 @@ fn load_imports_inner(config_path: &Path) -> Result<Vec<PreparedCImport>, String
     {
         return Err("compiler invocation identity differs from the import lock".into());
     }
+    if let Some(catalog) = &lock.click_header_catalog_sha256
+        && *catalog != system_headers::catalog_digest(config.c_target())
+    {
+        return Err(format!(
+            "Click's system headers for {} changed since this import lock was prepared; run `click import lock` to prepare the import against them",
+            config.target
+        ));
+    }
     let locked_by_name = lock
         .sources
         .iter()
@@ -292,13 +330,7 @@ fn load_imports_inner(config_path: &Path) -> Result<Vec<PreparedCImport>, String
         let locked = locked_by_name
             .get(source.logical_source.as_str())
             .ok_or_else(|| format!("lock has no source `{}`", source.logical_source))?;
-        validate_locked_source(
-            source,
-            locked,
-            &config,
-            &lock.invocation_sha256,
-            &lock.config_directory,
-        )?;
+        validate_locked_source(source, locked, &config, &lock)?;
         let artifact_path = resolve_artifact(&config, &source.artifact)?;
         let existing = read_stable(&artifact_path, MAX_ARTIFACT_BYTES, "locked artifact")?;
         charge_artifact_bytes(&mut artifact_bytes, existing.len())?;
@@ -347,7 +379,8 @@ pub fn create_lock(config_path: &Path) -> Result<(), String> {
 
 fn create_lock_inner(config_path: &Path) -> Result<(), String> {
     let (config, config_bytes) = read_config(config_path, ConfigUse::Prepare)?;
-    let context = make_context(&config)?;
+    let click_headers = materialize_click_headers(config.c_target())?;
+    let context = make_context(&config, &click_headers)?;
     let mut results = Vec::with_capacity(config.sources.len());
     let mut artifact_bytes = 0usize;
     for source in &config.sources {
@@ -368,6 +401,7 @@ fn create_lock_inner(config_path: &Path) -> Result<(), String> {
             artifact_bytes: result.artifact.len(),
             dependencies: result.dependencies.clone(),
             local_dependencies: result.local_dependencies.clone(),
+            click_headers: result.click_headers.clone(),
             identity: result.identity.clone(),
         });
     }
@@ -383,6 +417,7 @@ fn create_lock_inner(config_path: &Path) -> Result<(), String> {
             .into_owned(),
         invocation_sha256: context.invocation_sha256.clone(),
         option_profile: config.option_profile.clone(),
+        click_header_catalog_sha256: Some(click_headers.catalog_sha256.clone()),
         toolchain: context.toolchain.clone(),
         sources: locked,
     };
@@ -420,7 +455,10 @@ fn read_config(config_path: &Path, use_for: ConfigUse) -> Result<(Config, Vec<u8
     Ok((config, bytes))
 }
 
-fn make_context(config: &Config) -> Result<Context<'_>, String> {
+fn make_context<'a>(
+    config: &'a Config,
+    click_headers: &'a ClickHeaderDir,
+) -> Result<Context<'a>, String> {
     if file_digest(&config.config_path)? != config.config_bytes_sha256 {
         return Err("import config changed while it was being loaded".into());
     }
@@ -434,6 +472,7 @@ fn make_context(config: &Config) -> Result<Context<'_>, String> {
     }
     Ok(Context {
         config,
+        click_headers,
         invocation_sha256,
         toolchain,
         toolchain_generation,
@@ -468,7 +507,12 @@ fn preprocess(context: &Context<'_>, source: &SourceConfig) -> Result<Preprocess
     let _cleanup = RemoveFile(dep_path.clone());
     let mut args = fixed_args(context.config.c_target());
     append_user_args(&mut args, source, context.config)?;
+    // Click's headers take the C library's place in GCC's search order:
+    // after every `-iquote`, `-I`, and `-isystem` directory the project
+    // configures, so a project header found first is used, as GCC would.
     args.extend([
+        "-isystem".into(),
+        context.click_headers.root_text.clone(),
         "-x".into(),
         "c".into(),
         "-E".into(),
@@ -487,7 +531,11 @@ fn preprocess(context: &Context<'_>, source: &SourceConfig) -> Result<Preprocess
         Ok(output) => output,
         Err(error) => {
             let _ = fs::remove_file(&dep_path);
-            return Err(format!("preprocess {}: {error}", source.logical_source));
+            return Err(format!(
+                "preprocess {}: {}",
+                source.logical_source,
+                explain_compiler_diagnostic(&error, context.click_headers, context.config)
+            ));
         }
     };
     let dep = read_bounded(&dep_path, MAX_CONFIG_BYTES, "compiler dependency output");
@@ -502,22 +550,29 @@ fn preprocess(context: &Context<'_>, source: &SourceConfig) -> Result<Preprocess
     if !output.stderr.is_empty() {
         return Err(format!(
             "compiler diagnostics: {}",
-            String::from_utf8_lossy(&output.stderr)
+            explain_compiler_diagnostic(
+                &String::from_utf8_lossy(&output.stderr),
+                context.click_headers,
+                context.config
+            )
         ));
     }
-    let dependencies = parse_dependencies(
+    let (dependencies, click_headers) = parse_dependencies(
         &dep,
         &source_path,
         &context.config.working_directory,
         &context.roots,
         &context.exclusions,
+        context.click_headers,
     )?;
+    let artifact = rewrite_click_header_markers(output.stdout, context.click_headers)?;
     let source_sha256 = file_digest(&source_path)?;
     let local_dependencies = local_dependencies(context.config, &dependencies)?;
     let mut result = Preprocessed {
-        artifact: output.stdout,
+        artifact,
         dependencies,
         local_dependencies,
+        click_headers,
         source_sha256,
         identity: String::new(),
     };
@@ -546,9 +601,9 @@ fn validate_locked_source(
     source: &SourceConfig,
     locked: &LockedSource,
     config: &Config,
-    invocation_sha256: &str,
-    preparation_root: &str,
+    lock: &Lock,
 ) -> Result<(), String> {
+    let preparation_root = lock.config_directory.as_str();
     if locked.logical_source != source.logical_source
         || locked.path != source.path
         || locked.args != source.args
@@ -596,14 +651,34 @@ fn validate_locked_source(
             ));
         }
     }
+    if !locked.click_headers.is_empty() {
+        let current = system_headers::compiler_import_headers(config.c_target())
+            .into_iter()
+            .filter(|header| header.kind == HeaderKind::Modeled)
+            .map(|header| (header.name, system_headers::text_digest(&header.text)))
+            .collect::<BTreeMap<_, _>>();
+        for (name, digest) in &locked.click_headers {
+            if current.get(name.as_str()) != Some(digest) {
+                return Err(format!(
+                    "Click's <{name}> changed since the import lock for `{}` was prepared; run `click import lock` to prepare it again",
+                    source.logical_source
+                ));
+            }
+        }
+    }
     let identity = source_identity_parts(
+        lock.schema,
         &config.target,
-        invocation_sha256,
+        &lock.invocation_sha256,
         source,
-        &locked.source_sha256,
-        &locked.dependencies,
-        &locked.local_dependencies,
-        &locked.artifact_sha256,
+        &SourceDigests {
+            source_sha256: &locked.source_sha256,
+            dependencies: &locked.dependencies,
+            local_dependencies: &locked.local_dependencies,
+            click_header_catalog_sha256: lock.click_header_catalog_sha256.as_deref(),
+            click_headers: &locked.click_headers,
+            artifact_sha256: &locked.artifact_sha256,
+        },
     );
     if identity != locked.identity {
         return Err(format!(
@@ -621,39 +696,72 @@ fn source_identity(
     result: &Preprocessed,
 ) -> String {
     source_identity_parts(
+        LOCK_SCHEMA,
         &config.target,
         &context.invocation_sha256,
         source,
-        &result.source_sha256,
-        &result.dependencies,
-        &result.local_dependencies,
-        &hex_digest(&result.artifact),
+        &SourceDigests {
+            source_sha256: &result.source_sha256,
+            dependencies: &result.dependencies,
+            local_dependencies: &result.local_dependencies,
+            click_header_catalog_sha256: Some(&context.click_headers.catalog_sha256),
+            click_headers: &result.click_headers,
+            artifact_sha256: &hex_digest(&result.artifact),
+        },
     )
 }
 
+/// The recorded inputs of one prepared source that its identity binds.
+struct SourceDigests<'a> {
+    source_sha256: &'a str,
+    dependencies: &'a BTreeMap<String, String>,
+    local_dependencies: &'a BTreeMap<String, String>,
+    click_header_catalog_sha256: Option<&'a str>,
+    click_headers: &'a BTreeMap<String, String>,
+    artifact_sha256: &'a str,
+}
+
 fn source_identity_parts(
+    schema: u32,
     target: &str,
     invocation_sha256: &str,
     source: &SourceConfig,
-    source_sha256: &str,
-    dependencies: &BTreeMap<String, String>,
-    local_dependencies: &BTreeMap<String, String>,
-    artifact_sha256: &str,
+    digests: &SourceDigests<'_>,
 ) -> String {
-    let data = serde_json::to_vec(&(
-        LOCK_SCHEMA,
-        "c-source-projection-v2",
-        target,
-        invocation_sha256,
-        source.logical_source.as_str(),
-        source.path.as_str(),
-        &source.args,
-        source.artifact.as_str(),
-        source_sha256,
-        dependencies,
-        local_dependencies,
-        artifact_sha256,
-    ))
+    let data = if schema == LEGACY_LOCK_SCHEMA {
+        // The version-2 identity, unchanged, so a legacy lock still loads.
+        serde_json::to_vec(&(
+            LEGACY_LOCK_SCHEMA,
+            "c-source-projection-v2",
+            target,
+            invocation_sha256,
+            source.logical_source.as_str(),
+            source.path.as_str(),
+            &source.args,
+            source.artifact.as_str(),
+            digests.source_sha256,
+            digests.dependencies,
+            digests.local_dependencies,
+            digests.artifact_sha256,
+        ))
+    } else {
+        serde_json::to_vec(&(
+            schema,
+            "c-source-projection-v3",
+            target,
+            invocation_sha256,
+            source.logical_source.as_str(),
+            source.path.as_str(),
+            &source.args,
+            source.artifact.as_str(),
+            digests.source_sha256,
+            digests.dependencies,
+            digests.local_dependencies,
+            digests.click_header_catalog_sha256,
+            digests.click_headers,
+            digests.artifact_sha256,
+        ))
+    }
     .expect("identity serializes");
     hex_digest(&data)
 }
@@ -691,7 +799,10 @@ fn append_user_args(
     while i < args.len() {
         let arg = &args[i];
         out.push(arg.clone());
-        if matches!(arg.as_str(), "-D" | "-U" | "-I" | "-isystem" | "-include") {
+        if matches!(
+            arg.as_str(),
+            "-D" | "-U" | "-I" | "-iquote" | "-isystem" | "-include"
+        ) {
             i += 1;
             out.push(args[i].clone());
         }
@@ -706,7 +817,8 @@ fn parse_dependencies(
     cwd: &str,
     roots: &[PathBuf],
     exclusions: &BTreeSet<PathBuf>,
-) -> Result<BTreeMap<String, String>, String> {
+    click_headers: &ClickHeaderDir,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
     let text =
         std::str::from_utf8(bytes).map_err(|e| format!("dependency output is not UTF-8: {e}"))?;
     let mut tokens = dep_tokens(text)?;
@@ -717,11 +829,23 @@ fn parse_dependencies(
     let canonical_source = fs::canonicalize(source)
         .map_err(|e| format!("canonicalize source {}: {e}", source.display()))?;
     let mut result = BTreeMap::new();
+    let mut opened_click_headers = BTreeMap::new();
     for token in tokens {
         let path = absolute_path(Path::new(&token), Path::new(cwd))?;
         let canonical = fs::canonicalize(&path)
             .map_err(|e| format!("canonicalize compiler dependency {}: {e}", path.display()))?;
         if canonical == canonical_source {
+            continue;
+        }
+        if let Ok(relative) = canonical.strip_prefix(&click_headers.root) {
+            let name = relative.to_string_lossy();
+            let Some((&name, HeaderKind::Modeled)) = click_headers.kinds.get_key_value(&*name)
+            else {
+                return Err(format!(
+                    "compiler opened `{name}` from Click's system headers, which is not a modeled header"
+                ));
+            };
+            opened_click_headers.insert(name.to_string(), file_digest(&canonical)?);
             continue;
         }
         if !root_contains(roots, &canonical) {
@@ -744,7 +868,134 @@ fn parse_dependencies(
             entry.insert(file_digest(&path)?);
         }
     }
-    Ok(result)
+    Ok((result, opened_click_headers))
+}
+
+/// Writes Click's system headers for `target` to a fresh private directory.
+fn materialize_click_headers(target: CTarget) -> Result<ClickHeaderDir, String> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("clock: {e}"))?
+        .as_nanos();
+    let created = std::env::temp_dir().join(format!(
+        "click-import-headers-{}-{nanos}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    fs::create_dir(&created).map_err(|e| format!("create Click's system header directory: {e}"))?;
+    let root = match fs::canonicalize(&created) {
+        Ok(root) => root,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&created);
+            return Err(format!("resolve Click's system header directory: {error}"));
+        }
+    };
+    let root_text = root.to_string_lossy().into_owned();
+    let mut dir = ClickHeaderDir {
+        root,
+        root_text,
+        kinds: BTreeMap::new(),
+        catalog_sha256: system_headers::catalog_digest(target),
+    };
+    // Line markers name these files; a plain path is spelled the same in
+    // every marker, so it can be replaced exactly.
+    if !dir
+        .root_text
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-'))
+    {
+        return Err(format!(
+            "temporary directory `{}` must be a plain path to hold Click's system headers",
+            dir.root_text
+        ));
+    }
+    for header in system_headers::compiler_import_headers(target) {
+        let path = dir.root.join(header.name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("write Click's system headers: {e}"))?;
+        }
+        fs::write(&path, header.text.as_bytes())
+            .map_err(|e| format!("write Click's system headers: {e}"))?;
+        dir.kinds.insert(header.name, header.kind);
+    }
+    Ok(dir)
+}
+
+/// Renames Click's header files in the artifact's line markers from their
+/// temporary path to `<header>`, so the artifact does not depend on where the
+/// headers were written.
+fn rewrite_click_header_markers(
+    artifact: Vec<u8>,
+    headers: &ClickHeaderDir,
+) -> Result<Vec<u8>, String> {
+    let needle = format!("\"{}/", headers.root_text);
+    let Ok(text) = std::str::from_utf8(&artifact) else {
+        if artifact
+            .windows(headers.root_text.len())
+            .any(|window| window == headers.root_text.as_bytes())
+        {
+            return Err("compiler output that names Click's system headers is not UTF-8".into());
+        }
+        return Ok(artifact);
+    };
+    if !text.contains(headers.root_text.as_str()) {
+        return Ok(artifact);
+    }
+    let mut output = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let marker =
+            line.starts_with("# ") && line[2..].bytes().next().is_some_and(|b| b.is_ascii_digit());
+        if let Some(start) = line.find(&needle).filter(|_| marker) {
+            let after = &line[start + needle.len()..];
+            let end = after
+                .find('"')
+                .ok_or("unterminated line marker naming Click's system headers")?;
+            let name = &after[..end];
+            if headers.kinds.get(name) != Some(&HeaderKind::Modeled) {
+                return Err(format!(
+                    "compiler output names `{name}` from Click's system headers, which is not a modeled header"
+                ));
+            }
+            output.push_str(&line[..start]);
+            output.push_str(&format!("\"<{name}>\""));
+            output.push_str(&after[end + 1..]);
+        } else {
+            output.push_str(line);
+        }
+    }
+    if output.contains(headers.root_text.as_str()) {
+        return Err(
+            "compiler output names Click's temporary system header directory outside a line marker"
+                .into(),
+        );
+    }
+    Ok(output.into_bytes())
+}
+
+/// A compiler diagnostic with Click's temporary header directory named as
+/// `<click>`, and, for a missing header, which system headers Click supplies.
+fn explain_compiler_diagnostic(
+    diagnostic: &str,
+    headers: &ClickHeaderDir,
+    config: &Config,
+) -> String {
+    let mut message = diagnostic.replace(&format!("{}/", headers.root_text), "<click>/");
+    if message.contains("No such file or directory") {
+        let target = config.c_target();
+        message.push_str(&format!(
+            "\nnote: the system headers Click supplies for {} are <{}>; see {}. Project headers are found through -iquote, -I, and -isystem directories",
+            target.name(),
+            system_headers::modeled_header_names(target)
+                .iter()
+                .filter(|name| headers.kinds.get(*name) == Some(&HeaderKind::Modeled))
+                .copied()
+                .collect::<Vec<_>>()
+                .join(">, <"),
+            system_headers::COVERAGE_REFERENCE
+        ));
+    }
+    message
 }
 
 fn dep_tokens(text: &str) -> Result<Vec<String>, String> {
@@ -910,20 +1161,24 @@ fn validate_args(
             i += 1;
             continue;
         }
-        let separate = matches!(arg.as_str(), "-D" | "-U" | "-I" | "-isystem" | "-include");
+        let separate = matches!(
+            arg.as_str(),
+            "-D" | "-U" | "-I" | "-iquote" | "-isystem" | "-include"
+        );
         let prefix = arg.starts_with("-D")
             || arg.starts_with("-U")
             || arg.starts_with("-I")
+            || arg.starts_with("-iquote")
             || arg.starts_with("-isystem")
             || arg.starts_with("-include");
         if !prefix {
             return Err(match profile {
                 None => format!(
-                    "unsupported compiler argument {} `{arg}`; only -D/-U/-I/-isystem/-include are supported",
+                    "unsupported compiler argument {} `{arg}`; only -D/-U/-I/-iquote/-isystem/-include are supported",
                     i + 1
                 ),
                 Some(profile) => format!(
-                    "unsupported compiler argument {} `{arg}`; option profile `{}` accepts only its listed spellings beside -D/-U/-I/-isystem/-include",
+                    "unsupported compiler argument {} `{arg}`; option profile `{}` accepts only its listed spellings beside -D/-U/-I/-iquote/-isystem/-include",
                     i + 1,
                     profile.name
                 ),
@@ -1011,22 +1266,25 @@ fn explicit_roots(config: &Config) -> Result<Vec<PathBuf>, String> {
         let mut i = 0;
         while i < source.args.len() {
             let arg = &source.args[i];
-            let (kind, value) = if matches!(arg.as_str(), "-I" | "-isystem" | "-include") {
-                i += 1;
-                if i == source.args.len() {
-                    return Err(format!("missing value after {arg}"));
-                }
-                (arg.as_str(), source.args[i].as_str())
-            } else if let Some(v) = arg.strip_prefix("-isystem") {
-                ("-isystem", v)
-            } else if let Some(v) = arg.strip_prefix("-include") {
-                ("-include", v)
-            } else if let Some(v) = arg.strip_prefix("-I") {
-                ("-I", v)
-            } else {
-                i += 1;
-                continue;
-            };
+            let (kind, value) =
+                if matches!(arg.as_str(), "-I" | "-iquote" | "-isystem" | "-include") {
+                    i += 1;
+                    if i == source.args.len() {
+                        return Err(format!("missing value after {arg}"));
+                    }
+                    (arg.as_str(), source.args[i].as_str())
+                } else if let Some(v) = arg.strip_prefix("-isystem") {
+                    ("-isystem", v)
+                } else if let Some(v) = arg.strip_prefix("-iquote") {
+                    ("-iquote", v)
+                } else if let Some(v) = arg.strip_prefix("-include") {
+                    ("-include", v)
+                } else if let Some(v) = arg.strip_prefix("-I") {
+                    ("-I", v)
+                } else {
+                    i += 1;
+                    continue;
+                };
             let path = absolute_path(Path::new(value), Path::new(&config.working_directory))?;
             if kind == "-include" {
                 roots.insert(path.parent().unwrap_or(Path::new("/")).to_path_buf());
@@ -1562,7 +1820,17 @@ fn metadata_signature(metadata: &fs::Metadata) -> (u64, u128, u128, u64) {
     }
 }
 fn validate_lock_shape(lock: &Lock, config: &Config) -> Result<(), String> {
-    if lock.schema != LOCK_SCHEMA || lock.target != config.target {
+    if lock.target != config.target {
+        return Err("import lock schema or target does not match config".into());
+    }
+    let current = lock.schema == LOCK_SCHEMA && lock.click_header_catalog_sha256.is_some();
+    let legacy = lock.schema == LEGACY_LOCK_SCHEMA
+        && lock.click_header_catalog_sha256.is_none()
+        && lock
+            .sources
+            .iter()
+            .all(|source| source.click_headers.is_empty());
+    if !current && !legacy {
         return Err("import lock schema or target does not match config".into());
     }
     if lock.sources.len() != config.sources.len() {
@@ -1898,6 +2166,7 @@ mod tests {
             let dependencies =
                 BTreeMap::from([("/toolchain/include/local.h".to_string(), hex_digest(header))]);
             let source_config = &parsed.sources[0];
+            let catalog = system_headers::catalog_digest(CTarget::X86_64LinuxKernel);
             let locked = LockedSource {
                 logical_source: source_config.logical_source.clone(),
                 path: source_config.path.clone(),
@@ -1908,14 +2177,23 @@ mod tests {
                 artifact_bytes: artifact.len(),
                 dependencies: dependencies.clone(),
                 local_dependencies: BTreeMap::from([("local.h".to_string(), hex_digest(header))]),
+                click_headers: BTreeMap::new(),
                 identity: source_identity_parts(
+                    LOCK_SCHEMA,
                     &parsed.target,
                     &invocation_sha256,
                     source_config,
-                    &source_sha256,
-                    &dependencies,
-                    &BTreeMap::from([("local.h".to_string(), hex_digest(header))]),
-                    &artifact_sha256,
+                    &SourceDigests {
+                        source_sha256: &source_sha256,
+                        dependencies: &dependencies,
+                        local_dependencies: &BTreeMap::from([(
+                            "local.h".to_string(),
+                            hex_digest(header),
+                        )]),
+                        click_header_catalog_sha256: Some(&catalog),
+                        click_headers: &BTreeMap::new(),
+                        artifact_sha256: &artifact_sha256,
+                    },
                 ),
             };
             let lock = Lock {
@@ -1927,6 +2205,7 @@ mod tests {
                 config_directory: "/toolchain/include".to_string(),
                 invocation_sha256,
                 option_profile: None,
+                click_header_catalog_sha256: Some(catalog),
                 toolchain,
                 sources: vec![locked],
             };
@@ -2113,6 +2392,9 @@ mod tests {
                 "-D".into(),
                 "FLAG=1".into(),
                 "-Iinclude".into(),
+                "-iquote".into(),
+                "quoted".into(),
+                "-iquotequoted".into(),
                 "-isystem".into(),
                 "/usr/include".into(),
                 "-include".into(),
@@ -2154,7 +2436,7 @@ mod tests {
                 .expect_err("profile options need the profile");
             assert!(
                 error.contains(&format!("argument 1 `{spelling}`"))
-                    && error.contains("only -D/-U/-I/-isystem/-include"),
+                    && error.contains("only -D/-U/-I/-iquote/-isystem/-include"),
                 "{spelling}: {error}"
             );
         }
@@ -2413,7 +2695,8 @@ mod tests {
                 &root.join("x.c"),
                 ".",
                 &roots,
-                &BTreeSet::new()
+                &BTreeSet::new(),
+                &materialize_click_headers(CTarget::X86_64LinuxKernel).unwrap()
             )
             .is_err()
         );

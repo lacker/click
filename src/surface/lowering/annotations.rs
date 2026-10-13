@@ -1869,10 +1869,21 @@ pub(in crate::surface) fn function_contract_summary(
         .cloned()
         .collect::<Vec<_>>();
     let unfold_contract_predicates = |proposition: &ClickProposition| {
+        // Apply the predicate's character-byte adapter before substitution:
+        // otherwise its uint8 reads inherit the caller parameter's signed
+        // char type, unlike the predicate used by the entry proof.
+        let elaborated =
+            elaborate_character_byte_views(proposition, spec_definitions.predicates, &|name| {
+                parsed_function
+                    .parameters()
+                    .iter()
+                    .find(|parameter| parameter.name() == name)
+                    .map(syntax::C0Parameter::c_type)
+            });
         unfold_click_predicates_in_proposition_with_active(
             spec_definitions.predicates,
             &all_predicates,
-            proposition,
+            elaborated.as_ref().unwrap_or(proposition),
             &mut BTreeSet::new(),
         )
     };

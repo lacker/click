@@ -1,9 +1,10 @@
 # A bounded argument to a narrow parameter is in its range
 
-The positive of
-`mdtests/a_wide_argument_to_a_narrow_parameter_owes_its_range.md`: a `uint8`
-argument, or an `int32` one the caller tested into `[0, 255]`, converts to the
-`uint8` parameter, and the callee's result is in the parameter's range.
+The bounded companion of
+`mdtests/a_wide_argument_to_a_narrow_parameter_wraps_into_its_range.md`: a
+`uint8` argument, or an `int32` one the caller tested into `[0, 255]`,
+converts to the `uint8` parameter unchanged, and the callee's result is in
+the parameter's range.
 
 ```c filename=a_bounded_argument_to_a_narrow_parameter_is_in_its_range.c
 int32 widen(uint8 x) {

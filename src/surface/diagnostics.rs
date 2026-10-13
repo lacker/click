@@ -642,6 +642,16 @@ pub(super) fn condition_kind(condition: &ConditionTerm) -> &'static str {
     }
 }
 
+/// A fact's shape with every memory label fresh: two facts that differ only
+/// in which snapshots their reads name compare equal.
+pub(super) fn pure_fact_shape(
+    fact: &Proposition,
+    parameter_binding: ParameterBinding<'_>,
+) -> String {
+    let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
+    describe_pure_fact(fact, parameter_binding)
+}
+
 pub(super) fn describe_pure_fact(
     fact: &Proposition,
     parameter_binding: ParameterBinding<'_>,
@@ -908,7 +918,13 @@ pub(super) fn describe_goal_proof_context(
     resource_facts: &[CResourceFact],
     parameter_binding: ParameterBinding<'_>,
     result: Option<&CValue>,
+    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
 ) -> String {
+    // The returned value's checked type decides how a constant beside it
+    // prints, even when the value has no source name.
+    if let Some(result) = result {
+        labels.source_value_type(result);
+    }
     let mut relevant = match goal {
         Some(goal) => pure_facts_relevant_to(goal, pure_facts),
         None => pure_facts.to_vec(),
@@ -922,13 +938,16 @@ pub(super) fn describe_goal_proof_context(
     } else {
         format!(
             "\n  case: {}",
-            describe_context_facts_with_result(case_facts, &[], parameter_binding, result)
+            describe_context_facts_labeled(case_facts, &[], labels)
         )
     };
+    // One label set for the whole context, so a `<state A>` on the case
+    // line is the same memory as one among the pure facts.
+    let pure = describe_context_facts_labeled(&relevant, &[], labels);
     format!(
-        "{GOAL_PROOF_CONTEXT_HEADER}{case}\n  pure facts: {}\n  resource facts: {}",
-        describe_context_facts_with_result(&relevant, &[], parameter_binding, result),
-        describe_resource_facts(resource_facts, parameter_binding)
+        "{GOAL_PROOF_CONTEXT_HEADER}{case}\n  pure facts: {pure}\n  resource facts: {}{}",
+        describe_resource_facts(resource_facts, parameter_binding),
+        labels.trace_legend()
     )
 }
 
@@ -1356,16 +1375,19 @@ pub(super) fn describe_runtime_error(
             }
         }
         crate::kernel::CRuntimeError::ContractResourceDiagnostic { reason, held, required, memory } => {
-            use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_resource_fact_labeled};
+            use crate::surface::proof_diagnostics::render::SnapshotLabels;
             let mut labels = SnapshotLabels::naming(parameter_binding);
             let mut message = format!("function contract could not be applied: {reason}");
             if let Some(memory) = memory {
-                message.push_str(&format!("\n  argument read snapshot: {}", labels.snapshot_name(memory)));
+                message.push_str(&format!(
+                    "\n  arguments read in: {}",
+                    labels.state_phrase(memory)
+                ));
             }
             if let Some(held) = held {
-                message.push_str(&format!("\n  held: {}", render_resource_fact_labeled(held, &mut labels)));
+                message.push_str(&format!("\n  held: {}", describe_resource_fact(held, parameter_binding)));
             }
-            message.push_str(&format!("\n  required: {}", render_resource_fact_labeled(required, &mut labels)));
+            message.push_str(&format!("\n  required: {}", describe_resource_fact(required, parameter_binding)));
             message.push_str(&labels.trace_legend());
             message
         }
@@ -1646,10 +1668,9 @@ pub(super) fn describe_resource_fact(
         ),
         CResourceFact::Own(CResource::Instance(instance), _)
         | CResourceFact::View(CResource::Instance(instance)) => format!(
-            "{} instance {}#{}",
+            "{} {}",
             if resource.is_own() { "owns" } else { "views" },
-            instance.name(),
-            instance.identity().0
+            format_declared_resource(instance.name(), instance.arguments(), parameter_binding)
         ),
         CResourceFact::Own(
             CResource::Composite {
@@ -2964,6 +2985,10 @@ pub(crate) fn proposition_version_explanation(
             // gets fresh local labels; differing snapshot derivations belong
             // to the explanation, not this diagnostic shape comparison.
             let shape = |fact: &Proposition| {
+                // The typed notation with fresh labels spells two reads of
+                // one place alike whatever memory each reads, which is the
+                // shape this compares.
+                let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
                 let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
                     parameter_binding,
                 );
@@ -5016,11 +5041,36 @@ fn describe_load_at(pointer: &Pointer, parameter_binding: ParameterBinding<'_>) 
             None => referent.to_string(),
             Some(layout) => match layout.leaf_field_offsets().find(|(_, offset)| *offset == 0) {
                 Some((field, _)) => format!("{referent}.{field}"),
-                None => format!("load({address})"),
+                None => dereference_spelling(&address),
             },
         },
-        None => format!("load({address})"),
+        None => dereference_spelling(&address),
     }
+}
+
+/// The place an address spelling reads: `x` for `&x`, the place itself for
+/// a cell spelling such as `p[1]` or `the caller's s.f`, and `*p` or
+/// `*(p + 1)` otherwise.
+fn dereference_spelling(address: &str) -> String {
+    if let Some(place) = address.strip_prefix('&')
+        && is_place_spelling(place)
+    {
+        return place.to_string();
+    }
+    if address.starts_with("the caller's ") || address.ends_with(']') && is_cell_spelling(address) {
+        return address.to_string();
+    }
+    if is_place_spelling(address) {
+        format!("*{address}")
+    } else {
+        format!("*({address})")
+    }
+}
+
+/// Whether a spelling is a name followed by index brackets, `p[i + 1]`.
+fn is_cell_spelling(text: &str) -> bool {
+    text.split_once('[')
+        .is_some_and(|(base, _)| is_place_spelling(base) && !base.is_empty())
 }
 
 /// The field of a struct pointer parameter a load at `pointer` reads, when
@@ -6129,10 +6179,12 @@ pub(super) fn describe_bitvector_with_context(
     }
     match term {
         Bitvector32Term::MachineIntegerCast {
-            source,
-            destination,
-            ..
-        } => format!("machine-cast({source:?}->{destination:?})"),
+            value, destination, ..
+        } => format!(
+            "(({}){})",
+            format!("{destination:?}").to_ascii_lowercase(),
+            describe_bitvector_with_context(value, parameter_binding)
+        ),
 
         Bitvector32Term::Constant(value) => format!("{}", *value as i32),
         Bitvector32Term::Int64Constant(value) => format!("{value}i64"),
@@ -6174,16 +6226,18 @@ pub(super) fn describe_bitvector_with_context(
                 describe_bitvector_with_context(value, parameter_binding)
             )
         }
-        Bitvector32Term::Int64From32(value)
-        | Bitvector32Term::UInt64From32(value)
-        | Bitvector32Term::Int64FromUInt32(value)
+        Bitvector32Term::Int64From32(value) | Bitvector32Term::Int64FromUInt32(value) => format!(
+            "((int64){})",
+            describe_bitvector_with_context(value, parameter_binding)
+        ),
+        Bitvector32Term::UInt64From32(value)
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value) => format!(
-            "cast64({})",
+            "((uint64){})",
             describe_bitvector_with_context(value, parameter_binding)
         ),
         Bitvector32Term::UInt32From64(value) => format!(
-            "truncate32({})",
+            "((uint32){})",
             describe_bitvector_with_context(value, parameter_binding)
         ),
         Bitvector32Term::Int64BitwiseNot(value) | Bitvector32Term::UInt64BitwiseNot(value) => {
@@ -6197,7 +6251,7 @@ pub(super) fn describe_bitvector_with_context(
             then_term,
             else_term,
         } => format!(
-            "if {} then {} else {}",
+            "(if {} {{ {} }} else {{ {} }})",
             describe_condition_with_context(condition, parameter_binding),
             describe_bitvector_with_context(then_term, parameter_binding),
             describe_bitvector_with_context(else_term, parameter_binding)
@@ -6212,15 +6266,16 @@ pub(super) fn describe_bitvector_with_context(
             accumulator,
             item,
             body,
-        } => format!(
-            "fold({}..{}, init={}, acc=v{}, item=v{}, body={})",
-            describe_bitvector_with_context(start, parameter_binding),
-            describe_bitvector_with_context(end, parameter_binding),
-            describe_bitvector_with_context(initial, parameter_binding),
-            accumulator.0,
-            item.0,
-            describe_bitvector_with_context(body, parameter_binding)
-        ),
+        } => {
+            let _ = (accumulator, item);
+            format!(
+                "({}..{}).fold({}, |acc, k| {{ {} }})",
+                describe_bitvector_with_context(start, parameter_binding),
+                describe_bitvector_with_context(end, parameter_binding),
+                describe_bitvector_with_context(initial, parameter_binding),
+                describe_bitvector_with_context(body, parameter_binding)
+            )
+        }
         Bitvector32Term::PureFunctionApplication {
             name,
             arguments: values,
@@ -6239,9 +6294,13 @@ pub(super) fn describe_bitvector_with_context(
         Bitvector32Term::AlgebraicMatch { .. } => "match <algebraic value> { ... }".to_string(),
         Bitvector32Term::MemoryLoad(_, pointer, _) => describe_load_at(pointer, parameter_binding),
         Bitvector32Term::PointerAddress(pointer) => {
-            format!("address({})", describe_pointer(pointer, parameter_binding))
+            format!("((uint64){})", describe_pointer(pointer, parameter_binding))
         }
-        Bitvector32Term::IntegerToMachine { .. } => "integer-to-machine".to_string(),
+        Bitvector32Term::IntegerToMachine { value, destination } => format!(
+            "to_{}({})",
+            format!("{destination:?}").to_ascii_lowercase(),
+            describe_integer_term(value)
+        ),
         term => {
             let (operator, left, right) = term
                 .as_binary()

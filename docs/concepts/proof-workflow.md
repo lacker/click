@@ -1,6 +1,8 @@
 # Proof workflow
 
-Click proofs live in `by` clauses.
+This page is the working loop for writing a Click proof: the proof kinds,
+tactics, explicit proof scripts, loop proofs, and what to do when a proof does
+not close. Click proofs live in `by` clauses.
 
 When a proof does not close, first determine whether the claim is false, the
 proof needs explicit supported steps, or Click has a language, correctness, or

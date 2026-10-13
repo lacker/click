@@ -364,8 +364,10 @@ fn a_specification_condition_folds_only_when_it_is_constant() {
     }
 }
 
+// A specification's conversion owes each bound the context does not
+// prove; C's conversion owes none and is the same low word.
 #[test]
-fn wide_to_int_narrowing_requires_each_representability_bound() {
+fn checked_wide_to_int_narrowing_requires_each_representability_bound() {
     let value = Bitvector32Term::Variable(Variable(912));
     let lower = ConditionTerm::int64_signed_greater_equal(
         value.clone(),
@@ -389,7 +391,7 @@ fn wide_to_int_narrowing_requires_each_representability_bound() {
                 assumptions = assumptions.assume_condition(bound.clone(), true);
             }
             let mut obligations = Vec::new();
-            let result = crate::kernel::eval::coerce_c_value_to_type(
+            let modular = crate::kernel::eval::coerce_c_value_to_type(
                 input.clone(),
                 CType::Int32,
                 &mut obligations,
@@ -397,9 +399,19 @@ fn wide_to_int_narrowing_requires_each_representability_bound() {
             )
             .unwrap();
             assert_eq!(
-                result,
+                modular,
                 CValue::Int32(Bitvector32Term::uint32_from_64(value.clone()))
             );
+            assert!(obligations.is_empty());
+            let result = crate::kernel::eval::coerce_c_value_to_type_as(
+                input.clone(),
+                CType::Int32,
+                crate::kernel::eval::IntegerConversion::Checked,
+                &mut obligations,
+                &assumptions,
+            )
+            .unwrap();
+            assert_eq!(result, modular);
             assert_eq!(obligations.len(), bounds.len() - provided);
             for (obligation, bound) in obligations.iter().zip(&bounds[provided..]) {
                 assert_eq!(
@@ -413,6 +425,16 @@ fn wide_to_int_narrowing_requires_each_representability_bound() {
 
 #[test]
 fn wide_to_int_narrowing_checks_signed_and_unsigned_boundaries() {
+    use crate::kernel::eval::IntegerConversion;
+    let convert = |value: CValue, conversion, obligations: &mut Vec<ProofObligation>| {
+        crate::kernel::eval::coerce_c_value_to_type_as(
+            value,
+            CType::Int32,
+            conversion,
+            obligations,
+            &PureFactContext::new(),
+        )
+    };
     for value in [
         i64::MIN,
         i64::from(i32::MIN) - 1,
@@ -424,16 +446,25 @@ fn wide_to_int_narrowing_checks_signed_and_unsigned_boundaries() {
         i64::MAX,
     ] {
         let mut obligations = Vec::new();
-        let result = crate::kernel::eval::coerce_c_value_to_type(
-            CValue::Int64(Bitvector32Term::Int64Constant(value)),
-            CType::Int32,
-            &mut obligations,
-            &PureFactContext::new(),
+        let input = CValue::Int64(Bitvector32Term::Int64Constant(value));
+        // C's conversion keeps the low word, read as signed.
+        assert_eq!(
+            convert(input.clone(), IntegerConversion::Modular, &mut obligations),
+            Some(int32(value as u32))
         );
-        assert_eq!(result.is_some(), i32::try_from(value).is_ok());
-        if let Some(result) = result {
-            assert_eq!(result, int32(value as u32));
-            assert!(obligations.is_empty());
+        assert!(obligations.is_empty());
+        let result = convert(input, IntegerConversion::Checked, &mut obligations);
+        assert_eq!(result, Some(int32(value as u32)));
+        assert_eq!(obligations.is_empty(), i32::try_from(value).is_ok());
+        for obligation in &obligations {
+            let Proposition::ConditionIs(condition, true) = obligation.proposition() else {
+                panic!("narrowing owes an explicit range comparison");
+            };
+            assert_eq!(
+                PureFactContext::decide_intrinsically(condition),
+                Some(false)
+            );
+            assert!(obligation.context().unwrap().starts_with("int32 narrowing"));
         }
     }
     for value in [
@@ -444,16 +475,24 @@ fn wide_to_int_narrowing_checks_signed_and_unsigned_boundaries() {
         u64::MAX,
     ] {
         let mut obligations = Vec::new();
-        let result = crate::kernel::eval::coerce_c_value_to_type(
-            CValue::UInt64(Bitvector32Term::UInt64Constant(value)),
-            CType::Int32,
-            &mut obligations,
-            &PureFactContext::new(),
+        let input = CValue::UInt64(Bitvector32Term::UInt64Constant(value));
+        assert_eq!(
+            convert(input.clone(), IntegerConversion::Modular, &mut obligations),
+            Some(int32(value as u32))
         );
-        assert_eq!(result.is_some(), value <= i32::MAX as u64);
-        if let Some(result) = result {
-            assert_eq!(result, int32(value as u32));
-            assert!(obligations.is_empty());
+        assert!(obligations.is_empty());
+        let result = convert(input, IntegerConversion::Checked, &mut obligations);
+        assert_eq!(result, Some(int32(value as u32)));
+        assert_eq!(obligations.is_empty(), value <= i32::MAX as u64);
+        for obligation in &obligations {
+            let Proposition::ConditionIs(condition, true) = obligation.proposition() else {
+                panic!("narrowing owes an explicit range comparison");
+            };
+            assert_eq!(
+                PureFactContext::decide_intrinsically(condition),
+                Some(false)
+            );
+            assert_eq!(obligation.context(), Some("int32 narrowing upper bound"));
         }
     }
 }
@@ -1826,6 +1865,7 @@ fn explicit_wide_integer_pointer_cast_accepts_only_proven_null_without_origin() 
             let cast = crate::kernel::eval::cast_c_value_to_type(
                 value.clone(),
                 CType::UInt8Pointer,
+                crate::kernel::eval::IntegerConversion::Modular,
                 &mut obligations,
                 &assumptions,
             );
@@ -1862,6 +1902,7 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
         let word = crate::kernel::eval::cast_c_value_to_type(
             CValue::Pointer(pointer.clone()),
             target,
+            crate::kernel::eval::expression::IntegerConversion::Modular,
             &mut obligations,
             &assumptions,
         )
@@ -1873,6 +1914,7 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
         let restored = crate::kernel::eval::cast_c_value_to_type(
             word,
             CType::Int32Pointer,
+            crate::kernel::eval::expression::IntegerConversion::Modular,
             &mut obligations,
             &assumptions,
         )
@@ -1882,6 +1924,7 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
     let CValue::Pointer(byte_view) = crate::kernel::eval::cast_c_value_to_type(
         CValue::Pointer(pointer.clone()),
         CType::UInt8Pointer,
+        crate::kernel::eval::expression::IntegerConversion::Modular,
         &mut obligations,
         &assumptions,
     )
@@ -3831,6 +3874,19 @@ fn singleton_integer_range_forces_equality() {
 
 #[test]
 fn signed_byte_narrowing_checks_each_bound_and_unsigned_inputs() {
+    use crate::kernel::eval::IntegerConversion;
+    let convert = |value: CValue,
+                   conversion,
+                   obligations: &mut Vec<ProofObligation>,
+                   assumptions: &PureFactContext| {
+        crate::kernel::eval::coerce_c_value_to_type_as(
+            value,
+            CType::Int8,
+            conversion,
+            obligations,
+            assumptions,
+        )
+    };
     for (input, valid) in [
         (int32((-129i32) as u32), false),
         (int32((-128i32) as u32), true),
@@ -3843,15 +3899,41 @@ fn signed_byte_narrowing_checks_each_bound_and_unsigned_inputs() {
         (uint8(255), false),
     ] {
         let mut obligations = Vec::new();
-        let result = crate::kernel::eval::coerce_c_value_to_type(
+        // C's conversion is the low byte, read as signed, owing nothing.
+        let word = match &input {
+            CValue::Int32(Bitvector32Term::Constant(word))
+            | CValue::Int16(Bitvector32Term::Constant(word))
+            | CValue::UInt8(Bitvector32Term::Constant(word)) => *word,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            convert(
+                input.clone(),
+                IntegerConversion::Modular,
+                &mut obligations,
+                &PureFactContext::new()
+            ),
+            Some(int8(i32::from(word as u8 as i8) as u32)),
+            "{input:?}"
+        );
+        assert!(obligations.is_empty());
+        let result = convert(
             input.clone(),
-            CType::Int8,
+            IntegerConversion::Checked,
             &mut obligations,
             &PureFactContext::new(),
         );
-        assert_eq!(result.is_some(), valid, "{input:?}");
-        if valid {
-            assert!(obligations.is_empty());
+        assert_eq!(result.unwrap().c_type(), CType::Int8, "{input:?}");
+        assert_eq!(obligations.is_empty(), valid, "{input:?}");
+        for obligation in &obligations {
+            let Proposition::ConditionIs(condition, true) = obligation.proposition() else {
+                panic!("narrowing owes an explicit range comparison");
+            };
+            assert_eq!(
+                PureFactContext::decide_intrinsically(condition),
+                Some(false)
+            );
+            assert!(obligation.context().unwrap().starts_with("int8 narrowing"));
         }
     }
     let value = Bitvector32Term::Variable(Variable(815));
@@ -3870,14 +3952,33 @@ fn signed_byte_narrowing_checks_each_bound_and_unsigned_inputs() {
             }
         }
         let mut obligations = Vec::new();
-        let result = crate::kernel::eval::coerce_c_value_to_type(
+        let result = convert(
             int32(value.clone()),
-            CType::Int8,
+            IntegerConversion::Checked,
             &mut obligations,
             &assumptions,
         );
         assert_eq!(result, Some(int8(value.clone())));
         assert_eq!(obligations.len(), 2 - mask.count_ones() as usize);
+        // C's conversion owes nothing, and its term is the typed conversion
+        // node whatever the context knows; the identity inside the range is
+        // reasoning (`narrowed_cast_identity`), not a choice made here.
+        let mut obligations = Vec::new();
+        let modular = convert(
+            int32(value.clone()),
+            IntegerConversion::Modular,
+            &mut obligations,
+            &assumptions,
+        );
+        assert!(obligations.is_empty());
+        assert_eq!(
+            modular,
+            Some(int8(Bitvector32Term::machine_integer_cast(
+                crate::kernel::MachineIntegerType::Int32,
+                crate::kernel::MachineIntegerType::Int8,
+                value.clone(),
+            )))
+        );
     }
 }
 
@@ -4225,7 +4326,7 @@ fn uint64_bit_reinterpretation_has_a_distinct_checked_cast_boundary() {
             };
             assert_eq!(value.int64_as_const(), Some(bits as i64));
         } else {
-            assert_type_mismatch(ordinary);
+            assert!(prove_c_expression_evaluation(CState::new(), ordinary).is_none());
         }
     }
     assert_type_mismatch(c_uint64_bits_to_int64(c_int32_literal(1)));
@@ -4329,10 +4430,13 @@ fn modulo_casts_are_explicit_integer_boundaries_and_preserve_operand_definedness
         )),
         CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Constant(u32::MAX)))
     );
-    assert!(!matches!(
-        outcome(c_cast(c_int64_literal(i64::MAX), CType::Int32)),
-        CExpressionOutcome::Value(_)
-    ));
+    assert!(
+        prove_c_expression_evaluation(
+            CState::new(),
+            c_cast(c_int64_literal(i64::MAX), CType::Int32),
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -4425,6 +4529,7 @@ fn pointer_alignment_observes_only_a_boolean_and_keeps_integer_origin_separate()
                 crate::kernel::eval::cast_c_value_to_type(
                     CValue::UInt64(Bitvector32Term::pointer_address(address.clone())),
                     CType::Int32Pointer,
+                    crate::kernel::eval::expression::IntegerConversion::Modular,
                     &mut Vec::new(),
                     &assumptions,
                 ),

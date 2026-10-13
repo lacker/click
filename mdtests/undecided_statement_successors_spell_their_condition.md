@@ -11,7 +11,8 @@ undecided condition:
 ```
 
 which is the kernel's signed encoding of an unsigned comparison and does not
-say which comparison. It now spells the condition itself.
+say which comparison. It now spells the condition itself, as Click writes it:
+the `uint32` operand `x` against the literal `4u32`.
 
 ```c filename=undecided_statement_successors_spell_their_condition.c
 uint32 pick(uint32 x) {
@@ -36,6 +37,6 @@ uint32 pick(uint32 x) {
 
 ```expect
 fail: undecided condition:
-  successor 1: `x < 4 (unsigned)`
-  successor 2: `x >= 4 (unsigned)`
+  successor 1: `x < 4u32`
+  successor 2: `x >= 4u32`
 ```

@@ -1,5 +1,9 @@
 # Memory model
 
+This page describes how Click models C memory: blocks and pointers, the byte
+view of integer cells, heap lifetimes, argument aliasing, viewable ranges, old
+memory, write footprints, stack memory, and Click array refs.
+
 The memory model is central to Click. Many proof failures are aliasing or frame
 failures, not arithmetic failures.
 
@@ -319,8 +323,14 @@ bound. For byte elements, `requested <= held` covers the prefix; for wider
 elements, compare the complete nonwrapping byte extents as well. The source
 view must remain live in the destination memory snapshot. A low-word bound
 supplies no full-width coverage.
+A shifted byte subrange additionally needs its exact nonnegative offset to
+fit the source extent, and the requested count to fit the source extent
+minus that offset. This subtraction guard prevents unsigned wrap from
+creating coverage. The query uses structural parent addresses or an explicitly
+selected source; it does not scan other ranges in the block.
 
 See [the native prefix fixtures](https://github.com/clicklang/click/blob/master/mdtests/native_view_prefix_narrowing.md)
+and [native byte-window fixtures](https://github.com/clicklang/click/blob/master/mdtests/native_view_window.md)
 for explicit proofs with `simp() using { ... }`.
 
 Symbolic memory access usually needs:

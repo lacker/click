@@ -257,6 +257,11 @@ pub struct C0Global {
     c_type: C0Type,
     struct_name: Option<String>,
     initializer: Option<C0Expression>,
+    /// The address an externally linked pointer's initializer names,
+    /// resolved in its defining translation unit. Another unit may not see
+    /// the private object the initializer names, so it reads this value and
+    /// never re-evaluates the initializer against its own names.
+    resolved_address: Option<crate::kernel::CValue>,
     tentative: bool,
     file_static: bool,
     volatile: bool,
@@ -273,6 +278,7 @@ impl C0Global {
             c_type,
             struct_name,
             initializer: None,
+            resolved_address: None,
             tentative: false,
             file_static: false,
             volatile: false,
@@ -294,6 +300,7 @@ impl C0Global {
             c_type,
             struct_name,
             initializer: Some(initializer),
+            resolved_address: None,
             tentative: false,
             file_static: false,
             volatile: false,
@@ -316,6 +323,7 @@ impl C0Global {
             c_type,
             struct_name,
             initializer: Some(initializer),
+            resolved_address: None,
             tentative: false,
             file_static: true,
             volatile: false,
@@ -327,6 +335,13 @@ impl C0Global {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// This global with its pointer initializer's address resolved by its
+    /// defining translation unit.
+    pub(crate) fn with_resolved_address(mut self, address: crate::kernel::CValue) -> Self {
+        self.resolved_address = Some(address);
+        self
     }
 
     pub fn kernel_name(&self) -> &str {
@@ -457,6 +472,10 @@ pub struct C0GlobalArray {
     shape: Option<Vec<u32>>,
     incomplete_shape: Option<Vec<u32>>,
     initializer: Option<C0ArrayInitializer>,
+    /// An externally linked pointer array lowered by its defining
+    /// translation unit, whose element initializers may name objects private
+    /// to that unit. Other units read this instead of re-evaluating them.
+    resolved: Option<crate::kernel::CGlobalArray>,
     tentative: bool,
     file_static: bool,
     constant: bool,
@@ -482,6 +501,7 @@ impl C0GlobalArray {
             shape,
             incomplete_shape,
             initializer: None,
+            resolved: None,
             tentative: false,
             file_static,
             constant: false,
@@ -510,6 +530,7 @@ impl C0GlobalArray {
             shape: Some(shape),
             incomplete_shape: None,
             initializer: Some(initializer),
+            resolved: None,
             tentative: false,
             file_static,
             constant: false,
@@ -518,6 +539,12 @@ impl C0GlobalArray {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// This array as lowered by its defining translation unit.
+    pub(crate) fn with_resolved(mut self, resolved: crate::kernel::CGlobalArray) -> Self {
+        self.resolved = Some(resolved);
+        self
     }
 
     pub fn kernel_name(&self) -> &str {
@@ -3877,9 +3904,54 @@ impl C0Function {
     /// replaced translation-unit declarations with their selected
     /// definitions. Parsing checks the declarations visible at each use;
     /// this final pass checks the linked object graph that lowering will use.
+    /// The address an externally linked pointer global's initializer names,
+    /// resolved against this translation unit's own names, where any private
+    /// object it names is visible. Validates the initializer first.
+    pub(crate) fn resolve_linked_pointer_initializer(
+        &self,
+        global: &C0Global,
+    ) -> Result<Option<crate::kernel::CValue>, C0SyntaxError> {
+        let Some(initializer) = global.initializer() else {
+            return Ok(None);
+        };
+        if !global.c_type().is_pointer() {
+            return Ok(None);
+        }
+        self.validate_static_pointer_initializer(
+            global.c_type(),
+            global.pointee_is_constant(),
+            initializer,
+        )?;
+        Ok(self.static_address_initializer_value(
+            global.c_type(),
+            global.pointee_is_constant(),
+            initializer,
+        ))
+    }
+
+    /// An externally linked pointer array lowered against this translation
+    /// unit's own names, as [`Self::resolve_linked_pointer_initializer`] does
+    /// for a scalar. Validates the element initializers first.
+    pub(crate) fn resolve_linked_pointer_array(
+        &self,
+        array: &C0GlobalArray,
+    ) -> Result<Option<crate::kernel::CGlobalArray>, C0SyntaxError> {
+        let Some(initializer) = array.initializer() else {
+            return Ok(None);
+        };
+        if !array.element_type().is_pointer() {
+            return Ok(None);
+        }
+        for value in initializer.values() {
+            self.validate_static_pointer_initializer(array.element_type(), false, value)?;
+        }
+        Ok(self.to_kernel_global_array(array))
+    }
+
     pub(crate) fn validate_static_initializers(&self) -> Result<(), C0SyntaxError> {
         for global in self.globals.values() {
             if global.c_type().is_pointer()
+                && global.resolved_address.is_none()
                 && let Some(initializer) = global.initializer()
             {
                 self.validate_static_pointer_initializer(
@@ -3892,7 +3964,7 @@ impl C0Function {
         for array in self
             .global_arrays
             .values()
-            .filter(|array| array.element_type().is_pointer())
+            .filter(|array| array.element_type().is_pointer() && array.resolved.is_none())
         {
             if let Some(initializer) = array.initializer() {
                 for value in initializer.values() {
@@ -3922,6 +3994,9 @@ impl C0Function {
     }
 
     fn to_kernel_global(&self, global: &C0Global) -> Option<crate::kernel::CGlobal> {
+        if let Some(value) = &global.resolved_address {
+            return Some(global.to_kernel_global_with_value(value.clone()));
+        }
         let initializer = global.initializer()?;
         if let Some(value) = self.static_address_initializer_value(
             global.c_type(),
@@ -3934,6 +4009,9 @@ impl C0Function {
     }
 
     fn to_kernel_global_array(&self, array: &C0GlobalArray) -> Option<crate::kernel::CGlobalArray> {
+        if let Some(resolved) = &array.resolved {
+            return Some(resolved.clone());
+        }
         let values = array.initializer()?.to_kernel_contents(|initializer| {
             self.static_address_initializer_value(array.element_type(), false, initializer)
                 .or_else(|| kernel_integer_literal_value(array.element_type(), initializer))
@@ -5382,7 +5460,22 @@ impl C0Statement {
 }
 
 impl C0Expression {
+    /// Lowers an expression a Click specification wrote in C syntax. Its
+    /// integer casts owe the destination range, as every specification cast
+    /// does; the same cast in C source converts modulo 2^N.
+    pub fn to_kernel_specification_expression(&self) -> crate::kernel::CExpression {
+        self.lower_expression(true)
+    }
+
     pub fn to_kernel_expression(&self) -> crate::kernel::CExpression {
+        self.lower_expression(false)
+    }
+
+    /// Lowers this expression; `specification` marks one a Click
+    /// specification wrote in C syntax, whose integer casts keep the
+    /// specification's checked rule, where the same cast in C source
+    /// converts modulo 2^N.
+    fn lower_expression(&self, specification: bool) -> crate::kernel::CExpression {
         match self {
             Self::Void => crate::kernel::c_void_value(),
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
@@ -5412,31 +5505,36 @@ impl C0Expression {
                 } else {
                     crate::kernel::c_cast_with_pointee_qualifiers_and_struct
                 };
-                cast(
-                    expression.to_kernel_expression(),
+                let lowered = cast(
+                    expression.lower_expression(specification),
                     c_type.to_kernel_type(),
                     *pointee_volatile,
                     *pointee_constant,
                     struct_name.clone(),
-                )
+                );
+                if specification {
+                    lowered
+                } else {
+                    crate::kernel::c_source_integer_conversion(lowered)
+                }
             }
             Self::Conditional {
                 condition,
                 then_branch,
                 else_branch,
             } => crate::kernel::c_conditional(
-                condition.to_kernel_expression(),
-                then_branch.to_kernel_expression(),
-                else_branch.to_kernel_expression(),
+                condition.lower_expression(specification),
+                then_branch.lower_expression(specification),
+                else_branch.lower_expression(specification),
             ),
             Self::FloatNegate(expression) => {
-                crate::kernel::c_float_negate(expression.to_kernel_expression())
+                crate::kernel::c_float_negate(expression.lower_expression(specification))
             }
             Self::FloatClassification {
                 expression,
                 classification,
             } => crate::kernel::c_float_classification(
-                expression.to_kernel_expression(),
+                expression.lower_expression(specification),
                 match classification {
                     C0FloatClassification::Finite => crate::kernel::CFloatClassification::Finite,
                     C0FloatClassification::Infinite => {
@@ -5451,17 +5549,17 @@ impl C0Expression {
             ),
             Self::AddressOf(target) => match target.as_ref() {
                 Self::AggregateAddress { pointer, .. } | Self::UnionAddress { pointer, .. } => {
-                    pointer.to_kernel_expression()
+                    pointer.lower_expression(specification)
                 }
-                target => {
-                    crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
-                }
+                target => crate::kernel::CExpression::AddressOf(Box::new(
+                    target.lower_expression(specification),
+                )),
             },
-            Self::AggregateAddress { pointer, .. } => pointer.to_kernel_expression(),
-            Self::UnionAddress { pointer, .. } => pointer.to_kernel_expression(),
+            Self::AggregateAddress { pointer, .. } => pointer.lower_expression(specification),
+            Self::UnionAddress { pointer, .. } => pointer.lower_expression(specification),
             Self::MemberAddress { pointer, selection } => {
                 crate::kernel::CExpression::MemberAddress {
-                    object: Box::new(pointer.to_kernel_expression()),
+                    object: Box::new(pointer.lower_expression(specification)),
                     selection: selection.clone(),
                 }
             }
@@ -5471,8 +5569,8 @@ impl C0Expression {
                 element_type,
                 shape,
             } => crate::kernel::CExpression::ArrayRowAddress {
-                array: Box::new(array.to_kernel_expression()),
-                index: Box::new(index.to_kernel_expression()),
+                array: Box::new(array.lower_expression(specification)),
+                index: Box::new(index.lower_expression(specification)),
                 element_type: element_type.to_kernel_type(),
                 shape: shape.clone(),
             },
@@ -5483,14 +5581,15 @@ impl C0Expression {
                 subtract,
                 ..
             } => crate::kernel::CExpression::RecordPointerOffset {
-                pointer: Box::new(pointer.to_kernel_expression()),
-                index: Box::new(index.to_kernel_expression()),
+                pointer: Box::new(pointer.lower_expression(specification)),
+                index: Box::new(index.lower_expression(specification)),
                 layout: layout.clone(),
                 subtract: *subtract,
             },
-            Self::PointerOffsetBytes { pointer, bytes } => {
-                crate::kernel::c_pointer_offset_bytes(pointer.to_kernel_expression(), *bytes)
-            }
+            Self::PointerOffsetBytes { pointer, bytes } => crate::kernel::c_pointer_offset_bytes(
+                pointer.lower_expression(specification),
+                *bytes,
+            ),
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
             Self::UInt32Literal(value) => crate::kernel::c_uint32_literal(*value),
@@ -5503,82 +5602,92 @@ impl C0Expression {
             }
             Self::SizeOfUnion { bytes, .. } => crate::kernel::c_uint64_literal(u64::from(*bytes)),
             Self::LessThan(left, right) => crate::kernel::c_less_than(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::LessEqual(left, right) => crate::kernel::c_less_equal(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::GreaterThan(left, right) => crate::kernel::c_greater_than(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::GreaterEqual(left, right) => crate::kernel::c_greater_equal(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
-            Self::Equal(left, right) => {
-                crate::kernel::c_equal(left.to_kernel_expression(), right.to_kernel_expression())
-            }
+            Self::Equal(left, right) => crate::kernel::c_equal(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
             Self::NotEqual(left, right) => crate::kernel::c_not_equal(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
-            Self::Not(expression) => crate::kernel::c_not(expression.to_kernel_expression()),
-            Self::And(left, right) => {
-                crate::kernel::c_and(left.to_kernel_expression(), right.to_kernel_expression())
+            Self::Not(expression) => {
+                crate::kernel::c_not(expression.lower_expression(specification))
             }
-            Self::Or(left, right) => {
-                crate::kernel::c_or(left.to_kernel_expression(), right.to_kernel_expression())
-            }
-            Self::Add(left, right) => {
-                crate::kernel::c_add(left.to_kernel_expression(), right.to_kernel_expression())
-            }
-            Self::Subtract(left, right) => {
-                crate::kernel::c_subtract(left.to_kernel_expression(), right.to_kernel_expression())
-            }
-            Self::Multiply(left, right) => {
-                crate::kernel::c_multiply(left.to_kernel_expression(), right.to_kernel_expression())
-            }
-            Self::Divide(left, right) => {
-                crate::kernel::c_divide(left.to_kernel_expression(), right.to_kernel_expression())
-            }
+            Self::And(left, right) => crate::kernel::c_and(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
+            Self::Or(left, right) => crate::kernel::c_or(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
+            Self::Add(left, right) => crate::kernel::c_add(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
+            Self::Subtract(left, right) => crate::kernel::c_subtract(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
+            Self::Multiply(left, right) => crate::kernel::c_multiply(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
+            Self::Divide(left, right) => crate::kernel::c_divide(
+                left.lower_expression(specification),
+                right.lower_expression(specification),
+            ),
             Self::Remainder(left, right) => crate::kernel::c_remainder(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::ShiftLeft(left, right) => crate::kernel::c_shift_left(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::ShiftRight(left, right) => crate::kernel::c_shift_right(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::BitwiseAnd(left, right) => crate::kernel::c_bitwise_and(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::BitwiseOr(left, right) => crate::kernel::c_bitwise_or(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::BitwiseXor(left, right) => crate::kernel::c_bitwise_xor(
-                left.to_kernel_expression(),
-                right.to_kernel_expression(),
+                left.lower_expression(specification),
+                right.lower_expression(specification),
             ),
             Self::BitwiseNot(expression) => {
-                crate::kernel::c_bitwise_not(expression.to_kernel_expression())
+                crate::kernel::c_bitwise_not(expression.lower_expression(specification))
             }
-            Self::Load(pointer) => crate::kernel::c_load(pointer.to_kernel_expression()),
+            Self::Load(pointer) => crate::kernel::c_load(pointer.lower_expression(specification)),
             Self::SequentialRead {
                 target,
                 c_type,
                 pointee_constant,
                 ..
             } => crate::kernel::c_qualified_volatile_typed_load(
-                C0Expression::AddressOf(Box::new(target.as_ref().clone())).to_kernel_expression(),
+                C0Expression::AddressOf(Box::new(target.as_ref().clone()))
+                    .lower_expression(specification),
                 c_type.to_kernel_type(),
                 *pointee_constant,
             ),
@@ -5594,7 +5703,7 @@ impl C0Expression {
                 source,
                 ..
             } => crate::kernel::c_qualified_typed_load_with_source(
-                pointer.to_kernel_expression(),
+                pointer.lower_expression(specification),
                 field_type.to_kernel_type(),
                 *pointee_constant,
                 source.as_ref().and_then(|source| {
@@ -5614,13 +5723,14 @@ impl C0Expression {
                 field_type,
                 ..
             } => crate::kernel::c_typed_load(
-                pointer.to_kernel_expression(),
+                pointer.lower_expression(specification),
                 field_type.to_kernel_type(),
             ),
-            Self::Index(base, index) => {
-                crate::kernel::c_index(base.to_kernel_expression(), index.to_kernel_expression())
-            }
-            Self::CheckedArrayIndex { index, .. } => index.to_kernel_expression(),
+            Self::Index(base, index) => crate::kernel::c_index(
+                base.lower_expression(specification),
+                index.lower_expression(specification),
+            ),
+            Self::CheckedArrayIndex { index, .. } => index.lower_expression(specification),
         }
     }
 }
@@ -18149,8 +18259,32 @@ impl Parser {
             .is_some_and(|targets| self.reads_only_locals_other_than(&left, &targets));
         let right_disjoint_from_left_assignment = assignment_chain_targets(&left)
             .is_some_and(|targets| self.reads_only_locals_other_than(&right, &targets));
+        // A call is indeterminately sequenced with a read in the other
+        // operand. When that read is of named non-volatile static storage,
+        // both orders are checked rather than one chosen: see
+        // `sequence_reread_around_call`.
+        let left_rereads = (left_reads && right_position.is_some())
+            .then(|| self.reread_storage_names(&left))
+            .flatten();
+        let right_rereads = (right_reads && left_position.is_some())
+            .then(|| self.reread_storage_names(&right))
+            .flatten();
         let (left_prefix, left) = self.lower_expression_calls(left)?;
         let (right_prefix, right) = self.lower_expression_calls(right)?;
+        if let Some(names) = right_rereads
+            && right_prefix.is_empty()
+            && prefix_has_non_assertion(&left_prefix)
+        {
+            let prefix = self.sequence_reread_around_call(&names, left_prefix);
+            return Ok((prefix, left, right));
+        }
+        if let Some(names) = left_rereads
+            && left_prefix.is_empty()
+            && prefix_has_non_assertion(&right_prefix)
+        {
+            let prefix = self.sequence_reread_around_call(&names, right_prefix);
+            return Ok((prefix, left, right));
+        }
         if prefix_has_non_assertion(&left_prefix) && prefix_has_non_assertion(&right_prefix) {
             if left_position.is_none() || right_position.is_none() {
                 return Err(self.error_at_position(
@@ -18196,6 +18330,128 @@ impl Parser {
         let mut prefix = left_prefix;
         prefix.extend(right_prefix);
         Ok((prefix, left, right))
+    }
+
+    /// The static-storage names an operand reads, when it is safe to read it
+    /// again on the other side of an indeterminately sequenced call: built
+    /// only from integer literals, casts, integer arithmetic and named
+    /// non-volatile, non-floating scalar objects, so a second read has no
+    /// effect and the same value means the same result. Locals the call
+    /// cannot reach need no snapshot. `None` keeps the existing refusal.
+    fn reread_storage_names(&self, expression: &C0Expression) -> Option<Vec<String>> {
+        match expression {
+            C0Expression::Int32Literal(_)
+            | C0Expression::UInt8Literal(_)
+            | C0Expression::UInt32Literal(_)
+            | C0Expression::Int64Literal(_)
+            | C0Expression::UInt64Literal(_) => Some(Vec::new()),
+            C0Expression::Variable(name) => {
+                if self.variable_struct_values.contains_key(name) {
+                    return None;
+                }
+                let c_type = self.variable_types.get(name).copied()?;
+                // Integer and object-pointer values compare exactly; a float
+                // can be NaN, which `==` would refuse spuriously.
+                let integer = matches!(
+                    c_type,
+                    C0Type::Bool
+                        | C0Type::Int8
+                        | C0Type::Int16
+                        | C0Type::Int32
+                        | C0Type::Char(_)
+                        | C0Type::UInt8
+                        | C0Type::UInt16
+                        | C0Type::UInt32
+                        | C0Type::Int64
+                        | C0Type::UInt64
+                );
+                if !(integer || c_type.is_object_pointer()) {
+                    return None;
+                }
+                let volatile = if let Some(global) = self
+                    .globals
+                    .values()
+                    .find(|global| global.kernel_name() == name)
+                {
+                    global.is_volatile()
+                } else if let Some(static_local) = self.static_locals.get(name) {
+                    static_local.is_volatile()
+                } else if self.address_taken_variables.contains(name) {
+                    // An address-taken local's qualifiers are not tracked here.
+                    return None;
+                } else {
+                    return Some(Vec::new());
+                };
+                (!volatile).then(|| vec![name.clone()])
+            }
+            C0Expression::Cast { expression, .. } => self.reread_storage_names(expression),
+            C0Expression::Add(left, right)
+            | C0Expression::Subtract(left, right)
+            | C0Expression::Multiply(left, right)
+            | C0Expression::BitwiseAnd(left, right)
+            | C0Expression::BitwiseOr(left, right)
+            | C0Expression::BitwiseXor(left, right) => {
+                let mut names = self.reread_storage_names(left)?;
+                for name in self.reread_storage_names(right)? {
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                Some(names)
+            }
+            _ => None,
+        }
+    }
+
+    /// C leaves a call and a read in the other operand indeterminately
+    /// sequenced, so either may happen first. Rather than choose an order,
+    /// read each named object before the call, run the call, and require it
+    /// to hold the same value afterwards: the read must then be defined in
+    /// both orders and give one value. The operand itself is evaluated after
+    /// the call, as the lowering always has.
+    fn sequence_reread_around_call(
+        &mut self,
+        names: &[String],
+        call_prefix: Vec<C0Statement>,
+    ) -> Vec<C0Statement> {
+        let mut prefix = Vec::new();
+        let mut checks = Vec::new();
+        for name in names {
+            let c_type = self.variable_types[name];
+            let snapshot = self.fresh_synthesized_call_name();
+            self.variable_types.insert(snapshot.clone(), c_type);
+            prefix.push(C0Statement::Declare {
+                c_type,
+                array_shape: None,
+                aggregate_array_backing: false,
+                name: snapshot.clone(),
+                volatile: false,
+                pointee_volatile: false,
+                constant: false,
+                pointee_constant: self.variable_pointee_constants.contains(name),
+                initializer: None,
+                zero_fill: None,
+                site: C0Site::NONE,
+            });
+            prefix.push(C0Statement::Assign {
+                name: snapshot.clone(),
+                expression: C0Expression::Variable(name.clone()),
+                site: C0Site::NONE,
+            });
+            checks.push(C0Statement::Assert {
+                condition: C0Expression::Equal(
+                    Box::new(C0Expression::Variable(name.clone())),
+                    Box::new(C0Expression::Variable(snapshot)),
+                ),
+                label: format!(
+                    "the call leaves `{name}`, read in the other operand, unchanged, so the read gives one value in either order"
+                ),
+                site: C0Site::NONE,
+            });
+        }
+        prefix.extend(call_prefix);
+        prefix.extend(checks);
+        prefix
     }
 
     fn reject_unsequenced_updated_memory_read(

@@ -46,9 +46,18 @@ enum SignedArithmeticAtomToken {
     Narrow64Expression,
     NativeConstant(u64),
     NativeBinary(BitvectorBinaryOp),
-    PureFunction { name: String, arity: usize },
+    PureFunction {
+        name: String,
+        arity: usize,
+    },
     Binary(BitvectorBinaryOp),
     UnaryNot,
+    /// A C integer conversion of the following operand, as an opaque
+    /// observation; `IntervalNarrowedCast` alone relates it to the operand.
+    Cast {
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
+    },
 }
 
 /// Flat, iterative identity for the supported signed-machine term fragment.
@@ -208,6 +217,17 @@ fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmetic
                 push_token!(SignedArithmeticAtomToken::UnaryNot);
                 pending.push(operand);
             }
+            Bitvector32Term::MachineIntegerCast {
+                value,
+                source,
+                destination,
+            } if narrowed_word_cast(*source, *destination) => {
+                push_token!(SignedArithmeticAtomToken::Cast {
+                    source: *source,
+                    destination: *destination,
+                });
+                pending.push(value);
+            }
             term => {
                 let (operator, left, right) = signed_binary(term)?;
                 push_token!(SignedArithmeticAtomToken::Binary(operator));
@@ -304,6 +324,11 @@ enum CheckedTerm {
         left: usize,
         right: usize,
     },
+    Cast {
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
+        operand: usize,
+    },
 }
 
 #[derive(Default)]
@@ -334,6 +359,21 @@ impl TermArena {
             operator,
             left,
             right,
+        });
+        reference
+    }
+
+    fn cast(
+        &mut self,
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
+        operand: usize,
+    ) -> usize {
+        let reference = self.terms.len();
+        self.terms.push(CheckedTerm::Cast {
+            source,
+            destination,
+            operand,
         });
         reference
     }
@@ -388,6 +428,21 @@ impl TermArena {
                         pending.push((*left_right, *right_right, false));
                         pending.push((*left_left, *right_left, false));
                     }
+                    (
+                        CheckedTerm::Cast {
+                            source: left_source,
+                            destination: left_destination,
+                            operand: left_operand,
+                        },
+                        CheckedTerm::Cast {
+                            source: right_source,
+                            destination: right_destination,
+                            operand: right_operand,
+                        },
+                    ) if left_source == right_source && left_destination == right_destination => {
+                        pending.push((left, right, true));
+                        pending.push((*left_operand, *right_operand, false));
+                    }
                     _ => {
                         self.equivalence_cache.insert((left, right), false);
                         self.equivalence_cache.insert((right, left), false);
@@ -415,6 +470,16 @@ impl TermArena {
                                 *right_right,
                             )
                     }
+                    (
+                        CheckedTerm::Cast {
+                            operand: left_operand,
+                            ..
+                        },
+                        CheckedTerm::Cast {
+                            operand: right_operand,
+                            ..
+                        },
+                    ) => pair_is_equivalent(&self.equivalence_cache, *left_operand, *right_operand),
                     _ => false,
                 };
                 self.equivalence_cache.insert((left, right), equivalent);
@@ -461,10 +526,41 @@ impl TermArena {
                     pending.push((*left, actual_left));
                     pending.push((*right, actual_right));
                 }
+                (
+                    CheckedTerm::Cast {
+                        source,
+                        destination,
+                        operand,
+                    },
+                    Bitvector32Term::MachineIntegerCast {
+                        value,
+                        source: actual_source,
+                        destination: actual_destination,
+                    },
+                ) if source == actual_source && destination == actual_destination => {
+                    pending.push((*operand, value));
+                }
+                (CheckedTerm::Cast { .. }, _) => return false,
             }
         }
         true
     }
+}
+
+/// A conversion `IntervalNarrowedCast` may relate to its operand: from a
+/// type carried exactly in a 32-bit word into a one- or two-byte type that
+/// does not contain it.
+pub(crate) fn narrowed_word_cast(
+    source: crate::kernel::MachineIntegerType,
+    destination: crate::kernel::MachineIntegerType,
+) -> bool {
+    source.format().bits() <= 32
+        && crate::kernel::assumptions::narrowed_cast_identity(
+            &Bitvector32Term::Constant(0),
+            source,
+            destination,
+        )
+        .is_some()
 }
 
 fn explicit_binary(
@@ -640,6 +736,17 @@ pub(crate) enum SignedArithmeticNode {
         // Bitwise-and is total for signed int32 values.  UB-sensitive work
         // needed to construct `operand` is checked by its child interval
         // nodes, so this node intentionally has no definedness reference.
+        result: SignedArithmeticInterval,
+    },
+    /// A C conversion of a 32-bit-word operand into a one- or two-byte type
+    /// whose operand interval lies inside the destination range: the
+    /// conversion leaves the value unchanged (`narrowed_cast_identity`), so
+    /// it has the operand's interval and, as affine evidence, the operand's
+    /// affine form.
+    IntervalNarrowedCast {
+        operand: usize,
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
         result: SignedArithmeticInterval,
     },
     IntervalSignBitFlip {
@@ -1227,6 +1334,45 @@ impl SignedArithmeticCertificate {
                         term,
                     }
                 }
+                SignedArithmeticNode::IntervalNarrowedCast {
+                    operand,
+                    source,
+                    destination,
+                    result,
+                } => {
+                    let (operand, operand_term) = interval_at(&checked, *operand)?;
+                    if !narrowed_word_cast(*source, *destination) {
+                        return Err(SignedArithmeticCheckError::InvalidOperator(node_index));
+                    }
+                    // The operand interval is the signed reading of its word.
+                    // An unsigned 32-bit source agrees with it only when
+                    // nonnegative; every other word source carries its value
+                    // exactly. Inside the destination range the conversion
+                    // is the identity (`narrowed_cast_identity`).
+                    let (lo, hi) = destination.format().bounds();
+                    let (lo, hi) = (
+                        i64::try_from(lo).expect("a one- or two-byte bound"),
+                        i64::try_from(hi).expect("a one- or two-byte bound"),
+                    );
+                    let floor = if *source == crate::kernel::MachineIntegerType::UInt32 {
+                        lo.max(0)
+                    } else {
+                        lo
+                    };
+                    if operand.carrier != SignedArithmeticCarrier::SignedInt32
+                        || operand.lower < floor
+                        || operand.upper > hi
+                    {
+                        return Err(SignedArithmeticCheckError::InvalidEndpoint(node_index));
+                    }
+                    let term = terms.cast(*source, *destination, operand_term);
+                    let expected = operand.clone();
+                    check_interval_result(&expected, result, node_index)?;
+                    CheckedValue::Interval {
+                        value: expected,
+                        term,
+                    }
+                }
                 SignedArithmeticNode::IntervalSignBitFlip { operand, result } => {
                     let (operand, operand_term) = interval_at(&checked, *operand)?;
                     let sign_bit = terms
@@ -1541,7 +1687,8 @@ fn signed_atom_work(atom: &SignedArithmeticAtom) -> usize {
             SignedArithmeticAtomToken::Narrow64Expression
             | SignedArithmeticAtomToken::NativeBinary(_)
             | SignedArithmeticAtomToken::Binary(_)
-            | SignedArithmeticAtomToken::UnaryNot => 1,
+            | SignedArithmeticAtomToken::UnaryNot
+            | SignedArithmeticAtomToken::Cast { .. } => 1,
         };
         units.saturating_add(token_units)
     })
@@ -2082,6 +2229,9 @@ fn interval_affine_evidence(
         Add,
         Subtract,
         Multiply,
+        /// The conversion at this node denotes its operand's affine form;
+        /// keep the conversion's own term as the result's identity.
+        Retag(usize),
     }
     let mut tasks = vec![Task::Visit(_evidence)];
     let mut results = Vec::new();
@@ -2122,8 +2272,20 @@ fn interval_affine_evidence(
                         tasks.push(Task::Visit(*right));
                         tasks.push(Task::Visit(*left));
                     }
+                    SignedArithmeticNode::IntervalNarrowedCast { operand, .. } => {
+                        tasks.push(Task::Retag(index));
+                        tasks.push(Task::Visit(*operand));
+                    }
                     _ => return None,
                 }
+            }
+            Task::Retag(index) => {
+                let (_, affine) = results.pop()?;
+                let term_reference = match checked.get(index)? {
+                    CheckedValue::Interval { term, .. } => *term,
+                    _ => return None,
+                };
+                results.push((term_reference, affine));
             }
             Task::Add | Task::Subtract | Task::Multiply => {
                 let right = results.pop()?;
@@ -4245,6 +4407,146 @@ mod tests {
             ),
             Err(SignedArithmeticCheckError::InvalidDefinedness(2))
         );
+    }
+
+    fn narrowed_cast_certificate(
+        upper: i64,
+        source: crate::kernel::MachineIntegerType,
+        destination: crate::kernel::MachineIntegerType,
+        goal: &Proposition,
+        relational: bool,
+    ) -> SignedArithmeticCertificate {
+        let interval = |lower: i64, upper: i64| SignedArithmeticInterval {
+            carrier: SignedArithmeticCarrier::SignedInt32,
+            lower,
+            upper,
+        };
+        let mut nodes = vec![
+            SignedArithmeticNode::Premise {
+                index: 0,
+                result: claim(&le(Bitvector32Term::Constant(0), x())),
+            },
+            SignedArithmeticNode::Premise {
+                index: 1,
+                result: claim(&le(x(), Bitvector32Term::Constant(upper as u32))),
+            },
+            SignedArithmeticNode::IntervalFromAffine {
+                source: 0,
+                term: x(),
+                lower: 0,
+                upper: SIGNED_MAX,
+            },
+            SignedArithmeticNode::IntervalFromAffine {
+                source: 1,
+                term: x(),
+                lower: SIGNED_MIN,
+                upper,
+            },
+            SignedArithmeticNode::IntervalIntersect {
+                left: 2,
+                right: 3,
+                result: interval(0, upper),
+            },
+            SignedArithmeticNode::IntervalNarrowedCast {
+                operand: 4,
+                source,
+                destination,
+                result: interval(0, upper),
+            },
+        ];
+        if relational {
+            nodes.push(SignedArithmeticNode::Trivial {
+                result: SignedArithmeticClaim {
+                    carrier: SignedArithmeticCarrier::SignedInt32,
+                    relation: SignedArithmeticRelation::Equal,
+                    terms: BTreeMap::new(),
+                    constant: BigInt::zero(),
+                },
+            });
+            nodes.push(SignedArithmeticNode::AffineConclusion {
+                source: 6,
+                evidence: 5,
+                result: goal.clone(),
+            });
+        } else {
+            nodes.push(SignedArithmeticNode::IntervalAtom {
+                carrier: SignedArithmeticCarrier::SignedInt32,
+                term: Bitvector32Term::Constant(upper as u32),
+                lower: upper,
+                upper,
+            });
+            nodes.push(SignedArithmeticNode::IntervalCompare {
+                left: 5,
+                right: 6,
+                comparison: SignedArithmeticComparison::LessEqual,
+                result: goal.clone(),
+            });
+        }
+        SignedArithmeticCertificate {
+            nodes,
+            conclusion: 7,
+        }
+    }
+
+    // `IntervalNarrowedCast` relates a C conversion to its operand only
+    // when the operand's checked interval lies inside the destination
+    // range; then the conversion has that interval and is the operand.
+    #[test]
+    fn a_narrowed_cast_is_its_operand_only_inside_the_destination_range() {
+        use crate::kernel::MachineIntegerType as Ty;
+        let cast =
+            |source, destination| Bitvector32Term::machine_integer_cast(source, destination, x());
+        let premises = |upper: u32| {
+            vec![
+                le(Bitvector32Term::Constant(0), x()),
+                le(x(), Bitvector32Term::Constant(upper)),
+            ]
+        };
+        for (source, destination, upper) in [
+            (Ty::Int32, Ty::UInt8, 255),
+            (Ty::Int32, Ty::Int8, 127),
+            (Ty::UInt32, Ty::Int16, 32767),
+            (Ty::Int16, Ty::Int8, 127),
+        ] {
+            let byte = cast(source, destination);
+            // The interval of the conversion bounds it.
+            let bound = le(byte.clone(), Bitvector32Term::Constant(upper));
+            narrowed_cast_certificate(i64::from(upper), source, destination, &bound, false)
+                .check(&bound, &premises(upper))
+                .unwrap();
+            // As affine evidence it is the operand itself.
+            let same = equal(byte.clone(), x());
+            narrowed_cast_certificate(i64::from(upper), source, destination, &same, true)
+                .check(&same, &premises(upper))
+                .unwrap();
+            // One past the range is not the operand: the node is refused.
+            let wide = i64::from(upper) + 1;
+            assert_eq!(
+                narrowed_cast_certificate(wide, source, destination, &same, true)
+                    .check(&same, &premises(upper + 1)),
+                Err(SignedArithmeticCheckError::InvalidEndpoint(5))
+            );
+            // A false identity does not follow from the true one.
+            let off = equal(
+                byte,
+                Bitvector32Term::add(x(), Bitvector32Term::Constant(1)),
+            );
+            assert!(
+                narrowed_cast_certificate(i64::from(upper), source, destination, &off, true)
+                    .check(&off, &premises(upper))
+                    .is_err()
+            );
+        }
+        // A conversion between types that cannot change the value, or from
+        // a 64-bit source, is not this node's to relate.
+        for (source, destination) in [(Ty::UInt8, Ty::Int32), (Ty::Int64, Ty::UInt8)] {
+            let same = equal(cast(source, destination), x());
+            assert!(
+                narrowed_cast_certificate(100, source, destination, &same, true)
+                    .check(&same, &premises(100))
+                    .is_err()
+            );
+        }
     }
 }
 

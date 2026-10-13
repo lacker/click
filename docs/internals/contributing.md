@@ -1,5 +1,8 @@
 # Contributing to Click
 
+This page is the contribution workflow for humans and agents: forks, pull
+requests, the merge queue, worktrees, and where new work belongs.
+
 ## Fork and pull request workflow
 
 Humans and agents contribute through a fork of
@@ -190,13 +193,18 @@ If you are changing Click itself, read:
 
 ## Documentation ownership
 
-The technical reference, concepts, and internals in this site are intentionally
-AI-written and AI-maintained. Keep them factual, exhaustive, source-backed, and
-consistent with the local [documentation style](../style.md). Update the
-machine-readable inventory or fixture mapping whenever a public surface
-changes. The future human-written guide is a separate work with its own voice;
-don't move or rewrite it as part of technical-reference maintenance without
-explicit authorization.
+`docs/` is the AI reference. It is written for AI readers: its "Using Click"
+part for agents that verify code with Click, its "Developing Click" part for
+agents that change Click. Agents maintain it. Keep it factual, dense,
+source-backed, and consistent with the local [documentation style](../style.md).
+Update the machine-readable inventory or fixture mapping whenever a public
+surface changes. `docs/SUMMARY.md` assigns each page to one part and sets the
+reading order. The rendered site's `llms.txt` and single-file bundle
+`click-reference.md` are generated from it at build time and not committed;
+each page's first sentence is its `llms.txt` description.
+
+The human-written guide in `guide/` (in the repository root) is the
+maintainer's. Agents do not create or edit files there.
 
 ## Working conventions
 

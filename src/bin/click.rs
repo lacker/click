@@ -978,10 +978,10 @@ theorem bad(p: int32*, q: int32*) {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
-        assert!(
-            report.contains(&format!("goal: {ordinary_goal}")),
-            "{report}"
-        );
+        // The ordinary report spells the goal in source terms; the requested
+        // trace keeps the typed checked goal.
+        assert!(ordinary_goal.contains("tag("), "{ordinary}");
+        assert!(!ordinary_goal.contains("snapshot#"), "{ordinary}");
         assert_eq!(report.matches("goal:").count(), 1, "{report}");
         let checked = report.lines().find(|line| line.contains("goal:")).unwrap();
         assert!(checked.contains("tag("), "{report}");

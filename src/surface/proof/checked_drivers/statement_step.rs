@@ -192,10 +192,15 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
                     .clone(),
                 |context, fact| context.assume_proposition(fact.clone()),
             );
-            apply(
+            let successor = apply(
                 StatementPrerequisitePolicy::Contextual,
                 Some(&retained_context),
-            )?
+            )?;
+            crate::instrumentation::record_hidden_prerequisite(
+                crate::instrumentation::HiddenPrerequisiteRoute::RetainedHaveRerun,
+                "rerun",
+            );
+            successor
         }
         result => result?,
     };

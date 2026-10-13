@@ -89,31 +89,25 @@ object and an arbitrary external argument may be assumed.
 
 ## Existing P2 caller and linkage work stays separate
 
-Five fixtures cited as delivered coverage in the old issue currently expect
-`fail: run.contract`, not success. They must not be counted as positive
-end-to-end evidence. Audit verification reproduced their current failures:
+Five fixtures cited as delivered coverage in the old issue used to expect
+`fail: run.contract`. On 2026-10-13 each failure traced to its own sidecar,
+not to a verifier gap, and all five now pass and audit clean:
 
-| Fixture | Current failure |
+| Fixture | What was wrong |
 | --- | --- |
-| `aggregate_static_objects.md` | A post-call equality needed by `have` is not derived. |
-| `initialized_aggregate_static_objects.md` | A post-call equality needed by `have` is not derived. |
-| `designated_scalar_static_arrays.md` | The next `read_private` precondition is not established. |
-| `initialized_aggregate_static_arrays.md` | Owned entry clauses cannot be evaluated in a dependency order. |
-| `static_pointer_initializers_cross_file.md` | The final sum reports possible signed overflow. |
+| `aggregate_static_objects.md` | The caller did not own `shared.ready`, which its callee writes, and its `step()`s stopped at declarations before the call. |
+| `initialized_aggregate_static_objects.md` | The callee's contract did not state the updated `shared.value`, and the last `step()` did not reach the return. |
+| `designated_scalar_static_arrays.md` | A read-only callee owned its tables without stating them unchanged, so the caller's sum could overflow; it now views them. |
+| `initialized_aggregate_static_arrays.md` | The claim `result == 5` was false; two bumps of 2 give 4. |
+| `static_pointer_initializers_cross_file.md` | Read-only callees owned their aliased pointees without stating them unchanged; they now view them. |
 
-These observations do not prove one common verifier defect: contract permission
-coverage, proof steps, dependent resource evaluation and state transport must
-be distinguished. The related work belongs with
-[static-state-caller-transport.md](static-state-caller-transport.md), and any
-resource-engine defects with their existing owners. That issue also retains
-`examples/multifile-registry`, which remains quarantined in the ordinary gate.
-Their initializer syntax and layout can have parser coverage while their caller
-proofs remain incomplete. No expectation or quarantine is changed by this audit.
+`examples/multifile-registry`, which shared the caller-transport question,
+also verifies and is no longer quarantined.
 
-[linked-initializer-private-names.md](linked-initializer-private-names.md)
-retains the defining-translation-unit initializer-resolution gap.
+Linked pointer initializers resolve in their defining translation unit
+(`mdtests/a_linked_pointer_initializer_names_a_private_object_of_its_defining_file.md`).
 [private-static-helper-ownership.md](private-static-helper-ownership.md)
-retains the unchanged upstream PCG wrapper/client acceptance work. Neither is
+retains the unchanged upstream PCG wrapper/client acceptance work. It is not
 an additional global-storage implementation milestone or a demonstrated
 rbtree dependency.
 

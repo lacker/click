@@ -66,8 +66,8 @@ int32 read_shared() {
 }
 
 int32 read_private() {
-    owns private_table[0..4];
-    owns local_table[0..4];
+    views private_table[0..4];
+    views local_table[0..4];
     requires private_table[0] > -1000;
     requires private_table[0] < 1000;
     requires private_table[2] > -1000;
@@ -137,15 +137,11 @@ int32 run() {
     have private_file::read_private::local_table[2] < 1000 by simp;
     have private_file::read_private::local_table[3] > -1000 by simp;
     have private_file::read_private::local_table[3] < 1000 by simp;
-    step();
-    step();
-    step();
-    step();
-    step();
+    execute();
     simp();
 }
 ```
 
 ```expect
-fail: run.contract
+pass
 ```

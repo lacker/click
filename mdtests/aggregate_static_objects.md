@@ -93,6 +93,7 @@ int32 increment_file_private() {
 
 int32 run() {
     owns shared.value;
+    owns shared.ready;
     owns private_file::increment_private::private.value;
     owns private_file::file_private.value;
     requires shared.value == 0;
@@ -103,22 +104,11 @@ int32 run() {
     requires private_file::file_private.value < 1000;
     ensures result == 5;
 } by {
-    have shared.value == 0 by simp;
-    have shared.value < 1000 by simp;
-    step();
-    have shared.value == 1 by simp;
-    have shared.value < 1000 by simp;
-    step();
-    have private_file::increment_private::private.value == 0 by simp;
-    have private_file::increment_private::private.value < 1000 by simp;
-    step();
-    have private_file::file_private.value < 1000 by simp;
-    step();
-    step();
+    execute();
     simp();
 }
 ```
 
 ```expect
-fail: run.contract
+pass
 ```

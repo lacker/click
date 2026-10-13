@@ -57,5 +57,5 @@ int32 loop_writes_global() {
 ```
 
 ```expect
-fail: left side evaluated to load((char *)&g + 8), right side evaluated to 3
+fail: left side evaluated to at(<state A>, *(int32 *)((char *)&g + 8)), right side evaluated to 3
 ```

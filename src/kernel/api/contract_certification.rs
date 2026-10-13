@@ -1229,7 +1229,7 @@ fn c_function_contract_entry_facts(
         }
     }
     // A narrow integer parameter holds a value of its type: the argument was
-    // converted to it, and that conversion owes the range.
+    // converted to it, and that conversion lands in the range.
     for argument in arguments {
         if let CExpression::Value(value) = argument
             && let Some(facts) = c_narrow_integer_range_facts(value)

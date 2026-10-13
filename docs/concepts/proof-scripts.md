@@ -1,7 +1,7 @@
 # Proofs and proof scripts
 
-A Click contract says what must hold. Its proof clause says how Click should
-establish it.
+A Click contract says what must hold, and its proof clause says how Click
+should establish it.
 
 Use an omitted proof clause or `by auto;` by default. `auto` orchestrates C
 execution, effect reasoning, and proposition reasoning through checked proof

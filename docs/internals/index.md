@@ -7,6 +7,9 @@ name differ, user-facing documentation uses the Surface Click name.
 ## Architecture and trust
 
 - [System architecture](architecture.md)
+- [The verification pipeline](../concepts/verification-pipeline.md)
+- [Surface Click and Kernel Click](../concepts/surface-and-kernel.md)
+- [Proof landscape](../concepts/proof-landscape.md)
 - [Proof objects](proof-objects.md)
 - [Kernel implementation](kernel.md)
 - [Separation logic](separation-logic.md)

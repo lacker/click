@@ -23,11 +23,13 @@ system headers, or frontend toolchain.
   [C system headers](../language/c.md#system-headers). Proofs assume a C
   library that implements Click's interfaces as specified. Click does not
   import or verify a platform's library headers or bodies to supply an
-  interface.
-- **Compiler import is for the program's own code.** Use it only when headers
-  carry code that is itself under verification, such as Linux's own headers
-  with their structs, inline helpers, macros, and `CONFIG_*` selection. Calls
-  that code makes to anything outside it still use Click-side contracts.
+  interface. A compiler import searches the same headers; see
+  [Click's system headers](#clicks-system-headers).
+- **Compiler import is for the program's own code.** Use it when the build
+  selects that code: its `-I` and `-D` flags, or headers that carry code
+  under verification, such as Linux's own headers with their structs, inline
+  helpers, macros, and `CONFIG_*` selection. Calls that code makes to
+  anything outside it still use Click-side contracts.
 - **A language frontend is a separate case.** Click has no C++ or Rust type
   checker of its own, so the pinned Clang 19 exporter and Charon are accepted
   frontends. Each runs once at `click import lock`; verification loads the
@@ -83,12 +85,15 @@ associated proof tools. An invalid configuration or missing lock is an error;
 it does not fall back to source-bundle mode.
 
 Verification loads the recorded C artifact without executing or locating the
-configured compiler. The artifact and version-2 lock can move to another host
+configured compiler. The artifact and version-3 lock can move to another host
 with the same config bytes, C source, and project-local included headers. Loading
 checks their hashes, the artifact bytes and size, the target, the recorded
 toolchain/invocation identity, and the source projection identity. System
 headers used during preparation are identified in the lock but need not be
-installed on the verification host. A version-1 C lock must be refreshed.
+installed on the verification host. A version-1 C lock must be refreshed. A
+version-2 lock, written before compiler imports searched Click's system
+headers, still loads under its recorded identity: its preparation opened none
+of them. Refreshing it writes version 3.
 
 This verifies the **prepared snapshot**. A change to the C source or an opened
 project-local header is rejected during loading. A change to external headers,
@@ -1310,18 +1315,71 @@ Configuration cannot override its fixed standard or profile macros. Target and
 invocation identities distinguish locks even when the emitted C is identical.
 Selecting this profile grants no pthread contract or concurrency semantics.
 
-Both profiles require explicit include directories: `-nostdinc` disables
-ambient system include search. Supply the program's own header roots with
-ordered `-isystem` or `-I` arguments; those roots and opened headers
-participate in the preparation inventory and lock identity. A standard
-library interface is not such a root, per the
-[interface boundary](#interface-boundary). Compiler mode does not supply
-Click's modeled system headers either, so a translation unit that includes
-`<string.h>`, `<stddef.h>`, `<stdint.h>`, or another system header fails at
-`click import lock` with the compiler's missing-header error; those headers
-are available only to sources Click reads directly. Lock preparation may succeed while
-Click's C parser still refuses an unsupported declaration in an included
-header.
+Both profiles disable ambient system include search with `-nostdinc`, so the
+compiler never reads the host's C library headers. Supply the program's own
+header roots with ordered `-iquote`, `-I`, or `-isystem` arguments; those
+roots and opened headers participate in the preparation inventory and lock
+identity. A standard library interface is not such a root, per the
+[interface boundary](#interface-boundary): `#include <string.h>` finds
+[Click's system headers](#clicks-system-headers), which the import adds after
+every configured directory. Lock preparation may succeed while Click's C
+parser still refuses an unsupported declaration in an included header.
+
+### Click's system headers
+
+During `click import lock`, Click writes its system headers for the selected
+target to a private temporary directory and passes it as the last `-isystem`
+directory, after the configuration's arguments. That is the place GCC and
+Clang give the C library's headers, so their usual search order applies:
+
+1. `#include "file.h"` searches the including file's directory, then the
+   `-iquote` directories.
+2. Both forms then search the `-I` directories, then the configured
+   `-isystem` directories, in order.
+3. Last come Click's headers.
+
+The modeled headers have the same text, and the same meaning, as in direct
+mode: `<stdint.h>`, `<inttypes.h>`, `<stdbool.h>`, and `<limits.h>` on both
+targets, and `<stddef.h>`, `<string.h>`, and `<stdlib.h>` on the user-space
+target. See the [C system headers](../language/c.md#system-headers) table.
+`<pthread.h>` and `<stdatomic.h>` belong to the modeled-pthread runtime,
+which refuses compiler-imported sources, so an import refuses them by name.
+
+A header Click does not model is refused. On the user-space target, each
+other header of C11 and POSIX.1-2017, such as `<stdio.h>`, `<ctype.h>`, or
+`<sys/types.h>`, exists and stops preparation with an `#error` naming it, so
+`__has_include(<stdio.h>)` is true, as it is with a C library, and a program
+cannot silently take a branch its real build would not take. A header that is
+in neither set, such as `<openssl/ssl.h>`, is missing; the compiler's
+`No such file or directory` error is followed by a note listing the headers
+Click supplies for the target. The kernel target supplies only its four
+freestanding headers, since a kernel build has no C library.
+
+Click's headers declare functions; they carry no contracts. A call is
+checked against Click's standard-library contract for the function's name,
+whichever declaration the compiler selected, just as for a prototype the
+program writes itself. A project header that GCC finds first is therefore
+used as GCC would use it: a `limits.h` in a `-I` or `-isystem` directory
+replaces Click's `<limits.h>`, and one that continues with
+`#include_next <limits.h>` reaches Click's. A `-iquote` directory serves only
+quoted includes. Such a project header is an ordinary locked project input,
+and its macros and declarations are the program's; what Click trusts is
+unchanged.
+
+The artifact's line markers name Click's headers as `<string.h>`, not the
+temporary directory, so a refresh reproduces the artifact byte for byte. The
+lock records, beside the project dependencies, the name and SHA-256 of each
+Click header the compiler opened, and a digest of the target's header set:
+which names exist and whether each is modeled or refused, which decides what
+an include or `__has_include` finds. Loading refuses a lock when either no
+longer matches the running Click, so a change to Click's headers requires a
+refresh.
+
+Existing configurations that pin a C library's include directories with
+`-isystem`, as `design/charon-trial/zlib/` does with GCC 14's and glibc's,
+keep them: those directories precede Click's, so every header they supply is
+read from them, a locked input like any other. Refreshing those configs
+reproduces their committed artifacts byte for byte.
 
 Configured forced includes and ordered `-D` and `-U` options select additional
 preprocessing inputs. Other compiler options are rejected unless a named option

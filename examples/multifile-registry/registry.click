@@ -48,6 +48,9 @@ int32 registry_run() {
     requires counters[0].value == 10;
     requires counters[1].value == 20;
     requires counters[2].value == 99;
+    requires counters[0].name == 97;
+    requires counters[1].name == 98;
+    requires counters[2].name == 122;
     requires counters[0].value > -1000;
     requires counters[0].value < 1000;
     requires counters[1].value > -1000;
@@ -80,6 +83,7 @@ int32 registry_run() {
         step();
         step();
         have first == 2;
+        have counters[0].value == 11;
         have counters[0].value > -1000;
         have counters[0].value < 1000;
         have alpha::calls > -1000;

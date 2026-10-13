@@ -48,6 +48,13 @@ as a bug; report uncertain classifications to the user.
 Follow [bug filing](bugs/README.md) and [issue filing](issues/README.md) for
 reproductions, acceptance criteria, and cleanup when a fix lands.
 
+## Keep `docs/` for AI readers; leave `guide/` to the maintainer
+
+`docs/` is the AI reference: written for AI readers who use or develop Click
+and maintained by agents. Keep it accurate, dense, and backed by checked
+examples. `guide/` holds the human-written guide; agents do not create or edit
+files under it. The maintainer writes it.
+
 ## Keep existing C as the verification boundary
 
 Prove the existing program. Do not weaken claims or rewrite otherwise-correct C

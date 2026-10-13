@@ -11,30 +11,28 @@ The C is written as a C programmer would write it and is not adapted to Click.
 | `label.h` | Public prototypes, beside the sources |
 | `label_fit.c` | `label_fit`, which uses the configured capacity |
 | `label_copy.c` | `label_measure` and `label_copy`, which call `strlen`, `memcpy`, and `label_fit` |
-| `label_fit.click`, `label_fit.click.import.json` | Compiler import with the build's flags |
-| `label_copy.click` | Direct mode with Click's `<string.h>` and an `extern` contract for `label_fit` |
+| `label.click`, `label.click.import.json` | One sidecar and one compiler import for both files, with the build's flags |
 
-`label_fit.click` proves that the result is below the build's capacity of 32
-and never exceeds the input length. It needs a compiler import because
-`label_config.h` is found only through `-Iinclude` and the capacity comes from
-`-D`. `label_copy.click` proves that `label_measure` returns less than 32 for
-any readable C string, assuming `strlen`'s library contract and the `extern`
-contract for `label_fit`, which restates what `label_fit.click` proves. The two
-files can't share one sidecar today: compiler imports supply no system
-headers, and direct mode has no `-I` or `-D`.
+`label.click` proves that `label_fit`'s result is below the build's capacity
+of 32 and never exceeds the input length, and that `label_measure` returns
+less than 32 for any readable C string. The import passes the `Makefile`'s
+`-Iinclude -DLABEL_CAPACITY=32` for both files; `<string.h>` in
+`label_copy.c` resolves to Click's modeled header, so the `strlen` call is
+checked against Click's library contract. The call to `label_fit` applies
+`label_fit`'s verified contract.
 
-`label_copy` is not specified yet. Its `memcpy(dst, src, n)` call with a
-`const char *` source is refused
-(`bugs/memcpy-refuses-a-const-source-pointer.md`); the C stays as written.
+`label_copy` also verifies: for a readable source string and a separate
+32-byte destination buffer, it copies the bounded prefix, appends a terminator,
+and returns an index below 32. The standard library model accepts its
+`const char *` source without changing the C.
 
 From this directory:
 
 ```sh
-click import lock label_fit.click
-click verify label_fit.click
-click verify label_copy.click
+click import lock label.click
+click verify label.click
 ```
 
 `make` builds `liblabel.a` with a host compiler; Click does not use the
-`Makefile`. The lock and `label_fit.i` are local outputs, refreshed by the
+`Makefile`. The lock and the `.i` files are local outputs, refreshed by the
 examples gate.

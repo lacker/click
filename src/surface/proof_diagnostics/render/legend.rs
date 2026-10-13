@@ -412,8 +412,9 @@ impl SnapshotLabels {
     /// Expand references breadth-first under fixed entry/byte limits. Number
     /// order, rather than hash-map order, makes reports deterministic.
     pub(crate) fn trace_legend(&mut self) -> String {
+        let states = self.state_legend();
         if self.pointer_values.is_empty() && self.memories.is_empty() {
-            return String::new();
+            return states;
         }
         let mut output =
             String::from("\n\n  label definitions (recorded constructions, not additional facts):");
@@ -453,6 +454,7 @@ impl SnapshotLabels {
         if pointer_index <= self.pointer_values.len() || memory_index < self.memories.len() {
             output.push_str("\n    … additional label definitions omitted (legend limit)");
         }
+        output.push_str(&states);
         output
     }
 }

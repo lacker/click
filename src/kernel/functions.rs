@@ -7,6 +7,7 @@ use super::loans::{
 };
 use super::model_fields::{ModelFieldOrigin, ModelMint, algebraic_value_variable};
 use super::prelude::*;
+use super::spec::walk::{SpecNode, Visit, spec_tree_all};
 use super::thread_confinement::confined_resource_name;
 use crate::kernel::ResourceDescription;
 use std::sync::Arc;
@@ -13590,33 +13591,84 @@ fn contract_refinement_proves(assumptions: &PureFactContext, proposition: &Propo
 }
 
 fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool {
-    match proposition {
-        SpecProposition::Comparison { left, right, .. } => {
-            spec_expression_is_state_independent(left)
-                && spec_expression_is_state_independent(right)
+    spec_tree_all(SpecNode::Proposition(proposition), state_independent_node)
+}
+
+pub(super) fn spec_algebraic_expression_is_state_independent(
+    expression: &SpecAlgebraicExpression,
+) -> bool {
+    spec_tree_all(SpecNode::Algebraic(expression), state_independent_node)
+}
+
+/// Whether one spec node reads no program state of its own. Anything not
+/// listed reads state, or is not supported here, and refuses.
+fn state_independent_node(node: SpecNode<'_>) -> Visit<()> {
+    match node {
+        SpecNode::Proposition(proposition) => match proposition {
+            SpecProposition::Comparison { .. }
+            | SpecProposition::FloatClassification { .. }
+            | SpecProposition::Defined(_)
+            | SpecProposition::And(..)
+            | SpecProposition::Or(..)
+            | SpecProposition::Implies(..)
+            | SpecProposition::Not(_)
+            | SpecProposition::ForAllMachineInteger { .. }
+            | SpecProposition::ForAllInt32 { .. }
+            | SpecProposition::ForAllInteger { .. }
+            | SpecProposition::ForAllAlgebraic { .. }
+            | SpecProposition::ForAllPointer { .. }
+            | SpecProposition::ExistsMachineInteger { .. }
+            | SpecProposition::ExistsInt32 { .. }
+            | SpecProposition::ExistsInteger { .. }
+            | SpecProposition::ExistsAlgebraic { .. }
+            | SpecProposition::ExistsPointer { .. } => Visit::Descend,
+            _ => Visit::Stop(()),
+        },
+        SpecNode::Expression(expression) => match expression {
+            SpecExpression::Value(_) => Visit::Skip,
+            SpecExpression::CExpression(expression)
+                if c_expression_is_state_independent(expression) =>
+            {
+                Visit::Skip
+            }
+            crate::kernel::binary_spec_expression!(_, _)
+            | SpecExpression::BitwiseNot(_)
+            | SpecExpression::LoopEntrySnapshot(_)
+            | SpecExpression::Cast(..)
+            | SpecExpression::If { .. }
+            | SpecExpression::Let { .. }
+            | SpecExpression::PureFunctionApplication { .. }
+            | SpecExpression::PointerOffset { .. } => Visit::Descend,
+            _ => Visit::Stop(()),
+        },
+        // An Integer value reads the state exactly when a machine value inside
+        // it does: `to_integer(*p)` reads `*p`. A `Term` is closed, whether an
+        // Integer binder, a constant, or a value already resolved at lowering.
+        SpecNode::Integer(integer) => match integer {
+            SpecIntegerExpression::Term(_) => Visit::Skip,
+            SpecIntegerExpression::FromMachine(_)
+            | SpecIntegerExpression::Negate(_)
+            | crate::kernel::binary_spec_integer_expression!(_, _)
+            | SpecIntegerExpression::PureFunctionApplication { .. } => Visit::Descend,
+            SpecIntegerExpression::ResourceField(_)
+            | SpecIntegerExpression::AlgebraicMatch { .. }
+            | SpecIntegerExpression::RangeFold { .. } => Visit::Stop(()),
+        },
+        SpecNode::Algebraic(algebraic) => match &algebraic.node {
+            SpecAlgebraicExpressionNode::ResourceField(_) => Visit::Stop(()),
+            SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => {
+                Visit::Skip
+            }
+            SpecAlgebraicExpressionNode::Constructor { .. }
+            | SpecAlgebraicExpressionNode::Match { .. }
+            | SpecAlgebraicExpressionNode::PureFunctionApplication { .. } => Visit::Descend,
+        },
+        SpecNode::AlgebraicValue(_) => Visit::Descend,
+        SpecNode::Argument(SpecPureFunctionArgument::ArrayRef { .. }) => Visit::Stop(()),
+        SpecNode::Argument(_) => Visit::Descend,
+        SpecNode::PredicateArgument(_) | SpecNode::Sequence(_) | SpecNode::Resource(_) => {
+            Visit::Stop(())
         }
-        SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => spec_expression_is_state_independent(expression),
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            spec_proposition_is_state_independent(left)
-                && spec_proposition_is_state_independent(right)
-        }
-        SpecProposition::Not(body)
-        | SpecProposition::ForAllMachineInteger { body, .. }
-        | SpecProposition::ForAllInt32 { body, .. }
-        | SpecProposition::ForAllInteger { body, .. }
-        | SpecProposition::ForAllAlgebraic { body, .. }
-        | SpecProposition::ForAllPointer { body, .. }
-        | SpecProposition::ExistsMachineInteger { body, .. }
-        | SpecProposition::ExistsInt32 { body, .. }
-        | SpecProposition::ExistsInteger { body, .. }
-        | SpecProposition::ExistsAlgebraic { body, .. }
-        | SpecProposition::ExistsPointer { body, .. } => {
-            spec_proposition_is_state_independent(body)
-        }
-        _ => false,
     }
 }
 
@@ -13629,189 +13681,201 @@ fn spec_proposition_is_state_independent(proposition: &SpecProposition) -> bool 
 /// explicit refinement theorem. Mathematical `Integer` comparisons stay
 /// outside it for the same reason. The caller separately checks resource and
 /// footprint refinement.
+fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecProposition) -> bool {
+    spec_tree_all(
+        SpecNode::Proposition(proposition),
+        stateful_memory_refinement_node,
+    )
+}
+
+/// One node of [`spec_proposition_supports_stateful_memory_refinement`].
 ///
 /// Every variant is listed. A new specification form is excluded until its
 /// refinement behaviour has been considered, which a wildcard would silently
 /// reverse.
-fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecProposition) -> bool {
-    match proposition {
-        SpecProposition::SequenceComparison { left, right, .. } => {
-            spec_sequence_supports_stateful_memory_refinement(left)
-                && spec_sequence_supports_stateful_memory_refinement(right)
+fn stateful_memory_refinement_node(node: SpecNode<'_>) -> Visit<()> {
+    match node {
+        SpecNode::Proposition(proposition) => match proposition {
+            SpecProposition::SequenceComparison { .. }
+            | SpecProposition::SequenceMembership { .. }
+            | SpecProposition::Comparison { .. }
+            | SpecProposition::AlgebraicComparison { .. }
+            | SpecProposition::FloatClassification { .. }
+            | SpecProposition::Defined(_)
+            | SpecProposition::And(..)
+            | SpecProposition::Or(..)
+            | SpecProposition::Implies(..)
+            | SpecProposition::Not(_)
+            | SpecProposition::ForAllMachineInteger { .. }
+            | SpecProposition::ForAllInt32 { .. }
+            | SpecProposition::ForAllInteger { .. }
+            | SpecProposition::ForAllAlgebraic { .. }
+            | SpecProposition::ForAllPointer { .. }
+            | SpecProposition::ExistsMachineInteger { .. }
+            | SpecProposition::ExistsInt32 { .. }
+            | SpecProposition::ExistsInteger { .. }
+            | SpecProposition::ExistsAlgebraic { .. }
+            | SpecProposition::ExistsPointer { .. } => Visit::Descend,
+            SpecProposition::IntegerComparison { .. }
+            | SpecProposition::Predicate { .. }
+            | SpecProposition::ResourceSeparate { .. }
+            | SpecProposition::ResourceContains { .. }
+            | SpecProposition::ValidPlace { .. }
+            | SpecProposition::MemoryInitialized { .. }
+            | SpecProposition::MemoryLoadable { .. } => Visit::Stop(()),
+        },
+        SpecNode::Sequence(_) => Visit::Descend,
+        SpecNode::Expression(expression) => match expression {
+            // A field read names an instance the two interfaces share. Both the
+            // current and the entry projection lower through
+            // `resource_instance_at_path` against the state the caller supplies;
+            // a projection the state cannot answer refuses the refinement there.
+            SpecExpression::ResourceField { .. } | SpecExpression::Value(_) => Visit::Skip,
+            SpecExpression::IntegerToMachine { .. } => Visit::Stop(()),
+            SpecExpression::CExpression(expression) => {
+                if c_expression_supports_stateful_memory_refinement(expression) {
+                    Visit::Skip
+                } else {
+                    Visit::Stop(())
+                }
+            }
+            crate::kernel::binary_spec_expression!(_, _)
+            | SpecExpression::BitwiseNot(_)
+            | SpecExpression::Cast(..)
+            | SpecExpression::If { .. }
+            | SpecExpression::Let { .. }
+            | SpecExpression::PureFunctionApplication { .. }
+            | SpecExpression::PointerOffset { .. }
+            | SpecExpression::MemoryLoad {
+                memory: SpecMemory::Current | SpecMemory::FunctionEntry,
+                ..
+            }
+            | SpecExpression::AlgebraicMatch { .. } => Visit::Descend,
+            SpecExpression::CountedResourceCount { .. }
+            | SpecExpression::RangeFold { .. }
+            | SpecExpression::LoopEntrySnapshot(_)
+            | SpecExpression::MemoryLoad { .. }
+            | SpecExpression::AggregateFieldValue { .. } => Visit::Stop(()),
+        },
+        // Algebraic values are ordinary terms over instance fields,
+        // constructors, match arms, and opaque pure functions. None of them
+        // reads memory except through the `SpecExpression` nodes, which are
+        // filtered by the same rule, so an algebraic clause is admitted exactly
+        // when its scalar leaves are.
+        SpecNode::Algebraic(algebraic) => match &algebraic.node {
+            SpecAlgebraicExpressionNode::Variable(_)
+            | SpecAlgebraicExpressionNode::Binding(_)
+            | SpecAlgebraicExpressionNode::ResourceField(_) => Visit::Skip,
+            SpecAlgebraicExpressionNode::Constructor { .. }
+            | SpecAlgebraicExpressionNode::Match { .. }
+            | SpecAlgebraicExpressionNode::PureFunctionApplication { .. } => Visit::Descend,
+        },
+        SpecNode::AlgebraicValue(value) => match value {
+            SpecAlgebraicValue::C(_) | SpecAlgebraicValue::Algebraic(_) => Visit::Descend,
+            // Mathematical `Integer` values keep the exclusion that
+            // `SpecPureFunctionArgument::Integer` states.
+            SpecAlgebraicValue::Integer(_) => Visit::Stop(()),
+        },
+        SpecNode::Argument(argument) => match argument {
+            SpecPureFunctionArgument::Value(_) | SpecPureFunctionArgument::Algebraic(_) => {
+                Visit::Descend
+            }
+            SpecPureFunctionArgument::Integer(_) => Visit::Stop(()),
+            // An array snapshot is an explicit memory image; its stateful
+            // refinement law is not written down.
+            SpecPureFunctionArgument::ArrayRef { .. } => Visit::Stop(()),
+        },
+        // Every route to these is refused above, before they are reached.
+        SpecNode::Integer(_) | SpecNode::PredicateArgument(_) | SpecNode::Resource(_) => {
+            Visit::Stop(())
         }
-        SpecProposition::SequenceMembership { element, sequence } => {
-            spec_expression_supports_stateful_memory_refinement(element)
-                && spec_sequence_supports_stateful_memory_refinement(sequence)
-        }
-        SpecProposition::Comparison { left, right, .. } => {
-            spec_expression_supports_stateful_memory_refinement(left)
-                && spec_expression_supports_stateful_memory_refinement(right)
-        }
-        SpecProposition::AlgebraicComparison { left, right, .. } => {
-            spec_algebraic_expression_supports_stateful_memory_refinement(left)
-                && spec_algebraic_expression_supports_stateful_memory_refinement(right)
-        }
-        SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => {
-            spec_expression_supports_stateful_memory_refinement(expression)
-        }
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            spec_proposition_supports_stateful_memory_refinement(left)
-                && spec_proposition_supports_stateful_memory_refinement(right)
-        }
-        SpecProposition::Not(body)
-        | SpecProposition::ForAllMachineInteger { body, .. }
-        | SpecProposition::ForAllInt32 { body, .. }
-        | SpecProposition::ForAllInteger { body, .. }
-        | SpecProposition::ForAllAlgebraic { body, .. }
-        | SpecProposition::ForAllPointer { body, .. }
-        | SpecProposition::ExistsMachineInteger { body, .. }
-        | SpecProposition::ExistsInt32 { body, .. }
-        | SpecProposition::ExistsInteger { body, .. }
-        | SpecProposition::ExistsAlgebraic { body, .. }
-        | SpecProposition::ExistsPointer { body, .. } => {
-            spec_proposition_supports_stateful_memory_refinement(body)
-        }
-        SpecProposition::IntegerComparison { .. }
-        | SpecProposition::Predicate { .. }
-        | SpecProposition::ResourceSeparate { .. }
-        | SpecProposition::ResourceContains { .. }
-        | SpecProposition::ValidPlace { .. }
-        | SpecProposition::MemoryInitialized { .. }
-        | SpecProposition::MemoryLoadable { .. } => false,
     }
 }
 
-fn spec_sequence_supports_stateful_memory_refinement(sequence: &SpecSequenceExpression) -> bool {
-    match sequence {
-        SpecSequenceExpression::Literal(elements) => elements
-            .iter()
-            .all(spec_expression_supports_stateful_memory_refinement),
-        SpecSequenceExpression::Concat(left, right) => {
-            spec_sequence_supports_stateful_memory_refinement(left)
-                && spec_sequence_supports_stateful_memory_refinement(right)
-        }
-    }
-}
-
-fn spec_expression_supports_stateful_memory_refinement(expression: &SpecExpression) -> bool {
-    match expression {
-        // A field read names an instance the two interfaces share. Both the
-        // current and the entry projection lower through
-        // `resource_instance_at_path` against the state the caller supplies;
-        // a projection the state cannot answer refuses the refinement there.
-        SpecExpression::ResourceField { .. } => true,
-        SpecExpression::Value(_) => true,
-        SpecExpression::IntegerToMachine { .. } => false,
-        SpecExpression::CExpression(expression) => {
-            c_expression_supports_stateful_memory_refinement(expression)
-        }
-        crate::kernel::binary_spec_expression!(left, right) => {
-            spec_expression_supports_stateful_memory_refinement(left)
-                && spec_expression_supports_stateful_memory_refinement(right)
-        }
-        SpecExpression::BitwiseNot(body) | SpecExpression::Cast(body, _) => {
-            spec_expression_supports_stateful_memory_refinement(body)
-        }
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            spec_proposition_supports_stateful_memory_refinement(condition)
-                && spec_expression_supports_stateful_memory_refinement(then_branch)
-                && spec_expression_supports_stateful_memory_refinement(else_branch)
-        }
-        SpecExpression::Let { value, body, .. } => {
-            spec_expression_supports_stateful_memory_refinement(value)
-                && spec_expression_supports_stateful_memory_refinement(body)
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => arguments
-            .iter()
-            .all(spec_pure_function_argument_supports_stateful_memory_refinement),
-        SpecExpression::PointerOffset {
-            pointer, elements, ..
-        } => {
-            spec_expression_supports_stateful_memory_refinement(pointer)
-                && spec_expression_supports_stateful_memory_refinement(elements)
-        }
-        SpecExpression::MemoryLoad {
-            memory: SpecMemory::Current | SpecMemory::FunctionEntry,
-            pointer,
-            ..
-        } => spec_expression_supports_stateful_memory_refinement(pointer),
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            spec_algebraic_expression_supports_stateful_memory_refinement(scrutinee)
-                && arms
-                    .iter()
-                    .all(|arm| spec_expression_supports_stateful_memory_refinement(&arm.body))
-        }
-        SpecExpression::CountedResourceCount { .. }
-        | SpecExpression::RangeFold { .. }
-        | SpecExpression::LoopEntrySnapshot(_)
-        | SpecExpression::MemoryLoad { .. }
-        | SpecExpression::AggregateFieldValue { .. } => false,
-    }
-}
-
-/// Algebraic values are ordinary terms over instance fields, constructors,
-/// match arms, and opaque pure functions. None of them reads memory except
-/// through the `SpecExpression` nodes below, which are filtered by the same
-/// rule, so an algebraic clause is admitted exactly when its scalar leaves
-/// are.
-fn spec_algebraic_expression_supports_stateful_memory_refinement(
+/// The datatype reflexivity shortcut may skip evaluation only for expressions
+/// that cannot emit a guard or obligation. State independence alone does not
+/// imply totality: a mathematical conversion may have a required domain.
+pub(super) fn spec_algebraic_expression_is_obligation_free(
     expression: &SpecAlgebraicExpression,
 ) -> bool {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_)
-        | SpecAlgebraicExpressionNode::Binding(_)
-        | SpecAlgebraicExpressionNode::ResourceField(_) => true,
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => fields
-            .iter()
-            .all(spec_algebraic_value_supports_stateful_memory_refinement),
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            spec_algebraic_expression_supports_stateful_memory_refinement(scrutinee)
-                && arms.iter().all(|arm| {
-                    spec_algebraic_expression_supports_stateful_memory_refinement(&arm.body)
-                })
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => arguments
-            .iter()
-            .all(spec_pure_function_argument_supports_stateful_memory_refinement),
+    spec_tree_all(SpecNode::Algebraic(expression), obligation_free_node)
+}
+
+fn obligation_free_node(node: SpecNode<'_>) -> Visit<()> {
+    match node {
+        SpecNode::Algebraic(algebraic) => match &algebraic.node {
+            SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => {
+                Visit::Skip
+            }
+            SpecAlgebraicExpressionNode::PureFunctionApplication { name, .. }
+                if name == "to_nat" =>
+            {
+                Visit::Stop(())
+            }
+            SpecAlgebraicExpressionNode::Constructor { .. }
+            | SpecAlgebraicExpressionNode::PureFunctionApplication { .. } => Visit::Descend,
+            SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
+                if algebraic_match_covers_each_variant_once(scrutinee, arms) {
+                    Visit::Descend
+                } else {
+                    Visit::Stop(())
+                }
+            }
+            SpecAlgebraicExpressionNode::ResourceField(_) => Visit::Stop(()),
+        },
+        SpecNode::AlgebraicValue(_) => Visit::Descend,
+        SpecNode::Argument(SpecPureFunctionArgument::ArrayRef { .. }) => Visit::Stop(()),
+        SpecNode::Argument(_) => Visit::Descend,
+        // A C value is admitted only as a literal, a variable, or a function
+        // address; it is not walked.
+        SpecNode::Expression(
+            SpecExpression::Value(_)
+            | SpecExpression::CExpression(
+                CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_),
+            ),
+        ) => Visit::Skip,
+        SpecNode::Expression(_) => Visit::Stop(()),
+        SpecNode::Integer(integer) => match integer {
+            SpecIntegerExpression::Term(_) => Visit::Skip,
+            SpecIntegerExpression::Negate(_)
+            | SpecIntegerExpression::Add(..)
+            | SpecIntegerExpression::Subtract(..)
+            | SpecIntegerExpression::Multiply(..)
+            | SpecIntegerExpression::PureFunctionApplication { .. } => Visit::Descend,
+            SpecIntegerExpression::TruncatingQuotient(..)
+            | SpecIntegerExpression::TruncatingRemainder(..)
+            | SpecIntegerExpression::AlgebraicMatch { .. }
+            | SpecIntegerExpression::FromMachine(_)
+            | SpecIntegerExpression::ResourceField(_)
+            | SpecIntegerExpression::RangeFold { .. } => Visit::Stop(()),
+        },
+        SpecNode::Proposition(_)
+        | SpecNode::PredicateArgument(_)
+        | SpecNode::Sequence(_)
+        | SpecNode::Resource(_) => Visit::Stop(()),
     }
 }
 
-fn spec_algebraic_value_supports_stateful_memory_refinement(value: &SpecAlgebraicValue) -> bool {
-    match value {
-        SpecAlgebraicValue::C(expression) => {
-            spec_expression_supports_stateful_memory_refinement(expression)
-        }
-        // Mathematical `Integer` values keep the exclusion that
-        // `SpecPureFunctionArgument::Integer` already states.
-        SpecAlgebraicValue::Integer(_) => false,
-        SpecAlgebraicValue::Algebraic(expression) => {
-            spec_algebraic_expression_supports_stateful_memory_refinement(expression)
-        }
-    }
-}
-
-fn spec_pure_function_argument_supports_stateful_memory_refinement(
-    argument: &SpecPureFunctionArgument,
+/// Whether a match names each variant of its scrutinee's type exactly once,
+/// binding as many names as that variant has fields.
+fn algebraic_match_covers_each_variant_once(
+    scrutinee: &SpecAlgebraicExpression,
+    arms: &[SpecAlgebraicResultMatchArm],
 ) -> bool {
-    match argument {
-        SpecPureFunctionArgument::Value(expression) => {
-            spec_expression_supports_stateful_memory_refinement(expression)
-        }
-        SpecPureFunctionArgument::Integer(_) => false,
-        SpecPureFunctionArgument::Algebraic(expression) => {
-            spec_algebraic_expression_supports_stateful_memory_refinement(expression)
-        }
-        // An array snapshot is an explicit memory image; its stateful
-        // refinement law is not written down.
-        SpecPureFunctionArgument::ArrayRef { .. } => false,
+    if arms.len() != scrutinee.algebraic_type.variants.len() {
+        return false;
     }
+    let variants = scrutinee
+        .algebraic_type
+        .variants
+        .iter()
+        .map(|variant| (variant.name.as_str(), variant.fields.len()))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    arms.iter().all(|arm| {
+        seen.insert(arm.variant.as_str())
+            && variants.get(arm.variant.as_str()) == Some(&arm.bindings.len())
+    })
 }
 
 fn c_expression_supports_stateful_memory_refinement(expression: &CExpression) -> bool {
@@ -13858,194 +13922,6 @@ fn c_expression_supports_stateful_memory_refinement(expression: &CExpression) ->
     }
 }
 
-fn spec_expression_is_state_independent(expression: &SpecExpression) -> bool {
-    match expression {
-        SpecExpression::Value(_) => true,
-        SpecExpression::CExpression(expression) => c_expression_is_state_independent(expression),
-        crate::kernel::binary_spec_expression!(left, right) => {
-            spec_expression_is_state_independent(left)
-                && spec_expression_is_state_independent(right)
-        }
-        SpecExpression::BitwiseNot(body)
-        | SpecExpression::LoopEntrySnapshot(body)
-        | SpecExpression::Cast(body, _) => spec_expression_is_state_independent(body),
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            spec_proposition_is_state_independent(condition)
-                && spec_expression_is_state_independent(then_branch)
-                && spec_expression_is_state_independent(else_branch)
-        }
-        SpecExpression::Let { value, body, .. } => {
-            spec_expression_is_state_independent(value)
-                && spec_expression_is_state_independent(body)
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => arguments
-            .iter()
-            .all(spec_pure_function_argument_is_state_independent),
-        SpecExpression::PointerOffset {
-            pointer, elements, ..
-        } => {
-            spec_expression_is_state_independent(pointer)
-                && spec_expression_is_state_independent(elements)
-        }
-        _ => false,
-    }
-}
-
-fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionArgument) -> bool {
-    match argument {
-        SpecPureFunctionArgument::Value(expression) => {
-            spec_expression_is_state_independent(expression)
-        }
-        SpecPureFunctionArgument::Integer(expression) => {
-            spec_integer_expression_is_state_independent(expression)
-        }
-        SpecPureFunctionArgument::Algebraic(expression) => {
-            spec_algebraic_expression_is_state_independent(expression)
-        }
-        SpecPureFunctionArgument::ArrayRef { .. } => false,
-    }
-}
-
-/// An Integer argument or field reads the state exactly when a machine value
-/// inside it does: `to_integer(*p)` reads `*p`. A `Term` is closed, whether an
-/// Integer binder, a constant, or a value already resolved at lowering.
-fn spec_integer_expression_is_state_independent(expression: &SpecIntegerExpression) -> bool {
-    match expression {
-        SpecIntegerExpression::Term(_) => true,
-        SpecIntegerExpression::FromMachine(value) => spec_expression_is_state_independent(value),
-        SpecIntegerExpression::Negate(value) => spec_integer_expression_is_state_independent(value),
-        crate::kernel::binary_spec_integer_expression!(left, right) => {
-            spec_integer_expression_is_state_independent(left)
-                && spec_integer_expression_is_state_independent(right)
-        }
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => arguments
-            .iter()
-            .all(spec_pure_function_argument_is_state_independent),
-        SpecIntegerExpression::ResourceField(_)
-        | SpecIntegerExpression::AlgebraicMatch { .. }
-        | SpecIntegerExpression::RangeFold { .. } => false,
-    }
-}
-
-/// The datatype reflexivity shortcut may skip evaluation only for expressions
-/// that cannot emit a guard or obligation. State independence alone does not
-/// imply totality: a mathematical conversion may have a required domain.
-pub(super) fn spec_algebraic_expression_is_obligation_free(
-    expression: &SpecAlgebraicExpression,
-) -> bool {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => true,
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            fields.iter().all(|field| match field {
-                SpecAlgebraicValue::C(value) => spec_value_is_obligation_free(value),
-                SpecAlgebraicValue::Integer(value) => spec_integer_is_obligation_free(value),
-                SpecAlgebraicValue::Algebraic(value) => {
-                    spec_algebraic_expression_is_obligation_free(value)
-                }
-            })
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { name, arguments } => {
-            name != "to_nat" && arguments.iter().all(spec_argument_is_obligation_free)
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            if !spec_algebraic_expression_is_obligation_free(scrutinee)
-                || arms.len() != scrutinee.algebraic_type.variants.len()
-            {
-                return false;
-            }
-            let variants = scrutinee
-                .algebraic_type
-                .variants
-                .iter()
-                .map(|variant| (variant.name.as_str(), variant.fields.len()))
-                .collect::<BTreeMap<_, _>>();
-            let mut seen = BTreeSet::new();
-            arms.iter().all(|arm| {
-                seen.insert(arm.variant.as_str())
-                    && variants.get(arm.variant.as_str()) == Some(&arm.bindings.len())
-                    && spec_algebraic_expression_is_obligation_free(&arm.body)
-            })
-        }
-        SpecAlgebraicExpressionNode::ResourceField(_) => false,
-    }
-}
-
-fn spec_argument_is_obligation_free(argument: &SpecPureFunctionArgument) -> bool {
-    match argument {
-        SpecPureFunctionArgument::Value(value) => spec_value_is_obligation_free(value),
-        SpecPureFunctionArgument::Integer(value) => spec_integer_is_obligation_free(value),
-        SpecPureFunctionArgument::Algebraic(value) => {
-            spec_algebraic_expression_is_obligation_free(value)
-        }
-        SpecPureFunctionArgument::ArrayRef { .. } => false,
-    }
-}
-
-fn spec_value_is_obligation_free(value: &SpecExpression) -> bool {
-    matches!(
-        value,
-        SpecExpression::Value(_)
-            | SpecExpression::CExpression(
-                CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_)
-            )
-    )
-}
-
-fn spec_integer_is_obligation_free(value: &SpecIntegerExpression) -> bool {
-    match value {
-        SpecIntegerExpression::Term(_) => true,
-        SpecIntegerExpression::Negate(inner) => spec_integer_is_obligation_free(inner),
-        SpecIntegerExpression::Add(left, right)
-        | SpecIntegerExpression::Subtract(left, right)
-        | SpecIntegerExpression::Multiply(left, right) => {
-            spec_integer_is_obligation_free(left) && spec_integer_is_obligation_free(right)
-        }
-        SpecIntegerExpression::TruncatingQuotient(_, _)
-        | SpecIntegerExpression::TruncatingRemainder(_, _) => false,
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().all(spec_argument_is_obligation_free)
-        }
-        SpecIntegerExpression::AlgebraicMatch { .. } => false,
-        SpecIntegerExpression::FromMachine(_) | SpecIntegerExpression::ResourceField(_) => false,
-        SpecIntegerExpression::RangeFold { .. } => false,
-    }
-}
-
-pub(super) fn spec_algebraic_expression_is_state_independent(
-    expression: &SpecAlgebraicExpression,
-) -> bool {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::ResourceField(_) => false,
-        SpecAlgebraicExpressionNode::Variable(_) | SpecAlgebraicExpressionNode::Binding(_) => true,
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            fields.iter().all(|field| match field {
-                SpecAlgebraicValue::C(expression) => {
-                    spec_expression_is_state_independent(expression)
-                }
-                SpecAlgebraicValue::Integer(expression) => {
-                    spec_integer_expression_is_state_independent(expression)
-                }
-                SpecAlgebraicValue::Algebraic(expression) => {
-                    spec_algebraic_expression_is_state_independent(expression)
-                }
-            })
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            spec_algebraic_expression_is_state_independent(scrutinee)
-                && arms
-                    .iter()
-                    .all(|arm| spec_algebraic_expression_is_state_independent(&arm.body))
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => arguments
-            .iter()
-            .all(spec_pure_function_argument_is_state_independent),
-    }
-}
-
 pub(super) fn c_expression_is_state_independent(expression: &CExpression) -> bool {
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => true,
@@ -14085,313 +13961,27 @@ pub(super) fn c_expression_is_state_independent(expression: &CExpression) -> boo
     }
 }
 
-/// Whether a specification expression reads a by-value aggregate parameter
+/// Whether a specification subtree reads a by-value aggregate parameter
 /// from the current callee state. Entry-state reads (`old(...)`) use
 /// `SpecMemory::FunctionEntry` and are intentionally ignored: they describe
 /// the caller's argument image, which is stable across the call.
-fn spec_expression_reads_current_parameter(
-    expression: &SpecExpression,
-    parameter_name: &str,
-) -> bool {
-    match expression {
-        SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => false,
-        SpecExpression::IntegerToMachine { value, .. } => {
-            spec_integer_expression_reads_current_parameter(value, parameter_name)
+fn spec_reads_current_parameter(node: SpecNode<'_>, parameter_name: &str) -> bool {
+    !spec_tree_all(node, |node| match node {
+        SpecNode::Expression(SpecExpression::CExpression(expression))
+            if c_expression_mentions_variable(expression, parameter_name) =>
+        {
+            Visit::Stop(())
         }
-        SpecExpression::CExpression(expression) => {
-            c_expression_mentions_variable(expression, parameter_name)
+        SpecNode::Expression(SpecExpression::MemoryLoad { memory, .. })
+        | SpecNode::Proposition(SpecProposition::MemoryLoadable { memory, .. })
+        | SpecNode::PredicateArgument(SpecPredicateArgument::ArrayRef { memory, .. })
+        | SpecNode::Argument(SpecPureFunctionArgument::ArrayRef { memory, .. })
+            if matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_)) =>
+        {
+            Visit::Skip
         }
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            spec_algebraic_expression_reads_current_parameter(scrutinee, parameter_name)
-                || arms
-                    .iter()
-                    .any(|arm| spec_expression_reads_current_parameter(&arm.body, parameter_name))
-        }
-        SpecExpression::CountedResourceCount { arguments, .. } => arguments
-            .iter()
-            .flatten()
-            .any(|argument| spec_expression_reads_current_parameter(argument, parameter_name)),
-        crate::kernel::binary_spec_expression!(left, right) => {
-            spec_expression_reads_current_parameter(left, parameter_name)
-                || spec_expression_reads_current_parameter(right, parameter_name)
-        }
-        SpecExpression::BitwiseNot(body)
-        | SpecExpression::Cast(body, _)
-        | SpecExpression::LoopEntrySnapshot(body) => {
-            spec_expression_reads_current_parameter(body, parameter_name)
-        }
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            spec_proposition_reads_current_parameter(condition, parameter_name)
-                || spec_expression_reads_current_parameter(then_branch, parameter_name)
-                || spec_expression_reads_current_parameter(else_branch, parameter_name)
-        }
-        SpecExpression::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            spec_expression_reads_current_parameter(start, parameter_name)
-                || spec_expression_reads_current_parameter(end, parameter_name)
-                || spec_expression_reads_current_parameter(initial, parameter_name)
-                || spec_expression_reads_current_parameter(body, parameter_name)
-        }
-        SpecExpression::Let { value, body, .. } => {
-            spec_expression_reads_current_parameter(value, parameter_name)
-                || spec_expression_reads_current_parameter(body, parameter_name)
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().any(|argument| {
-                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
-            })
-        }
-        SpecExpression::PointerOffset {
-            pointer, elements, ..
-        } => {
-            spec_expression_reads_current_parameter(pointer, parameter_name)
-                || spec_expression_reads_current_parameter(elements, parameter_name)
-        }
-        SpecExpression::MemoryLoad {
-            memory: SpecMemory::FunctionEntry | SpecMemory::Fixed(_),
-            ..
-        } => false,
-        SpecExpression::AggregateFieldValue { pointer, .. }
-        | SpecExpression::MemoryLoad { pointer, .. } => {
-            spec_expression_reads_current_parameter(pointer, parameter_name)
-        }
-    }
-}
-
-fn spec_integer_expression_reads_current_parameter(
-    expression: &SpecIntegerExpression,
-    parameter_name: &str,
-) -> bool {
-    match expression {
-        SpecIntegerExpression::Term(_) | SpecIntegerExpression::ResourceField(_) => false,
-        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().any(|argument| {
-                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
-            })
-        }
-        SpecIntegerExpression::AlgebraicMatch { scrutinee, arms } => {
-            spec_algebraic_expression_reads_current_parameter(scrutinee, parameter_name)
-                || arms.iter().any(|arm| {
-                    spec_integer_expression_reads_current_parameter(&arm.body, parameter_name)
-                })
-        }
-        SpecIntegerExpression::FromMachine(machine) => {
-            spec_expression_reads_current_parameter(machine, parameter_name)
-        }
-        SpecIntegerExpression::Negate(inner) => {
-            spec_integer_expression_reads_current_parameter(inner, parameter_name)
-        }
-        crate::kernel::binary_spec_integer_expression!(left, right) => {
-            spec_integer_expression_reads_current_parameter(left, parameter_name)
-                || spec_integer_expression_reads_current_parameter(right, parameter_name)
-        }
-        SpecIntegerExpression::RangeFold {
-            index,
-            initial,
-            body,
-            ..
-        } => {
-            let index_reads = match index {
-                SpecIntegerRangeFoldIndex::Int32 { start, end }
-                | SpecIntegerRangeFoldIndex::UInt64 { start, end } => {
-                    spec_expression_reads_current_parameter(start, parameter_name)
-                        || spec_expression_reads_current_parameter(end, parameter_name)
-                }
-                SpecIntegerRangeFoldIndex::Integer { start, end } => {
-                    spec_integer_expression_reads_current_parameter(start, parameter_name)
-                        || spec_integer_expression_reads_current_parameter(end, parameter_name)
-                }
-            };
-            index_reads
-                || spec_integer_expression_reads_current_parameter(initial, parameter_name)
-                || spec_integer_expression_reads_current_parameter(body, parameter_name)
-        }
-    }
-}
-
-fn spec_proposition_reads_current_parameter(
-    proposition: &SpecProposition,
-    parameter_name: &str,
-) -> bool {
-    match proposition {
-        SpecProposition::IntegerComparison { left, right, .. } => {
-            spec_integer_expression_reads_current_parameter(left, parameter_name)
-                || spec_integer_expression_reads_current_parameter(right, parameter_name)
-        }
-        SpecProposition::AlgebraicComparison { left, right, .. } => {
-            spec_algebraic_expression_reads_current_parameter(left, parameter_name)
-                || spec_algebraic_expression_reads_current_parameter(right, parameter_name)
-        }
-        SpecProposition::SequenceMembership { element, sequence } => {
-            spec_expression_reads_current_parameter(element, parameter_name)
-                || spec_sequence_reads_current_parameter(sequence, parameter_name)
-        }
-        SpecProposition::SequenceComparison { left, right, .. } => {
-            spec_sequence_reads_current_parameter(left, parameter_name)
-                || spec_sequence_reads_current_parameter(right, parameter_name)
-        }
-        SpecProposition::Comparison { left, right, .. } => {
-            spec_expression_reads_current_parameter(left, parameter_name)
-                || spec_expression_reads_current_parameter(right, parameter_name)
-        }
-        SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => {
-            spec_expression_reads_current_parameter(expression, parameter_name)
-        }
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            spec_proposition_reads_current_parameter(left, parameter_name)
-                || spec_proposition_reads_current_parameter(right, parameter_name)
-        }
-        SpecProposition::Not(body)
-        | SpecProposition::ForAllMachineInteger { body, .. }
-        | SpecProposition::ForAllInt32 { body, .. }
-        | SpecProposition::ForAllInteger { body, .. }
-        | SpecProposition::ForAllAlgebraic { body, .. }
-        | SpecProposition::ForAllPointer { body, .. }
-        | SpecProposition::ExistsMachineInteger { body, .. }
-        | SpecProposition::ExistsInt32 { body, .. }
-        | SpecProposition::ExistsInteger { body, .. }
-        | SpecProposition::ExistsAlgebraic { body, .. }
-        | SpecProposition::ExistsPointer { body, .. } => {
-            spec_proposition_reads_current_parameter(body, parameter_name)
-        }
-        SpecProposition::Predicate { arguments, .. } => {
-            arguments.iter().any(|argument| match argument {
-                SpecPredicateArgument::Value(expression) => {
-                    spec_expression_reads_current_parameter(expression, parameter_name)
-                }
-                SpecPredicateArgument::ArrayRef { memory, pointer } => {
-                    !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
-                        && spec_expression_reads_current_parameter(pointer, parameter_name)
-                }
-            })
-        }
-        SpecProposition::ResourceSeparate { left, right }
-        | SpecProposition::ResourceContains {
-            parent: left,
-            child: right,
-        } => {
-            spec_resource_reads_current_parameter(left, parameter_name)
-                || spec_resource_reads_current_parameter(right, parameter_name)
-        }
-        SpecProposition::ValidPlace { pointer: base, .. }
-        | SpecProposition::MemoryInitialized { base, .. } => {
-            spec_expression_reads_current_parameter(base, parameter_name)
-        }
-        SpecProposition::MemoryLoadable {
-            memory,
-            base,
-            start,
-            end,
-            ..
-        } => {
-            !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
-                && (spec_expression_reads_current_parameter(base, parameter_name)
-                    || spec_expression_reads_current_parameter(start, parameter_name)
-                    || spec_expression_reads_current_parameter(end, parameter_name))
-        }
-    }
-}
-
-fn spec_sequence_reads_current_parameter(
-    sequence: &SpecSequenceExpression,
-    parameter_name: &str,
-) -> bool {
-    match sequence {
-        SpecSequenceExpression::Literal(elements) => elements
-            .iter()
-            .any(|element| spec_expression_reads_current_parameter(element, parameter_name)),
-        SpecSequenceExpression::Concat(left, right) => {
-            spec_sequence_reads_current_parameter(left, parameter_name)
-                || spec_sequence_reads_current_parameter(right, parameter_name)
-        }
-    }
-}
-
-fn spec_resource_reads_current_parameter(resource: &SpecResource, parameter_name: &str) -> bool {
-    match resource {
-        SpecResource::Memory {
-            base, start, end, ..
-        } => {
-            spec_expression_reads_current_parameter(base, parameter_name)
-                || spec_expression_reads_current_parameter(start, parameter_name)
-                || spec_expression_reads_current_parameter(end, parameter_name)
-        }
-        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
-            arguments
-                .iter()
-                .any(|argument| spec_expression_reads_current_parameter(argument, parameter_name))
-        }
-    }
-}
-
-fn spec_algebraic_expression_reads_current_parameter(
-    expression: &SpecAlgebraicExpression,
-    parameter_name: &str,
-) -> bool {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_)
-        | SpecAlgebraicExpressionNode::Binding(_)
-        | SpecAlgebraicExpressionNode::ResourceField(_) => false,
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            fields.iter().any(|field| match field {
-                SpecAlgebraicValue::C(expression) => {
-                    spec_expression_reads_current_parameter(expression, parameter_name)
-                }
-                SpecAlgebraicValue::Integer(expression) => {
-                    spec_integer_expression_reads_current_parameter(expression, parameter_name)
-                }
-                SpecAlgebraicValue::Algebraic(expression) => {
-                    spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
-                }
-            })
-        }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            spec_algebraic_expression_reads_current_parameter(scrutinee, parameter_name)
-                || arms.iter().any(|arm| {
-                    spec_algebraic_expression_reads_current_parameter(&arm.body, parameter_name)
-                })
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().any(|argument| {
-                spec_pure_function_argument_reads_current_parameter(argument, parameter_name)
-            })
-        }
-    }
-}
-
-fn spec_pure_function_argument_reads_current_parameter(
-    argument: &SpecPureFunctionArgument,
-    parameter_name: &str,
-) -> bool {
-    match argument {
-        SpecPureFunctionArgument::Value(expression) => {
-            spec_expression_reads_current_parameter(expression, parameter_name)
-        }
-        SpecPureFunctionArgument::Integer(expression) => {
-            spec_integer_expression_reads_current_parameter(expression, parameter_name)
-        }
-        SpecPureFunctionArgument::Algebraic(expression) => {
-            spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
-        }
-        SpecPureFunctionArgument::ArrayRef {
-            memory, pointer, ..
-        } => {
-            !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
-                && spec_expression_reads_current_parameter(pointer, parameter_name)
-        }
-    }
+        _ => Visit::Descend,
+    })
 }
 
 fn c_expression_mentions_variable(expression: &CExpression, name: &str) -> bool {
@@ -14752,441 +14342,54 @@ fn statement_writes_aggregate_parameter(
     }
 }
 
-fn spec_expression_current_parameter_accesses(
-    expression: &SpecExpression,
-    parameter_name: &str,
-    reads: &mut Vec<ParameterAccessRange>,
-    unknown_read: &mut bool,
-) {
-    match expression {
-        SpecExpression::Value(_) | SpecExpression::ResourceField { .. } => {}
-        SpecExpression::IntegerToMachine { .. } => *unknown_read = true,
-        SpecExpression::CExpression(expression) => {
-            if c_expression_mentions_variable(expression, parameter_name) {
-                *unknown_read = true;
-            }
-        }
-        SpecExpression::AlgebraicMatch { scrutinee, arms } => {
-            spec_algebraic_expression_current_parameter_accesses(
-                scrutinee,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            for arm in arms {
-                spec_expression_current_parameter_accesses(
-                    &arm.body,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-        SpecExpression::CountedResourceCount { arguments, .. } => {
-            for argument in arguments.iter().flatten() {
-                spec_expression_current_parameter_accesses(
-                    argument,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-        crate::kernel::binary_spec_expression!(left, right) => {
-            spec_expression_current_parameter_accesses(left, parameter_name, reads, unknown_read);
-            spec_expression_current_parameter_accesses(right, parameter_name, reads, unknown_read);
-        }
-        SpecExpression::BitwiseNot(body)
-        | SpecExpression::Cast(body, _)
-        | SpecExpression::LoopEntrySnapshot(body) => {
-            spec_expression_current_parameter_accesses(body, parameter_name, reads, unknown_read);
-        }
-        SpecExpression::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            spec_proposition_current_parameter_accesses(
-                condition,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            spec_expression_current_parameter_accesses(
-                then_branch,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            spec_expression_current_parameter_accesses(
-                else_branch,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-        }
-        SpecExpression::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            spec_expression_current_parameter_accesses(start, parameter_name, reads, unknown_read);
-            spec_expression_current_parameter_accesses(end, parameter_name, reads, unknown_read);
-            spec_expression_current_parameter_accesses(
-                initial,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            spec_expression_current_parameter_accesses(body, parameter_name, reads, unknown_read);
-        }
-        SpecExpression::Let { value, body, .. } => {
-            spec_expression_current_parameter_accesses(value, parameter_name, reads, unknown_read);
-            spec_expression_current_parameter_accesses(body, parameter_name, reads, unknown_read);
-        }
-        SpecExpression::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                spec_pure_function_argument_current_parameter_accesses(
-                    argument,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-        SpecExpression::PointerOffset {
-            pointer, elements, ..
-        } => {
-            spec_expression_current_parameter_accesses(
-                pointer,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            spec_expression_current_parameter_accesses(
-                elements,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-        }
-        SpecExpression::MemoryLoad {
-            memory: SpecMemory::FunctionEntry | SpecMemory::Fixed(_),
-            ..
-        } => {}
-        SpecExpression::AggregateFieldValue {
-            pointer,
-            value_type,
-            ..
-        }
-        | SpecExpression::MemoryLoad {
-            memory: SpecMemory::Current,
-            pointer,
-            value_type,
-        } => {
-            if let Some(offset) = spec_expression_parameter_offset(pointer, parameter_name) {
-                if let Some(range) = parameter_access_range(offset, value_type.byte_width()) {
-                    reads.push(range);
-                }
-            } else if spec_expression_reads_current_parameter(pointer, parameter_name) {
-                *unknown_read = true;
-            }
-        }
-        SpecExpression::MemoryLoad {
-            memory: SpecMemory::LoopEntry,
-            pointer,
-            ..
-        } => {
-            if spec_expression_reads_current_parameter(pointer, parameter_name) {
-                *unknown_read = true;
-            }
-        }
-    }
-}
-
+/// Collects the byte ranges of `parameter_name` that `proposition` reads from
+/// the current callee state, in source order. A read whose range is not a
+/// constant offset from the parameter sets `unknown_read` instead.
 fn spec_proposition_current_parameter_accesses(
     proposition: &SpecProposition,
     parameter_name: &str,
     reads: &mut Vec<ParameterAccessRange>,
     unknown_read: &mut bool,
 ) {
-    match proposition {
-        // An Integer read has no precise byte range here, so any read of the
-        // parameter is an unknown read.
-        SpecProposition::IntegerComparison { left, right, .. } => {
-            *unknown_read |= spec_integer_expression_reads_current_parameter(left, parameter_name)
-                || spec_integer_expression_reads_current_parameter(right, parameter_name);
-        }
-        SpecProposition::AlgebraicComparison { left, right, .. } => {
-            spec_algebraic_expression_current_parameter_accesses(
-                left,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            spec_algebraic_expression_current_parameter_accesses(
-                right,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-        }
-        SpecProposition::SequenceMembership { element, sequence } => {
-            spec_expression_current_parameter_accesses(
-                element,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            spec_sequence_current_parameter_accesses(sequence, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::SequenceComparison { left, right, .. } => {
-            spec_sequence_current_parameter_accesses(left, parameter_name, reads, unknown_read);
-            spec_sequence_current_parameter_accesses(right, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::Comparison { left, right, .. } => {
-            spec_expression_current_parameter_accesses(left, parameter_name, reads, unknown_read);
-            spec_expression_current_parameter_accesses(right, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => {
-            spec_expression_current_parameter_accesses(
-                expression,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-        }
-        SpecProposition::And(left, right)
-        | SpecProposition::Or(left, right)
-        | SpecProposition::Implies(left, right) => {
-            spec_proposition_current_parameter_accesses(left, parameter_name, reads, unknown_read);
-            spec_proposition_current_parameter_accesses(right, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::Not(body)
-        | SpecProposition::ForAllMachineInteger { body, .. }
-        | SpecProposition::ForAllInt32 { body, .. }
-        | SpecProposition::ForAllInteger { body, .. }
-        | SpecProposition::ForAllAlgebraic { body, .. }
-        | SpecProposition::ForAllPointer { body, .. }
-        | SpecProposition::ExistsMachineInteger { body, .. }
-        | SpecProposition::ExistsInt32 { body, .. }
-        | SpecProposition::ExistsInteger { body, .. }
-        | SpecProposition::ExistsAlgebraic { body, .. }
-        | SpecProposition::ExistsPointer { body, .. } => {
-            spec_proposition_current_parameter_accesses(body, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::Predicate { arguments, .. } => {
-            for argument in arguments {
-                match argument {
-                    SpecPredicateArgument::Value(expression) => {
-                        spec_expression_current_parameter_accesses(
-                            expression,
-                            parameter_name,
-                            reads,
-                            unknown_read,
-                        );
-                    }
-                    SpecPredicateArgument::ArrayRef { memory, pointer } => {
-                        if !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
-                            && spec_expression_reads_current_parameter(pointer, parameter_name)
-                        {
-                            *unknown_read = true;
-                        }
-                    }
+    spec_tree_all(SpecNode::Proposition(proposition), |node| {
+        match node {
+            SpecNode::Expression(SpecExpression::IntegerToMachine { .. }) => *unknown_read = true,
+            SpecNode::Expression(
+                SpecExpression::AggregateFieldValue {
+                    pointer,
+                    value_type,
+                    ..
                 }
-            }
-        }
-        SpecProposition::ResourceSeparate { left, right }
-        | SpecProposition::ResourceContains {
-            parent: left,
-            child: right,
-        } => {
-            spec_resource_current_parameter_accesses(left, parameter_name, reads, unknown_read);
-            spec_resource_current_parameter_accesses(right, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::ValidPlace { pointer: base, .. }
-        | SpecProposition::MemoryInitialized { base, .. } => {
-            spec_expression_current_parameter_accesses(base, parameter_name, reads, unknown_read);
-        }
-        SpecProposition::MemoryLoadable {
-            memory,
-            base,
-            start,
-            end,
-            ..
-        } => {
-            if !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
-                && (spec_expression_reads_current_parameter(base, parameter_name)
-                    || spec_expression_reads_current_parameter(start, parameter_name)
-                    || spec_expression_reads_current_parameter(end, parameter_name))
-            {
-                *unknown_read = true;
-            }
-        }
-    }
-}
-
-fn spec_sequence_current_parameter_accesses(
-    sequence: &SpecSequenceExpression,
-    parameter_name: &str,
-    reads: &mut Vec<ParameterAccessRange>,
-    unknown_read: &mut bool,
-) {
-    match sequence {
-        SpecSequenceExpression::Literal(elements) => {
-            for element in elements {
-                spec_expression_current_parameter_accesses(
-                    element,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-        SpecSequenceExpression::Concat(left, right) => {
-            spec_sequence_current_parameter_accesses(left, parameter_name, reads, unknown_read);
-            spec_sequence_current_parameter_accesses(right, parameter_name, reads, unknown_read);
-        }
-    }
-}
-
-fn spec_resource_current_parameter_accesses(
-    resource: &SpecResource,
-    parameter_name: &str,
-    reads: &mut Vec<ParameterAccessRange>,
-    unknown_read: &mut bool,
-) {
-    match resource {
-        SpecResource::Memory {
-            base, start, end, ..
-        } => {
-            if spec_expression_reads_current_parameter(base, parameter_name)
-                || spec_expression_reads_current_parameter(start, parameter_name)
-                || spec_expression_reads_current_parameter(end, parameter_name)
-            {
-                *unknown_read = true;
-            }
-        }
-        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
-            for argument in arguments {
-                spec_expression_current_parameter_accesses(
-                    argument,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-    }
-}
-
-fn spec_algebraic_expression_current_parameter_accesses(
-    expression: &SpecAlgebraicExpression,
-    parameter_name: &str,
-    reads: &mut Vec<ParameterAccessRange>,
-    unknown_read: &mut bool,
-) {
-    match &expression.node {
-        SpecAlgebraicExpressionNode::Variable(_)
-        | SpecAlgebraicExpressionNode::Binding(_)
-        | SpecAlgebraicExpressionNode::ResourceField(_) => {}
-        SpecAlgebraicExpressionNode::Constructor { fields, .. } => {
-            for field in fields {
-                match field {
-                    SpecAlgebraicValue::C(expression) => {
-                        spec_expression_current_parameter_accesses(
-                            expression,
-                            parameter_name,
-                            reads,
-                            unknown_read,
-                        );
-                    }
-                    SpecAlgebraicValue::Integer(expression) => {
-                        *unknown_read |= spec_integer_expression_reads_current_parameter(
-                            expression,
-                            parameter_name,
-                        );
-                    }
-                    SpecAlgebraicValue::Algebraic(expression) => {
-                        spec_algebraic_expression_current_parameter_accesses(
-                            expression,
-                            parameter_name,
-                            reads,
-                            unknown_read,
-                        );
-                    }
+                | SpecExpression::MemoryLoad {
+                    memory: SpecMemory::Current,
+                    pointer,
+                    value_type,
+                },
+            ) => match spec_expression_parameter_offset(pointer, parameter_name) {
+                Some(offset) => {
+                    reads.extend(parameter_access_range(offset, value_type.byte_width()))
                 }
+                None => {
+                    *unknown_read |=
+                        spec_reads_current_parameter(SpecNode::Expression(pointer), parameter_name)
+                }
+            },
+            // These reads have no precise byte range here, so any read of the
+            // parameter is an unknown read. An Integer read is one of them.
+            SpecNode::Integer(_)
+            | SpecNode::Expression(
+                SpecExpression::CExpression(_) | SpecExpression::MemoryLoad { .. },
+            )
+            | SpecNode::Proposition(SpecProposition::MemoryLoadable { .. })
+            | SpecNode::PredicateArgument(SpecPredicateArgument::ArrayRef { .. })
+            | SpecNode::Argument(SpecPureFunctionArgument::ArrayRef { .. })
+            | SpecNode::Resource(SpecResource::Memory { .. }) => {
+                *unknown_read |= spec_reads_current_parameter(node, parameter_name)
             }
+            _ => return Visit::Descend,
         }
-        SpecAlgebraicExpressionNode::Match { scrutinee, arms } => {
-            spec_algebraic_expression_current_parameter_accesses(
-                scrutinee,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-            for arm in arms {
-                spec_algebraic_expression_current_parameter_accesses(
-                    &arm.body,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-        SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. } => {
-            for argument in arguments {
-                spec_pure_function_argument_current_parameter_accesses(
-                    argument,
-                    parameter_name,
-                    reads,
-                    unknown_read,
-                );
-            }
-        }
-    }
-}
-
-fn spec_pure_function_argument_current_parameter_accesses(
-    argument: &SpecPureFunctionArgument,
-    parameter_name: &str,
-    reads: &mut Vec<ParameterAccessRange>,
-    unknown_read: &mut bool,
-) {
-    match argument {
-        SpecPureFunctionArgument::Value(expression) => {
-            spec_expression_current_parameter_accesses(
-                expression,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-        }
-        SpecPureFunctionArgument::Integer(expression) => {
-            *unknown_read |=
-                spec_integer_expression_reads_current_parameter(expression, parameter_name);
-        }
-        SpecPureFunctionArgument::Algebraic(expression) => {
-            spec_algebraic_expression_current_parameter_accesses(
-                expression,
-                parameter_name,
-                reads,
-                unknown_read,
-            );
-        }
-        SpecPureFunctionArgument::ArrayRef {
-            memory, pointer, ..
-        } => {
-            if !matches!(memory, SpecMemory::FunctionEntry | SpecMemory::Fixed(_))
-                && spec_expression_reads_current_parameter(pointer, parameter_name)
-            {
-                *unknown_read = true;
-            }
-        }
-    }
+        Visit::Skip
+    });
 }
 
 /// Rejects a postcondition that would expose a modified by-value aggregate
@@ -15290,7 +14493,7 @@ fn modified_by_value_aggregate_parameter_with_current_ensure(
         .find(|parameter| {
             aggregate_parameter_copy_changed(entry_state, outcome, parameter)
                 && ensures.iter().any(|ensure| {
-                    spec_proposition_reads_current_parameter(ensure, parameter.name())
+                    spec_reads_current_parameter(SpecNode::Proposition(ensure), parameter.name())
                 })
         })
         .map(|parameter| parameter.name().to_string())
@@ -33890,12 +33093,12 @@ mod integer_parameter_read_tests {
             value: Box::new(value.clone()),
             destination: MachineIntegerType::Int32,
         };
-        assert!(spec_expression_reads_current_parameter(
-            &conversion,
+        assert!(spec_reads_current_parameter(
+            SpecNode::Expression(&conversion),
             "parameter"
         ));
-        assert!(!spec_expression_reads_current_parameter(
-            &conversion,
+        assert!(!spec_reads_current_parameter(
+            SpecNode::Expression(&conversion),
             "other"
         ));
         let comparison = SpecProposition::IntegerComparison {
@@ -33903,12 +33106,12 @@ mod integer_parameter_read_tests {
             operator: IntegerComparisonOperator::Equal,
             right: value,
         };
-        assert!(spec_proposition_reads_current_parameter(
-            &comparison,
+        assert!(spec_reads_current_parameter(
+            SpecNode::Proposition(&comparison),
             "parameter"
         ));
-        assert!(!spec_proposition_reads_current_parameter(
-            &comparison,
+        assert!(!spec_reads_current_parameter(
+            SpecNode::Proposition(&comparison),
             "other"
         ));
     }

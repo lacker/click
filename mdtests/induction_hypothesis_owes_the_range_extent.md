@@ -46,5 +46,5 @@ theorem hypothesis_owes_the_range_extent(v: int32[], lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: instantiated premise `0 <= ((hi - 1) - lo)` does not follow from the listed evidence
+fail: instantiated premise `0 <= hi - 1 - lo` does not follow from the listed evidence
 ```

@@ -217,5 +217,5 @@ struct tree_node* tree_root_of(struct tree_node* node, struct tree_node* parent)
 ```
 
 ```expect
-fail: missing resource fact `owns instance ptree_at
+fail: missing resource fact `owns ptree_at(…, node)`
 ```

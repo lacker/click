@@ -147,11 +147,6 @@ fi
 # minutes on a release build, so it is a job of the nightly workflow and not
 # part of the budgeted gate.
 #
-# Each exclusion is a known failure with an open issue, and goes when the
-# issue does:
-# - examples/multifile-registry does not verify; it is quarantined in
-#   tests/examples.rs (issues/static-state-caller-transport.md).
-#
 # examples/basic-cpp is left out for a different reason: its import lock and
 # compilation database are generated per machine by the test harness and are
 # not checked in, so a fresh checkout cannot load it. `tests/cpp_import.rs`
@@ -163,7 +158,6 @@ if [[ "${1:-}" == "--audit" ]]; then
     CLICK_CPP_EXPORTER="$(scripts/build-cpp-exporter.sh)"
     cargo build --release --bin click
     exec target/release/click audit --keep-going --time-limit 180m \
-        --exclude examples/multifile-registry \
         --exclude examples/basic-cpp \
         .
 fi

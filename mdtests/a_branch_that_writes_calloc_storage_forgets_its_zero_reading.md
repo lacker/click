@@ -53,5 +53,5 @@ int32 f(int32 c) {
 ```
 
 ```expect
-fail: left side evaluated to load(…), right side evaluated to 0
+fail: left side evaluated to at(<state A>, *<pointer A>), right side evaluated to 0
 ```

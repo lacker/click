@@ -1,5 +1,9 @@
 # Propositions
 
+Propositions are the logical claims that contracts, invariants, and proofs are
+written in; this page covers how they differ from C expressions, quantifiers,
+range propositions, model payloads, pointer disequality, and old values.
+
 Typed logical binders use Click's `name: type` convention, as in
 `forall (k: int32)` and `exists (item: uint8)`. The `type name` convention is
 reserved for attached C function signatures.

@@ -1836,8 +1836,8 @@ mod tests {
             .join("mdtests/loop_binder_instance_footprint_includes_its_memory.md");
         let report =
             entry_with([fixture.display().to_string()]).expect_err("the loop may write the cell");
-        assert!(report.contains("memory-effects("), "{report}");
-        assert!(report.contains("label definitions"), "{report}");
+        assert!(report.contains("written range(s) between"), "{report}");
+        assert!(report.contains("<state A> is "), "{report}");
         assert!(report.contains("store to occupied[start]"), "{report}");
         assert!(report.contains("i >= end"), "{report}");
         assert!(report.contains("at(pre, occupied[start])"), "{report}");

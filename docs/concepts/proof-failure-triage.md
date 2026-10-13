@@ -26,17 +26,50 @@ semantics, do not rewrite otherwise-correct implementation code merely to make
 a proof easier. Keep the original source pattern in the regression and put the
 adaptation or fix in the contract, proof, language, verifier, or kernel.
 
-Facts, goals, and rejected requirements use one proposition formatter in both
-ordinary errors and proof traces. Readable Click expressions are used when they
-preserve the checked operands. Otherwise the formatter uses typed diagnostic
-notation; a saved source expression never substitutes for the checked fact.
-For example, a memory operand prints as
+Ordinary errors spell every fact, goal, rejected requirement, and evaluated
+side in Click or C syntax, with Click's precedence and minimal parentheses.
+A refused claim reads, for example:
+
+```text
+unclosed goal: result == 8; left side evaluated to old(g[0]) + 1, right side evaluated to 8
+proof context for the goal:
+  case: [0 != u]
+  pure facts: [old(g[0]) < 100]
+```
+
+A value is printed in its own type: `-56` for an `int32`, `4294967240u32` for a
+`uint32`, and an unsigned comparison of `int32` operands converts them,
+`(uint32)n <= 1073741823u32`. Machine conversions are C casts such as
+`(int32)(uint32)size`, and an overflow condition reads as `defined(a + b)` or
+its negation.
+
+A read names the memory it reads. A read of the state being reported is the
+bare place (`a[m]`), a read of the function's entry memory is `old(a[m])`, and
+a read at a recorded mark or program point is `at(point, a[m])`. A read of any
+other memory is `at(<state A>, a[m])`, and a `where` list after the report says
+which program event produced each such state, for example
+`<state A> is the memory after the store to a[i]`. Two reads of one place in
+two memories therefore never print alike. Different states do not by
+themselves establish unequal values: the proof may establish that their reads
+agree.
+
+Where no source name exists, the report uses a placeholder instead of a kernel
+identity: `<unnamed A>` for a value no local, parameter, read or model field
+names (a loop-head value, or a callee's result), and `<pointer A>` for an
+address no parameter or local reaches. Placeholders share one identity within a
+report and are not Click proof syntax. Facts with no Click form, such as the
+memory a step may have changed or resources held together, are short descriptions
+in angle brackets, in source terms: `<only p[1] changed between function entry
+and here>`.
+
+An explicitly requested `--trace-proof` keeps its typed diagnostic notation:
+readable Click expressions are used there only when they preserve the checked
+operands, and otherwise a memory operand prints as
 `read<Bits64>(snapshot#1, pointer=value#1)`, in an added fact just as in a goal.
 The width, snapshot, and address remain visible even when the source wrote only
-`parent->__rb_parent_color`. Different snapshots do not by themselves establish
-unequal values: the proof may establish that their reads agree.
+`parent->__rb_parent_color`.
 
-Goals, requirements, and traced facts share names and snapshot labels. A bounded legend defines
+Within a trace, goals, requirements, and traced facts share names and snapshot labels. A bounded legend defines
 generated addresses and snapshots, including immutable proof names, pointer-read
 constructions, byte offsets, and memory constructions with their inputs. An
 initial empty memory is an explicit root. Other snapshots describe a recorded
@@ -279,11 +312,12 @@ kernel goal, and a newest-first suffix of recent premises. The original
 reason remains the first line. Context is rendered only when the terminal
 message is requested, with a 64 KiB report cap, bounded proposition printer,
 and at most eight premises. Individual premise renderings are capped at 2 KiB
-and reports say when additional context was omitted. A memory snapshot is
-labeled `snapshot#1`, `snapshot#2`, and so on, numbered by first appearance
-within one report: equal memory shares one label and memory that differs gets
-another, so "same memory" and "different memory" are visible as such. The
-structural comparison stops after the first 32 distinct snapshots. Expanded
+and reports say when additional context was omitted. In an ordinary report a
+memory with no source name is labeled `<state A>`, `<state B>`, and so on, and
+in a trace `snapshot#1`, `snapshot#2`, numbered by first appearance within one
+report: equal memory shares one label and memory that differs gets another, so
+"same memory" and "different memory" are visible as such. The structural
+comparison stops after the first 32 distinct snapshots. Expanded
 trace facts retain further snapshot identities with constant-time lookup;
 repeated uses of a retained version share a label. Beyond that comparison
 budget, separately constructed equal memories may receive different labels.

@@ -28,5 +28,5 @@ int32 run(struct holder *holder) {
 ```
 
 ```expect
-fail: Requires memory(
+fail: Requires separate(…[0..40], holder->mu)
 ```

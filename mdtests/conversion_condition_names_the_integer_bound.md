@@ -13,5 +13,5 @@ theorem back_to_int32(n: Integer) {
 ```
 
 ```expect
-fail: not established: the Integer converted back to a machine type must fit it: its lower bound `-2147483648` is not established for the converted value: `Integer term has no exact Click spelling at this frontier`
+fail: not established: the Integer converted back to a machine type must fit it: its lower bound `-2147483648` is not established for the converted value: `<unnamed A> + 1`
 ```

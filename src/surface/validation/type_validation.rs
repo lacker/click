@@ -2437,9 +2437,9 @@ pub(crate) fn array_ref_elements_compatible(
 }
 
 /// [`click_types_compatible`] for an argument of a predicate or pure
-/// function, which also passes a `char` pointer as `uint8` bytes, so a
+/// function, which also passes a signed character pointer as `uint8` bytes, so a
 /// specification such as `cstr_readable(s)` reads a C string's bytes. Under
-/// either signedness of plain `char` this reads the same objects: the kernel
+/// either signedness of `char` this reads the same objects: the kernel
 /// lets a character type read a one-byte cell of the other signedness as the
 /// same eight bits (C11 6.5p7), so `bytes[k] == '\0'` holds exactly when the
 /// string's `char` is zero. C signatures keep the types distinct.
@@ -2450,7 +2450,10 @@ pub(in crate::surface) fn click_argument_types_compatible(
     matches!(
         (actual, expected),
         (
-            C0Type::CharPointer(_) | C0Type::CharArray(_, _),
+            C0Type::CharPointer(_)
+                | C0Type::CharArray(_, _)
+                | C0Type::Int8Pointer
+                | C0Type::Int8Array(_),
             C0Type::UInt8Pointer | C0Type::UInt8Array(_),
         )
     ) || click_types_compatible(actual, expected)

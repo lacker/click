@@ -105,11 +105,11 @@ unsigned long label_copy(char *dst, const char *src)
 ## Pick a function and add a sidecar
 
 Start with a leaf: a function whose behavior you can state and whose callees,
-if any, you already understand. `label_fit` calls nothing. Create
-`label_fit.click` next to `label_fit.c`. It names the C file and states a
-claim; the C is not edited:
+if any, you already understand. `label_fit` calls nothing. Create a sidecar,
+`label.click`, next to the sources. It names the C file it verifies and states
+a claim; the C is not edited:
 
-```click filename=label_fit.click
+```click filename=label.click
 verifying "label_fit.c";
 
 uint64 label_fit(uint64 length) {
@@ -131,7 +131,7 @@ each postcondition from what execution established.
 Run without any configuration, Click reads the C itself:
 
 ```console
-$ click verify label_fit.click
+$ click verify label.click
 click: failed to read `label_config.h`: No such file or directory (os error 2)
 ```
 
@@ -148,11 +148,11 @@ needs nothing more. `label_fit.c` needs both, so it needs a compiler import.
 
 A compiler import runs GCC's preprocessor with flags you list, once, and
 records the result. Its configuration is a JSON file named after the sidecar.
-Copy the preprocessor flags from the compile command: `-I`, `-isystem`, `-D`,
-`-U`, and `-include`. Other flags are refused, so copying the whole command
-line fails:
+Copy the preprocessor flags from the compile command: `-I`, `-iquote`,
+`-isystem`, `-D`, `-U`, and `-include`. Other flags are refused, so copying the
+whole command line fails:
 
-```json filename=label_fit.click.import.json
+```json filename=label.click.import.json
 {
   "schema": 1,
   "target": "x86_64-linux-userspace",
@@ -176,15 +176,15 @@ line fails:
 ```
 
 ```console
-$ click import lock label_fit.click
-click: source `label_fit.c`: unsupported compiler argument 2 `-O2`; only -D/-U/-I/-isystem/-include are supported
+$ click import lock label.click
+click: source `label_fit.c`: unsupported compiler argument 2 `-O2`; only -D/-U/-I/-iquote/-isystem/-include are supported
 ```
 
 The language standard and the ABI come from the target's fixed profile, so
 `-std=c11` is accepted only because it matches it. Keep only the
 preprocessor flags:
 
-```json filename=label_fit.click.import.json
+```json filename=label.click.import.json
 {
   "schema": 1,
   "target": "x86_64-linux-userspace",
@@ -209,14 +209,14 @@ preprocessor flags:
 
 Then lock the import and verify. `click import lock` prints nothing on
 success; it writes the preprocessed `label_fit.i` and
-`label_fit.click.import.lock.json`:
+`label.click.import.lock.json`:
 
 ```console
-$ click import lock label_fit.click
+$ click import lock label.click
 ```
 
 ```console
-$ click verify label_fit.click
+$ click verify label.click
 1 selected proof verified
 ```
 
@@ -241,19 +241,17 @@ Some details of the configuration:
   flags by hand from `make -n` output or from the entry's `arguments` or
   `command`. (A `compilation_database` field exists only for
   [C++ imports](../reference/cli/import.md#preliminary-c-semantic-artifact).)
-- Compiler mode passes `-nostdinc` and supplies no system headers, neither
-  the platform's nor Click's own. A file that includes `<string.h>`,
-  `<stddef.h>`, or `<stdint.h>` fails at `click import lock` with GCC's
-  `No such file or directory`. Today a file that needs both `-I`/`-D` and a
-  system header can't be verified unchanged; see
-  [What to do when Click refuses a construct](#what-to-do-when-click-refuses-a-construct).
+- GCC never reads your platform's libc headers. A `#include <string.h>`
+  finds Click's own header, as in direct mode, after any `-I` or `-isystem`
+  directory you list; see
+  [Click's system headers](../reference/cli/import.md#clicks-system-headers).
 
 ## Write the contract and read a failure
 
 A failing proof shows that the build flags reached the proof. Claim the
 header's default capacity instead of the build's:
 
-```click filename=label_fit.click
+```click filename=label.click
 verifying "label_fit.c";
 
 uint64 label_fit(uint64 length) {
@@ -265,7 +263,7 @@ uint64 label_fit(uint64 length) {
 ```
 
 ```console
-$ click verify label_fit.click
+$ click verify label.click
 proof error:
   `label_fit.contract` path 0, tactic 1
   checked outcome `simp` search did not retain a complete proof for `label_fit.ensures_0`
@@ -280,7 +278,7 @@ tactic@7:
   simp();
 
 To get a trace:
-  click verify --trace-proof label_fit label_fit.click
+  click verify --trace-proof label_fit label.click
 ```
 
 Read it from the top. `tactic 1` is `simp()`, the second step of the proof, so
@@ -291,7 +289,7 @@ build; that is ordinary proof development, not a Click problem.
 
 A more useful contract also says the function never lengthens a label:
 
-```click filename=label_fit.click
+```click filename=label.click
 verifying "label_fit.c";
 
 uint64 label_fit(uint64 length) {
@@ -304,7 +302,7 @@ uint64 label_fit(uint64 length) {
 ```
 
 ```console
-$ click verify label_fit.click
+$ click verify label.click
 proof error:
   `label_fit.contract` path 0, tactic 1
   checked outcome `simp` search did not retain a complete proof for `label_fit.ensures_1`
@@ -319,7 +317,7 @@ tactic@8:
   simp();
 
 To get a trace:
-  click verify --trace-proof label_fit label_fit.click
+  click verify --trace-proof label_fit label.click
 ```
 
 This claim is true: on that path `length >= 32`, so `31 <= length`. The miss
@@ -328,7 +326,7 @@ while this one is a 64-bit `unsigned long` comparison. State the fact with
 `have ... by auto`, which carries machine comparisons to integer arithmetic and
 solves them:
 
-```click filename=label_fit.click
+```click filename=label.click
 verifying "label_fit.c";
 
 uint64 label_fit(uint64 length) {
@@ -342,7 +340,7 @@ uint64 label_fit(uint64 length) {
 ```
 
 ```console
-$ click verify label_fit.click
+$ click verify label.click
 1 selected proof verified
 ```
 
@@ -353,106 +351,151 @@ try smaller explicit steps such as `have`, and run the suggested
 
 ## Calls to libc and to other files
 
-`label_measure` in `label_copy.c` calls `strlen` and `label_fit`. `label_copy.c`
-needs no `-I` or `-D` (`label.h` is beside it), and it includes `<string.h>`,
-so it uses direct mode with no import configuration.
+`label_measure` in `label_copy.c` calls `strlen` from libc and `label_fit` from
+the other file. The `Makefile` compiles `label_copy.c` with the same flags, so
+add it to the import as a second `sources` entry with the same `args`:
+
+```json filename=label.click.import.json
+{
+  "schema": 1,
+  "target": "x86_64-linux-userspace",
+  "compiler": "/usr/bin/gcc",
+  "working_directory": ".",
+  "environment": {
+    "allow": {
+      "PATH": "/usr/bin:/bin",
+      "LC_ALL": "C"
+    }
+  },
+  "sources": [
+    {
+      "logical_source": "label_fit.c",
+      "path": "label_fit.c",
+      "args": ["-Iinclude", "-DLABEL_CAPACITY=32"],
+      "artifact": "label_fit.i"
+    },
+    {
+      "logical_source": "label_copy.c",
+      "path": "label_copy.c",
+      "args": ["-Iinclude", "-DLABEL_CAPACITY=32"],
+      "artifact": "label_copy.i"
+    }
+  ]
+}
+```
+
+Then name it in the sidecar and state `label_measure`'s contract:
+
+```click filename=label.click
+verifying "label_fit.c";
+verifying "label_copy.c";
+
+uint64 label_fit(uint64 length) {
+    ensures result < 32;
+    ensures result <= length;
+} by {
+    execute();
+    have result <= length by auto;
+    simp();
+}
+
+uint64 label_measure(const char* src) {
+    requires cstr_readable(src);
+    ensures result < 32;
+} by {
+    execute();
+    simp();
+}
+```
+
+```console
+$ click import lock label.click
+```
+
+```console
+$ click verify label.click
+external assumptions: label_measure -> strlen
+2 selected proofs verified
+```
 
 ### Libc calls
 
-Click supplies its own declaration-only system headers for the user-space
-target and checks each call against its own contract for the function. The
-modeled headers are `<stdint.h>`, `<inttypes.h>`, `<stdbool.h>`, `<limits.h>`,
-`<stddef.h>`, `<string.h>` (`memcpy`, `memcmp`, `memset`, `strlen`),
-`<stdlib.h>` (`malloc`, `calloc`, `realloc`, `free`), `<pthread.h>`, and
-`<stdatomic.h>`; the [system headers](../reference/language/c.md#system-headers)
-table has the details. Any other system include, such as `<ctype.h>` or
-`<stdio.h>`, stops verification of that file before any proof runs:
+`label_copy.c` includes `<string.h>`. Click supplies its own
+declaration-only system headers and checks each call against its own contract
+for the function; GCC finds them in place of the platform's. The modeled
+headers are `<stdint.h>`, `<inttypes.h>`, `<stdbool.h>`, `<limits.h>`,
+`<stddef.h>`, `<string.h>` (`memcpy`, `memcmp`, `memset`, `strlen`), and
+`<stdlib.h>` (`malloc`, `calloc`, `realloc`, `free`); the
+[system headers](../reference/language/c.md#system-headers) table has the
+details. Any other system include, such as `<ctype.h>` or `<stdio.h>`, stops
+`click import lock` with a message that names it. Had `label_copy.c` begun
+with `#include <stdio.h>`, the lock would fail with:
 
 ```text
-click: failed to process C source includes: label_copy.c:1: system header `<ctype.h>` is not supported
+click: preprocess label_copy.c: compiler exited with exit status: 1: In file included from label_copy.c:1:
+<click>/stdio.h:2:2: error: #error "<stdio.h> is not one of Click's modeled system headers for x86_64-linux-userspace; see docs/reference/language/c.md#system-headers"
+    2 | #error "<stdio.h> is not one of Click's modeled system headers for x86_64-linux-userspace; see docs/reference/language/c.md#system-headers"
+      |  ^~~~~
 ```
 
 The contracts are in the [standard library](../reference/library/index.md).
 `strlen` requires `cstr_readable(src)`: a readable, NUL-terminated string. The
-caller must state that requirement.
+caller must state that requirement. `external assumptions` lists every
+contract the result depends on but did not check: here, Click's `strlen`
+contract.
 
 ### Calls into other project functions
 
-A call to another project function uses that function's contract when it has
-one, and otherwise executes its body. Either way Click needs to see the
-function. Without `label_fit.c` in this sidecar, the call has nothing to apply:
+A call to another project function applies that function's contract, so
+`label_measure`'s proof uses `label_fit`'s verified `ensures result < 32`
+rather than re-executing its body. That is why both files are in one sidecar:
+Click must see a function to verify a call to it. With only `label_copy.c`
+in the sidecar and its import, the same proof stops with
+``no C source defines `label_fit` ``.
 
-```click filename=label_copy.click
-verifying "label_copy.c";
-
-uint64 label_measure(const char* src) {
-    requires cstr_readable(src);
-    ensures result < 32;
-} by {
-    execute();
-    simp();
-}
-```
-
-```console
-$ click verify label_copy.click
-proof error:
-  no C source defines `label_fit`
-```
-
-There are two ways to supply it:
-
-- **Verify the callee in the same sidecar.** Add `verifying "label_fit.c";`
-  and its contract and proof. A call then applies that verified contract. This
-  works when both files can be read in the same mode, all in direct mode or
-  all in one compiler import (a `sources` entry per file).
-- **Give the callee an `extern` contract.** An `extern` block states a
-  contract for a function whose body is outside the sidecar. Callers must
-  establish its `requires`, and Click assumes its `ensures` without checking
-  any implementation.
-
-Here `label_fit.c` needs the build flags and `label_copy.c` needs
-`<string.h>`, so they can't share a mode, and `label_copy.click` uses an
-`extern` contract that restates what `label_fit.click` proves:
-
-```click filename=label_copy.click
-verifying "label_copy.c";
-
-extern uint64 label_fit(uint64 length) {
-    ensures result < 32;
-    ensures result <= length;
-}
-
-uint64 label_measure(const char* src) {
-    requires cstr_readable(src);
-    ensures result < 32;
-} by {
-    execute();
-    simp();
-}
-```
-
-```console
-$ click verify label_copy.click
-external assumptions: label_measure -> label_fit, strlen
-2 selected proofs verified
-```
-
-`external assumptions` lists every contract the result depends on but did not
-check. `strlen` is Click's libc contract. `label_fit` is your `extern` block:
-Click does not connect it to `label_fit.click`, so keep the two in agreement
-by hand, and verify `label_fit.click` as well.
+A function whose body is outside the program you verify, such as one from
+another library, gets an `extern` contract instead: an `extern` block states
+its contract without a body. Callers must establish its `requires`, Click
+assumes its `ensures` without checking any implementation, and `click verify`
+lists it among the external assumptions. See
+[External function contracts](../reference/language/c.md#external-function-contracts).
 
 ## What to do when Click refuses a construct
 
 Try the remaining function, `label_copy`:
 
-```click filename=label_copy.click
+```click filename=label.click
+verifying "label_fit.c";
 verifying "label_copy.c";
 
-extern uint64 label_fit(uint64 length) {
+uint64 label_fit(uint64 length) {
     ensures result < 32;
     ensures result <= length;
+} by {
+    execute();
+    have result <= length by auto;
+    simp();
+}
+
+theorem label_source_prefix_viewable(bytes: uint8[], length: uint64, taken: uint64) {
+    requires length < 18446744073709551615u64;
+    requires length + 1u64 <= 9223372036854775807u64;
+    requires viewable(bytes[0u64..length + 1u64]);
+    requires taken <= length;
+    ensures viewable(bytes[0u64..taken]) by {
+        apply(uint64_less_than_to_integer(length, 18446744073709551615u64));
+        apply(uint64_less_equal_to_integer(taken, length));
+        have to_integer(length) + 1 <= 18446744073709551615 by { auto; }
+        apply(uint64_add_to_integer(length, 1u64));
+        have to_integer(taken) <= to_integer(length + 1u64) by { auto; }
+        apply(uint64_to_integer_less_equal_implies_less_equal(taken, length + 1u64));
+        apply(uint64_less_equal_transitive(taken, length + 1u64, 9223372036854775807u64));
+        simp() using {
+            taken <= length + 1u64;
+            taken <= 9223372036854775807u64;
+            viewable(bytes[0u64..length + 1u64]);
+        };
+    }
 }
 
 uint64 label_measure(const char* src) {
@@ -465,35 +508,70 @@ uint64 label_measure(const char* src) {
 
 uint64 label_copy(char* dst, const char* src) {
     requires cstr_readable(src);
-    owns dst[0..32];
+    owns dst[0u64..32u64];
+    requires separate(memory(dst[0u64..32u64]), memory(src[0u64..32u64]));
     ensures result < 32;
     ensures dst[result] == '\0';
 } by {
+    step();
+    unfold(cstr_readable);
+    have exists (len: uint64) {
+        len < 18446744073709551615u64 and
+        viewable(((uint8*)src)[0..len + 1u64]) and
+        forall (k: uint64) { k < len implies ((uint8*)src)[k] != 0u8 } and
+        ((uint8*)src)[len] == 0u8 and
+        forall (k: uint64) { k < len + 1u64 implies defined(((uint8*)src)[k]) }
+    } by {
+        obtain (len: uint64) { at(function.entry,
+            len < 18446744073709551615u64 and
+            viewable(((uint8*)src)[0..len + 1u64]) and
+            forall (k: uint64) { k < len implies ((uint8*)src)[k] != 0u8 } and
+            ((uint8*)src)[len] == 0u8 and
+            forall (k: uint64) { k < len + 1u64 implies defined(((uint8*)src)[k]) }
+        ) }
+        witness { len: len }
+        extract(at(function.entry, len) < at(function.entry, 18446744073709551615u64));
+        transport(at(function.entry, viewable(((uint8*)src)[0..len + 1u64])),
+                  viewable(((uint8*)src)[0..len + 1u64])) using {
+            at(function.entry, viewable(((uint8*)src)[0..len + 1u64]));
+        }
+        have forall (k: uint64) { k < len + 1u64 implies defined(((uint8*)src)[k]) } by {
+            extract(at(function.entry, forall (k: uint64) {
+                k < len + 1u64 implies defined(((uint8*)src)[k])
+            }));
+            intro();
+            intro();
+            instantiate(at(function.entry, forall (k: uint64) {
+                k < len + 1u64 implies defined(((uint8*)src)[k])
+            }), k) using { k < len + 1u64; }
+            transport(at(function.entry, defined(((uint8*)src)[k])),
+                      defined(((uint8*)src)[k])) using {
+                at(function.entry, defined(((uint8*)src)[k]));
+            }
+        }
+        extract(at(function.entry, forall (k: uint64) { k < len implies ((uint8*)src)[k] != 0u8 }));
+        extract(at(function.entry, ((uint8*)src)[len] == 0u8));
+        simp();
+    }
+    let length = step(strlen(src), {});
+    let taken = step(label_fit(length), {});
+    have viewable(((uint8*)src)[0u64..length + 1u64]) by {
+        transport(at(statement(2).entry, viewable(((uint8*)src)[0u64..length + 1u64])),
+                  viewable(((uint8*)src)[0u64..length + 1u64])) using {
+            at(statement(2).entry, viewable(((uint8*)src)[0u64..length + 1u64]));
+        }
+    }
+    apply(label_source_prefix_viewable(((uint8*)src), length, taken));
     execute();
     simp();
 }
 ```
 
-```console
-$ click verify label_copy.click
-proof error:
-  `label_copy.contract` tactic 0
-  `execute()` could not verify C operation
-  function contract could not be applied
-  could not bind arguments for memcpy
-  C operation
-  memcpy(dst, src, n)
-  call bindings
-  destination = dst, source = src, bytes = n
-  C statement at label_copy.c:15:2
-  `memcpy(dst, src, n);`
-
-tactic@22:
-  execute();
-
-To get a trace:
-  click verify --trace-proof label_copy label_copy.click
-```
+The copy needs a separate destination and source prefix, because `memcpy`
+requires its accessed ranges not to overlap. Its source may be `const`, as
+in the existing C. The destination's 32-byte ownership and `label_fit`'s bound
+also cover the terminator store. Verify this complete sidecar with
+`click verify label.click`.
 
 Three kinds of report look different:
 
@@ -503,8 +581,7 @@ Three kinds of report look different:
   hits it fails at `click import lock` or when the locked source is loaded.
 - **Click can't apply its model to an operation.** `execute()` reports that it
   `could not verify C operation` and names the C statement. No contract change
-  helps when the operation itself is refused, as here, where the arguments are
-  not bound to the `memcpy` contract at all.
+  helps when the operation itself is outside the modeled subset.
 - **A proof failure.** An `unclosed goal`, or `execute()` reporting a `missing
   prerequisite` or `undefined behavior`, names a claim or requirement that the
   facts did not establish. Change the contract or the proof.
@@ -523,27 +600,27 @@ names common gaps. Then:
   adaptations go in contracts, proofs, or Click itself, and the C changes only
   for a real bug or an independently wanted change.
 - **Verify what you can.** Leave the refused function out of the sidecar,
-  as `examples/label-build-flags/label_copy.click` does, and keep the rest
-  verified.
+  and keep the supported functions verified.
 - **Report the gap with the original source.** A construct the documentation
   says is supported, or an `execute()` refusal like this one for a modeled
-  function, is a Click bug; this one is filed as
-  [`memcpy` refuses a `const` source pointer](https://github.com/clicklang/click/blob/master/bugs/memcpy-refuses-a-const-source-pointer.md).
-  An unsupported construct outside the documented subset is missing
+  function, is a Click bug. An unsupported construct outside the documented
+  subset is missing
   functionality. Either way, include the smallest C that shows it, unchanged
   in shape, as [What to put in an issue](proof-failure-triage.md#what-to-put-in-an-issue)
   describes.
 
 ## Summary
 
-- Put a sidecar next to the C file with `verifying "file.c";` and leave the C
-  as it is.
+- Put a sidecar next to the C files with a `verifying "file.c";` line per
+  file and leave the C as it is.
 - Use direct mode when quoted includes resolve beside their includers and no
-  `-D` matters; otherwise copy `-I`, `-isystem`, `-D`, `-U`, and `-include`
-  into `FILE.click.import.json` and run `click import lock`. Today, a file
-  can't have both flags and system headers.
-- Libc calls use Click's modeled headers and contracts; other project
-  functions are verified in the same sidecar or given `extern` contracts,
-  which `click verify` reports as external assumptions.
+  `-D` matters; otherwise copy `-I`, `-iquote`, `-isystem`, `-D`, `-U`, and
+  `-include` into `NAME.click.import.json`, one `sources` entry per file, and
+  run `click import lock`. Either way `<string.h>` and the other modeled
+  system headers are Click's.
+- Libc calls use Click's modeled headers and contracts; calls between project
+  functions use the callee's verified contract; a function outside the
+  program gets an `extern` contract. `click verify` reports the unchecked
+  contracts as external assumptions.
 - Read a failure by its step: a refused source or operation is a coverage
   question; an unclosed goal or missing prerequisite is a proof question.

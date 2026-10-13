@@ -6196,7 +6196,7 @@ fn cpp_reference_parameters_are_declared_and_named_as_their_referents() {
         "ensures value == old(value) + 2;",
     ));
     assert!(
-        false_claim.contains("left side evaluated to (value + 1)"),
+        false_claim.contains("left side evaluated to old(value) + 1"),
         "{false_claim}"
     );
     assert!(

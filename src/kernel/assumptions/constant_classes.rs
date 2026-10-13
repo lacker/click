@@ -74,7 +74,29 @@ fn arithmetic_operands(term: &Bitvector32Term) -> Option<Vec<&Bitvector32Term>> 
     match term {
         crate::kernel::binary_bitvector32_term!(left, right) => Some(vec![left, right]),
         Bitvector32Term::BitwiseNot(value) => Some(vec![value]),
-        term => term.signed_byte_operand().map(|value| vec![value]),
+        term => word_cast_operand(term).map(|(value, _, _)| vec![value]),
+    }
+}
+
+/// The operand of an integer conversion between types that fit a 32-bit
+/// word, such as a signed byte read or a C narrowing conversion, with its
+/// source and destination. Its constant is a function of the operand's.
+fn word_cast_operand(
+    term: &Bitvector32Term,
+) -> Option<(
+    &Bitvector32Term,
+    crate::kernel::MachineIntegerType,
+    crate::kernel::MachineIntegerType,
+)> {
+    match term {
+        Bitvector32Term::MachineIntegerCast {
+            value,
+            source,
+            destination,
+        } if source.format().bits() <= 32 && destination.format().bits() <= 32 => {
+            Some((value, *source, *destination))
+        }
+        _ => None,
     }
 }
 
@@ -142,9 +164,13 @@ pub(super) fn fold_arithmetic(
         // The conversion's own constant fold: a byte constant `c` in
         // `0..=255` converts to its two's-complement value, and a constant
         // outside the byte range stays unfolded (`Unknown`).
-        term => match term.signed_byte_operand() {
-            Some(value) => operand(value).map(|value| {
-                Bitvector32Term::signed_byte(Bitvector32Term::Constant(value as i32 as u32))
+        term => match word_cast_operand(term) {
+            Some((value, source, destination)) => operand(value).map(|value| {
+                Bitvector32Term::machine_integer_cast(
+                    source,
+                    destination,
+                    Bitvector32Term::Constant(value as i32 as u32),
+                )
             }),
             None => SignedConstantResolution::Unknown,
         },

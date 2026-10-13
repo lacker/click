@@ -1,5 +1,8 @@
 # Examples
 
+This catalog maps Click features to the mdtests and example projects that
+exercise them.
+
 Focused regression examples live in `mdtests/`. Each mdtest should be small and
 self-contained, with inline C and `.click` blocks. Prefer copying a nearby
 mdtest instead of inventing syntax from memory.
@@ -22,12 +25,9 @@ without a generated processed count; chunk reads use the original byte views.
 `examples/multifile-registry/` specifies a registry across four C translation
 units and two headers. It covers shared updates, independent same-named private
 statics, persistent local arrays, const lookup tables, and unchanged fields.
-The data definitions live in a translation unit without functions. It does
-not verify yet, so the examples gate quarantines it: `click verify` and the
-gate both stop at `registry_run`'s entry, which cannot evaluate an owned field
-path into another module's function-local static struct array, and past that
-point the cross-file caller needs static-state caller transport
-(`issues/static-state-caller-transport.md`).
+The data definitions live in a translation unit without functions. The
+cross-file caller states the current static values it relies on, and those
+facts are carried through calls that update other statics.
 
 `examples/heap-object/` is the focused allocation-lifetime project. It shows a
 nullable factory, full initialization, a read-only borrower, ownership transfer
@@ -249,10 +249,12 @@ authorities.
 - `mdtests/uint8_buffer_read.md`: `uint8[]` parameter indexing with
   byte-sized `viewable`.
 - `mdtests/uint8_local_array.md`: local byte arrays and byte stores/loads.
-- `mdtests/uint8_narrowing.md`: checked `int32`-to-`uint8` narrowing with
-  range requirements.
-- `mdtests/uint8_narrowing_requires_range.md`: missing byte-range proof for
-  narrowing fails.
+- `mdtests/uint8_narrowing.md`: `int32`-to-`uint8` narrowing is the value
+  itself under range requirements.
+- `mdtests/uint8_narrowing_equals_its_source_only_in_range.md`: without the
+  range, the narrowed value is not claimed equal to its source.
+- `mdtests/uint8_conversion_wraps_modulo_256.md`: out-of-range conversions to
+  `uint8` wrap modulo 256, as in GCC and Clang.
 - `mdtests/uint8_widening.md`: `uint8` values widen through `int32` assignments
   and returns.
 - `mdtests/uint8_loop_invariant_pure_function.md`: `uint8[]` pure function
@@ -539,9 +541,8 @@ sequence:
   over a one-field json-c-shaped object; it is not unchanged json-c source.
 - `examples/label-build-flags/`: a two-file C library with a `Makefile`, the
   worked example of [Verify a function in your own project](../concepts/own-project.md).
-  One sidecar uses a compiler import with the build's `-I` and `-D` flags; the
-  other uses Click's `<string.h>` and an `extern` contract for the first
-  file's function.
+  One sidecar and one compiler import cover both files with the build's `-I`
+  and `-D` flags, and `<string.h>` resolves to Click's modeled header.
 - `examples/jsonc-existing-source/`: byte-preserved upstream json-c source
   with a checked SHA-256 manifest. Proves its numeric version and NUL-terminated
   version-string contents under the explicit unsigned-char kernel target.

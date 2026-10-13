@@ -38,5 +38,5 @@ int32 fill(uint32 x) {
 ```
 
 ```expect
-fail: `uint32 <(((0-value A)+2), ((0-value A)+3)) is true` remained open; this loop declares `decreases`, so the bundle also has `0 <= 3 - x` at the back edge, `3 - x` decreases at the back edge
+fail: `(uint32)(0 - <unnamed A> + 2) < (uint32)(0 - <unnamed A> + 3)` remained open; this loop declares `decreases`, so the bundle also has `0 <= 3 - x` at the back edge, `3 - x` decreases at the back edge
 ```

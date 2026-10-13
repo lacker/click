@@ -1,3 +1,4 @@
+target "x86_64-linux-kernel";
 verifying "main.c";
 
 int32 from_header() {

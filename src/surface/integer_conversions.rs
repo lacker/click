@@ -859,11 +859,11 @@ mod tests {
                 .unwrap();
                 verify_c0_sources(&expanded, &[("cast.c", &implicit_return)]).unwrap();
             }
+            // C's conversion owes no native range; the Integer bounds the
+            // certificate cites alone justify the identity.
             if !native_guard.is_empty() {
-                assert!(
-                    verify_c0_sources(&source.replace(native_guard, ""), &[("cast.c", &c)])
-                        .is_err()
-                );
+                verify_c0_sources(&source.replace(native_guard, ""), &[("cast.c", &c)])
+                    .unwrap_or_else(|e| panic!("{source_ty}/{destination}: {}", e.message()));
             }
             let expanded =
                 expand_c0_claim_source_by_label(&source, &[("cast.c", &c)], "caller.ensures_0")

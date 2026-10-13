@@ -457,6 +457,19 @@ fn decomposed_affine_difference(
                 pending.push((right, -coefficient.clone()));
                 pending.push((left, coefficient));
             }
+            // The kernel decomposes a conversion only through interval
+            // evidence that its operand is inside the destination range.
+            Bitvector32Term::MachineIntegerCast {
+                value,
+                source,
+                destination,
+            } if crate::kernel::proof::signed_arithmetic::narrowed_word_cast(
+                *source,
+                *destination,
+            ) =>
+            {
+                pending.push((value, coefficient));
+            }
             Bitvector32Term::Multiply(left, right) => {
                 if let Some(value) = left.as_const() {
                     let value = BigInt::from(value as i32);
@@ -695,7 +708,7 @@ fn affine_operation_terms(
             Bitvector32Term::Add(_, _)
                 | Bitvector32Term::Subtract(_, _)
                 | Bitvector32Term::Multiply(_, _)
-        )
+        ) || is_narrowed_word_cast(term)
     };
     let left_operation = is_affine_operation(left).then_some(left);
     let right_operation = is_affine_operation(right).then_some(right);
@@ -742,6 +755,7 @@ fn contains_machine_operation(root: &Bitvector32Term) -> bool {
                 return true;
             }
             Bitvector32Term::BitwiseNot(_) => return true,
+            term if is_narrowed_word_cast(term) => return true,
             Bitvector32Term::PureFunctionApplication { arguments, .. } => {
                 pending.extend(arguments.iter());
             }
@@ -749,6 +763,16 @@ fn contains_machine_operation(root: &Bitvector32Term) -> bool {
         }
     }
     false
+}
+
+/// A C conversion the checked `IntervalNarrowedCast` node can relate to its
+/// operand.
+fn is_narrowed_word_cast(term: &Bitvector32Term) -> bool {
+    matches!(
+        term,
+        Bitvector32Term::MachineIntegerCast { source, destination, .. }
+            if crate::kernel::proof::signed_arithmetic::narrowed_word_cast(*source, *destination)
+    )
 }
 
 fn scale_factor(source: &SignedArithmeticClaim, target: &SignedArithmeticClaim) -> Option<BigInt> {
@@ -1956,6 +1980,22 @@ impl<'a> Planner<'a> {
                         tasks.push(Task::Build(term));
                         tasks.push(Task::Visit(operand, allow_direct));
                     }
+                    Bitvector32Term::MachineIntegerCast {
+                        value,
+                        source,
+                        destination,
+                    } if crate::kernel::proof::signed_arithmetic::narrowed_word_cast(
+                        *source,
+                        *destination,
+                    ) =>
+                    {
+                        if allow_direct && let Some(index) = self.interval_atom(term) {
+                            results.push(index);
+                            continue;
+                        }
+                        tasks.push(Task::Build(term));
+                        tasks.push(Task::Visit(value, allow_direct));
+                    }
                     Bitvector32Term::BitwiseAnd(left, right)
                     | Bitvector32Term::BitwiseXor(left, right) => {
                         let (operand, _) = if right.as_const().is_some() {
@@ -2063,6 +2103,34 @@ impl<'a> Planner<'a> {
         right_index: Option<usize>,
     ) -> Option<usize> {
         match term {
+            // A conversion whose operand stays inside the destination range
+            // is that operand (`narrowed_cast_identity`); outside it the
+            // planner has no evidence to offer.
+            Bitvector32Term::MachineIntegerCast {
+                source,
+                destination,
+                ..
+            } => {
+                let operand = right_index?;
+                let interval = self.interval_at(operand)?;
+                let (lo, hi) = destination.format().bounds();
+                let (lo, hi) = (i64::try_from(lo).ok()?, i64::try_from(hi).ok()?);
+                let floor = if *source == crate::kernel::MachineIntegerType::UInt32 {
+                    lo.max(0)
+                } else {
+                    lo
+                };
+                (interval.lower >= floor && interval.upper <= hi).then_some(())?;
+                self.push_interval(
+                    SignedArithmeticNode::IntervalNarrowedCast {
+                        operand,
+                        source: *source,
+                        destination: *destination,
+                        result: interval.clone(),
+                    },
+                    interval,
+                )
+            }
             Bitvector32Term::Add(_, _) => {
                 let left = left_index?;
                 let right = right_index?;

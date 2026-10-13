@@ -1,5 +1,8 @@
 # Larger example projects
 
+This page tours the larger verification projects in `examples/`, from a heap
+object to a red-black tree model, and walks one modeled loop end to end.
+
 Small proof patterns live in `mdtests/`. Larger verification examples live in
 `examples/`.
 

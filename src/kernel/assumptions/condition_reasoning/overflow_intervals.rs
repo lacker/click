@@ -1074,6 +1074,15 @@ impl PureFactContext {
                 };
                 return (lower <= upper).then_some((lower, upper));
             }
+            // Any other narrowing conversion: its operand's interval moved
+            // into the destination range, or that whole range
+            // (`narrowed_casts`), within what the context states of it.
+            Bitvector32Term::MachineIntegerCast { .. } => {
+                if let Some((cast_lower, cast_upper)) = self.narrowed_cast_interval(term) {
+                    let (lower, upper) = (lower.max(cast_lower), upper.min(cast_upper));
+                    return (lower <= upper).then_some((lower, upper));
+                }
+            }
             Bitvector32Term::If {
                 then_term,
                 else_term,

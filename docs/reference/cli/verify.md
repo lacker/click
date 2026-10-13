@@ -149,15 +149,16 @@ the same formatted failure report, including the written tactic and its source
 location. A separate `To get a trace:` section gives the command to rerun.
 The source excerpt points to the failing written tactic (including steps inside
 `have` and `open`), and the ordinary error omits the internal premise dump.
-Facts, goals, and rejected requirements share one proposition format in ordinary
-errors and traces. `goal:` shows the checked proposition after rewrites;
-`adds:` uses that same format for each admitted fact. Readable expressions are
-used only when they preserve checked identities. Typed memory operands include
-their read width, snapshot, and address, with shared labels and a construction
-legend. Constants in `int32` comparisons use signed decimal values. The
-checked return type distinguishes signed and unsigned 32-bit equality facts
-even when the returned value has no source name.
-A source spelling is not printed in place of a snapshot-dependent fact.
+The ordinary error spells facts, goals, and rejected requirements in Click or
+C syntax, with each constant in its checked type (`-56` for an `int32`,
+`4294967240u32` for a `uint32`): a read of the entry memory is `old(...)`, a read at a recorded point
+is `at(point, ...)`, and a read of any other memory is `at(<state A>, ...)`,
+defined in a `where` list after the report (see
+[proof-failure triage](../../concepts/proof-failure-triage.md)). In the trace,
+`goal:` shows the checked proposition after rewrites and `adds:` uses that same
+format for each admitted fact. The trace uses readable expressions only when
+they preserve checked identities; its typed memory operands include their read
+width, snapshot, and address, with shared labels and a construction legend.
 An `assumption()` failure on an existential goal suggests the
 `witness { name: value }` tactic. A trace reports facts introduced into the
 focused proof context and changes to exact resource representations, using
