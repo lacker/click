@@ -1902,7 +1902,7 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
         let word = crate::kernel::eval::cast_c_value_to_type(
             CValue::Pointer(pointer.clone()),
             target,
-            crate::kernel::eval::expression::IntegerConversion::Modular,
+            crate::kernel::eval::IntegerConversion::Modular,
             &mut obligations,
             &assumptions,
         )
@@ -1914,7 +1914,7 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
         let restored = crate::kernel::eval::cast_c_value_to_type(
             word,
             CType::Int32Pointer,
-            crate::kernel::eval::expression::IntegerConversion::Modular,
+            crate::kernel::eval::IntegerConversion::Modular,
             &mut obligations,
             &assumptions,
         )
@@ -1924,7 +1924,7 @@ fn integer_cast_cannot_erase_a_retained_object_domain() {
     let CValue::Pointer(byte_view) = crate::kernel::eval::cast_c_value_to_type(
         CValue::Pointer(pointer.clone()),
         CType::UInt8Pointer,
-        crate::kernel::eval::expression::IntegerConversion::Modular,
+        crate::kernel::eval::IntegerConversion::Modular,
         &mut obligations,
         &assumptions,
     )
@@ -4529,7 +4529,7 @@ fn pointer_alignment_observes_only_a_boolean_and_keeps_integer_origin_separate()
                 crate::kernel::eval::cast_c_value_to_type(
                     CValue::UInt64(Bitvector32Term::pointer_address(address.clone())),
                     CType::Int32Pointer,
-                    crate::kernel::eval::expression::IntegerConversion::Modular,
+                    crate::kernel::eval::IntegerConversion::Modular,
                     &mut Vec::new(),
                     &assumptions,
                 ),
