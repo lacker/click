@@ -6,7 +6,7 @@ fn incomparable_values(left: &CValue, right: &CValue) -> ClickError {
     let describe = |value: &CValue| {
         format!(
             "`{}` of type `{}`",
-            crate::surface::diagnostics::describe_c_value(value, &[], &[]),
+            crate::surface::diagnostics::describe_c_value(value, ParameterBinding::default()),
             crate::kernel::c_type_spelling(value.c_type())
         )
     };

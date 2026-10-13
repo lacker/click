@@ -11,6 +11,12 @@ native 64-bit `usize` counter retains checked indexing and increment checks.
 The measure `bytes_len - i` proves termination. The contract views the input,
 so the function has no authority to modify it.
 
+The loop body's arithmetic is `have P by auto;`: the solver carries the
+`uint64` and `int32` order facts to `Integer`, proves the addition defined,
+observes each sum term by term, and closes each bound by a checked
+certificate. What remains explicit is memory transport for the read and the
+fold laws (`peel`).
+
 The sidecar uses explicit low-word casts for the fold endpoints. Checked
 full-width order and range premises justify those casts; truncation alone
 never grants indexing authority. The proof covers empty input as well as

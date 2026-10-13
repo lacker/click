@@ -14,6 +14,71 @@ fn node_layout() -> CAggregateLayout {
     )
 }
 
+#[test]
+fn aggregate_result_binding_preserves_input_and_existing_declarations() {
+    let layout = node_layout();
+    let interface = c_function(
+        CType::UInt8Array(layout.size_bytes()),
+        "retain_source",
+        Vec::new(),
+        c_return(c_void_value()),
+    )
+    .with_return_aggregate_layout(layout.clone());
+    let address = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(874_071))),
+            byte_width: 4,
+        },
+    };
+    let pointer = CMemory::aggregate_input_pointer(address.clone(), &layout, CType::UInt8Pointer);
+    let memory = CMemory::new()
+        .with_object_input_domain(address.clone(), &layout)
+        .unwrap();
+    let mut state = CState::new().with_memory(memory.clone());
+    set_contract_result(
+        &mut state,
+        interface.contract_interface(),
+        CValue::Pointer(pointer.clone()),
+    );
+    assert_eq!(state.memory(), &memory);
+    assert!(
+        state
+            .memory()
+            .has_aggregate_object_domain(&pointer, &layout)
+    );
+    assert!(state.memory().blocks.get(&address.block).is_none());
+
+    // A result name cannot replace a conflicting real declaration either.
+    let conflicting = memory.with_declared_scalar_block(address.block.clone(), 4, CType::Int32);
+    let mut state = CState::new().with_memory(conflicting.clone());
+    set_contract_result(
+        &mut state,
+        interface.contract_interface(),
+        CValue::Pointer(pointer.clone()),
+    );
+    assert_eq!(state.memory(), &conflicting);
+    assert!(
+        !state
+            .memory()
+            .has_aggregate_object_domain(&pointer, &layout)
+    );
+
+    let local = CMemory::frame_local_pointer(0, "completed_return");
+    let declared = CMemory::new().with_declared_aggregate_block(local.block.clone(), &layout);
+    let result = declared
+        .declared_aggregate_pointer(&local, &layout)
+        .unwrap();
+    let mut state = CState::new().with_memory(declared.clone());
+    set_contract_result(
+        &mut state,
+        interface.contract_interface(),
+        CValue::Pointer(result.clone()),
+    );
+    assert_eq!(state.memory(), &declared);
+    assert!(state.memory().has_aggregate_object_domain(&result, &layout));
+}
+
 // Manual kernel IR names the same fields as native member lowering. Raw byte
 // offsets deliberately retain the original domain and cannot select a field.
 fn checked_field(

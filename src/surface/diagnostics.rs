@@ -407,11 +407,10 @@ pub(super) fn diagnostic_item_limit() -> usize {
 fn describe_context_pure_and_execution_facts(
     pure_facts: &[Proposition],
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameters, arguments);
+        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
     let text = describe_context_facts_labeled(pure_facts, execution_pure_facts, &mut labels);
     format!("{text}{}", labels.trace_legend())
 }
@@ -451,14 +450,13 @@ fn describe_context_facts_labeled(
 /// of every memory snapshot those facts read.
 pub(super) fn describe_pure_facts_for_diagnostic(
     pure_facts: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     if pure_facts.is_empty() {
         return "[]".to_string();
     }
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameters, arguments);
+        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
     let text = describe_bounded_list(pure_facts, |fact| {
         crate::surface::proof_diagnostics::render::render_proposition_labeled(fact, &mut labels)
     });
@@ -470,7 +468,7 @@ pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
         return "[]".to_string();
     }
 
-    describe_pure_facts_for_diagnostic(pure_facts, &[], &[])
+    describe_pure_facts_for_diagnostic(pure_facts, ParameterBinding::default())
 }
 
 /// Describes one fact, and for a refused concrete named-contract formation
@@ -480,12 +478,11 @@ pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
 /// the formation check read.
 pub(super) fn describe_pure_fact_with_environment(
     fact: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     environment: &crate::kernel::CExecutionEnvironment,
     predicate_environment: Option<&PredicateEnvironment>,
 ) -> String {
-    let description = describe_pure_fact(fact, parameters, arguments);
+    let description = describe_pure_fact(fact, parameter_binding);
     let Some((contract, target)) = concrete_named_contract_fact(fact) else {
         return description;
     };
@@ -635,11 +632,10 @@ pub(super) fn condition_kind(condition: &ConditionTerm) -> &'static str {
 
 pub(super) fn describe_pure_fact(
     fact: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameters, arguments);
+        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
     let mut text =
         crate::surface::proof_diagnostics::render::render_proposition_labeled(fact, &mut labels);
     text.push_str(&labels.trace_legend());
@@ -647,14 +643,13 @@ pub(super) fn describe_pure_fact(
 }
 
 pub(super) fn describe_execution_pure_facts(facts: &(impl ExecutionFactSource + ?Sized)) -> String {
-    describe_context_pure_and_execution_facts(&[], facts, &[], &[])
+    describe_context_pure_and_execution_facts(&[], facts, ParameterBinding::default())
 }
 
 pub(super) fn describe_available_facts(
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
 ) -> String {
     format!(
@@ -662,10 +657,9 @@ pub(super) fn describe_available_facts(
         describe_context_pure_and_execution_facts(
             pure_facts,
             execution_pure_facts,
-            parameters,
-            arguments
+            parameter_binding
         ),
-        describe_resource_facts(resource_facts, parameters, arguments)
+        describe_resource_facts(resource_facts, parameter_binding)
     )
 }
 
@@ -674,14 +668,13 @@ pub(super) fn describe_available_facts(
 /// For a missing named-contract fact, also name the routes that establish it.
 pub(super) fn describe_required_pure_fact(
     required: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match concrete_named_contract_fact(required) {
         Some((contract, target)) => format!(
             "no `{contract}(&{target})` fact is available; apply a refinement theorem or pass `&{target}` where `{contract}` is required"
         ),
-        None => describe_pure_fact(required, parameters, arguments),
+        None => describe_pure_fact(required, parameter_binding),
     }
 }
 
@@ -689,21 +682,20 @@ pub(super) fn describe_missing_pure_fact(
     required: &Proposition,
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
 ) -> String {
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameters, arguments);
+        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
     let requirement = if concrete_named_contract_fact(required).is_some() {
-        describe_required_pure_fact(required, parameters, arguments)
+        describe_required_pure_fact(required, parameter_binding)
     } else {
         crate::surface::proof_diagnostics::render::render_proposition_labeled(required, &mut labels)
     };
     let available = describe_context_facts_labeled(pure_facts, execution_pure_facts, &mut labels);
     format!(
         "missing pure fact: {requirement}\n  available pure facts: {available}\n  available resource facts: {}{}",
-        describe_resource_facts(resource_facts, parameters, arguments),
+        describe_resource_facts(resource_facts, parameter_binding),
         labels.trace_legend()
     )
 }
@@ -712,8 +704,7 @@ pub(super) fn describe_missing_resource_fact(
     required: &CResourceFact,
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
 ) -> String {
     let mut note = String::new();
@@ -736,7 +727,7 @@ pub(super) fn describe_missing_resource_fact(
                 .iter()
                 .map(|hole| format!(
                     "`{}`",
-                    describe_bitvector_with_context(hole, parameters, arguments)
+                    describe_bitvector_with_context(hole, parameter_binding)
                 ))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -744,12 +735,11 @@ pub(super) fn describe_missing_resource_fact(
     }
     format!(
         "missing resource fact `{}`{note}\n  {}",
-        describe_resource_fact(required, parameters, arguments),
+        describe_resource_fact(required, parameter_binding),
         describe_available_facts(
             pure_facts,
             resource_facts,
-            parameters,
-            arguments,
+            parameter_binding,
             execution_pure_facts
         )
     )
@@ -764,8 +754,7 @@ pub(super) fn describe_missing_resource_fact(
 /// same item limit as every other fact list.
 pub(super) fn describe_undecided_statement_successors(
     transitions: &[crate::surface::CertifiedStatementTransition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let item_limit = diagnostic_item_limit();
     let mut lines = Vec::new();
@@ -779,7 +768,7 @@ pub(super) fn describe_undecided_statement_successors(
                     .all(|other| other.path_facts.contains(fact))
             })
             .take(item_limit)
-            .map(|fact| format!("`{}`", describe_stated_fact(fact, parameters, arguments)))
+            .map(|fact| format!("`{}`", describe_stated_fact(fact, parameter_binding)))
             .collect::<Vec<_>>();
         if distinguishing.is_empty() {
             continue;
@@ -905,8 +894,7 @@ pub(super) fn describe_goal_proof_context(
     pure_facts: &[Proposition],
     case_facts: &[Proposition],
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let mut relevant = match goal {
         Some(goal) => pure_facts_relevant_to(goal, pure_facts),
@@ -921,21 +909,20 @@ pub(super) fn describe_goal_proof_context(
     } else {
         format!(
             "\n  case: {}",
-            describe_context_pure_and_execution_facts(case_facts, &[], parameters, arguments)
+            describe_context_pure_and_execution_facts(case_facts, &[], parameter_binding)
         )
     };
     format!(
         "{GOAL_PROOF_CONTEXT_HEADER}{case}\n  pure facts: {}\n  resource facts: {}",
-        describe_context_pure_and_execution_facts(&relevant, &[], parameters, arguments),
-        describe_resource_facts(resource_facts, parameters, arguments)
+        describe_context_pure_and_execution_facts(&relevant, &[], parameter_binding),
+        describe_resource_facts(resource_facts, parameter_binding)
     )
 }
 
 pub(super) fn describe_proof_context(
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
 ) -> String {
     format!(
@@ -943,10 +930,9 @@ pub(super) fn describe_proof_context(
         describe_context_pure_and_execution_facts(
             pure_facts,
             execution_pure_facts,
-            parameters,
-            arguments
+            parameter_binding
         ),
-        describe_resource_facts(resource_facts, parameters, arguments)
+        describe_resource_facts(resource_facts, parameter_binding)
     )
 }
 
@@ -959,7 +945,7 @@ pub(super) fn describe_loop_head_refusal(refusal: &crate::kernel::CLoopHeadRefus
             let (parameters, arguments) = local_naming_tables(state);
             return format!(
                 "loop declares a resource the enclosing function does not hold: `{}`",
-                describe_resource_fact(fact, &parameters, &arguments)
+                describe_resource_fact(fact, ParameterBinding::new(&parameters, &arguments))
             );
         }
         crate::kernel::CLoopHeadRefusal::MissingPrerequisite {
@@ -1046,7 +1032,7 @@ pub(super) fn describe_unverified_contract_claims(
 /// locals' names.
 pub(super) fn describe_stated_fact_over_locals(fact: &Proposition, state: &CState) -> String {
     let (parameters, arguments) = local_naming_tables(state);
-    describe_stated_fact(fact, &parameters, &arguments)
+    describe_stated_fact(fact, ParameterBinding::new(&parameters, &arguments))
 }
 
 /// The naming tables of `state`'s locals: the kernel variables a step or a
@@ -1103,15 +1089,14 @@ pub(super) fn describe_runtime_error_over_locals(
     state: &CState,
 ) -> String {
     let (parameters, arguments) = local_naming_tables(state);
-    describe_runtime_error(error, &parameters, &arguments)
+    describe_runtime_error(error, ParameterBinding::new(&parameters, &arguments))
 }
 
 pub(super) fn describe_missing_proof_obligations(
     obligations: &[ProofObligation],
     pure_facts: &[Proposition],
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
 ) -> String {
     let item_limit = diagnostic_item_limit();
@@ -1121,9 +1106,9 @@ pub(super) fn describe_missing_proof_obligations(
         .map(|obligation| match obligation.context() {
             Some(context) => format!(
                 "{context}: {}",
-                describe_pure_fact(obligation.proposition(), parameters, arguments)
+                describe_pure_fact(obligation.proposition(), parameter_binding)
             ),
-            None => describe_pure_fact(obligation.proposition(), parameters, arguments),
+            None => describe_pure_fact(obligation.proposition(), parameter_binding),
         })
         .collect::<Vec<_>>();
     if obligations.len() > item_limit {
@@ -1141,8 +1126,7 @@ pub(super) fn describe_missing_proof_obligations(
         describe_available_facts(
             pure_facts,
             resource_facts,
-            parameters,
-            arguments,
+            parameter_binding,
             execution_pure_facts
         )
     )
@@ -1157,8 +1141,7 @@ pub(super) fn describe_missing_proof_obligations(
 pub(super) fn describe_refuted_condition(
     required: &Proposition,
     pure_facts: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let variables = crate::kernel::proposition_variables(required);
     let about = pure_facts
@@ -1172,10 +1155,8 @@ pub(super) fn describe_refuted_condition(
         .collect::<Vec<_>>();
     format!(
         "the facts refute `{}`: {}",
-        describe_stated_fact(required, parameters, arguments),
-        describe_bounded_list(&about, |fact| describe_stated_fact(
-            fact, parameters, arguments
-        )),
+        describe_stated_fact(required, parameter_binding),
+        describe_bounded_list(&about, |fact| describe_stated_fact(fact, parameter_binding)),
     )
 }
 
@@ -1185,11 +1166,10 @@ pub(super) fn describe_refuted_condition(
 pub(super) fn describe_refuted_proof_obligation(
     obligation: &ProofObligation,
     pure_facts: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let refutation =
-        describe_refuted_condition(obligation.proposition(), pure_facts, parameters, arguments);
+        describe_refuted_condition(obligation.proposition(), pure_facts, parameter_binding);
     match obligation.context() {
         Some(context) => format!("{context}: {refutation}"),
         None => refutation,
@@ -1198,18 +1178,14 @@ pub(super) fn describe_refuted_proof_obligation(
 
 pub(super) fn describe_function_outcome(
     outcome: &CFunctionOutcome,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match outcome {
         CFunctionOutcome::Return { value, .. } => {
-            format!(
-                "returned {}",
-                describe_c_value(value, parameters, arguments)
-            )
+            format!("returned {}", describe_c_value(value, parameter_binding))
         }
         CFunctionOutcome::Throw { value, .. } => {
-            format!("threw {}", describe_c_value(value, parameters, arguments))
+            format!("threw {}", describe_c_value(value, parameter_binding))
         }
         CFunctionOutcome::VerificationDiverges => "has no verified return frontier".to_string(),
         CFunctionOutcome::UndefinedBehavior(kind) => {
@@ -1217,15 +1193,14 @@ pub(super) fn describe_function_outcome(
         }
         CFunctionOutcome::RuntimeError(error) => format!(
             "C operation could not be verified: {}",
-            describe_runtime_error(error, parameters, arguments)
+            describe_runtime_error(error, parameter_binding)
         ),
     }
 }
 
 pub(super) fn describe_runtime_error(
     error: &crate::kernel::CRuntimeError,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match error {
         crate::kernel::CRuntimeError::UnboundVariable(name) => {
@@ -1249,14 +1224,14 @@ pub(super) fn describe_runtime_error(
         } => {
             let found = match stored {
                 Some(stored) => {
-                    format!("found {}", describe_c_value(stored, parameters, arguments))
+                    format!("found {}", describe_c_value(stored, parameter_binding))
                 }
                 None => "did not fit the cell's value".to_string(),
             };
             format!(
                 "a {}-byte load at `{}` {found}",
                 value_type.byte_width(),
-                describe_pointer(pointer, parameters, arguments)
+                describe_pointer(pointer, parameter_binding)
             )
         }
         crate::kernel::CRuntimeError::PointerConversion(message) => message.clone(),
@@ -1268,7 +1243,7 @@ pub(super) fn describe_runtime_error(
         }
         crate::kernel::CRuntimeError::MissingReturn => "missing return".to_string(),
         crate::kernel::CRuntimeError::MutexStorageScopeEnd { local, mutex, may_alias } => {
-            let live = format!("mutex_live({})", describe_mutex_pointer(mutex, parameters, arguments));
+            let live = format!("mutex_live({})", describe_mutex_pointer(mutex, parameter_binding));
             if *may_alias {
                 format!("Click cannot yet prove that {live} lies outside local storage `{local}`; its storage must outlive this scope")
             } else {
@@ -1279,7 +1254,7 @@ pub(super) fn describe_runtime_error(
             let subject = if matches!(mutex.block, crate::kernel::PointerBlock::Heap(_)) {
                 "a mutex in this allocation".to_string()
             } else {
-                format!("mutex {}", describe_mutex_pointer(mutex, parameters, arguments))
+                format!("mutex {}", describe_mutex_pointer(mutex, parameter_binding))
             };
             format!("Cannot release allocation storage while {subject} remains initialized; call pthread_mutex_destroy before releasing its storage")
         }
@@ -1288,28 +1263,28 @@ pub(super) fn describe_runtime_error(
                 describe_pure_fact(&Proposition::CResourceSeparate {
                     left: Box::new(CResource::Memory(*allocation.clone())),
                     right: Box::new(CResource::Memory(*storage.clone())),
-                }, parameters, arguments)),
+                }, parameter_binding)),
         crate::kernel::CRuntimeError::MutexStorageWrite { write, storage } =>
             format!("Requires {}; initialized mutex storage is reserved until pthread_mutex_destroy",
                 describe_pure_fact(&Proposition::CResourceSeparate {
                     left: Box::new(CResource::Memory(*write.clone())),
                     right: Box::new(CResource::Memory(*storage.clone())),
-                }, parameters, arguments)),
+                }, parameter_binding)),
         crate::kernel::CRuntimeError::MissingMutexStorageAlignment { mutex, alignment } =>
-            format!("Requires aligned({}, {alignment})", describe_mutex_pointer(mutex, parameters, arguments)),
+            format!("Requires aligned({}, {alignment})", describe_mutex_pointer(mutex, parameter_binding)),
         crate::kernel::CRuntimeError::UnsupportedMutexStorageRetirement =>
             "Click does not yet support freeing or reallocating storage in a preserving guard contract; checked mutex lifetime authority is required".into(),
         crate::kernel::CRuntimeError::MissingMutexGuard { mutex } => format!(
             "Requires owns mutex_guard({})",
-            describe_mutex_pointer(mutex, parameters, arguments)
+            describe_mutex_pointer(mutex, parameter_binding)
         ),
         crate::kernel::CRuntimeError::MissingMutexLive { mutex } => format!(
             "Requires owns mutex_live({})",
-            describe_mutex_pointer(mutex, parameters, arguments)
+            describe_mutex_pointer(mutex, parameter_binding)
         ),
         crate::kernel::CRuntimeError::MissingMutexUse { mutex } => format!(
             "Requires owns mutex_use({})",
-            describe_mutex_pointer(mutex, parameters, arguments)
+            describe_mutex_pointer(mutex, parameter_binding)
         ),
         crate::kernel::CRuntimeError::MissingMutexInvariant { resource, supplied } => {
             let spell = |fact: &CResourceFact| match fact.resource() {
@@ -1318,11 +1293,10 @@ pub(super) fn describe_runtime_error(
                     format_declared_resource(
                         instance.name(),
                         instance.arguments(),
-                        parameters,
-                        arguments
+                        parameter_binding
                     )
                 ),
-                _ => describe_resource_fact(fact, parameters, arguments),
+                _ => describe_resource_fact(fact, parameter_binding),
             };
             match supplied {
                 Some(supplied) => format!(
@@ -1334,7 +1308,7 @@ pub(super) fn describe_runtime_error(
             }
         }
         crate::kernel::CRuntimeError::MissingResource { resource } => {
-            let fact = describe_resource_fact(resource, parameters, arguments);
+            let fact = describe_resource_fact(resource, parameter_binding);
             if matches!(resource.resource(), CResource::MutexGuard(_) | CResource::MutexLive(_) | CResource::MutexUse(_)) {
                 format!("Requires {fact}")
             } else {
@@ -1344,7 +1318,7 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::UnbackedReturnedView { view } => format!(
             "{}: `{}`",
             crate::kernel::CRuntimeError::UNBACKED_RETURNED_VIEW,
-            describe_resource_fact(view, parameters, arguments)
+            describe_resource_fact(view, parameter_binding)
         ),
         crate::kernel::CRuntimeError::MissingVerifiedFunctionRule(name) => format!(
             "cannot execute call to `{name}` opaquely: its contract has not been verified yet"
@@ -1368,7 +1342,7 @@ pub(super) fn describe_runtime_error(
         }
         crate::kernel::CRuntimeError::ContractResourceDiagnostic { reason, held, required, memory } => {
             use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_resource_fact_labeled};
-            let mut labels = SnapshotLabels::naming(parameters, arguments);
+            let mut labels = SnapshotLabels::naming(parameter_binding);
             let mut message = format!("function contract could not be applied: {reason}");
             if let Some(memory) = memory {
                 message.push_str(&format!("\n  argument read snapshot: {}", labels.snapshot_name(memory)));
@@ -1388,7 +1362,7 @@ pub(super) fn describe_runtime_error(
         }
         crate::kernel::CRuntimeError::UninitializedMutex { mutex } => format!(
             "could not prove that mutex `{}` was initialized on this path",
-            describe_pointer(mutex, parameters, arguments)
+            describe_pointer(mutex, parameter_binding)
         ),
         crate::kernel::CRuntimeError::UnsupportedConcurrentMutex => {
             "Click cannot yet verify pthread workers sharing an initialized mutex".to_string()
@@ -1413,26 +1387,26 @@ pub(super) fn describe_runtime_error(
         } => {
             let mut message = format!(
                 "live allocation obligation was neither returned nor freed: `{}`",
-                describe_resource_fact(allocation, parameters, arguments)
+                describe_resource_fact(allocation, parameter_binding)
             );
             if let Some(resource) = resource {
                 message.push_str("; held by ");
-                message.push_str(&describe_resource_fact(resource, parameters, arguments));
+                message.push_str(&describe_resource_fact(resource, parameter_binding));
             }
             message
         }
         crate::kernel::CRuntimeError::StaleResourceAfterFree { resource } => format!(
             "resource would remain usable after its allocation is freed: `{}`",
-            describe_resource_fact(resource, parameters, arguments)
+            describe_resource_fact(resource, parameter_binding)
         ),
         crate::kernel::CRuntimeError::DuplicateResource { resource } => format!(
             "duplicate resource fact `{}`",
-            describe_resource_fact(resource, parameters, arguments)
+            describe_resource_fact(resource, parameter_binding)
         ),
         crate::kernel::CRuntimeError::OverlappingOwnedMemoryResources { left, right } => format!(
             "overlapping owned memory resource facts `owns {}` and `owns {}`",
-            describe_memory_range(left, parameters, arguments),
-            describe_memory_range(right, parameters, arguments)
+            describe_memory_range(left, parameter_binding),
+            describe_memory_range(right, parameter_binding)
         ),
         crate::kernel::CRuntimeError::ProducedCompositeOverlapsHeldResource {
             produced,
@@ -1441,12 +1415,12 @@ pub(super) fn describe_runtime_error(
         } => format!(
             "produced composite `{}` overlaps a resource the caller already holds: \
              its body `{}` overlaps `{}`",
-            describe_c_resource(produced.resource(), parameters, arguments),
-            describe_resource_fact(piece, parameters, arguments),
-            describe_resource_fact(held, parameters, arguments)
+            describe_c_resource(produced.resource(), parameter_binding),
+            describe_resource_fact(piece, parameter_binding),
+            describe_resource_fact(held, parameter_binding)
         ),
         crate::kernel::CRuntimeError::LoanRefusal(diagnostic) => {
-            describe_loan_refusal(diagnostic, parameters, arguments)
+            describe_loan_refusal(diagnostic, parameter_binding)
         }
     }
 }
@@ -1471,12 +1445,11 @@ pub(super) fn runtime_refusal_kind(error: &crate::kernel::CRuntimeError) -> Clic
 /// refusal subject; nothing here reads the ledger or the resource frame.
 fn describe_loan_conflict(
     diagnostic: &crate::kernel::LoanRefusalDiagnostic,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let subject = diagnostic.subject();
     let conflicting = subject.conflicting_resource_fact()?;
-    let conflicting = describe_resource_fact(conflicting, parameters, arguments);
+    let conflicting = describe_resource_fact(conflicting, parameter_binding);
     if diagnostic.operation() == crate::kernel::LoanRefusalOperation::Entry {
         let viewed = subject.resource_fact()?;
         // This message follows the proof's own sentence about the contract
@@ -1484,7 +1457,7 @@ fn describe_loan_conflict(
         return Some(format!(
             "the contract's `views` clause overlaps its own `owns` clause: `{}` is already supported by `{conflicting}`; \
              a view must name authority the caller lends, not authority this contract owns",
-            describe_resource_fact(viewed, parameters, arguments)
+            describe_resource_fact(viewed, parameter_binding)
         ));
     }
     let attempted = subject.memory_range()?;
@@ -1501,16 +1474,15 @@ fn describe_loan_conflict(
         });
     Some(format!(
         "stable-view memory access conflicts with an active loan: the attempted range `{}` overlaps `{conflicting}`, lent as {origin}{loan}",
-        describe_memory_range(attempted, parameters, arguments)
+        describe_memory_range(attempted, parameter_binding)
     ))
 }
 
 pub(in crate::surface) fn describe_loan_refusal(
     diagnostic: &crate::kernel::LoanRefusalDiagnostic,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    if let Some(conflict) = describe_loan_conflict(diagnostic, parameters, arguments) {
+    if let Some(conflict) = describe_loan_conflict(diagnostic, parameter_binding) {
         return conflict;
     }
     let category = match diagnostic.category() {
@@ -1551,12 +1523,12 @@ pub(in crate::surface) fn describe_loan_refusal(
     let subject = if let Some(resource) = subject.resource_fact() {
         format!(
             "; selected resource `{}`",
-            describe_resource_fact(resource, parameters, arguments)
+            describe_resource_fact(resource, parameter_binding)
         )
     } else if let Some(range) = subject.memory_range() {
         format!(
             "; selected range `{}`",
-            describe_memory_range(range, parameters, arguments)
+            describe_memory_range(range, parameter_binding)
         )
     } else {
         String::new()
@@ -1606,64 +1578,56 @@ pub(in crate::surface) fn describe_loan_refusal(
 
 pub(super) fn describe_resource_facts(
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     if resource_facts.is_empty() {
         return "[]".to_string();
     }
     describe_bounded_list(resource_facts, |resource| {
-        describe_resource_fact(resource, parameters, arguments)
+        describe_resource_fact(resource, parameter_binding)
     })
 }
 
 pub(super) fn describe_resource_fact(
     resource: &CResourceFact,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     if let Some(range) = resource.memory_view_range() {
-        return format!(
-            "views {}",
-            describe_memory_range(range, parameters, arguments)
-        );
+        return format!("views {}", describe_memory_range(range, parameter_binding));
     }
     if let Some(range) = resource.memory_own_range() {
-        return format!(
-            "owns {}",
-            describe_memory_range(range, parameters, arguments)
-        );
+        return format!("owns {}", describe_memory_range(range, parameter_binding));
     }
     match resource {
         CResourceFact::Own(CResource::MutexGuard(identity), _)
         | CResourceFact::View(CResource::MutexGuard(identity)) => format!(
             "{} mutex_guard({})",
             if resource.is_own() { "owns" } else { "views" },
-            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+            describe_mutex_pointer(identity.mutex(), parameter_binding)
         ),
         CResourceFact::Own(CResource::MutexLive(identity), _)
         | CResourceFact::View(CResource::MutexLive(identity)) => format!(
             "{} mutex_live({})",
             if resource.is_own() { "owns" } else { "views" },
-            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+            describe_mutex_pointer(identity.mutex(), parameter_binding)
         ),
         CResourceFact::Own(CResource::MutexUse(identity), _)
         | CResourceFact::View(CResource::MutexUse(identity)) => format!(
             "{} {}",
             if resource.is_own() { "owns" } else { "views" },
-            format_mutex_use(identity, parameters, arguments)
+            format_mutex_use(identity, parameter_binding)
         ),
         CResourceFact::Own(CResource::Publication(right), _)
         | CResourceFact::View(CResource::Publication(right)) => format!(
             "{} {}",
             if resource.is_own() { "owns" } else { "views" },
-            format_publication_right(right, parameters, arguments)
+            format_publication_right(right, parameter_binding)
         ),
         CResourceFact::Own(CResource::PopulationAuthority(description), _)
         | CResourceFact::View(CResource::PopulationAuthority(description)) => format!(
             "{} authority({})",
             if resource.is_own() { "owns" } else { "views" },
-            format_population_description(description, parameters, arguments)
+            format_population_description(description, parameter_binding)
         ),
         CResourceFact::Own(CResource::Instance(instance), _)
         | CResourceFact::View(CResource::Instance(instance)) => format!(
@@ -1683,14 +1647,13 @@ pub(super) fn describe_resource_fact(
             },
             quantity,
         ) => {
-            let resource =
-                format_declared_resource(name, resource_arguments, parameters, arguments);
+            let resource = format_declared_resource(name, resource_arguments, parameter_binding);
             if quantity.as_const() == Some(1) {
                 format!("owns {resource}")
             } else {
                 format!(
                     "owns {resource} (quantity {})",
-                    describe_bitvector_with_context(quantity, parameters, arguments)
+                    describe_bitvector_with_context(quantity, parameter_binding)
                 )
             }
         }
@@ -1705,13 +1668,13 @@ pub(super) fn describe_resource_fact(
             },
         ) => format!(
             "views {}",
-            format_declared_resource(name, resource_arguments, parameters, arguments)
+            format_declared_resource(name, resource_arguments, parameter_binding)
         ),
         CResourceFact::Own(CResource::Iterated(iterated), _)
         | CResourceFact::View(CResource::Iterated(iterated)) => format!(
             "{} {}",
             if resource.is_own() { "owns" } else { "views" },
-            describe_iterated_memory(iterated, parameters, arguments)
+            describe_iterated_memory(iterated, parameter_binding)
         ),
         CResourceFact::Own(CResource::Memory(_), _) | CResourceFact::View(CResource::Memory(_)) => {
             unreachable!("memory resources handled above")
@@ -1724,32 +1687,31 @@ pub(super) fn describe_resource_fact(
 /// the indices currently taken out.
 pub(in crate::surface) fn describe_iterated_memory(
     iterated: &crate::kernel::CIteratedMemory,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let index = Bitvector32Term::Variable(crate::kernel::Variable(u64::MAX - 7));
     // Iterated ownership's element_range constructs signed int32 bounds.
     let element = iterated.element_range(&index);
-    let spelled_index = describe_bitvector_with_context(&index, parameters, arguments);
+    let spelled_index = describe_bitvector_with_context(&index, parameter_binding);
     let element = format!(
         "{}[{}..{}]",
-        describe_pointer(element.base(), parameters, arguments),
-        describe_bitvector_with_context(element.start(), parameters, arguments),
-        describe_bitvector_with_context(element.end(), parameters, arguments)
+        describe_pointer(element.base(), parameter_binding),
+        describe_bitvector_with_context(element.start(), parameter_binding),
+        describe_bitvector_with_context(element.end(), parameter_binding)
     )
     .replace(&spelled_index, "k");
-    let guard_base = describe_pointer(iterated.guard().base(), parameters, arguments);
+    let guard_base = describe_pointer(iterated.guard().base(), parameter_binding);
     let mut text = format!(
         "forall k in {}..{} where {}[k] {} {}: {} (the iterated clause of `{}`)",
-        describe_bitvector_with_context(iterated.lower(), parameters, arguments),
-        describe_bitvector_with_context(iterated.upper(), parameters, arguments),
+        describe_bitvector_with_context(iterated.lower(), parameter_binding),
+        describe_bitvector_with_context(iterated.upper(), parameter_binding),
         guard_base,
         if iterated.guard().holds_when_equal() {
             "=="
         } else {
             "!="
         },
-        describe_bitvector_with_context(iterated.guard().value(), parameters, arguments),
+        describe_bitvector_with_context(iterated.guard().value(), parameter_binding),
         element,
         iterated.owner()
     );
@@ -1759,7 +1721,7 @@ pub(in crate::surface) fn describe_iterated_memory(
             iterated
                 .holes()
                 .iter()
-                .map(|hole| describe_bitvector_with_context(hole, parameters, arguments))
+                .map(|hole| describe_bitvector_with_context(hole, parameter_binding))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -1767,11 +1729,7 @@ pub(in crate::surface) fn describe_iterated_memory(
     text
 }
 
-fn describe_c_resource(
-    resource: &CResource,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> String {
+fn describe_c_resource(resource: &CResource, parameter_binding: ParameterBinding<'_>) -> String {
     match resource {
         CResource::Instance(instance) => {
             format!("instance {}#{}", instance.name(), instance.identity().0)
@@ -1779,7 +1737,7 @@ fn describe_c_resource(
         CResource::Memory(range) => {
             format!(
                 "memory({})",
-                describe_memory_range(range, parameters, arguments)
+                describe_memory_range(range, parameter_binding)
             )
         }
         CResource::Composite {
@@ -1789,22 +1747,22 @@ fn describe_c_resource(
         | CResource::Token {
             name,
             arguments: resource_arguments,
-        } => format_declared_resource(name, resource_arguments, parameters, arguments),
+        } => format_declared_resource(name, resource_arguments, parameter_binding),
         CResource::MutexGuard(identity) => format!(
             "mutex_guard({})",
-            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+            describe_mutex_pointer(identity.mutex(), parameter_binding)
         ),
         CResource::MutexLive(identity) => format!(
             "mutex_live({})",
-            describe_mutex_pointer(identity.mutex(), parameters, arguments)
+            describe_mutex_pointer(identity.mutex(), parameter_binding)
         ),
-        CResource::MutexUse(identity) => format_mutex_use(identity, parameters, arguments),
-        CResource::Publication(right) => format_publication_right(right, parameters, arguments),
+        CResource::MutexUse(identity) => format_mutex_use(identity, parameter_binding),
+        CResource::Publication(right) => format_publication_right(right, parameter_binding),
         CResource::PopulationAuthority(description) => format!(
             "authority({})",
-            format_population_description(description, parameters, arguments)
+            format_population_description(description, parameter_binding)
         ),
-        CResource::Iterated(iterated) => describe_iterated_memory(iterated, parameters, arguments),
+        CResource::Iterated(iterated) => describe_iterated_memory(iterated, parameter_binding),
     }
 }
 
@@ -1828,18 +1786,16 @@ fn describe_resource_subject(resource: &ResourceSubject) -> String {
 
 fn format_mutex_use(
     identity: &crate::kernel::MutexUseIdentity,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    let mutex = describe_mutex_pointer(identity.mutex(), parameters, arguments);
+    let mutex = describe_mutex_pointer(identity.mutex(), parameter_binding);
     match identity.protected_type() {
         Some(resource_type) => format!(
             "mutex_use({mutex}, {})",
             format_declared_resource(
                 resource_type.family(),
                 resource_type.arguments(),
-                parameters,
-                arguments
+                parameter_binding
             )
         ),
         None => format!("mutex_use({mutex})"),
@@ -1848,18 +1804,16 @@ fn format_mutex_use(
 
 fn format_publication_right(
     right: &crate::kernel::PublicationRight,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let right_text = format!(
         "{}({}, {})",
         right.side().keyword(),
-        describe_mutex_pointer(right.flag(), parameters, arguments),
+        describe_mutex_pointer(right.flag(), parameter_binding),
         format_declared_resource(
             right.payload().family(),
             right.payload().arguments(),
-            parameters,
-            arguments
+            parameter_binding
         )
     );
     if right.observed().is_some() {
@@ -1872,15 +1826,14 @@ fn format_publication_right(
 pub(super) fn format_declared_resource(
     name: &str,
     resource_arguments: &[AlgebraicValue],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     format!(
         "{name}({})",
         resource_arguments
             .iter()
             .map(|argument| match argument {
-                AlgebraicValue::C(value) => describe_c_value(value, parameters, arguments),
+                AlgebraicValue::C(value) => describe_c_value(value, parameter_binding),
                 AlgebraicValue::Integer(value) => describe_integer_term(value),
                 AlgebraicValue::Algebraic(value) =>
                     format!("<{} model>", value.algebraic_type.name),
@@ -1969,13 +1922,16 @@ fn describe_layout_place_range(
 
 fn describe_struct_place_range(
     range: &CMemoryRange,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let start = u64::from(range.constant_start()?);
     let end = u64::from(range.constant_end()?);
     let width = u64::from(range.element_width());
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -2020,24 +1976,27 @@ fn describe_struct_place_range(
 
 pub(super) fn describe_memory_range(
     range: &CMemoryRange,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     // A wide range is spelled from its base and its own 64-bit bounds.
     if let Some((start, end)) = range.wide_bounds() {
         return format!(
             "{}[{}..{}]",
-            describe_pointer(range.base(), parameters, arguments),
-            describe_bitvector_with_context(start, parameters, arguments),
-            describe_bitvector_with_context(end, parameters, arguments)
+            describe_pointer(range.base(), parameter_binding),
+            describe_bitvector_with_context(start, parameter_binding),
+            describe_bitvector_with_context(end, parameter_binding)
         );
     }
-    if let Some(place) = describe_struct_place_range(range, parameters, arguments) {
+    if let Some(place) = describe_struct_place_range(range, parameter_binding) {
         return place;
     }
     // Elements behind a pointer field are spelled from the field:
     // `a->data[0..n]`.
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -2078,23 +2037,23 @@ pub(super) fn describe_memory_range(
             };
             return format!(
                 "{field}[{}..{}]",
-                describe_bitvector_with_context(&start, parameters, arguments),
-                describe_bitvector_with_context(&end, parameters, arguments)
+                describe_bitvector_with_context(&start, parameter_binding),
+                describe_bitvector_with_context(&end, parameter_binding)
             );
         }
     }
-    if let Some(description) = describe_parameter_relative_range(range, parameters, arguments) {
+    if let Some(description) = describe_parameter_relative_range(range, parameter_binding) {
         return description;
     }
-    if let Some(description) = describe_indexed_base_range(range, parameters, arguments) {
+    if let Some(description) = describe_indexed_base_range(range, parameter_binding) {
         return description;
     }
     // A range over a named object starts at the object itself (`g[0..4]`),
     // not at a pointer to it.
-    let base = match named_object_block(&range.base().block, parameters, arguments) {
+    let base = match named_object_block(&range.base().block, parameter_binding) {
         Some(name) if range.base().offset == PointerOffsetTerm::Constant(0) => name,
         _ => {
-            let cell = describe_pointer(range.base(), parameters, arguments);
+            let cell = describe_pointer(range.base(), parameter_binding);
             // One element at an address spelled as a member or a byte offset
             // is that cell; `p->data[2][0..1]` would read as a second index.
             // A bare name or an elided address keeps its range.
@@ -2122,8 +2081,8 @@ pub(super) fn describe_memory_range(
     format!(
         "{}[{}..{}]",
         base,
-        describe_bitvector_with_context(range.start(), parameters, arguments),
-        describe_bitvector_with_context(range.end(), parameters, arguments)
+        describe_bitvector_with_context(range.start(), parameter_binding),
+        describe_bitvector_with_context(range.end(), parameter_binding)
     )
 }
 
@@ -2134,8 +2093,7 @@ pub(super) fn describe_memory_range(
 /// base the describer can name takes part.
 fn describe_indexed_base_range(
     range: &CMemoryRange,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let width = i64::from(range.element_width());
     let PointerOffsetTerm::Add(rest, last) = &range.base().offset else {
@@ -2156,11 +2114,11 @@ fn describe_indexed_base_range(
         block: range.base().block.clone(),
         offset: rest.as_ref().clone(),
     };
-    let base = describe_pointer(&root, parameters, arguments);
+    let base = describe_pointer(&root, parameter_binding);
     if base.contains("the pointer value at this program point") || base.contains('…') {
         return None;
     }
-    let index = describe_bitvector_with_context(index, parameters, arguments);
+    let index = describe_bitvector_with_context(index, parameter_binding);
     let bounds = range.int32_bounds()?;
     match (bounds.0.as_const(), bounds.1.as_const()) {
         (Some(0), Some(1)) => Some(format!("{base}[{index}]")),
@@ -2175,21 +2133,19 @@ fn describe_indexed_base_range(
 /// which no source text names.
 fn named_object_block(
     block: &PointerBlock,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     if matches!(block, PointerBlock::Concrete(name) if name == "null") {
         return Some("NULL".to_string());
     }
-    describe_memory_block(block, parameters, arguments)
+    describe_memory_block(block, parameter_binding)
 }
 
 pub(super) fn describe_parameter_relative_range(
     range: &CMemoryRange,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    let (parameter, base_index) = parameter_relative_base(range, parameters, arguments)?;
+    let (parameter, base_index) = parameter_relative_base(range, parameter_binding)?;
     let (start, end) = parameter_relative_endpoints(&base_index, range);
     let from = range.element_width();
     let to = u32::try_from(diagnostic_parameter_element_width(parameter)).ok()?;
@@ -2223,14 +2179,14 @@ pub(super) fn describe_parameter_relative_range(
         return Some(format!(
             "{}[{}]",
             name,
-            describe_bitvector_with_context(&start, parameters, arguments)
+            describe_bitvector_with_context(&start, parameter_binding)
         ));
     }
     Some(format!(
         "{}[{}..{}]",
         name,
-        describe_bitvector_with_context(&start, parameters, arguments),
-        describe_bitvector_with_context(&end, parameters, arguments)
+        describe_bitvector_with_context(&start, parameter_binding),
+        describe_bitvector_with_context(&end, parameter_binding)
     ))
 }
 
@@ -2258,11 +2214,14 @@ fn range_end_is_next_element(start: &Bitvector32Term, end: &Bitvector32Term) -> 
 /// parameter does.
 fn parameter_relative_base<'a>(
     range: &CMemoryRange,
-    parameters: &'a [syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'a>,
 ) -> Option<(&'a syntax::C0Parameter, Bitvector32Term)> {
     let mut symbolic = None;
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -2321,8 +2280,7 @@ fn parameter_relative_endpoints(
 pub(super) fn describe_missing_range_end_note(
     error: &crate::kernel::CRuntimeError,
     resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let crate::kernel::CRuntimeError::MissingResource { resource } = error else {
         return String::new();
@@ -2345,13 +2303,13 @@ pub(super) fn describe_missing_range_end_note(
                 "after reserving {} for an earlier requirement of this call, ",
                 describe_bounded_list(&miss.reserved, |fact| format!(
                     "`{}`",
-                    describe_resource_fact(fact, parameters, arguments)
+                    describe_resource_fact(fact, parameter_binding)
                 ))
             ),
         ),
         None => (resource_facts, String::new()),
     };
-    let required_parameter = parameter_relative_base(required, parameters, arguments);
+    let required_parameter = parameter_relative_base(required, parameter_binding);
     let byte_coordinates = required_parameter.as_ref().is_some_and(|(parameter, _)| {
         parameter.pointee_struct_layout().is_some()
             || parameter.struct_layout().is_some()
@@ -2365,7 +2323,7 @@ pub(super) fn describe_missing_range_end_note(
         }
         let held_index = if held.base() == required.base() {
             match &required_parameter {
-                Some(_) => parameter_relative_base(held, parameters, arguments)?.1,
+                Some(_) => parameter_relative_base(held, parameter_binding)?.1,
                 None => {
                     return Some((
                         held.start().clone(),
@@ -2377,7 +2335,7 @@ pub(super) fn describe_missing_range_end_note(
             }
         } else {
             let (required_parameter, _) = required_parameter.as_ref()?;
-            let (held_parameter, index) = parameter_relative_base(held, parameters, arguments)?;
+            let (held_parameter, index) = parameter_relative_base(held, parameter_binding)?;
             if !std::ptr::eq(held_parameter, *required_parameter) {
                 return None;
             }
@@ -2433,10 +2391,10 @@ pub(super) fn describe_missing_range_end_note(
         return match &reservation {
             Some(miss) => format!(
                 "\n  note: {reserved_prefix}no remaining owner covers `{}`; remaining: {}",
-                describe_memory_range(required, parameters, arguments),
+                describe_memory_range(required, parameter_binding),
                 describe_bounded_list(&miss.remaining, |fact| format!(
                     "`{}`",
-                    describe_resource_fact(fact, parameters, arguments)
+                    describe_resource_fact(fact, parameter_binding)
                 ))
             ),
             None => String::new(),
@@ -2455,10 +2413,10 @@ pub(super) fn describe_missing_range_end_note(
             .expect("found a refuted side above");
         return format!(
             "\n  note: {reserved_prefix}held `{}` does not cover `{}`: `{} <= {}` is false{coordinate_note}",
-            describe_resource_fact(held_fact, parameters, arguments),
-            describe_memory_range(required, parameters, arguments),
-            describe_bitvector_with_context(lower, parameters, arguments),
-            describe_bitvector_with_context(upper, parameters, arguments),
+            describe_resource_fact(held_fact, parameter_binding),
+            describe_memory_range(required, parameter_binding),
+            describe_bitvector_with_context(lower, parameter_binding),
+            describe_bitvector_with_context(upper, parameter_binding),
         );
     }
     let conditions = sides
@@ -2467,8 +2425,8 @@ pub(super) fn describe_missing_range_end_note(
         .map(|(lower, upper)| {
             format!(
                 "`{} <= {}`",
-                describe_bitvector_with_context(lower, parameters, arguments),
-                describe_bitvector_with_context(upper, parameters, arguments),
+                describe_bitvector_with_context(lower, parameter_binding),
+                describe_bitvector_with_context(upper, parameter_binding),
             )
         })
         .collect::<Vec<_>>();
@@ -2477,8 +2435,8 @@ pub(super) fn describe_missing_range_end_note(
     }
     format!(
         "\n  note: {reserved_prefix}held `{}` covers `{}` only when {}{coordinate_note}",
-        describe_resource_fact(held_fact, parameters, arguments),
-        describe_memory_range(required, parameters, arguments),
+        describe_resource_fact(held_fact, parameter_binding),
+        describe_memory_range(required, parameter_binding),
         conditions.join(" and "),
     )
 }
@@ -2494,8 +2452,7 @@ pub(super) fn describe_missing_range_end_note(
 pub(in crate::surface) fn describe_load_kind_mismatch(
     left: &CValue,
     right: &CValue,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (_, left_load) = unresolved_load(left)?;
     let (_, right_load) = unresolved_load(right)?;
@@ -2504,7 +2461,7 @@ pub(in crate::surface) fn describe_load_kind_mismatch(
     if left_load != right_load || left_kind == right_kind {
         return None;
     }
-    let named = match describe_source_cell(&left_load, parameters, arguments) {
+    let named = match describe_source_cell(&left_load, parameter_binding) {
         Some(cell) => format!("`{}`", cell.text()),
         None => "one address".to_string(),
     };
@@ -2610,8 +2567,7 @@ pub(super) fn describe_model_field_mismatch(
     here: &CState,
     there: &CState,
     since: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let origin = unresolved_model_field(value)?;
     let explanation = resource_tracker::explain_at_states(
@@ -2623,7 +2579,7 @@ pub(super) fn describe_model_field_mismatch(
         resource_tracker::StatePoint::at(here),
         resource_tracker::StatePoint::at(there),
     );
-    describe_resource_version_mismatch(&explanation, since, parameters, arguments)
+    describe_resource_version_mismatch(&explanation, since, parameter_binding)
 }
 
 /// Names the write that stopped a comparison side from being carried across
@@ -2636,8 +2592,7 @@ pub(super) fn describe_model_field_mismatch(
 /// write it has to rule out and how.
 pub(super) fn describe_unseparated_write(
     value: &CValue,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (memory, load) = unresolved_load(value)?;
     let explanation = resource_tracker::explain_last_same(
@@ -2647,13 +2602,8 @@ pub(super) fn describe_unseparated_write(
         },
         &resource_tracker::ProgramPoint::at(&memory),
     );
-    describe_resource_version_mismatch(
-        &explanation,
-        "earlier in this function",
-        parameters,
-        arguments,
-    )
-    .map(|mismatch| format!("; {mismatch}"))
+    describe_resource_version_mismatch(&explanation, "earlier in this function", parameter_binding)
+        .map(|mismatch| format!("; {mismatch}"))
 }
 
 /// A `fold` field initializer that reads a model this state no longer holds.
@@ -2671,8 +2621,7 @@ pub(super) fn describe_unheld_model_field_initializer(
     initializer: &ContractExpression,
     state: &CState,
     entry_state: &CState,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let access = unheld_model_field_access(initializer, state, false)?;
     // The instance identity a fold writes is the reader's binder, so the
@@ -2688,7 +2637,7 @@ pub(super) fn describe_unheld_model_field_initializer(
         resource_tracker::StatePoint::at(state),
         resource_tracker::StatePoint::at(entry_state),
     );
-    describe_resource_version_mismatch(&explanation, "function entry", parameters, arguments)
+    describe_resource_version_mismatch(&explanation, "function entry", parameter_binding)
 }
 
 /// The first model field in `expression` that `state` cannot resolve, skipping
@@ -2769,7 +2718,8 @@ pub(in crate::surface) fn describe_consumed_instance_field_read(
                 expressions.push(right);
             }
             ClickProposition::FloatClassification { expression, .. }
-            | ClickProposition::Defined { expression } => expressions.push(expression),
+            | ClickProposition::Defined { expression }
+            | ClickProposition::ValidPlace { expression, .. } => expressions.push(expression),
             ClickProposition::Not(inner)
             | ClickProposition::ForAll { body: inner, .. }
             | ClickProposition::Exists { body: inner, .. } => pending.push(inner),
@@ -2861,16 +2811,15 @@ pub(in crate::surface) fn describe_consumed_instance_field_read(
 pub(super) fn describe_read_address_mismatch(
     left: &CValue,
     right: &CValue,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (left_memory, left_load) = unresolved_load(left)?;
     let (right_memory, right_load) = unresolved_load(right)?;
     if left_load == right_load || left_memory.read_identity() != right_memory.read_identity() {
         return None;
     }
-    let left = describe_source_cell(&left_load, parameters, arguments)?;
-    let right = describe_source_cell(&right_load, parameters, arguments)?;
+    let left = describe_source_cell(&left_load, parameter_binding)?;
+    let right = describe_source_cell(&right_load, parameter_binding)?;
     Some(format!(
         "`{}` and `{}` read the same recorded memory using different address expressions. \
          Establish the index/address relation or the equality of those values.",
@@ -2886,15 +2835,14 @@ pub(super) fn describe_two_sided_version_mismatch(
     right: &CValue,
     left_point: &str,
     right_point: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (left_memory, left_load) = unresolved_load(left)?;
     let (right_memory, right_load) = unresolved_load(right)?;
     if left_load != right_load {
         return None;
     }
-    if let Some(mismatch) = describe_load_kind_mismatch(left, right, parameters, arguments) {
+    if let Some(mismatch) = describe_load_kind_mismatch(left, right, parameter_binding) {
         return Some(mismatch);
     }
     let explanation = resource_tracker::explain(
@@ -2913,7 +2861,7 @@ pub(super) fn describe_two_sided_version_mismatch(
     } else {
         left_point
     };
-    describe_resource_version_mismatch(&explanation, since, parameters, arguments)
+    describe_resource_version_mismatch(&explanation, since, parameter_binding)
 }
 
 /// The explanation for a goal and an available fact that spell alike and
@@ -2925,11 +2873,10 @@ pub(super) fn describe_proposition_version_mismatch(
     goal: &Proposition,
     premises: &[&Proposition],
     premise_point: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (explanation, internal) =
-        proposition_version_explanation(goal, premises, parameters, arguments)?;
+        proposition_version_explanation(goal, premises, parameter_binding)?;
     describe_resource_version_mismatch(
         &explanation,
         if internal {
@@ -2937,8 +2884,7 @@ pub(super) fn describe_proposition_version_mismatch(
         } else {
             premise_point
         },
-        parameters,
-        arguments,
+        parameter_binding,
     )
 }
 
@@ -2947,8 +2893,7 @@ pub(super) fn describe_proposition_version_mismatch(
 pub(crate) fn proposition_version_explanation(
     goal: &Proposition,
     premises: &[&Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<(resource_tracker::Explanation, bool)> {
     // A goal that reads no resource has no version to differ about. Deciding
     // that first keeps this diagnostic, and the tracker's walk, off the
@@ -2973,7 +2918,7 @@ pub(crate) fn proposition_version_explanation(
             // to the explanation, not this diagnostic shape comparison.
             let shape = |fact: &Proposition| {
                 let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
-                    parameters, arguments,
+                    parameter_binding,
                 );
                 crate::surface::proof_diagnostics::render::render_proposition_labeled(
                     fact,
@@ -3003,8 +2948,7 @@ pub(crate) fn proposition_version_explanation(
 pub(super) fn describe_resource_version_mismatch(
     explanation: &resource_tracker::Explanation,
     since: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (at, stop) = explanation.outcome.blocking_step()?;
     if stop.reason == resource_tracker::StopReason::HistoryEnds {
@@ -3014,7 +2958,7 @@ pub(super) fn describe_resource_version_mismatch(
     }
     let mut message = match &explanation.resource {
         resource_tracker::OwnedResource::Block(block) => {
-            describe_block_fact_stop(block, &stop.change, parameters, arguments)
+            describe_block_fact_stop(block, &stop.change, parameter_binding)
         }
         resource_tracker::OwnedResource::Cell { pointer, bytes } => describe_cell_version_stop(
             pointer,
@@ -3024,8 +2968,7 @@ pub(super) fn describe_resource_version_mismatch(
             },
             stop,
             since,
-            parameters,
-            arguments,
+            parameter_binding,
         ),
         // No term names a memory footprint, so no goal or premise a refusal
         // compares reads one. There is nothing to say rather than something
@@ -3134,16 +3077,15 @@ fn describe_model_field_version_stop(
 fn describe_block_fact_stop(
     block: &PointerBlock,
     change: &resource_tracker::Change,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    let named = describe_memory_block(block, parameters, arguments)
+    let named = describe_memory_block(block, parameter_binding)
         .map(|name| format!("`{name}`"))
         .unwrap_or_else(|| "this array".to_string());
     format!(
         "a fact about {named} as a whole does not carry across {}. Only a step the kernel proves \
          leaves the whole object alone carries one, and a stated `separate(...)` is not read here.",
-        describe_step(change, parameters, arguments)
+        describe_step(change, parameter_binding)
     )
 }
 
@@ -3182,10 +3124,9 @@ fn describe_cell_version_stop(
     widths: AccessWidths,
     stop: &resource_tracker::Stop,
     since: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    let cell = describe_source_cell(pointer, parameters, arguments);
+    let cell = describe_source_cell(pointer, parameter_binding);
     // Without the C names — a pure theorem has none — the address has no
     // source spelling, so the sentence says "this read" rather than repeating
     // a verifier-owned one.
@@ -3194,7 +3135,7 @@ fn describe_cell_version_stop(
         None => "this read".to_string(),
     };
     if let resource_tracker::Change::CellsSeeded { pointer: recorded } = &stop.change {
-        let recorded = describe_source_cell(recorded, parameters, arguments)
+        let recorded = describe_source_cell(recorded, parameter_binding)
             .map(|cell| format!("`{}`", cell.text()))
             .unwrap_or_else(|| "another cell".to_string());
         return format!(
@@ -3211,7 +3152,7 @@ fn describe_cell_version_stop(
     };
     format!(
         "{named} {changed} since {since}: {}",
-        describe_cell_cause(cell.as_ref(), widths, stop, certain, parameters, arguments)
+        describe_cell_cause(cell.as_ref(), widths, stop, certain, parameter_binding)
     )
 }
 
@@ -3221,12 +3162,11 @@ fn describe_cell_cause(
     widths: AccessWidths,
     stop: &resource_tracker::Stop,
     certain: bool,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match &stop.change {
         resource_tracker::Change::Store { pointer } => {
-            describe_store_cause(cell, pointer, widths, certain, parameters, arguments)
+            describe_store_cause(cell, pointer, widths, certain, parameter_binding)
         }
         resource_tracker::Change::CellsSeeded { .. } => {
             "range contents were recorded; establish the index/address relation or preservation needed \
@@ -3234,18 +3174,18 @@ fn describe_cell_cause(
                 .to_string()
         }
         resource_tracker::Change::Call { ranges } => {
-            describe_havoc_cause("the call in between", cell, ranges, parameters, arguments)
+            describe_havoc_cause("the call in between", cell, ranges, parameter_binding)
         }
         resource_tracker::Change::Loop {
             ranges: Some(ranges),
-        } => describe_havoc_cause("the loop in between", cell, ranges, parameters, arguments),
+        } => describe_havoc_cause("the loop in between", cell, ranges, parameter_binding),
         resource_tracker::Change::Loop { ranges: None } => {
             "the loop in between may have written it. The loop declares no write set, so nothing \
              can be shown separate from it: carry the fact through it as an invariant instead."
                 .to_string()
         }
         resource_tracker::Change::Free { allocation } => {
-            match describe_memory_block(&allocation.block, parameters, arguments) {
+            match describe_memory_block(&allocation.block, parameter_binding) {
                 Some(freed) => format!(
                     "the allocation at `{freed}` was released in between, and nothing shows it \
                      separate from this cell."
@@ -3258,7 +3198,7 @@ fn describe_cell_cause(
             }
         }
         resource_tracker::Change::ContractRetirement { allocation } => {
-            match describe_memory_block(&allocation.block, parameters, arguments) {
+            match describe_memory_block(&allocation.block, parameter_binding) {
                 Some(retired) => format!(
                     "the contract in between may have released the allocation at `{retired}`."
                 ),
@@ -3316,10 +3256,9 @@ fn describe_store_cause(
     written: &Pointer,
     widths: AccessWidths,
     certain: bool,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    let store = describe_source_cell(written, parameters, arguments);
+    let store = describe_source_cell(written, parameter_binding);
     if certain {
         return match &store {
             Some(store) => format!("the store to `{}` wrote it.", store.text()),
@@ -3414,20 +3353,18 @@ fn describe_same_object_store_cause(
 /// a source expression.
 pub(in crate::surface) fn diagnostic_source_cell(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    let cell = describe_source_cell(pointer, parameters, arguments)?;
+    let cell = describe_source_cell(pointer, parameter_binding)?;
     (!matches!(cell.index, CellIndex::Unnamed)).then(|| cell.text())
 }
 
 pub(in crate::surface) fn diagnostic_source_load_cell(
     pointer: &Pointer,
     kind: crate::kernel::LoadKind,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    let cell = describe_source_cell(pointer, parameters, arguments)?;
+    let cell = describe_source_cell(pointer, parameter_binding)?;
     (cell.element_bytes == Some(kind.byte_width()) && !matches!(cell.index, CellIndex::Unnamed))
         .then(|| cell.text())
 }
@@ -3437,11 +3374,14 @@ pub(in crate::surface) fn diagnostic_source_load_cell(
 /// load kind alone does not describe the source C type.
 pub(in crate::surface) fn diagnostic_source_pointer_cell(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     base_point: Option<&str>,
 ) -> Option<String> {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -3477,10 +3417,9 @@ pub(in crate::surface) fn diagnostic_source_pointer_cell(
 #[cfg(test)]
 pub(in crate::surface) fn source_cell_text_for_tests(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    describe_source_cell(pointer, parameters, arguments).map(|cell| cell.text())
+    describe_source_cell(pointer, parameter_binding).map(|cell| cell.text())
 }
 
 /// [`describe_same_object_store_cause`] driven from the surface tests with
@@ -3576,12 +3515,11 @@ fn describe_havoc_cause(
     step: &str,
     cell: Option<&SourceCell>,
     ranges: &[CMemoryRange],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let spelled = ranges
         .iter()
-        .map(|range| describe_source_range(range, parameters, arguments))
+        .map(|range| describe_source_range(range, parameter_binding))
         .collect::<Option<Vec<_>>>()
         .filter(|spelled| !spelled.is_empty());
     let Some(spelled) = spelled else {
@@ -3649,12 +3587,11 @@ fn bounded_range_list(ranges: &[String]) -> String {
 /// what a line number would take.
 fn describe_step(
     change: &resource_tracker::Change,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match change {
         resource_tracker::Change::Store { pointer } => {
-            match describe_source_cell(pointer, parameters, arguments) {
+            match describe_source_cell(pointer, parameter_binding) {
                 Some(store) => format!("the store to `{}`", store.text()),
                 None => "a store".to_string(),
             }
@@ -3665,13 +3602,13 @@ fn describe_step(
         resource_tracker::Change::Call { .. } => "the call".to_string(),
         resource_tracker::Change::Loop { .. } => "the loop".to_string(),
         resource_tracker::Change::Free { allocation } => {
-            match describe_memory_block(&allocation.block, parameters, arguments) {
+            match describe_memory_block(&allocation.block, parameter_binding) {
                 Some(freed) => format!("the release of `{freed}`"),
                 None => "a released allocation".to_string(),
             }
         }
         resource_tracker::Change::ContractRetirement { allocation } => {
-            match describe_memory_block(&allocation.block, parameters, arguments) {
+            match describe_memory_block(&allocation.block, parameter_binding) {
                 Some(retired) => format!("the contract possibly releasing `{retired}`"),
                 None => "a contract possibly releasing an allocation".to_string(),
             }
@@ -3776,8 +3713,7 @@ impl SourceCell {
 /// shown.
 fn describe_source_cell(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<SourceCell> {
     // Two parameters can point into one block, and then every one of them
     // can express the address -- `b[j]` is also `a[(b - a) + j]`. The
@@ -3791,7 +3727,11 @@ fn describe_source_cell(
     // the two bases. So among unnamed candidates the index with fewer
     // variables wins, and only then the shorter text.
     let mut best: Option<(SourceCell, usize)> = None;
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -3804,13 +3744,9 @@ fn describe_source_cell(
                 element_bytes: None,
             });
         }
-        if let Some(member) = describe_parameter_struct_member(
-            pointer,
-            parameter,
-            base.pointer(),
-            parameters,
-            arguments,
-        ) {
+        if let Some(member) =
+            describe_parameter_struct_member(pointer, parameter, base.pointer(), parameter_binding)
+        {
             return Some(SourceCell {
                 object: member,
                 index: CellIndex::StructMember,
@@ -3824,10 +3760,8 @@ fn describe_source_cell(
         };
         let spelled = SourceCell {
             object: parameter.name().to_string(),
-            index: if bitvector_is_source_spelled(&index, parameters, arguments) {
-                CellIndex::Named(describe_bitvector_with_context(
-                    &index, parameters, arguments,
-                ))
+            index: if bitvector_is_source_spelled(&index, parameter_binding) {
+                CellIndex::Named(describe_bitvector_with_context(&index, parameter_binding))
             } else {
                 CellIndex::Unnamed
             },
@@ -3845,7 +3779,7 @@ fn describe_source_cell(
     if let Some((best, _)) = best {
         return Some(best);
     }
-    let declared = describe_memory_block(&pointer.block, parameters, arguments)?;
+    let declared = describe_memory_block(&pointer.block, parameter_binding)?;
     match &pointer.offset {
         // A local's block holds one declared object, and the name the reader
         // wrote for it *is* the address: `q`, not `q[0]`, which would read as a
@@ -3905,28 +3839,27 @@ fn prefer_source_cell(
 /// bounds have no spelling in the caller's own names.
 fn describe_source_range(
     range: &CMemoryRange,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    if let Some((_, base_index)) = parameter_relative_base(range, parameters, arguments) {
+    if let Some((_, base_index)) = parameter_relative_base(range, parameter_binding) {
         let (start, end) = parameter_relative_endpoints(&base_index, range);
-        if bitvector_is_source_spelled(&start, parameters, arguments)
-            && bitvector_is_source_spelled(&end, parameters, arguments)
+        if bitvector_is_source_spelled(&start, parameter_binding)
+            && bitvector_is_source_spelled(&end, parameter_binding)
         {
-            return Some(describe_memory_range(range, parameters, arguments));
+            return Some(describe_memory_range(range, parameter_binding));
         }
     }
     if range.base().offset != PointerOffsetTerm::Constant(0)
-        || !bitvector_is_source_spelled(range.bound_terms().0, parameters, arguments)
-        || !bitvector_is_source_spelled(range.bound_terms().1, parameters, arguments)
+        || !bitvector_is_source_spelled(range.bound_terms().0, parameter_binding)
+        || !bitvector_is_source_spelled(range.bound_terms().1, parameter_binding)
     {
         return None;
     }
-    let declared = describe_memory_block(&range.base().block, parameters, arguments)?;
+    let declared = describe_memory_block(&range.base().block, parameter_binding)?;
     Some(format!(
         "{declared}[{}..{}]",
-        describe_bitvector_with_context(range.bound_terms().0, parameters, arguments),
-        describe_bitvector_with_context(range.bound_terms().1, parameters, arguments)
+        describe_bitvector_with_context(range.bound_terms().0, parameter_binding),
+        describe_bitvector_with_context(range.bound_terms().1, parameter_binding)
     ))
 }
 
@@ -3936,13 +3869,12 @@ fn describe_source_range(
 /// over a name nobody wrote is not a repair.
 fn bitvector_is_source_spelled(
     term: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> bool {
     let mut variables = std::collections::BTreeSet::new();
     crate::kernel::collect_bitvector_variables(term, &mut variables);
     variables.iter().all(|variable| {
-        describe_parameter_bitvector(&Bitvector32Term::Variable(*variable), parameters, arguments)
+        describe_parameter_bitvector(&Bitvector32Term::Variable(*variable), parameter_binding)
             .is_some()
     })
 }
@@ -3951,10 +3883,13 @@ fn bitvector_is_source_spelled(
 /// parameter whose argument points into it, or a file-scope declaration.
 pub(super) fn describe_memory_block(
     block: &PointerBlock,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         if let CExpression::Value(CValue::Pointer(base)) = argument
             && &base.pointer().block == block
         {
@@ -3984,12 +3919,12 @@ pub(super) fn describe_memory_block(
 
 /// Spell mutex storage as an address, including a field at offset zero, rather
 /// than rendering the containing object or an array-element value.
-fn describe_mutex_pointer(
-    pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> String {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+fn describe_mutex_pointer(pointer: &Pointer, parameter_binding: ParameterBinding<'_>) -> String {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -4017,7 +3952,7 @@ fn describe_mutex_pointer(
             return format!("&{}{selector}{name}", parameter.name());
         }
     }
-    describe_pointer(pointer, parameters, arguments)
+    describe_pointer(pointer, parameter_binding)
 }
 
 /// The element width of a parameter that points to (or is) an array of one
@@ -4067,8 +4002,7 @@ thread_local! {
 /// small nesting the index is spelled without the tables, which ends it.
 fn describe_address_index(
     index: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     const NESTING_LIMIT: u32 = 2;
     let depth = NESTED_ADDRESS_SPELLINGS.with(std::cell::Cell::get);
@@ -4083,13 +4017,12 @@ fn describe_address_index(
     }
     NESTED_ADDRESS_SPELLINGS.with(|nested| nested.set(depth + 1));
     let _leave = Leave(depth);
-    describe_bitvector_with_context(index, parameters, arguments)
+    describe_bitvector_with_context(index, parameter_binding)
 }
 
 pub(in crate::surface) fn describe_pointer(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     // Two parameters can point into one block, and then every one of them can
     // express the address -- `b[j]` is also `a[(b - a) + j]`. As in
@@ -4098,7 +4031,11 @@ pub(in crate::surface) fn describe_pointer(
     // deterministic.
     let mut best: Option<String> = None;
     let mut byte_offset: Option<String> = None;
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -4118,19 +4055,15 @@ pub(in crate::surface) fn describe_pointer(
                 format!(
                     "{}[{}]",
                     parameter.name(),
-                    describe_address_index(&index, parameters, arguments)
+                    describe_address_index(&index, parameter_binding)
                 )
             };
             if best.as_ref().is_none_or(|best| spelled.len() < best.len()) {
                 best = Some(spelled);
             }
-        } else if let Some(member) = describe_parameter_struct_member(
-            pointer,
-            parameter,
-            base.pointer(),
-            parameters,
-            arguments,
-        ) {
+        } else if let Some(member) =
+            describe_parameter_struct_member(pointer, parameter, base.pointer(), parameter_binding)
+        {
             if best.as_ref().is_none_or(|best| member.len() < best.len()) {
                 best = Some(member);
             }
@@ -4157,7 +4090,11 @@ pub(in crate::surface) fn describe_pointer(
     // A by-value aggregate parameter is two objects: the callee's copy,
     // which the tables name, and the argument it was copied from, which a
     // claim about the parameter reads. The second is the caller's.
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(copy)) = argument else {
             continue;
         };
@@ -4170,9 +4107,9 @@ pub(in crate::surface) fn describe_pointer(
             return field.replacen("->", ".", 1);
         }
         let name = format!("the caller's {}", parameter.name());
-        if let Some(member) = describe_struct_member_from(
-            pointer, parameter, &source, &name, ".", parameters, arguments,
-        ) {
+        if let Some(member) =
+            describe_struct_member_from(pointer, parameter, &source, &name, ".", parameter_binding)
+        {
             return member;
         }
         if *pointer == source {
@@ -4191,11 +4128,11 @@ pub(in crate::surface) fn describe_pointer(
         {
             "NULL".to_string()
         }
-        block => match named_object_block(block, parameters, arguments) {
+        block => match named_object_block(block, parameter_binding) {
             Some(name) if pointer.offset == PointerOffsetTerm::Constant(0) => format!("&{name}"),
             Some(name) => format!(
                 "(char *)&{name} + {}",
-                describe_pointer_offset_with_context(&pointer.offset, parameters, arguments)
+                describe_pointer_offset_with_context(&pointer.offset, parameter_binding)
             ),
             // Heap, temporary and symbolic blocks have no source name.
             None => "…".to_string(),
@@ -4256,8 +4193,7 @@ fn describe_parameter_struct_member(
     pointer: &Pointer,
     parameter: &syntax::C0Parameter,
     base: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     describe_struct_member_from(
         pointer,
@@ -4265,8 +4201,7 @@ fn describe_parameter_struct_member(
         base,
         parameter.name(),
         "->",
-        parameters,
-        arguments,
+        parameter_binding,
     )
 }
 
@@ -4279,8 +4214,7 @@ fn describe_struct_member_from(
     base: &Pointer,
     name: &str,
     select: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let layout = parameter
         .pointee_struct_layout()
@@ -4312,10 +4246,10 @@ fn describe_struct_member_from(
     let selected = match (element, whole) {
         (None, 0) => None,
         (None, whole) => Some(whole.to_string()),
-        (Some(index), 0) => Some(describe_address_index(index, parameters, arguments)),
+        (Some(index), 0) => Some(describe_address_index(index, parameter_binding)),
         (Some(index), whole) => Some(format!(
             "{} + {whole}",
-            describe_address_index(index, parameters, arguments)
+            describe_address_index(index, parameter_binding)
         )),
     };
     let fields = layout.fields();
@@ -4523,66 +4457,62 @@ fn typed_literal_spelling(spelled: String, suffix: &str) -> String {
     }
 }
 
-pub(super) fn describe_c_value(
-    value: &CValue,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> String {
+pub(super) fn describe_c_value(value: &CValue, parameter_binding: ParameterBinding<'_>) -> String {
     match value {
         CValue::Void => "void".to_string(),
         CValue::Int128(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "i128",
         ),
         CValue::UInt128(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "u128",
         ),
         CValue::Bool(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "bool",
         ),
         CValue::Int8(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "i8",
         ),
         CValue::Int16(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "i16",
         ),
-        CValue::Int32(value) => describe_bitvector_with_context(value, parameters, arguments),
+        CValue::Int32(value) => describe_bitvector_with_context(value, parameter_binding),
         CValue::UInt8(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "u8",
         ),
         CValue::UInt32(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "u32",
         ),
         CValue::UInt16(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "u16",
         ),
         // A 64-bit constant already carries its suffix.
         CValue::Int64(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "i64",
         ),
         CValue::UInt64(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "u64",
         ),
         CValue::Float32(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "f32",
         ),
         CValue::Float64(value) => typed_literal_spelling(
-            describe_bitvector_with_context(value, parameters, arguments),
+            describe_bitvector_with_context(value, parameter_binding),
             "f64",
         ),
-        CValue::Pointer(pointer) => describe_pointer(pointer, parameters, arguments),
+        CValue::Pointer(pointer) => describe_pointer(pointer, parameter_binding),
         CValue::PointerInteger(value) => {
-            describe_c_value(&value.numeric_value(), parameters, arguments)
+            describe_c_value(&value.numeric_value(), parameter_binding)
         }
     }
 }
@@ -4737,7 +4667,7 @@ impl Drop for ReferenceResultSourceScope {
 
 pub(super) fn describe_c_expression(expression: &CExpression) -> String {
     match expression {
-        CExpression::Value(value) => describe_c_value(value, &[], &[]),
+        CExpression::Value(value) => describe_c_value(value, ParameterBinding::default()),
         CExpression::Variable(name)
             if name == "result" && REFERENCE_RESULT_SOURCE.with(std::cell::Cell::get) =>
         {
@@ -4772,19 +4702,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
             {
                 return format!("({} as {spelling})", describe_c_expression(expression));
             }
-            let spelling = match target_type {
-                CType::Int8 => "int8".to_string(),
-                CType::Int16 => "int16".to_string(),
-                CType::Int32 => "int32".to_string(),
-                CType::UInt8 => "uint8".to_string(),
-                CType::UInt16 => "uint16".to_string(),
-                CType::UInt32 => "uint32".to_string(),
-                CType::Int64 => "int64".to_string(),
-                CType::UInt64 => "uint64".to_string(),
-                CType::Int128 => "int128".to_string(),
-                CType::UInt128 => "uint128".to_string(),
-                _ => format!("{target_type:?}"),
-            };
+            let spelling = crate::kernel::c_type_spelling(*target_type);
             // Contract expressions use the `(type) expression` cast syntax.
             // Wrap the complete cast so it remains a single term when it is
             // embedded in a generated comparison or another proposition.
@@ -4952,16 +4870,12 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
 /// load at a constant offset from a struct pointer parameter where exactly
 /// one field starts is that field, `s->len`. Any other load keeps the
 /// explicit `load(...)` form.
-fn describe_load_at(
-    pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> String {
-    if let Some(field) = describe_struct_field_load(pointer, parameters, arguments) {
+fn describe_load_at(pointer: &Pointer, parameter_binding: ParameterBinding<'_>) -> String {
+    if let Some(field) = describe_struct_field_load(pointer, parameter_binding) {
         return field;
     }
-    let address = describe_pointer(pointer, parameters, arguments);
-    let referent = parameters.iter().find_map(|parameter| {
+    let address = describe_pointer(pointer, parameter_binding);
+    let referent = parameter_binding.parameters.iter().find_map(|parameter| {
         (parameter.is_reference() && parameter.name() == address)
             .then(|| syntax::referent_of_carrier(parameter.name()))
             .flatten()
@@ -4988,10 +4902,13 @@ fn describe_load_at(
 /// nested struct or a union whose members share that offset stays a load.
 fn describe_struct_field_load(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let CExpression::Value(CValue::Pointer(base)) = argument else {
             continue;
         };
@@ -5848,6 +5765,9 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
         ClickProposition::Defined { expression } => {
             format!("defined({})", describe_contract_expression(expression))
         }
+        ClickProposition::ValidPlace { expression, .. } => {
+            format!("valid_place({})", describe_contract_expression(expression))
+        }
         ClickProposition::At {
             selector,
             proposition,
@@ -5974,15 +5894,14 @@ fn lowering_only_variable(prefix: &str, id: u64) -> String {
 }
 
 pub(super) fn describe_bitvector(term: &Bitvector32Term) -> String {
-    describe_bitvector_with_context(term, &[], &[])
+    describe_bitvector_with_context(term, ParameterBinding::default())
 }
 
 pub(super) fn describe_bitvector_with_context(
     term: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
+    if let Some(name) = describe_parameter_bitvector(term, parameter_binding) {
         return name;
     }
     match term {
@@ -6008,7 +5927,7 @@ pub(super) fn describe_bitvector_with_context(
         {
             let (_, pointer) = crate::kernel::registered_load_for_variable(variable)
                 .expect("checked registered above");
-            describe_load_at(&pointer, parameters, arguments)
+            describe_load_at(&pointer, parameter_binding)
         }
         // And a model-field variable prints as the field it is. The value is
         // stored inside the instance fact, so there is nothing in the term to
@@ -6021,54 +5940,54 @@ pub(super) fn describe_bitvector_with_context(
         }
         Bitvector32Term::Variable(variable) => lowering_only_variable("v", variable.0),
         Bitvector32Term::Add(left, right) => {
-            describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "+", right, parameter_binding)
         }
         Bitvector32Term::Subtract(left, right) => {
-            describe_binary_bitvector_with_context(left, "-", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "-", right, parameter_binding)
         }
         Bitvector32Term::Multiply(left, right) => {
-            describe_binary_bitvector_with_context(left, "*", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "*", right, parameter_binding)
         }
         Bitvector32Term::Divide(left, right) => {
-            describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "/", right, parameter_binding)
         }
         Bitvector32Term::UnsignedDivide(left, right) => {
-            describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "/", right, parameter_binding)
         }
         Bitvector32Term::Remainder(left, right) => {
-            describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "%", right, parameter_binding)
         }
         Bitvector32Term::UnsignedRemainder(left, right) => {
-            describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "%", right, parameter_binding)
         }
         Bitvector32Term::ShiftLeft(left, right) => {
-            describe_binary_bitvector_with_context(left, "<<", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "<<", right, parameter_binding)
         }
         Bitvector32Term::ArithmeticShiftRight(left, right) => {
-            describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, ">>", right, parameter_binding)
         }
         Bitvector32Term::LogicalShiftRight(left, right) => {
-            describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, ">>", right, parameter_binding)
         }
         Bitvector32Term::BitwiseAnd(left, right) => {
-            describe_binary_bitvector_with_context(left, "&", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "&", right, parameter_binding)
         }
         Bitvector32Term::BitwiseOr(left, right) => {
-            describe_binary_bitvector_with_context(left, "|", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "|", right, parameter_binding)
         }
         Bitvector32Term::BitwiseXor(left, right) => {
-            describe_binary_bitvector_with_context(left, "^", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "^", right, parameter_binding)
         }
         Bitvector32Term::BitwiseNot(value) => {
             format!(
                 "~{}",
-                describe_bitvector_with_context(value, parameters, arguments)
+                describe_bitvector_with_context(value, parameter_binding)
             )
         }
         Bitvector32Term::Float32Negate(value) | Bitvector32Term::Float64Negate(value) => {
             format!(
                 "-{}",
-                describe_bitvector_with_context(value, parameters, arguments)
+                describe_bitvector_with_context(value, parameter_binding)
             )
         }
         Bitvector32Term::Float32Binary {
@@ -6087,7 +6006,7 @@ pub(super) fn describe_bitvector_with_context(
                 CFloatBinaryOperator::Multiply => "*",
                 CFloatBinaryOperator::Divide => "/",
             };
-            describe_binary_bitvector_with_context(left, symbol, right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, symbol, right, parameter_binding)
         }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -6095,54 +6014,54 @@ pub(super) fn describe_bitvector_with_context(
         | Bitvector32Term::UInt64FromInt32(value)
         | Bitvector32Term::UInt64FromInt64(value) => format!(
             "cast64({})",
-            describe_bitvector_with_context(value, parameters, arguments)
+            describe_bitvector_with_context(value, parameter_binding)
         ),
         Bitvector32Term::UInt32From64(value) => format!(
             "truncate32({})",
-            describe_bitvector_with_context(value, parameters, arguments)
+            describe_bitvector_with_context(value, parameter_binding)
         ),
         Bitvector32Term::Int64Add(left, right) | Bitvector32Term::UInt64Add(left, right) => {
-            describe_binary_bitvector_with_context(left, "+", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "+", right, parameter_binding)
         }
         Bitvector32Term::Int64Subtract(left, right)
         | Bitvector32Term::UInt64Subtract(left, right) => {
-            describe_binary_bitvector_with_context(left, "-", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "-", right, parameter_binding)
         }
         Bitvector32Term::Int64Multiply(left, right)
         | Bitvector32Term::UInt64Multiply(left, right) => {
-            describe_binary_bitvector_with_context(left, "*", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "*", right, parameter_binding)
         }
         Bitvector32Term::Int64Divide(left, right) | Bitvector32Term::UInt64Divide(left, right) => {
-            describe_binary_bitvector_with_context(left, "/", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "/", right, parameter_binding)
         }
         Bitvector32Term::Int64Remainder(left, right)
         | Bitvector32Term::UInt64Remainder(left, right) => {
-            describe_binary_bitvector_with_context(left, "%", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "%", right, parameter_binding)
         }
         Bitvector32Term::Int64ShiftLeft(left, right)
         | Bitvector32Term::UInt64ShiftLeft(left, right) => {
-            describe_binary_bitvector_with_context(left, "<<", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "<<", right, parameter_binding)
         }
         Bitvector32Term::Int64ArithmeticShiftRight(left, right)
         | Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
-            describe_binary_bitvector_with_context(left, ">>", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, ">>", right, parameter_binding)
         }
         Bitvector32Term::Int64BitwiseAnd(left, right)
         | Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            describe_binary_bitvector_with_context(left, "&", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "&", right, parameter_binding)
         }
         Bitvector32Term::Int64BitwiseOr(left, right)
         | Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            describe_binary_bitvector_with_context(left, "|", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "|", right, parameter_binding)
         }
         Bitvector32Term::Int64BitwiseXor(left, right)
         | Bitvector32Term::UInt64BitwiseXor(left, right) => {
-            describe_binary_bitvector_with_context(left, "^", right, parameters, arguments)
+            describe_binary_bitvector_with_context(left, "^", right, parameter_binding)
         }
         Bitvector32Term::Int64BitwiseNot(value) | Bitvector32Term::UInt64BitwiseNot(value) => {
             format!(
                 "~{}",
-                describe_bitvector_with_context(value, parameters, arguments)
+                describe_bitvector_with_context(value, parameter_binding)
             )
         }
         Bitvector32Term::If {
@@ -6151,9 +6070,9 @@ pub(super) fn describe_bitvector_with_context(
             else_term,
         } => format!(
             "if {} then {} else {}",
-            describe_condition_with_context(condition, parameters, arguments),
-            describe_bitvector_with_context(then_term, parameters, arguments),
-            describe_bitvector_with_context(else_term, parameters, arguments)
+            describe_condition_with_context(condition, parameter_binding),
+            describe_bitvector_with_context(then_term, parameter_binding),
+            describe_bitvector_with_context(else_term, parameter_binding)
         ),
         // A fold body is an arbitrary term over its own binders, so it has no
         // shorter source spelling; render it through the bounded proposition
@@ -6167,12 +6086,12 @@ pub(super) fn describe_bitvector_with_context(
             body,
         } => format!(
             "fold({}..{}, init={}, acc=v{}, item=v{}, body={})",
-            describe_bitvector_with_context(start, parameters, arguments),
-            describe_bitvector_with_context(end, parameters, arguments),
-            describe_bitvector_with_context(initial, parameters, arguments),
+            describe_bitvector_with_context(start, parameter_binding),
+            describe_bitvector_with_context(end, parameter_binding),
+            describe_bitvector_with_context(initial, parameter_binding),
             accumulator.0,
             item.0,
-            describe_bitvector_with_context(body, parameters, arguments)
+            describe_bitvector_with_context(body, parameter_binding)
         ),
         Bitvector32Term::PureFunctionApplication {
             name,
@@ -6182,9 +6101,7 @@ pub(super) fn describe_bitvector_with_context(
             name,
             values
                 .iter()
-                .map(|argument| {
-                    describe_bitvector_with_context(argument, parameters, arguments)
-                })
+                .map(|argument| { describe_bitvector_with_context(argument, parameter_binding) })
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -6192,14 +6109,9 @@ pub(super) fn describe_bitvector_with_context(
             format!("{name}(<typed Click arguments>)")
         }
         Bitvector32Term::AlgebraicMatch { .. } => "match <algebraic value> { ... }".to_string(),
-        Bitvector32Term::MemoryLoad(_, pointer, _) => {
-            describe_load_at(pointer, parameters, arguments)
-        }
+        Bitvector32Term::MemoryLoad(_, pointer, _) => describe_load_at(pointer, parameter_binding),
         Bitvector32Term::PointerAddress(pointer) => {
-            format!(
-                "address({})",
-                describe_pointer(pointer, parameters, arguments)
-            )
+            format!("address({})", describe_pointer(pointer, parameter_binding))
         }
         Bitvector32Term::IntegerToMachine { .. } => "integer-to-machine".to_string(),
     }
@@ -6207,10 +6119,13 @@ pub(super) fn describe_bitvector_with_context(
 
 pub(super) fn describe_parameter_bitvector(
     term: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         match argument {
             CExpression::Value(CValue::Int32(value))
                 if value == term && parameter.c_type() == C0Type::Int32 =>
@@ -6262,13 +6177,12 @@ pub(super) fn describe_binary_bitvector_with_context(
     left: &Bitvector32Term,
     operator: &str,
     right: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     format!(
         "({} {operator} {})",
-        describe_bitvector_with_context(left, parameters, arguments),
-        describe_bitvector_with_context(right, parameters, arguments)
+        describe_bitvector_with_context(left, parameter_binding),
+        describe_bitvector_with_context(right, parameter_binding)
     )
 }
 
@@ -6276,18 +6190,17 @@ pub(super) fn describe_binary_bitvector_with_context(
 /// caller's names where it has them (`j * 4` rather than `… * 4`).
 fn describe_pointer_offset_with_context(
     offset: &PointerOffsetTerm,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match offset {
         PointerOffsetTerm::Add(left, right) => format!(
             "({} + {})",
-            describe_pointer_offset_with_context(left, parameters, arguments),
-            describe_pointer_offset_with_context(right, parameters, arguments)
+            describe_pointer_offset_with_context(left, parameter_binding),
+            describe_pointer_offset_with_context(right, parameter_binding)
         ),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => format!(
             "{} * {byte_width}",
-            describe_bitvector_with_context(value, parameters, arguments)
+            describe_bitvector_with_context(value, parameter_binding)
         ),
         PointerOffsetTerm::Int64Scaled {
             value,
@@ -6297,7 +6210,7 @@ fn describe_pointer_offset_with_context(
             let signedness = if *unsigned { "uint64" } else { "int64" };
             format!(
                 "{signedness}({}) * {byte_width}",
-                describe_bitvector_with_context(value, parameters, arguments)
+                describe_bitvector_with_context(value, parameter_binding)
             )
         }
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {
@@ -6311,14 +6224,13 @@ fn describe_pointer_offset_with_context(
 /// width and address, or the range a callee's summary may write.
 pub(super) fn describe_storage_writes_outside_footprint(
     escapes: &[crate::kernel::StorageWriteOutsideFootprint],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let limit = diagnostic_item_limit();
     let mut entries = escapes
         .iter()
         .take(limit)
-        .map(|escape| describe_storage_write_outside_footprint(escape, parameters, arguments))
+        .map(|escape| describe_storage_write_outside_footprint(escape, parameter_binding))
         .collect::<Vec<_>>();
     if escapes.len() > limit {
         entries.push(format!("… {} more omitted", escapes.len() - limit));
@@ -6328,17 +6240,16 @@ pub(super) fn describe_storage_writes_outside_footprint(
 
 fn describe_storage_write_outside_footprint(
     escape: &crate::kernel::StorageWriteOutsideFootprint,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match escape {
         crate::kernel::StorageWriteOutsideFootprint::Write { pointer, bytes } => format!(
             "the {bytes}-byte store to `{}`",
-            describe_pointer(pointer, parameters, arguments)
+            describe_pointer(pointer, parameter_binding)
         ),
         crate::kernel::StorageWriteOutsideFootprint::Range(range) => format!(
             "the range `{}` a callee may write",
-            describe_memory_range(range, parameters, arguments)
+            describe_memory_range(range, parameter_binding)
         ),
     }
 }
@@ -6384,7 +6295,7 @@ fn describe_integer_term(term: &crate::kernel::IntegerTerm) -> String {
 }
 
 pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
-    if let Some(unsigned) = describe_unsigned_comparison(condition, &[], &[]) {
+    if let Some(unsigned) = describe_unsigned_comparison(condition, ParameterBinding::default()) {
         return unsigned;
     }
     match condition {
@@ -6521,8 +6432,8 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
         ConditionTerm::PointerEqual(left, right) => {
             format!(
                 "{} == {}",
-                describe_pointer(left, &[], &[]),
-                describe_pointer(right, &[], &[])
+                describe_pointer(left, ParameterBinding::default()),
+                describe_pointer(right, ParameterBinding::default())
             )
         }
     }
@@ -6534,19 +6445,17 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
 /// which now spells a condition's operands itself.
 pub(super) fn describe_pure_fact_spelled(
     fact: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    describe_pure_fact(fact, parameters, arguments)
+    describe_pure_fact(fact, parameter_binding)
 }
 
 /// A stated fact uses the same checked-proposition display as every goal.
 pub(super) fn describe_stated_fact(
     fact: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    describe_pure_fact(fact, parameters, arguments)
+    describe_pure_fact(fact, parameter_binding)
 }
 
 /// [`describe_condition`] with machine operands spelled through the C
@@ -6554,17 +6463,16 @@ pub(super) fn describe_stated_fact(
 /// the context-free rendering.
 pub(super) fn describe_condition_with_context(
     condition: &ConditionTerm,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let binary = |left: &Bitvector32Term, operator: &str, right: &Bitvector32Term| {
         format!(
             "{} {operator} {}",
-            describe_bitvector_with_context(left, parameters, arguments),
-            describe_bitvector_with_context(right, parameters, arguments)
+            describe_bitvector_with_context(left, parameter_binding),
+            describe_bitvector_with_context(right, parameter_binding)
         )
     };
-    if let Some(unsigned) = describe_unsigned_comparison(condition, parameters, arguments) {
+    if let Some(unsigned) = describe_unsigned_comparison(condition, parameter_binding) {
         return unsigned;
     }
     match condition {
@@ -6584,8 +6492,8 @@ pub(super) fn describe_condition_with_context(
         | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => binary(left, ">=", right),
         ConditionTerm::PointerEqual(left, right) => format!(
             "{} == {}",
-            describe_pointer(left, parameters, arguments),
-            describe_pointer(right, parameters, arguments)
+            describe_pointer(left, parameter_binding),
+            describe_pointer(right, parameter_binding)
         ),
         other => describe_condition(other),
     }
@@ -6597,8 +6505,7 @@ pub(super) fn describe_condition_with_context(
 /// flipped. Spelled as the unsigned comparison it means, never as the bias.
 fn describe_unsigned_comparison(
     condition: &ConditionTerm,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     const SIGN_BIT: u32 = 0x8000_0000;
     let (left, operator, right) = match condition {
@@ -6612,9 +6519,7 @@ fn describe_unsigned_comparison(
         Bitvector32Term::BitwiseXor(value, sign) | Bitvector32Term::BitwiseXor(sign, value)
             if sign.as_const() == Some(SIGN_BIT) =>
         {
-            Some(describe_bitvector_with_context(
-                value, parameters, arguments,
-            ))
+            Some(describe_bitvector_with_context(value, parameter_binding))
         }
         _ => None,
     };
@@ -6670,14 +6575,12 @@ fn describe_float_condition(condition: &CFloatCondition) -> String {
 
 fn format_population_description(
     description: &crate::kernel::ResourceDescription,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[crate::kernel::CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let mut result = format_declared_resource(
         description.family(),
         description.arguments(),
-        parameters,
-        arguments,
+        parameter_binding,
     );
     if let Some(arity) = description.population_arity() {
         result.pop();
@@ -6702,11 +6605,14 @@ mod wide_range_reader_tests {
             Bitvector32Term::UInt64Constant(1 << 33),
             1,
         );
-        assert!(describe_source_range(&wide, &[], &[]).is_none());
+        assert!(describe_source_range(&wide, ParameterBinding::default()).is_none());
         let resource = CResourceFact::view_memory(wide);
         let error = crate::kernel::CRuntimeError::MissingResource {
             resource: Box::new(resource.clone()),
         };
-        assert!(describe_missing_range_end_note(&error, &[resource], &[], &[]).is_empty());
+        assert!(
+            describe_missing_range_end_note(&error, &[resource], ParameterBinding::default())
+                .is_empty()
+        );
     }
 }

@@ -1486,7 +1486,12 @@ impl Proof<'_> {
                 .or_else(|| self.execution_fixed_state_view());
             let (parameters, arguments) = names
                 .as_ref()
-                .map(|view| (view.parameters, view.arguments))
+                .map(|view| {
+                    (
+                        view.parameter_binding.parameters,
+                        view.parameter_binding.arguments,
+                    )
+                })
                 .unwrap_or((&[], &[]));
             let premises = self
                 .state
@@ -1496,7 +1501,9 @@ impl Proof<'_> {
                 .map(|branch| branch.state.facts.recent_facts(8))
                 .unwrap_or_default();
             crate::surface::diagnostics::proposition_version_explanation(
-                goal, &premises, parameters, arguments,
+                goal,
+                &premises,
+                ParameterBinding::new(parameters, arguments),
             )
             .map(|(explanation, _)| {
                 crate::surface::proof_diagnostics::MemoryHistoryDiagnostic::capture(explanation)
@@ -1510,7 +1517,7 @@ impl Proof<'_> {
                 // Fixed-state subproofs have no execution branch, but their
                 // live locals still name the values their goals contain.
                 // CState shares its persistent storage; no environment is copied.
-                ProofContext::FixedState(context) => Some(context.state.clone()),
+                ProofContext::FixedState(context) => Some(context.fixed_state.state.clone()),
                 _ => None,
             },
             None,
@@ -1536,12 +1543,8 @@ pub(in crate::surface::proof) struct FixedStateOperationView<'p> {
     pub(in crate::surface::proof) claim_label: &'p str,
     pub(in crate::surface::proof) tactic_index: usize,
     pub(in crate::surface::proof) effect_facts: &'p ExecutionFacts,
-    pub(in crate::surface::proof) parameters: &'p [syntax::C0Parameter],
-    pub(in crate::surface::proof) arguments: &'p [CExpression],
-    pub(in crate::surface::proof) pre_state: &'p CState,
-    pub(in crate::surface::proof) state: &'p CState,
-    pub(in crate::surface::proof) result: Option<&'p CValue>,
-    pub(in crate::surface::proof) recorded_snapshots: &'p RecordedSnapshots,
+    pub(in crate::surface::proof) parameter_binding: ParameterBinding<'p>,
+    pub(in crate::surface::proof) fixed_state: FixedStateFrame<'p>,
     pub(in crate::surface::proof) surface_propositions: &'p SurfacePropositionMap,
     pub(in crate::surface::proof) spec_definitions: SpecDefinitions<'p>,
     pub(in crate::surface::proof) theorem_environment: &'p TheoremEnvironment,
@@ -1557,17 +1560,10 @@ impl<'p> FixedStateOperationView<'p> {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
             effect_facts: &context.effect_facts,
-            parameters: context.parameters,
-            arguments: context.arguments,
-            pre_state: context.pre_state,
-            state: context.state,
-            result: context.result,
-            recorded_snapshots: context.recorded_snapshots,
+            parameter_binding: context.parameter_binding,
+            fixed_state: context.fixed_state,
             surface_propositions: context.surface_propositions,
-            spec_definitions: SpecDefinitions::new(
-                context.spec_definitions.predicates,
-                context.spec_definitions.functions,
-            ),
+            spec_definitions: context.spec_definitions,
             theorem_environment: context.theorem_environment,
             original_requirements: context.original_requirements,
             requirement_facts: context.requirement_facts,

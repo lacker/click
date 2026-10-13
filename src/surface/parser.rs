@@ -103,29 +103,34 @@ pub(in crate::surface) struct FunctionLocals {
     pub(in crate::surface) references: BTreeSet<String>,
 }
 
+/// The program facts a sidecar is parsed against: its struct and union
+/// layouts, and by function, the objects a contract may name and the locals
+/// that are memory-backed.
+#[derive(Clone, Default)]
+pub(in crate::surface) struct ProgramLayouts {
+    pub(in crate::surface) struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
+    pub(in crate::surface) union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
+    /// Each function's address-backed aggregate objects, with their structs.
+    pub(in crate::surface) aggregate_objects: BTreeMap<String, BTreeMap<String, String>>,
+    /// Each function's aggregate objects that are arrays.
+    pub(in crate::surface) aggregate_array_objects: BTreeMap<String, BTreeSet<String>>,
+    /// The shapes of the arrays each function's contract may index.
+    pub(in crate::surface) global_array_shapes:
+        BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
+    /// By translation unit, the globals and function statics a contract may
+    /// name, `name` or `function::name`.
+    pub(in crate::surface) qualified_objects:
+        BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
+    /// Each function's locals of struct-pointer or reference type, by its
+    /// source spelling.
+    pub(in crate::surface) local_struct_pointers: BTreeMap<String, FunctionLocals>,
+}
+
 pub(super) fn parse_with_layouts_and_aggregate_objects(
     source: &str,
-    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
-    union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
-    aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
-    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
-    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
-    qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
-    local_struct_pointers_by_function: BTreeMap<String, FunctionLocals>,
+    layouts: ProgramLayouts,
 ) -> Result<ClickFile, ClickError> {
-    let mut parser = Parser::new_with_layouts_and_aggregate_objects(
-        source,
-        struct_layouts,
-        union_layouts,
-        aggregate_objects_by_function,
-        aggregate_array_objects_by_function,
-        global_array_shapes_by_function,
-        None,
-    )
-    .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
-    parser.qualified_objects = Some(qualified_objects);
-    parser.local_struct_pointers_by_function = local_struct_pointers_by_function;
-    parser.parse_file()
+    Parser::with_program_layouts(source, layouts, None)?.parse_file()
 }
 
 /// Whether a Click source declares only definitions for importers:
@@ -185,30 +190,53 @@ pub(super) fn parse_file_items(source: &str) -> Result<ClickFile, ClickError> {
     parser.parse_file_items()
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn parse_file_items_for_module(
     source: &str,
     identity: &str,
     line_offset: usize,
     imported_algebraic_types: &[AlgebraicTypeDefinition],
-    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
-    union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
-    aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
-    aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
-    global_array_shapes_by_function: BTreeMap<String, BTreeMap<String, GlobalArrayShape>>,
-    qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
-    local_struct_pointers_by_function: BTreeMap<String, FunctionLocals>,
+    imported_tactic_names: &BTreeSet<String>,
+    imported_callees: &[&FunctionBlock],
+    layouts: ProgramLayouts,
 ) -> Result<ClickFile, ClickError> {
-    let mut parser = Parser::new_with_layouts_and_aggregate_objects(
+    let mut parser = Parser::with_program_layouts(
         source,
-        struct_layouts,
-        union_layouts,
-        aggregate_objects_by_function,
-        aggregate_array_objects_by_function,
-        global_array_shapes_by_function,
+        layouts,
         Some(&crate::source::SourceContainer::new(identity, line_offset)),
-    )
-    .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
+    )?;
+    parser
+        .tactic_names
+        .extend(imported_tactic_names.iter().cloned());
+    for block in imported_callees {
+        let parameters = block
+            .signature()
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.name().to_string())
+            .collect::<Vec<_>>();
+        for requirement in block.requires() {
+            if let Requirement::Resource(resource) = requirement {
+                parser.record_callee_resource_binder(
+                    block.signature().name(),
+                    resource,
+                    &parameters,
+                    CalleeResourceBinderKind::Supplied,
+                );
+            }
+        }
+        for ensure in block.ensures() {
+            if !ensure.borrowed()
+                && let Ensure::Resource(resource) = ensure.ensure()
+            {
+                parser.record_callee_resource_binder(
+                    block.signature().name(),
+                    resource,
+                    &parameters,
+                    CalleeResourceBinderKind::Produced,
+                );
+            }
+        }
+    }
     for definition in imported_algebraic_types {
         for variant in definition.variants() {
             parser.algebraic_variant_fields.insert(
@@ -217,8 +245,6 @@ pub(super) fn parse_file_items_for_module(
             );
         }
     }
-    parser.qualified_objects = Some(qualified_objects);
-    parser.local_struct_pointers_by_function = local_struct_pointers_by_function;
     parser.parse_file_items()
 }
 
@@ -509,6 +535,7 @@ struct Parser {
     /// contract may cast to a struct pointer, and the struct each has been
     /// cast to so far.
     current_void_pointer_params: BTreeSet<String>,
+    current_c_parameter_types: BTreeMap<String, C0Type>,
     current_parameter_struct_casts: BTreeMap<String, String>,
     aggregate_objects_by_function: BTreeMap<String, BTreeMap<String, String>>,
     aggregate_array_objects_by_function: BTreeMap<String, BTreeSet<String>>,
@@ -790,6 +817,27 @@ impl Parser {
         )
     }
 
+    /// A parser for `source` against a program's layouts and objects.
+    fn with_program_layouts(
+        source: &str,
+        layouts: ProgramLayouts,
+        container: Option<&crate::source::SourceContainer>,
+    ) -> Result<Self, ClickError> {
+        let mut parser = Self::new_with_layouts_and_aggregate_objects(
+            source,
+            layouts.struct_layouts,
+            layouts.union_layouts,
+            layouts.aggregate_objects,
+            layouts.aggregate_array_objects,
+            layouts.global_array_shapes,
+            container,
+        )
+        .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
+        parser.qualified_objects = Some(layouts.qualified_objects);
+        parser.local_struct_pointers_by_function = layouts.local_struct_pointers;
+        Ok(parser)
+    }
+
     fn new_with_layouts_and_aggregate_objects(
         source: &str,
         struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
@@ -847,6 +895,7 @@ impl Parser {
             union_layouts,
             current_struct_params: BTreeMap::new(),
             current_void_pointer_params: BTreeSet::new(),
+            current_c_parameter_types: BTreeMap::new(),
             current_parameter_struct_casts: BTreeMap::new(),
             aggregate_objects_by_function,
             aggregate_array_objects_by_function,
@@ -2788,6 +2837,14 @@ impl Parser {
                 .map(|parameter| parameter.name().to_string())
                 .collect(),
         );
+        let previous_c_parameter_types = std::mem::replace(
+            &mut self.current_c_parameter_types,
+            signature
+                .parameters()
+                .iter()
+                .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
+                .collect(),
+        );
         let previous_parameter_struct_casts =
             std::mem::take(&mut self.current_parameter_struct_casts);
         let aggregate_objects = self
@@ -3184,6 +3241,7 @@ impl Parser {
         }
         self.current_struct_params = previous_struct_params;
         self.current_void_pointer_params = previous_void_pointer_params;
+        self.current_c_parameter_types = previous_c_parameter_types;
         let parameter_struct_casts = std::mem::replace(
             &mut self.current_parameter_struct_casts,
             previous_parameter_struct_casts,
@@ -3866,6 +3924,7 @@ impl Parser {
                         | C0Type::Float32Array(_)
                         | C0Type::Float64Array(_)
                         | C0Type::Int32Pointer
+                        | C0Type::UInt32Pointer
                         | C0Type::CharPointer
                         | C0Type::UInt8Pointer
                         | C0Type::Float32Pointer
@@ -5290,6 +5349,18 @@ impl Parser {
             return Ok(ClickProposition::Contains { parent, child });
         }
 
+        if self.peek_ident() == Some("valid_place") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            let pointee_struct = self.contract_expression_struct_name(&expression);
+            return Ok(ClickProposition::ValidPlace {
+                expression,
+                pointee_struct,
+            });
+        }
+
         if self.peek_ident() == Some("initialized") && self.peek_next() == Some(&Token::LParen) {
             self.position += 1;
             self.expect(Token::LParen)?;
@@ -5372,7 +5443,7 @@ impl Parser {
                     | Token::GreaterEqual,
                 ) => {
                     let operator = self.parse_comparison_operator("proposition")?;
-                    let right = self.parse_contract_expression()?;
+                    let right = self.parse_comparison_operand()?;
                     return Ok(ClickProposition::Comparison {
                         left: ContractExpression::Call { name, arguments },
                         operator,
@@ -5705,15 +5776,40 @@ impl Parser {
     }
 
     fn parse_proposition_comparison(&mut self) -> Result<ClickProposition, ClickError> {
-        let left = self.parse_contract_expression()?;
+        let left = self.parse_comparison_operand()?;
         let operator = self.parse_comparison_operator("proposition")?;
-        let right = self.parse_contract_expression()?;
+        let right = self.parse_comparison_operand()?;
 
         Ok(ClickProposition::Comparison {
             left,
             operator,
             right,
         })
+    }
+
+    /// A comparison operand whose outermost operator is `&`, `|` or `^` must
+    /// be parenthesized. C binds comparisons tighter than these operators and
+    /// Click binds them looser, so `x & 1 == 0` would read differently to a C
+    /// reader than it verifies.
+    fn parse_comparison_operand(&mut self) -> Result<ContractExpression, ClickError> {
+        let start = self.position;
+        let operand = self.parse_contract_expression()?;
+        let operator = match &operand {
+            ContractExpression::BitwiseAnd(..) => "&",
+            ContractExpression::BitwiseOr(..) => "|",
+            ContractExpression::BitwiseXor(..) => "^",
+            _ => return Ok(operand),
+        };
+        let parenthesized = self.tokens.get(start) == Some(&Token::LParen)
+            && self.matching_parentheses.get(start).copied().flatten() == Some(self.position - 1);
+        if parenthesized {
+            return Ok(operand);
+        }
+        Err(self.error(format!(
+            "parenthesize a `{operator}` operand of a comparison: C groups \
+             `a {operator} b == c` as `a {operator} (b == c)` and Click as \
+             `(a {operator} b) == c`, so write `(a {operator} b) == c`"
+        )))
     }
 
     fn parse_comparison_operator(
@@ -6356,14 +6452,9 @@ impl Parser {
                 proof: have_proof_as_written_in_full(SourceProof::Tactic(SmartTactic::Simp)),
             }));
         }
-        let auto_position = self.position;
+        // `have P by auto;` proves the fact where it is stated: with no C
+        // to run toward the fact, `auto` is the solver.
         let proof = self.parse_by_clause()?;
-        if proof == SourceProof::Tactic(SmartTactic::Auto) {
-            self.position = auto_position;
-            return Err(self.error(
-                "`auto` executes C to function exit, so it cannot prove a `have`; write `have P;` or `have P by simp;` to prove the fact where it is stated",
-            ));
-        }
         self.skip_redundant_semicolon();
         // `have P;`, `have P by simp;` and `have P by { simp(); }` are
         // one proof step. They are one syntax tree too, so every
@@ -8240,6 +8331,25 @@ impl Parser {
                     self.expect(Token::Semicolon)?;
                     nodes.push(IntegerCertificateNode::Trivial { result });
                 }
+                "negated_goal" => {
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::NegatedGoal { result });
+                }
+                "divide" => {
+                    let source = self.expect_index("divide source")?;
+                    self.expect_ident_spelling("by")?;
+                    let divisor = self.parse_contract_expression()?;
+                    self.expect(Token::FatArrow)?;
+                    let result = self.parse_proposition()?;
+                    self.expect(Token::Semicolon)?;
+                    nodes.push(IntegerCertificateNode::Divide {
+                        source,
+                        divisor,
+                        result,
+                    });
+                }
                 "conclusion" => {
                     if conclusion.is_some() {
                         return Err(self
@@ -9760,9 +9870,8 @@ impl Parser {
     }
 
     /// Recognizes `( [const] struct name [const] * )` at the cursor without
-    /// consuming it. A struct-pointer cast is the only pointer cast contract
-    /// expressions accept; it lets a contract over an opaque `void *`
-    /// parameter name the object the C body reaches through the same cast.
+    /// consuming it. Contracts retain the explicit target layout through
+    /// object-pointer conversions via `void *`.
     fn peek_struct_pointer_cast(&self) -> Option<StructPointerCast> {
         let mut index = self.position;
         if self.tokens.get(index) != Some(&Token::LParen) {
@@ -9817,10 +9926,25 @@ impl Parser {
     /// synthesized proof text reads the parameter with a single layout.
     fn record_parameter_struct_cast(
         &mut self,
-        operand: Option<&str>,
+        operand: &CExpression,
         struct_name: &str,
     ) -> Result<(), ClickError> {
-        let Some(name) = operand.filter(|name| self.current_void_pointer_params.contains(*name))
+        // An explicit conversion through void retains its target layout on
+        // the expression. It does not assign a layout to the source parameter.
+        if matches!(
+            operand,
+            CExpression::Cast {
+                target_type: CType::VoidPointer,
+                ..
+            }
+        ) {
+            return Ok(());
+        }
+        let name = match operand {
+            CExpression::Variable(name) => Some(name.as_str()),
+            _ => None,
+        };
+        let Some(name) = name.filter(|name| self.current_void_pointer_params.contains(*name))
         else {
             return Err(self.error(
                 "a struct pointer cast applies to a `void *` parameter of the function under contract",
@@ -9856,11 +9980,7 @@ impl Parser {
                     "struct pointer cast expects a current C `void *` expression; put old(...) around the whole cast for an entry-state value",
                 ));
             };
-            let operand_name = match &operand {
-                CExpression::Variable(name) => Some(name.as_str()),
-                _ => None,
-            };
-            self.record_parameter_struct_cast(operand_name, &cast.struct_name)?;
+            self.record_parameter_struct_cast(&operand, &cast.struct_name)?;
             return Ok(crate::surface::lowering::contract_c_unary(
                 source_operand,
                 CExpression::Cast {
@@ -9885,10 +10005,12 @@ impl Parser {
             {
                 return Err(self.error("contract cast targets must be unqualified native types; byte views inherit the source qualification"));
             }
-            if target_type.is_pointer() && target_type != CType::UInt8Pointer {
-                return Err(
-                    self.error("native contract pointer casts require a `uint8*` byte-view target")
-                );
+            if target_type.is_pointer()
+                && !matches!(target_type, CType::UInt8Pointer | CType::VoidPointer)
+            {
+                return Err(self.error(
+                    "native contract pointer casts require a `uint8*` byte-view target or a `void*` target",
+                ));
             }
             self.expect(Token::RParen)?;
             let operand = self.parse_contract_unary_at_depth(depth + 1)?;
@@ -9899,6 +10021,13 @@ impl Parser {
             }
             let expression =
                 contract_expression_as_c_fragment(&operand).unwrap_or(CExpression::Value(int32(0)));
+            if target_type == CType::VoidPointer {
+                crate::surface::validation::validate_void_pointer_cast_source(
+                    &expression,
+                    &self.current_c_parameter_types,
+                    "contract expression",
+                )?;
+            }
             return Ok(ContractExpression::CUnary {
                 operand: Box::new(operand),
                 lowered: CExpression::Cast {
@@ -11396,14 +11525,30 @@ impl Parser {
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
                 self.position -= 1;
+                if self.peek_next() == Some(&Token::Ident("void".to_string()))
+                    && self.tokens.get(self.position + 2) == Some(&Token::Star)
+                    && self.tokens.get(self.position + 3) == Some(&Token::RParen)
+                {
+                    self.position += 4;
+                    let operand = self.parse_ensure_unary()?;
+                    crate::surface::validation::validate_void_pointer_cast_source(
+                        &operand.to_kernel_expression(), &self.current_c_parameter_types, "contract expression"
+                    )?;
+                    return Ok(C0Expression::Cast {
+                        expression: Box::new(operand),
+                        c_type: C0Type::VoidPointer,
+                        struct_name: None,
+                        pointee_volatile: false,
+                        pointee_constant: false,
+                        explicit_qualification: false,
+                    });
+                }
                 if let Some(cast) = self.peek_struct_pointer_cast() {
                     self.consume_struct_pointer_cast(&cast)?;
                     let operand = self.parse_ensure_unary()?;
-                    let operand_name = match &operand {
-                        C0Expression::Variable(name) => Some(name.as_str()),
-                        _ => None,
-                    };
-                    self.record_parameter_struct_cast(operand_name, &cast.struct_name)?;
+                    self.record_parameter_struct_cast(
+                        &operand.to_kernel_expression(), &cast.struct_name,
+                    )?;
                     return Ok(C0Expression::Cast {
                         expression: Box::new(operand),
                         c_type: C0Type::Int32Pointer,
@@ -11619,8 +11764,12 @@ impl Parser {
     }
 
     fn starts_contract_scalar_cast(&self) -> bool {
-        self.peek() == Some(&Token::LParen)
-            && matches!(self.peek_next(), Some(Token::Ident(name)) if matches!(name.as_str(), "int8" | "uint8" | "int16" | "uint16" | "uint32" | "int32" | "uint64" | "int64" | "int128" | "uint128"))
+        (self.peek() == Some(&Token::LParen)
+            && self.peek_next() == Some(&Token::Ident("void".to_string()))
+            && self.tokens.get(self.position + 2) == Some(&Token::Star)
+            && self.tokens.get(self.position + 3) == Some(&Token::RParen))
+            || self.peek() == Some(&Token::LParen)
+                && matches!(self.peek_next(), Some(Token::Ident(name)) if matches!(name.as_str(), "int8" | "uint8" | "int16" | "uint16" | "uint32" | "int32" | "uint64" | "int64" | "int128" | "uint128"))
     }
 
     fn parenthesized_atom_continues_as_contract_expression(&self) -> bool {

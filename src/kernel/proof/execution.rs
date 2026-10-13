@@ -3360,12 +3360,15 @@ impl CheckedFunctionEntry {
         expected_entry_state: &CState,
         assumptions: PureFactContext,
     ) -> Result<Arc<Self>, CRuntimeError> {
-        let entry_state = crate::kernel::c_function_entry_state(caller_state, function, arguments)
-            .ok_or_else(|| {
-                CRuntimeError::FunctionContract(
-                    "could not bind the function entry arguments".into(),
-                )
-            })?;
+        let entry_state = crate::kernel::c_function_entry_state_with_assumptions(
+            caller_state,
+            function,
+            arguments,
+            &assumptions,
+        )
+        .ok_or_else(|| {
+            CRuntimeError::FunctionContract("could not bind the function entry arguments".into())
+        })?;
         if &entry_state != expected_entry_state {
             return Err(CRuntimeError::FunctionContract(
                 "the checked function entry does not match the proof entry".into(),
@@ -3426,8 +3429,12 @@ impl CheckedFunctionEntry {
         if &self.caller_state == caller_state {
             return Some(self.entry_state.clone());
         }
-        let rebased_entry =
-            crate::kernel::c_function_entry_state(caller_state, function, arguments)?;
+        let rebased_entry = crate::kernel::c_function_entry_state_with_assumptions(
+            caller_state,
+            function,
+            arguments,
+            assumptions,
+        )?;
         crate::kernel::api::function_entry_representation_states_match(
             function,
             &self.entry_state,
@@ -4529,9 +4536,12 @@ fn branch_split_starts_at_parent(
     {
         return false;
     }
-    let Some(entry_state) =
-        crate::kernel::c_function_entry_state(parent.reached_state(), function, arguments)
-    else {
+    let Some(entry_state) = crate::kernel::c_function_entry_state_with_assumptions(
+        parent.reached_state(),
+        function,
+        arguments,
+        root_facts.assumptions(),
+    ) else {
         return false;
     };
     crate::kernel::api::execution_evidence_states_match(
@@ -6695,9 +6705,8 @@ fn consume_checked_scope_exits(
 ) -> Option<Arc<CStatement>> {
     let retired = retired
         .iter()
-        .map(|name| {
+        .inspect(|_| {
             crate::instrumentation::record_deterministic_work(1);
-            name
         })
         .collect::<std::collections::BTreeSet<_>>();
     while let Some(current) = source.as_ref() {
@@ -7368,20 +7377,18 @@ fn check_evidence_events_with_call_events(
                         if matches!(
                             outcome,
                             CStatementOutcome::Break(_) | CStatementOutcome::Continue(_)
+                        ) && let Some(resumed) = scoped_loop_control_source(
+                            matches!(outcome, CStatementOutcome::Continue(_)),
+                            &scope_exits,
+                            &mut scope_loops,
                         ) {
-                            if let Some(resumed) = scoped_loop_control_source(
-                                matches!(outcome, CStatementOutcome::Continue(_)),
-                                &scope_exits,
-                                &mut scope_loops,
-                            ) {
-                                state = match outcome {
-                                    CStatementOutcome::Break(state)
-                                    | CStatementOutcome::Continue(state) => *state,
-                                    _ => unreachable!(),
-                                };
-                                remaining = resumed.map(Arc::unwrap_or_clone);
-                                continue;
-                            }
+                            state = match outcome {
+                                CStatementOutcome::Break(state)
+                                | CStatementOutcome::Continue(state) => *state,
+                                _ => unreachable!(),
+                            };
+                            remaining = resumed.map(Arc::unwrap_or_clone);
+                            continue;
                         }
                         if matches!(outcome, CStatementOutcome::VerificationDiverges) {
                             scope_exits.clear();
@@ -8943,9 +8950,23 @@ impl ExecutionProofCore {
         if !matches!(self.frontier.position, FrontierPosition::FunctionEntry) {
             return Ok(Cow::Borrowed(&self.state));
         }
-        crate::kernel::c_function_entry_state(&self.state, function, arguments)
-            .map(Cow::Owned)
-            .ok_or_else(|| EvidenceRefusal::from("the function's arguments do not bind at entry"))
+        let empty = PureFactContext::new();
+        let entry_facts = self
+            .function_entry
+            .as_ref()
+            .filter(|entry| {
+                entry.function.has_same_entry_and_source(function) && entry.arguments == arguments
+            })
+            .map(|entry| entry.assumptions())
+            .unwrap_or(&empty);
+        crate::kernel::c_function_entry_state_with_assumptions(
+            &self.state,
+            function,
+            arguments,
+            entry_facts,
+        )
+        .map(Cow::Owned)
+        .ok_or_else(|| EvidenceRefusal::from("the function's arguments do not bind at entry"))
     }
 
     /// Materialize the already checked function entry before a proof-only
@@ -8960,9 +8981,13 @@ impl ExecutionProofCore {
             .as_ref()
             .ok_or("an entry interface requires a checked function entry")?;
         let caller = entry.caller_state().clone();
-        let bound =
-            crate::kernel::c_function_entry_state(&self.state, &entry.function, &entry.arguments)
-                .ok_or("the interface could not bind function arguments")?;
+        let bound = crate::kernel::c_function_entry_state_with_assumptions(
+            &self.state,
+            &entry.function,
+            &entry.arguments,
+            entry.assumptions(),
+        )
+        .ok_or("the interface could not bind function arguments")?;
         let source = Arc::new(entry.function.body().clone());
         if self
             .evidence_state
@@ -9531,7 +9556,6 @@ impl ExecutionProofCore {
     /// The part of the evidence judgment shared by statement and condition
     /// theorems: the theorem starts from the running state, and every
     /// premise it assumes is retained.
-    #[allow(clippy::too_many_arguments)]
     fn check_evidence_state_and_premises(
         &self,
         function: &CFunction,
@@ -10327,16 +10351,18 @@ impl ExecutionProofCore {
             &self.checked_call_events,
         )?;
         if self.frontier.is_at_function_entry() && !self.frontier.entry_member_prefix {
-            observation.before_state = crate::kernel::c_function_entry_state(
+            observation.before_state = crate::kernel::c_function_entry_state_with_assumptions(
                 &observation.before_state,
                 function,
                 arguments,
+                before_facts.assumptions(),
             )
             .ok_or("resource observation could not bind the function entry state")?;
-            observation.after_state = crate::kernel::c_function_entry_state(
+            observation.after_state = crate::kernel::c_function_entry_state_with_assumptions(
                 &observation.after_state,
                 function,
                 arguments,
+                after_facts.assumptions(),
             )
             .ok_or("resource observation could not bind its successor entry state")?;
         }
@@ -10354,7 +10380,6 @@ impl ExecutionProofCore {
     /// Applies the verified rule of tactic `name` at the reached state and
     /// records the checked application. Returns the successor state and fact
     /// context the proof continues from.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_tactic_application(
         &mut self,
         function: &CFunction,
@@ -10387,18 +10412,20 @@ impl ExecutionProofCore {
         // Before any evidence, the core holds the caller-side state and the
         // trace holds entry-bound states, as for a resource rewrite here.
         if self.frontier.is_at_function_entry() && !self.frontier.entry_member_prefix {
-            application.before_state = crate::kernel::c_function_entry_state(
+            application.before_state = crate::kernel::c_function_entry_state_with_assumptions(
                 &application.before_state,
                 function,
                 function_arguments,
+                before_facts.assumptions(),
             )
             .ok_or_else(|| {
                 Refused("a tactic application could not bind the function entry state".into())
             })?;
-            application.after_state = crate::kernel::c_function_entry_state(
+            application.after_state = crate::kernel::c_function_entry_state_with_assumptions(
                 &application.after_state,
                 function,
                 function_arguments,
+                application.after_facts.assumptions(),
             )
             .ok_or_else(|| {
                 Refused("a tactic application could not bind its successor entry state".into())
@@ -10506,9 +10533,13 @@ impl ExecutionProofCore {
             // have opened the authority wrapper. Bind their checked successor
             // to the callee entry before exchanging the member. The checked
             // rewrite chain must still connect to the original entry.
-            let bound_before =
-                crate::kernel::c_function_entry_state(self.reached_state(), function, arguments)
-                    .ok_or("entry member change could not bind function arguments")?;
+            let bound_before = crate::kernel::c_function_entry_state_with_assumptions(
+                self.reached_state(),
+                function,
+                arguments,
+                before_facts.assumptions(),
+            )
+            .ok_or("entry member change could not bind function arguments")?;
             let (bound_after, bound_witness) = bound_before.checked_population_member_exchange(
                 selected,
                 produce,
@@ -10543,7 +10574,6 @@ impl ExecutionProofCore {
         Ok(entry_successor)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_resource_rewrite_with_children(
         &mut self,
         function: &CFunction,
@@ -10568,14 +10598,22 @@ impl ExecutionProofCore {
             selected_children,
         )?;
         if self.frontier.is_at_function_entry() && !self.frontier.entry_member_prefix {
-            rewrite.before_state =
-                crate::kernel::c_function_entry_state(&rewrite.before_state, function, arguments)
-                    .ok_or_else(|| {
-                    "resource rewrite could not bind the function entry state".to_string()
-                })?;
-            rewrite.after_state =
-                crate::kernel::c_function_entry_state(&rewrite.after_state, function, arguments)
-                    .ok_or("resource rewrite could not bind its successor entry state")?;
+            rewrite.before_state = crate::kernel::c_function_entry_state_with_assumptions(
+                &rewrite.before_state,
+                function,
+                arguments,
+                before_facts.assumptions(),
+            )
+            .ok_or_else(|| {
+                "resource rewrite could not bind the function entry state".to_string()
+            })?;
+            rewrite.after_state = crate::kernel::c_function_entry_state_with_assumptions(
+                &rewrite.after_state,
+                function,
+                arguments,
+                after_facts.assumptions(),
+            )
+            .ok_or("resource rewrite could not bind its successor entry state")?;
         }
         if self.evidence_state.is_some() {
             self.evidence_state = Some(rewrite.after_state.clone());
@@ -10693,7 +10731,6 @@ impl ExecutionProofCore {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_return_resource_rewrite_with_children(
         &mut self,
         function: &CFunction,
@@ -10785,7 +10822,6 @@ impl ExecutionProofCore {
     }
 
     /// Checks and retains an ordinary wrapper exchange on a completed path.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_return_transfer_wrapper_rewrite(
         &mut self,
         function: &CFunction,
@@ -10862,8 +10898,17 @@ impl ExecutionProofCore {
         {
             return Ok(());
         }
-        let retained_after_state = before_state
-            .clone()
+        // The presented outcome has projected locals, so retain the C-body
+        // snapshot. Reconstruct the selected head's native place promises
+        // there as well: opening the head above may have admitted them, and
+        // copying only its resource ledger would discard that checked delta.
+        let retained_after_state =
+            crate::kernel::functions::assume_checked_native_composite_places(
+                &before_state,
+                selected,
+                function.composite_resource_definitions(),
+                before_facts.assumptions(),
+            )?
             .with_resource_context(after_state.resources().clone());
         let rewrite = CheckedResourceRewrite::check_with_children(
             function,
@@ -11188,10 +11233,11 @@ impl ExecutionProofCore {
             }
         });
         if !has_checked_entry {
-            crate::kernel::c_function_entry_state(
+            crate::kernel::c_function_entry_state_with_assumptions(
                 candidates.state(),
                 function,
                 candidates.arguments(),
+                assumptions,
             )
             .ok_or("the published arguments do not bind at entry")?;
         }

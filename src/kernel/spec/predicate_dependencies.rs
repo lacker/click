@@ -36,7 +36,11 @@ pub(in crate::kernel) fn observes_resource_state(proposition: &SpecProposition) 
                 SpecProposition::SequenceMembership { element, sequence } => {
                     pending.extend([Node::Expression(element), Node::Sequence(sequence)]);
                 }
-                SpecProposition::Defined(expression)
+                SpecProposition::ValidPlace {
+                    pointer: expression,
+                    ..
+                }
+                | SpecProposition::Defined(expression)
                 | SpecProposition::FloatClassification { expression, .. } => {
                     pending.push(Node::Expression(expression));
                 }

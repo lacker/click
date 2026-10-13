@@ -423,16 +423,14 @@ fn dynamic_body_fact_dependency(
 
 pub(super) fn materialize_folded_composite_resource_cells(
     resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     claim_label: &str,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CState, ClickError> {
     let memory = materialize_folded_composite_resource_memory(
         resource_environment,
-        parameters,
-        arguments,
+        parameter_binding,
         &state,
         spec_definitions,
     )
@@ -442,8 +440,7 @@ pub(super) fn materialize_folded_composite_resource_cells(
 
 fn materialize_folded_composite_resource_memory(
     resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CMemory, String> {
@@ -489,8 +486,7 @@ fn materialize_folded_composite_resource_memory(
             name,
             composite_body,
             &substitutions,
-            parameters,
-            arguments,
+            parameter_binding,
             memory,
         )?;
     }
@@ -860,12 +856,10 @@ fn common_possible_instance_arm(
 /// convention. It is bounded by the arm body: one cell per element of each
 /// constant-bounded range the arm owns, no search, and cells the snapshot
 /// already holds are left alone.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
     resource_environment: &ResourceEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     instance: &ResourceInstance,
     assumptions: &PureFactContext,
@@ -897,8 +891,7 @@ pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
     project_selected_instance_arm_cells(
         &selected,
         instance,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         naming_assumptions,
         false,
@@ -924,8 +917,7 @@ pub(super) enum OwnedCores {
 
 pub(super) fn project_initial_composite_resource_cores(
     resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     mut state: CState,
     available_pure_facts: &(impl PropositionSource + ?Sized),
     claim_label: &str,
@@ -970,8 +962,7 @@ pub(super) fn project_initial_composite_resource_cores(
                     state = project_selected_instance_arm_cells(
                         &selected,
                         instance,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         &assumptions,
                         attach_instance_arms,
@@ -983,8 +974,7 @@ pub(super) fn project_initial_composite_resource_cores(
             state = project_selected_instance_arm_cells(
                 &selected,
                 instance,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 &assumptions,
                 include_owned,
@@ -1029,8 +1019,7 @@ pub(super) fn project_initial_composite_resource_cores(
         let Some(body_active) = try_select_composite_resource_body(
             definition,
             &substitutions,
-            parameters,
-            arguments,
+            parameter_binding,
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -1052,8 +1041,7 @@ pub(super) fn project_initial_composite_resource_cores(
             &name,
             composite_body,
             &substitutions,
-            parameters,
-            arguments,
+            parameter_binding,
             state.memory().clone(),
         )
         .map_err(|message| {
@@ -1106,7 +1094,7 @@ pub(super) fn project_initial_composite_resource_cores(
                 .map_err(|error| {
                     ClickError::new(format!(
                         "`{claim_label}` setup failed: projecting composite resource core `{name}` produced {}",
-                        describe_resource_context_validity_error(error, parameters, arguments)
+                        describe_resource_context_validity_error(error, parameter_binding)
                     ))
                 })?,
         };
@@ -1124,8 +1112,7 @@ pub(super) fn project_initial_composite_resource_cores(
 fn project_selected_instance_arm_cells(
     selected: &SelectedInstanceArm,
     instance: &ResourceInstance,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     assumptions: &PureFactContext,
     include_owned: bool,
@@ -1161,8 +1148,7 @@ fn project_selected_instance_arm_cells(
         arm.name(),
         body,
         &substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         state.memory().clone(),
     ) else {
         return state;
@@ -1265,8 +1251,7 @@ fn resource_value_substitutions_for_parameters(
 
 pub(super) fn project_initial_resource_facts(
     resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     available_pure_facts: &[Proposition],
     spec_definitions: SpecDefinitions<'_>,
@@ -1275,16 +1260,14 @@ pub(super) fn project_initial_resource_facts(
     let result = CValue::Int32(Bitvector32Term::Constant(0));
     let mut facts = ProofResourcePureFacts::new(ProofFacts::from_ordered(available_pure_facts));
     append_state_resource_context_observable_facts_with_store(
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         &mut facts,
         &format!("`{claim_label}` setup"),
     )?;
     project_folded_resource_observable_facts_with_store(
         resource_environment,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         state,
         &result,
@@ -1297,8 +1280,7 @@ pub(super) fn project_initial_resource_facts(
 
 pub(super) fn project_outcome_resource_facts(
     resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     available_pure_facts: ProofFacts,
@@ -1311,16 +1293,14 @@ pub(super) fn project_outcome_resource_facts(
     };
     let mut facts = ProofResourcePureFacts::new(available_pure_facts);
     append_state_resource_context_observable_facts_with_store(
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         &mut facts,
         &format!("`{claim_label}` path {path_index}"),
     )?;
     project_folded_resource_observable_facts_with_store(
         resource_environment,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         value,
@@ -1336,8 +1316,7 @@ pub(super) fn project_outcome_resource_facts(
 }
 
 fn append_state_resource_context_observable_facts_with_store<F: ResourcePureFacts>(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     available_pure_facts: &mut F,
     context: &str,
@@ -1348,7 +1327,7 @@ fn append_state_resource_context_observable_facts_with_store<F: ResourcePureFact
         .map_err(|error| {
             ClickError::new(format!(
                 "{context}: {}",
-                describe_resource_context_validity_error(error, parameters, arguments)
+                describe_resource_context_validity_error(error, parameter_binding)
             ))
         })?;
     for fact in facts {
@@ -1359,8 +1338,7 @@ fn append_state_resource_context_observable_facts_with_store<F: ResourcePureFact
 
 fn project_folded_resource_observable_facts_with_store(
     resource_environment: &ResourceEnvironment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: &CState,
     result: &CValue,
@@ -1371,8 +1349,7 @@ fn project_folded_resource_observable_facts_with_store(
         project_held_resource_observable_facts(
             resource_environment,
             resource,
-            parameters,
-            arguments,
+            parameter_binding,
             pre_state,
             state,
             result,
@@ -1395,8 +1372,7 @@ pub(super) fn observe_composite_resource_for_proof(
     function: &CFunction,
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
@@ -1410,8 +1386,7 @@ pub(super) fn observe_composite_resource_for_proof(
         function,
         resource_environment,
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         &mut facts,
         surface_propositions,
@@ -1433,8 +1408,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     function: &CFunction,
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     available_pure_facts: &mut F,
     surface_propositions: &mut SurfacePropositionMap,
@@ -1443,8 +1417,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<(CState, CResourceFact), ClickError> {
-    let requested_resource =
-        lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
+    let requested_resource = lower_resource_clause_at_state(resource, parameter_binding, &state)?;
     let assumptions = available_pure_facts.assumptions().clone();
     let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
     let abstract_resource = state
@@ -1473,8 +1446,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                     &requested_resource,
                     &available_pure_facts.materialize(),
                     state.resources().facts(),
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     &[]
                 )
             ))
@@ -1534,8 +1506,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 right: ContractExpression::ResourceCount(Box::new(counted_resource.clone())),
             };
             let count_kernel = lower_outcome_proposition_with_assumptions(
-                parameters,
-                arguments,
+                parameter_binding,
                 &state,
                 &state,
                 &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -1573,8 +1544,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             right: observed_quantity.clone(),
         };
         let nonnegative_kernel = lower_outcome_proposition_with_assumptions(
-            parameters,
-            arguments,
+            parameter_binding,
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -1614,8 +1584,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             right: ContractExpression::ResourceCount(Box::new(counted_resource.clone())),
         };
         if let Ok(count_nonnegative_kernel) = lower_outcome_proposition_with_assumptions(
-            parameters,
-            arguments,
+            parameter_binding,
             &state,
             &state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -1686,8 +1655,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         &mut surface_substitutions,
         definition,
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         &state,
         None,
         available_pure_facts.assumptions(),
@@ -1722,8 +1690,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         resource_environment,
         definition,
         resource_arguments,
-        parameters,
-        arguments,
+        parameter_binding,
         &state,
         &state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -1764,8 +1731,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             definition,
             resource,
             &surface_substitutions,
-            parameters,
-            arguments,
+            parameter_binding,
             &observation_pre_state,
             &fact_state,
             instantiated,
@@ -1920,8 +1886,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     resource: &ResourceClause,
     substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     fact_state: &CState,
     instantiated: &crate::kernel::InstantiatedCompositeResourceFacts,
@@ -1935,8 +1900,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     let Some(active) = try_select_composite_resource_body(
         definition,
         substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         fact_state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -1949,7 +1913,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
     if !active {
         return Ok(());
     }
-    let parent = lower_resource_clause_at_state(resource, parameters, arguments, fact_state)
+    let parent = lower_resource_clause_at_state(resource, parameter_binding, fact_state)
         .map_err(|error| error.raw_summary().to_string())?;
     let parent_subject = resource_clause_subject(resource);
     let mut owned_children = Vec::new();
@@ -1966,7 +1930,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
                     definition.name()
                 )
             })?;
-        let lowered = lower_resource_clause_at_state(&contained, parameters, arguments, fact_state)
+        let lowered = lower_resource_clause_at_state(&contained, parameter_binding, fact_state)
             .map_err(|error| error.raw_summary().to_string())?;
         if let Some(child) = lowered.owned_resource() {
             let child_subject = resource_clause_subject(&contained);
@@ -1989,7 +1953,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
             continue;
         };
         if let Some(kernel) =
-            resource_clause_loadable_prop_at_state(&contained, parameters, arguments, fact_state)
+            resource_clause_loadable_prop_at_state(&contained, parameter_binding, fact_state)
                 .map_err(|error| error.raw_summary().to_string())?
         {
             surface_propositions
@@ -2075,8 +2039,7 @@ fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
 pub(super) fn record_initial_composite_surface_facts(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     available_pure_facts: &PureFactList,
     surface_propositions: &mut SurfacePropositionMap,
@@ -2104,8 +2067,7 @@ pub(super) fn record_initial_composite_surface_facts(
             &mut substitutions,
             definition,
             resource,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             None,
             &assumptions,
@@ -2117,8 +2079,7 @@ pub(super) fn record_initial_composite_surface_facts(
         let Some(true) = try_select_composite_resource_body(
             definition,
             &substitutions,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -2134,8 +2095,7 @@ pub(super) fn record_initial_composite_surface_facts(
                 continue;
             }
             let kernel = lower_outcome_proposition(
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 state,
                 &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -2158,8 +2118,7 @@ pub(super) fn record_initial_composite_surface_facts(
 fn project_held_resource_observable_facts(
     resource_environment: &ResourceEnvironment,
     resource: &CResourceFact,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: &CState,
     result: &CValue,
@@ -2187,8 +2146,7 @@ fn project_held_resource_observable_facts(
         resource_environment,
         definition,
         resource_arguments,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         result,
@@ -2204,8 +2162,7 @@ fn project_held_resource_observable_facts(
 fn try_select_composite_resource_body(
     definition: &ResourceDefinition,
     substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: &CState,
     result: &CValue,
@@ -2225,8 +2182,7 @@ fn try_select_composite_resource_body(
         )
     })?;
     let lowered = lower_outcome_proposition_with_assumptions(
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         result,
@@ -2290,8 +2246,7 @@ fn try_select_composite_resource_body(
 fn composite_resource_body_is_active_with_assumptions(
     definition: &ResourceDefinition,
     substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: &CState,
     result: &CValue,
@@ -2301,8 +2256,7 @@ fn composite_resource_body_is_active_with_assumptions(
     try_select_composite_resource_body(
         definition,
         substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         result,
@@ -2326,8 +2280,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     resource_environment: &ResourceEnvironment,
     definition: &ResourceDefinition,
     resource_arguments: &[AlgebraicValue],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: &CState,
     result: &CValue,
@@ -2359,8 +2312,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     let Some(body_active) = try_select_composite_resource_body(
         definition,
         &substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         result,
@@ -2377,8 +2329,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         definition.name(),
         composite_body,
         &substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         state.memory().clone(),
     )?;
     let owned_body_resources = contained_resources
@@ -2426,8 +2377,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         },
         &substitutions,
         &contained_resources,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         &fact_state,
         result,
@@ -2444,8 +2394,7 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
     parent_resource: &CResource,
     substitutions: &BTreeMap<String, ContractExpression>,
     contained_resources: &ResourceContext,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     fact_state: &CState,
     result: &CValue,
@@ -2465,8 +2414,7 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
         definition,
         composite_body,
         substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         fact_state.memory(),
         propositions,
     )?;
@@ -2477,8 +2425,7 @@ fn append_composite_definition_observable_facts<F: ResourcePureFacts>(
             composite_body,
             substitutions,
             contained_resources,
-            parameters,
-            arguments,
+            parameter_binding,
             pre_state,
             fact_state,
             result,
@@ -2527,8 +2474,7 @@ fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: &CMemory,
     propositions: &mut F,
 ) -> Result<(), String> {
@@ -2541,8 +2487,7 @@ fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
         })?;
         append_resource_clause_loadable_fact_with_store(
             &contained,
-            parameters,
-            arguments,
+            parameter_binding,
             memory,
             propositions,
         )
@@ -2560,14 +2505,12 @@ fn append_composite_resource_loadable_facts<F: ResourcePureFacts>(
 
 fn append_resource_clause_loadable_fact_with_store<F: ResourcePureFacts>(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: &CMemory,
     propositions: &mut F,
 ) -> Result<(), ClickError> {
     let state = CState::new().with_memory(memory.clone());
-    let Some(ranges) =
-        resource_clause_memory_ranges_at_state(resource, parameters, arguments, &state)?
+    let Some(ranges) = resource_clause_memory_ranges_at_state(resource, parameter_binding, &state)?
     else {
         return Ok(());
     };
@@ -2576,9 +2519,7 @@ fn append_resource_clause_loadable_fact_with_store<F: ResourcePureFacts>(
             propositions.insert(guard);
         }
     }
-    if let Some(proposition) =
-        resource_clause_loadable_prop(resource, parameters, arguments, memory)?
-    {
+    if let Some(proposition) = resource_clause_loadable_prop(resource, parameter_binding, memory)? {
         propositions.insert(proposition);
     }
     Ok(())
@@ -2616,8 +2557,7 @@ fn append_composite_resource_declared_facts<F: ResourcePureFacts>(
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
     contained_resources: &ResourceContext,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     fact_state: &CState,
     result: &CValue,
@@ -2632,8 +2572,7 @@ fn append_composite_resource_declared_facts<F: ResourcePureFacts>(
             )
         })?;
         let (lowered, facts) = lower_outcome_proposition_with_auxiliary_facts(
-            parameters,
-            arguments,
+            parameter_binding,
             pre_state,
             fact_state,
             result,
@@ -2647,7 +2586,7 @@ fn append_composite_resource_declared_facts<F: ResourcePureFacts>(
                 definition.name(),
                 describe_click_proposition(&fact),
                 describe_pure_facts(&propositions.materialize()),
-                describe_resource_facts(contained_resources.facts(), parameters, arguments)
+                describe_resource_facts(contained_resources.facts(), parameter_binding)
             )
         })?;
         for fact in facts {
@@ -2679,8 +2618,7 @@ pub(super) fn resource_context_observable_facts_for_proof(
 
 fn describe_resource_context_validity_error(
     error: ResourceContextValidityError,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match error {
         ResourceContextValidityError::InvalidExclusiveAccess(_) => {
@@ -2689,14 +2627,14 @@ fn describe_resource_context_validity_error(
         ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             format!(
                 "duplicate resource fact `{}`",
-                describe_resource_fact(&resource, parameters, arguments)
+                describe_resource_fact(&resource, parameter_binding)
             )
         }
         ResourceContextValidityError::OverlappingOwnedMemoryResources { left, right } => {
             format!(
                 "overlapping owned memory resource facts `owns {}` and `owns {}`",
-                describe_memory_range(&left, parameters, arguments),
-                describe_memory_range(&right, parameters, arguments)
+                describe_memory_range(&left, parameter_binding),
+                describe_memory_range(&right, parameter_binding)
             )
         }
     }
@@ -2706,16 +2644,14 @@ fn materialize_composite_resource_memory(
     name: &str,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: CMemory,
 ) -> Result<CMemory, String> {
     let (memory, _) = instantiate_composite_resource_body_resources(
         name,
         composite_body,
         substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         memory,
     )?;
     Ok(memory)
@@ -2728,8 +2664,7 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
     name: &str,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     mut memory: CMemory,
 ) -> Result<(CMemory, ResourceContext), String> {
     let mut resources = ResourceContext::new();
@@ -2750,19 +2685,13 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
             .with_memory(memory.clone())
             .with_resource_context(resources.clone());
         let lowered =
-            lower_resource_clause_at_state(&contained, parameters, arguments, &lowering_state)
+            lower_resource_clause_at_state(&contained, parameter_binding, &lowering_state)
                 .map_err(|error| {
                     format!(
                         "could not lower resource `{name}` contained `{}`: {}\n  {}",
                         describe_resource_clause(&contained),
                         error.raw_summary(),
-                        describe_available_facts(
-                            &[],
-                            resources.facts(),
-                            parameters,
-                            arguments,
-                            &[]
-                        )
+                        describe_available_facts(&[], resources.facts(), parameter_binding, &[])
                     )
                 })?;
         memory = materialize_composite_resource_cells_from_snapshot(
@@ -2770,7 +2699,7 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
             &naming_memory,
             &contained,
             &lowered,
-            parameters,
+            parameter_binding.parameters,
         );
         // This composite-body instantiation path has no fact assumptions yet.
         // Projection/packing paths check composition once assumptions are
@@ -2878,8 +2807,7 @@ pub(super) fn unfold_composite_resource_for_proof(
     compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
@@ -2892,8 +2820,7 @@ pub(super) fn unfold_composite_resource_for_proof(
         compiled_definitions,
         resource_environment,
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         facts,
         surface_propositions,
@@ -2910,8 +2837,7 @@ pub(super) fn open_composite_resource_for_proof(
     compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
@@ -2923,8 +2849,7 @@ pub(super) fn open_composite_resource_for_proof(
         compiled_definitions,
         resource_environment,
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         facts,
         surface_propositions,
@@ -2941,8 +2866,7 @@ fn unfold_composite_resource_for_proof_with_access(
     compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: CState,
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
@@ -2957,8 +2881,7 @@ fn unfold_composite_resource_for_proof_with_access(
         compiled_definitions,
         resource_environment,
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         &mut facts,
         surface_propositions,
@@ -2982,8 +2905,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     compiled_definitions: &[CCompositeResourceDefinition],
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     mut state: CState,
     available_pure_facts: &mut F,
     surface_propositions: &mut SurfacePropositionMap,
@@ -3009,8 +2931,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         &mut substitutions,
         definition,
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         &state,
         None,
         available_pure_facts.assumptions(),
@@ -3021,8 +2942,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     let body_active = composite_resource_body_is_active_with_assumptions(
         definition,
         &substitutions,
-        parameters,
-        arguments,
+        parameter_binding,
         &state,
         &state,
         &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -3046,7 +2966,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         &[]
     };
     let mut abstract_resource =
-        lower_resource_clause_at_state(resource, parameters, arguments, &state)?;
+        lower_resource_clause_at_state(resource, parameter_binding, &state)?;
     let requested_quantity = abstract_resource
         .owned_quantity_term()
         .cloned()
@@ -3243,8 +3163,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                         describe_resource_clause(resource)
                     ))
                 })?;
-            let lowered =
-                lower_resource_clause_at_state(&contained, parameters, arguments, &state)?;
+            let lowered = lower_resource_clause_at_state(&contained, parameter_binding, &state)?;
             let Some(next) = remaining.without_fact(&lowered, &assumptions) else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
@@ -3253,8 +3172,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                         &abstract_resource,
                         &available_pure_facts.materialize(),
                         state.resources().facts(),
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         &[]
                     )
                 )));
@@ -3273,8 +3191,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 &abstract_resource,
                 &available_pure_facts.materialize(),
                 state.resources().facts(),
-                parameters,
-                arguments,
+                parameter_binding,
                 &[]
             )
         )));
@@ -3295,7 +3212,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             .clone()
             .with_resource_context(lowering_resources.clone());
         let mut lowered =
-            lower_resource_clause_at_state(&contained, parameters, arguments, &lowering_state)?;
+            lower_resource_clause_at_state(&contained, parameter_binding, &lowering_state)?;
         if opening_view {
             lowered = CResourceFact::View(lowered.resource().clone());
         }
@@ -3309,7 +3226,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 state.memory().clone(),
                 &contained,
                 &lowered,
-                parameters,
+                parameter_binding.parameters,
             );
             // Naming cells during a proof rewrite is not a C write. Keep
             // unrelated memory-backed views and their support identities.
@@ -3346,7 +3263,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
                 describe_resource_clause(resource),
-                describe_resource_context_validity_error(error, parameters, arguments)
+                describe_resource_context_validity_error(error, parameter_binding)
             )));
         }
     }
@@ -3367,8 +3284,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
             state.clone()
         };
         let (lowered_fact, lowering_facts) = lower_outcome_proposition_with_auxiliary_facts(
-            parameters,
-            arguments,
+            parameter_binding,
             &fact_state,
             &fact_state,
             &CValue::Int32(Bitvector32Term::Constant(0)),
@@ -3384,8 +3300,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 describe_proof_context(
                     &available_pure_facts.materialize(),
                     state.resources().facts(),
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     &[]
                 )
             ))
@@ -3484,7 +3399,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                     ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
                         describe_resource_clause(resource),
-                        describe_resource_context_validity_error(error, parameters, arguments)
+                        describe_resource_context_validity_error(error, parameter_binding)
                     ))
                 })?;
             inserted_unfolded_occurrences = resources.1;
@@ -3501,7 +3416,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                     ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
                         describe_resource_clause(resource),
-                        describe_resource_context_validity_error(error, parameters, arguments)
+                        describe_resource_context_validity_error(error, parameter_binding)
                     ))
                 })?;
             let assumptions = available_pure_facts.assumptions().clone();
@@ -3543,7 +3458,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
                     describe_resource_clause(resource),
-                    describe_resource_context_validity_error(error, parameters, arguments)
+                    describe_resource_context_validity_error(error, parameter_binding)
                 ))
             })?;
             state = state.with_resource_context(resources);
@@ -3639,8 +3554,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     );
 
     append_state_resource_context_observable_facts_with_store(
-        parameters,
-        arguments,
+        parameter_binding,
         &state,
         available_pure_facts,
         &format!(
@@ -3675,8 +3589,7 @@ fn fold_composite_resources_on_outcome_with_facts(
     path_index: usize,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
     pure_facts: &impl ResourcePureFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     mut outcome: CFunctionOutcome,
     spec_definitions: SpecDefinitions<'_>,
@@ -3703,7 +3616,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 return Err(ClickError::new(format!(
                     "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}",
                     describe_resource_clause(resource),
-                    describe_function_outcome(&outcome, parameters, arguments)
+                    describe_function_outcome(&outcome, parameter_binding)
                 )));
             }
         };
@@ -3711,8 +3624,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             &mut substitutions,
             definition,
             resource,
-            parameters,
-            arguments,
+            parameter_binding,
             &guard_state,
             Some(&guard_result),
             pure_facts.assumptions(),
@@ -3723,8 +3635,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         let mut body_active = composite_resource_body_is_active_with_assumptions(
             definition,
             &substitutions,
-            parameters,
-            arguments,
+            parameter_binding,
             pre_state,
             &guard_state,
             &guard_result,
@@ -3751,8 +3662,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             };
             let population = lower_resource_clause_at_state_with_assumptions(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 Some(value),
                 pure_facts.assumptions(),
@@ -3842,8 +3752,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             };
             let population = lower_resource_clause_at_state_with_assumptions(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 Some(value),
                 pure_facts.assumptions(),
@@ -3929,8 +3838,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             })?;
             let lowered = lower_resource_clause_at_state_with_assumptions(
                 &contained,
-                parameters,
-                arguments,
+                parameter_binding,
                 &guard_state,
                 Some(&guard_result),
                 pure_facts.assumptions(),
@@ -3970,8 +3878,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 };
                 let state = authority_closing_fact_state.as_ref().unwrap_or(state);
                 let lowered = lower_outcome_proposition_with_assumptions(
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     pre_state,
                     state,
                     value,
@@ -4036,6 +3943,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 pure_facts.exact_available_across_effects(&required, execution_pure_facts);
             if !exactly_available
                 && !matches!(normalize_proposition(&required), SimpProposition::True)
+                && !body_assumptions.function_contract_fact_is_established(&required)
                 && !body_assumptions.proves(&required)
             {
                 // `proves` returns false when the active budget runs out
@@ -4047,10 +3955,10 @@ fn fold_composite_resources_on_outcome_with_facts(
                     CFunctionOutcome::Return { state, .. } => state.resources().facts(),
                     _ => pre_state.resources().facts(),
                 };
-                let required_text = describe_pure_fact(&required, parameters, arguments);
+                let required_text = describe_pure_fact(&required, parameter_binding);
                 let identically_printed = available_pure_facts
                     .iter()
-                    .filter(|fact| describe_pure_fact(fact, parameters, arguments) == required_text)
+                    .filter(|fact| describe_pure_fact(fact, parameter_binding) == required_text)
                     .count();
                 let snapshot_note = if identically_printed > 0 {
                     format!(
@@ -4085,8 +3993,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                         &required,
                         &available_pure_facts,
                         resources,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         execution_pure_facts,
                     )
                 )));
@@ -4096,7 +4003,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             return Err(ClickError::new(format!(
                 "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}\n  execution pure facts: {}",
                 describe_resource_clause(resource),
-                describe_function_outcome(&outcome, parameters, arguments),
+                describe_function_outcome(&outcome, parameter_binding),
                 describe_execution_pure_facts(execution_pure_facts)
             )));
         };
@@ -4124,8 +4031,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 })?;
             let mut lowered = lower_resource_clause_at_state_with_assumptions(
                 &contained,
-                parameters,
-                arguments,
+                parameter_binding,
                 &post_state,
                 Some(&value),
                 pure_facts.assumptions(),
@@ -4176,7 +4082,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` path {path_index}: `fold({})` body views memory this context owns: `{}` is backed by an owner that can still write it, so the folded facts would not be stable; own it in the body or borrow it through a call",
                                 describe_resource_clause(resource),
-                                describe_resource_fact(&lowered, parameters, arguments)
+                                describe_resource_fact(&lowered, parameter_binding)
                             )));
                         }
                         body_has_unbound_view = true;
@@ -4236,8 +4142,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                         lowered,
                         &available_pure_facts,
                         &diagnostic_facts,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         execution_pure_facts
                     )
                 )));
@@ -4249,8 +4154,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         if closure == ResourceBodyClosure::Initialize && !folded_representation_already_present {
             let abstract_resource = lower_resource_clause_at_state_with_assumptions(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 &post_state,
                 Some(&value),
                 pure_facts.assumptions(),
@@ -4298,7 +4202,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                         ClickError::new(format!(
                             "`{claim_label}` path {path_index}: `fold({})` produced {}",
                             describe_resource_clause(resource),
-                            describe_resource_context_validity_error(error, parameters, arguments)
+                            describe_resource_context_validity_error(error, parameter_binding)
                         ))
                     })?;
                 (
@@ -4356,8 +4260,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         {
             let abstract_resource = lower_resource_clause_at_state_with_assumptions(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 &post_state,
                 Some(&value),
                 pure_facts.assumptions(),
@@ -4406,8 +4309,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         if matches!(closure, ResourceBodyClosure::CloseOpen { .. }) {
             let selected = lower_resource_clause_at_state_with_assumptions(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 &post_state,
                 Some(&value),
                 pure_facts.assumptions(),
@@ -4452,8 +4354,7 @@ pub(super) fn fold_composite_resource_for_proof(
     claim_label: &str,
     tactic_index: usize,
     facts: ProofFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: CState,
     spec_definitions: SpecDefinitions<'_>,
@@ -4467,8 +4368,7 @@ pub(super) fn fold_composite_resource_for_proof(
         claim_label,
         tactic_index,
         facts,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         spec_definitions,
@@ -4490,8 +4390,7 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
     path_index: usize,
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
     facts: ProofFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     outcome: CFunctionOutcome,
     spec_definitions: SpecDefinitions<'_>,
@@ -4508,8 +4407,7 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
         path_index,
         execution_pure_facts,
         &facts,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         outcome,
         spec_definitions,
@@ -4523,9 +4421,8 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
     if matches!(closure, ResourceBodyClosure::CloseOpen { .. })
         && let CFunctionOutcome::Return { value, state } = &outcome
     {
-        let requested = lower_resource_clause_at_state_with_result(
-            resource, parameters, arguments, state, value,
-        )?;
+        let requested =
+            lower_resource_clause_at_state_with_result(resource, parameter_binding, state, value)?;
         let viewed = CResourceFact::View(requested.resource().clone());
         let support = state
             .resources()
@@ -4540,8 +4437,7 @@ pub(super) fn fold_composite_resource_on_outcome_for_proof(
             project_held_resource_observable_facts(
                 resource_environment,
                 &support,
-                parameters,
-                arguments,
+                parameter_binding,
                 pre_state,
                 state,
                 value,
@@ -4568,8 +4464,7 @@ pub(super) fn close_open_resource_for_proof(
     claim_label: &str,
     tactic_index: usize,
     facts: ProofFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: CState,
     spec_definitions: SpecDefinitions<'_>,
@@ -4583,8 +4478,7 @@ pub(super) fn close_open_resource_for_proof(
         claim_label,
         tactic_index,
         facts,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         spec_definitions,
@@ -4604,8 +4498,7 @@ fn fold_composite_resource_for_proof_with_closure(
     claim_label: &str,
     tactic_index: usize,
     facts: ProofFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     state: CState,
     spec_definitions: SpecDefinitions<'_>,
@@ -4626,8 +4519,7 @@ fn fold_composite_resource_for_proof_with_closure(
         tactic_index,
         &[],
         &facts,
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         outcome,
         spec_definitions,
@@ -4649,13 +4541,11 @@ fn fold_composite_resource_for_proof_with_closure(
 /// The hole-free iterated ownership fact the one iterated clause of
 /// `resource`'s definition denotes at the tactic's own arguments, read at
 /// `state`. `gather` forms it and `scatter` dissolves it.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn iterated_template_for_resource(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     action: &str,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     claim_label: &str,
     tactic_index: usize,
@@ -4688,8 +4578,7 @@ pub(super) fn iterated_template_for_resource(
                 definition.name()
             ))
         })?;
-    let lowered =
-        lower_resource_clause_at_current_locals(&clause, parameters, arguments, state, None)?;
+    let lowered = lower_resource_clause_at_current_locals(&clause, parameter_binding, state, None)?;
     match lowered {
         CResourceFact::Own(CResource::Iterated(iterated), _) => Ok(iterated.as_ref().clone()),
         _ => Err(ClickError::new(format!(
@@ -4765,8 +4654,7 @@ fn extend_substitutions_with_witnesses(
     substitutions: &mut BTreeMap<String, ContractExpression>,
     definition: &ResourceDefinition,
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     result: Option<&CValue>,
     assumptions: &PureFactContext,
@@ -4786,8 +4674,7 @@ fn extend_substitutions_with_witnesses(
     };
     let fact = lower_resource_clause_at_state_with_assumptions(
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         result,
         assumptions,

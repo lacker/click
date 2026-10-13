@@ -2159,7 +2159,8 @@ impl<'a> OriginsUnchanged<'a> {
         // Retain the selected, checked alias/snapshot path when different
         // pointer spellings identify this cell. The read kind is preserved.
         left_kind == right_kind
-            && ((left_pointer.block != right_pointer.block
+            && (((left_pointer.block != right_pointer.block
+                || (*left_kind == LoadKind::Bits32 && left_pointer != right_pointer))
                 && crate::kernel::memory_provenance::checked_origin_load_equality(
                     &Bitvector32Term::Variable(left),
                     &Bitvector32Term::Variable(right),

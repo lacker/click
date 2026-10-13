@@ -3479,6 +3479,53 @@ fn pinned_std_byte_reinterpretation_initializes_uint32_offline() {
 }
 
 #[test]
+fn pinned_initialized_uint32_projects_all_four_representation_bytes_offline() {
+    let (root, import) = pinned_span_fixture_with_exact_dependencies(
+        "initialized-word-byte-projections",
+        r#"#include <span.h>
+unsigned int probe() noexcept {
+    unsigned int obj = 305419896U;
+    std::byte* p = reinterpret_cast<std::byte*>(&obj);
+    unsigned int b0 = static_cast<unsigned char>(*p);
+    unsigned int b1 = static_cast<unsigned char>(*(p + 1));
+    unsigned int b2 = static_cast<unsigned char>(*(p + 2));
+    unsigned int b3 = static_cast<unsigned char>(*(p + 3));
+    return b0 + b1 * 256U + b2 * 65536U + b3 * 16777216U;
+}
+"#,
+        &["sysroot/usr/include/c++/12/cstddef"],
+    );
+    check_pinned_byte_proof(
+        &root,
+        &import,
+        "verifying \"span-probe.cpp\"; uint32 probe() { ensures result == 305419896u32; } by { execute(); simp(); }",
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pinned_uint32_representation_byte_endpoint_is_not_dereferenceable_offline() {
+    let (root, import) = pinned_span_fixture_with_exact_dependencies(
+        "word-byte-endpoint-refusal",
+        "#include <span.h>\nunsigned char probe() noexcept { unsigned int obj = 305419896U; std::byte* p = reinterpret_cast<std::byte*>(&obj); return static_cast<unsigned char>(*(p + 4)); }\n",
+        &["sysroot/usr/include/c++/12/cstddef"],
+    );
+    let source = "verifying \"span-probe.cpp\"; uint8 probe() { ensures result == 0u8; } by { execute(); simp(); }";
+    fs::write(root.join("bad.click"), source).unwrap();
+    let error = verify_program_prepared_project(
+        &read_click_project(&root.join("bad.click"), source).unwrap(),
+        &import,
+    )
+    .expect_err("one-past byte formation grants no dereference");
+    assert!(
+        error.message().contains("invalid memory access"),
+        "the initialized private word must fail only the endpoint access: {}",
+        error.message()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn pinned_std_byte_reinterpreted_call_result_preserves_pointer_identity_offline() {
     let (root, import) = pinned_span_fixture_with_exact_dependencies(
         "byte-cast-call",
@@ -3495,7 +3542,7 @@ fn pinned_std_byte_reinterpreted_call_result_preserves_pointer_identity_offline(
     let artifact: serde_json::Value =
         serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
     let lock: serde_json::Value = serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
-    for change in 0..4 {
+    for change in 0..5 {
         let mut forged = artifact.clone();
         let conversion = &mut forged["function"]["body"][0]["conversions"][0];
         match change {
@@ -3506,6 +3553,36 @@ fn pinned_std_byte_reinterpreted_call_result_preserves_pointer_identity_offline(
                 conversion["value_type"]["pointee"]["name"] = "Other".into();
                 conversion["value_type"]["pointee"]["declaration_id"] = "c:@E@Other".into();
             }
+            4 => {
+                fn use_signed_int(value: &mut serde_json::Value) {
+                    match value {
+                        serde_json::Value::Object(fields) => {
+                            if fields.get("kind").and_then(serde_json::Value::as_str)
+                                == Some("integer")
+                                && fields.get("bits").and_then(serde_json::Value::as_u64)
+                                    == Some(32)
+                                && fields.get("signed").and_then(serde_json::Value::as_bool)
+                                    == Some(false)
+                            {
+                                fields.insert("signed".into(), true.into());
+                            }
+                            for child in fields.values_mut() {
+                                use_signed_int(child);
+                            }
+                        }
+                        serde_json::Value::Array(children) => {
+                            for child in children {
+                                use_signed_int(child);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                // Keep the parameter, echo result and conversion input types
+                // mutually consistent. The direct signed-int byte cast itself
+                // must be refused rather than borrowing the uint32 guarantee.
+                use_signed_int(&mut forged);
+            }
             _ => unreachable!(),
         }
         let bytes = serde_json::to_vec_pretty(&forged).unwrap();
@@ -3514,11 +3591,45 @@ fn pinned_std_byte_reinterpreted_call_result_preserves_pointer_identity_offline(
         forged_lock["artifact_bytes"] = bytes.len().into();
         fs::write(&artifact_path, bytes).unwrap();
         fs::write(&lock_path, serde_json::to_vec_pretty(&forged_lock).unwrap()).unwrap();
-        assert!(
-            load_import(&root.join("span.click.import.json")).is_err(),
-            "mutation {change}"
-        );
+        let error = load_import(&root.join("span.click.import.json"))
+            .expect_err(&format!("mutation {change}"));
+        if change == 4 {
+            assert!(
+                error.contains("byte pointer conversion") || error.contains("byte pointer cast"),
+                "consistent signed-int mutation must fail the byte scope check: {error}"
+            );
+        }
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pinned_std_byte_direct_signed_int_cast_has_no_uint32_traversal_guarantee() {
+    let (root, import) = pinned_span_fixture_with_exact_dependencies(
+        "signed-byte-cast-scope",
+        "#include <span.h>\nstd::byte* probe(unsigned int* p) noexcept { return reinterpret_cast<std::byte*>(p); }\n",
+        &["sysroot/usr/include/c++/12/cstddef"],
+    );
+    drop(import);
+    fs::copy(
+        std::env::var("CLICK_CPP_EXPORTER").unwrap(),
+        root.join("click-cpp-exporter"),
+    )
+    .unwrap();
+    let original_artifact = fs::read(root.join("span.click-cpp.json")).unwrap();
+    fs::write(root.join("span-probe.cpp"),
+        "#include <span.h>\nstd::byte* probe(int* p) noexcept { return reinterpret_cast<std::byte*>(p); }\n").unwrap();
+    let error = refresh_import(&root.join("span.click.import.json"))
+        .expect_err("signed-int direct cast is outside the approved profile");
+    assert!(
+        error.contains("unsupported explicit C++ conversion"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(root.join("span.click-cpp.json")).unwrap(),
+        original_artifact,
+        "a refused source cannot replace a checked artifact"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3582,10 +3693,460 @@ fn pinned_std_byte_modular_output_initializes_storage_offline() {
     let project = read_click_project(&root.join("byte.click"), source).unwrap();
     let expanded_helper = expand_project_claim_source_by_label(
         &project,
-        &ProgramInputs::Program(&import),
+        &ProgramInputs::program(&import),
         "fill.contract",
     )
     .unwrap();
     check_pinned_byte_proof(&root, &import, &expanded_helper);
+    fs::remove_dir_all(root).unwrap();
+}
+
+const EXACT_BYTE_WORD_CONTRACT: &str = r#"verifying "span-probe.cpp";
+void fill(uint8* p) {
+    owns p[0..4];
+    ensures initialized(p[0..4]);
+    ensures p[0] == 120u8;
+    ensures p[1] == 86u8;
+    ensures p[2] == 52u8;
+    ensures p[3] == 18u8;
+} by { execute(); simp(); }
+uint32 probe() { ensures result == 305419896u32; } by { execute(); simp(); }
+"#;
+
+const EXACT_BYTE_WRITER: &str = "*p = static_cast<std::byte>(120); *(p + 1) = static_cast<std::byte>(86); *(p + 2) = static_cast<std::byte>(52); *(p + 3) = static_cast<std::byte>(18);";
+
+fn modular_byte_word_harness(writer: &str) -> String {
+    format!(
+        "#include <span.h>\nvoid fill(std::byte* p) noexcept {{ {writer} }} unsigned int probe() noexcept {{ unsigned int obj; std::byte* bytes = reinterpret_cast<std::byte*>(&obj); fill(bytes); return obj; }}\n"
+    )
+}
+
+#[test]
+fn pinned_std_byte_modular_output_determines_exact_uint32_word_offline() {
+    // Keep the existing first-byte fixture unchanged. This caller reads the
+    // original declared word and must use the same shared four-byte law as C.
+    let (root, import) = pinned_span_fixture_with_exact_dependencies(
+        "modular-byte-word",
+        &modular_byte_word_harness(EXACT_BYTE_WRITER),
+        &["sysroot/usr/include/c++/12/cstddef"],
+    );
+    check_pinned_byte_proof(&root, &import, EXACT_BYTE_WORD_CONTRACT);
+    let project = read_click_project(&root.join("byte.click"), EXACT_BYTE_WORD_CONTRACT).unwrap();
+    let expanded_helper = expand_project_claim_source_by_label(
+        &project,
+        &ProgramInputs::program(&import),
+        "fill.contract",
+    )
+    .unwrap();
+    check_pinned_byte_proof(&root, &import, &expanded_helper);
+    let wrong_word = EXACT_BYTE_WORD_CONTRACT.replace("305419896u32", "305419897u32");
+    fs::write(root.join("bad.click"), &wrong_word).unwrap();
+    assert!(
+        verify_program_prepared_project(
+            &read_click_project(&root.join("bad.click"), &wrong_word).unwrap(),
+            &import
+        )
+        .is_err()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pinned_std_byte_modular_word_rejects_noop_hole_and_wrong_byte_writers_offline() {
+    for (name, writer) in [
+        ("noop", "p = p + 0;".to_owned()),
+        (
+            "hole",
+            EXACT_BYTE_WRITER.replace("*(p + 2) = static_cast<std::byte>(52);", ""),
+        ),
+        (
+            "wrong-byte",
+            EXACT_BYTE_WRITER.replace("static_cast<std::byte>(86)", "static_cast<std::byte>(87)"),
+        ),
+    ] {
+        let (root, import) = pinned_span_fixture_with_exact_dependencies(
+            &format!("modular-word-{name}"),
+            &modular_byte_word_harness(&writer),
+            &["sysroot/usr/include/c++/12/cstddef"],
+        );
+        fs::write(root.join("bad.click"), EXACT_BYTE_WORD_CONTRACT).unwrap();
+        let project =
+            read_click_project(&root.join("bad.click"), EXACT_BYTE_WORD_CONTRACT).unwrap();
+        let error = verify_program_prepared_project(&project, &import).expect_err(name);
+        assert!(
+            error.message().contains("fill"),
+            "writer {name} must fail its unchanged checked helper contract: {}",
+            error.message()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+const UNCHANGED_READ32_HARNESS: &str = r#"#include <serialize.h>
+struct FourByteStream {
+    unsigned int state;
+    void read(std::span<std::byte> out) noexcept {
+        std::byte* p = out.data();
+        *p = static_cast<std::byte>(120);
+        *(p + 1) = static_cast<std::byte>(86);
+        *(p + 2) = static_cast<std::byte>(52);
+        *(p + 3) = static_cast<std::byte>(18);
+    }
+};
+uint32_t probe(FourByteStream& stream) noexcept {
+    return ser_readdata32(stream);
+}
+"#;
+
+#[test]
+fn pinned_unchanged_ser_readdata32_preserves_exact_word_span_and_backing_offline() {
+    let (root, import) = pinned_span_fixture_with_exact_dependencies(
+        "unchanged-read32",
+        UNCHANGED_READ32_HARNESS,
+        &[
+            "bitcoin-src/src/serialize.h",
+            "bitcoin-src/src/compat/endian.h",
+            "sysroot/usr/include/c++/12/span",
+            "sysroot/usr/include/c++/12/cstddef",
+            "sysroot/usr/include/x86_64-linux-gnu/c++/12/bits/c++config.h",
+            "sysroot/usr/include/x86_64-linux-gnu/bits/stdint-uintn.h",
+            "sysroot/usr/include/x86_64-linux-gnu/bits/types.h",
+        ],
+    );
+    assert_eq!(
+        sha256(&fs::read(root.join("bitcoin-src/src/serialize.h")).unwrap()),
+        "87a273aa8cb9aeea82cd8038bb85284a5782c8abc35f8c826eb60f1a01e06775"
+    );
+    let lowered = click::languages::cpp::lower_import(&import).unwrap();
+    let functions = &import.export().reachable_functions;
+    let native = |name: &str| {
+        functions
+            .iter()
+            .find(|function| {
+                function.name == name || function.name.starts_with(&format!("{name}__"))
+            })
+            .unwrap_or_else(|| panic!("missing unchanged function {name}"))
+    };
+    let read = native("FourByteStream_read");
+    let decoder = functions
+        .iter()
+        .find(|function| {
+            function.span.file == "bitcoin-src/src/serialize.h"
+                && function.name.starts_with("ser_readdata32")
+        })
+        .expect("unchanged selected decoder body");
+    let endian = functions
+        .iter()
+        .find(|function| {
+            function.span.file == "bitcoin-src/src/compat/endian.h"
+                && function.name == "le32toh_internal"
+        })
+        .expect("unchanged pinned endian conversion");
+    let click::languages::cpp::CppType::Record {
+        name: byte_span, ..
+    } = &read.parameters[1].value_type
+    else {
+        panic!("the stream takes the actual standard-byte descriptor");
+    };
+    let read_name = lowered.contract_name(&read.declaration_id).unwrap();
+    let decoder_name = lowered.contract_name(&decoder.declaration_id).unwrap();
+    let endian_name = lowered.contract_name(&endian.declaration_id).unwrap();
+    let source = format!(
+        r#"verifying "span-probe.cpp";
+void {read_name}(struct FourByteStream* this, struct {byte_span} out) {{
+    requires std_span_size(out) == 4u64;
+    owns std_span_data(out)[0..4];
+    ensures initialized(std_span_data(out)[0..4]);
+    ensures std_span_data(out)[0] == 120u8;
+    ensures std_span_data(out)[1] == 86u8;
+    ensures std_span_data(out)[2] == 52u8;
+    ensures std_span_data(out)[3] == 18u8;
+    ensures std_span_data(out) == old(std_span_data(out));
+    ensures std_span_size(out) == old(std_span_size(out));
+}} by {{ execute(); simp(); }}
+uint32 {endian_name}(uint32 little_endian_32bits) {{
+    ensures result == little_endian_32bits;
+}} by {{ execute(); simp(); }}
+uint32 {decoder_name}(struct FourByteStream& s) {{
+    views s.state;
+    ensures result == 305419896u32;
+    ensures s.state == old(s.state);
+}} by {{
+    execute_until(statement(7));
+    have obj == 305419896u32 by simp;
+    execute();
+    simp();
+}}
+uint32 probe(struct FourByteStream& stream) {{
+    views stream.state;
+    ensures result == 305419896u32;
+    ensures stream.state == old(stream.state);
+}} by {{ execute(); simp(); }}
+"#
+    );
+    check_pinned_byte_proof(&root, &import, &source);
+    // The byte helper and intermediate packing step must transcribe into
+    // source and independently recheck, as well as the outer caller.
+    for claim in [
+        "FourByteStream_read.contract".to_string(),
+        format!("{decoder_name}.contract"),
+    ] {
+        let project = read_click_project(&root.join("byte.click"), &source).unwrap();
+        let expanded = expand_project_claim_source_by_label(
+            &project,
+            &ProgramInputs::program(&import),
+            &claim,
+        )
+        .unwrap();
+        check_pinned_byte_proof(&root, &import, &expanded);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pinned_std_span_models_require_the_actual_header_pin_after_refresh() {
+    let header = "sysroot/usr/include/c++/12/span";
+    let pinned_digest = "f1e67ea2c1e2e0faef697f37d995abb59eeb7fb0c0cf13a586fe2799ed9196bd";
+    let (root, original) = pinned_span_fixture_with_exact_dependencies(
+        "span-model-header-pin",
+        UNCHANGED_READ32_HARNESS,
+        &[
+            "bitcoin-src/src/serialize.h",
+            "bitcoin-src/src/compat/endian.h",
+            "sysroot/usr/include/c++/12/span",
+            "sysroot/usr/include/c++/12/cstddef",
+            "sysroot/usr/include/x86_64-linux-gnu/c++/12/bits/c++config.h",
+            "sysroot/usr/include/x86_64-linux-gnu/bits/stdint-uintn.h",
+            "sysroot/usr/include/x86_64-linux-gnu/bits/types.h",
+        ],
+    );
+    let original_assumptions = original.library_model_equivalence_assumptions();
+    assert_eq!(original_assumptions.len(), 3, "{original_assumptions:?}");
+    for name in [
+        "std::span<unsigned int>::span",
+        "std::as_writable_bytes",
+        "std::span<std::byte>::data",
+    ] {
+        assert!(
+            original_assumptions.iter().any(|assumption| {
+                assumption.contains(name)
+                    && assumption.contains(pinned_digest)
+                    && assumption.contains(click::languages::cpp::DECLARED_UINT32_BYTE_GUARANTEE)
+                    && assumption.contains("equivalence")
+            }),
+            "{name}: {original_assumptions:?}"
+        );
+    }
+    let artifact_path = root.join("span.click-cpp.json");
+    let lock_path = root.join("span.click.import.json.lock");
+    let original_artifact_bytes = fs::read(&artifact_path).unwrap();
+    let original_lock_bytes = fs::read(&lock_path).unwrap();
+    let artifact: serde_json::Value = serde_json::from_slice(&original_artifact_bytes).unwrap();
+    let lock: serde_json::Value = serde_json::from_slice(&original_lock_bytes).unwrap();
+    fn lock_identity(lock: &serde_json::Value, exporter_schema: u64) -> String {
+        let dependencies: std::collections::BTreeMap<String, String> =
+            serde_json::from_value(lock["dependencies"].clone()).unwrap();
+        // These two fields have the same canonical order as the checked lock row.
+        let files: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_value(lock["preprocessor_files"].clone()).unwrap();
+        let profile: click::languages::cpp::CppProfile =
+            serde_json::from_value(lock["profile"].clone()).unwrap();
+        sha256(
+            &serde_json::to_vec(&(
+                lock["schema"].as_u64().unwrap(),
+                exporter_schema,
+                "click-cpp-semantic-import-v6",
+                lock["config_sha256"].as_str().unwrap(),
+                lock["compilation_database_sha256"].as_str().unwrap(),
+                lock["source_sha256"].as_str().unwrap(),
+                lock["logical_source_sha256"].as_str().unwrap(),
+                dependencies,
+                files,
+                lock["exporter_sha256"].as_str().unwrap(),
+                lock["artifact_sha256"].as_str().unwrap(),
+                profile,
+            ))
+            .unwrap(),
+        )
+    }
+    let schema = artifact["schema"].as_u64().unwrap();
+    assert_eq!(
+        lock_identity(&lock, schema),
+        lock["identity"].as_str().unwrap(),
+        "hostile model metadata controls must reconstruct the actual import identity"
+    );
+    for missing in [true, false] {
+        let mut altered = artifact.clone();
+        let mut changed = 0;
+        for function in altered["reachable_functions"].as_array_mut().unwrap() {
+            let Some(axiom) = function
+                .get_mut("axiom")
+                .and_then(|value| value.as_object_mut())
+            else {
+                continue;
+            };
+            if !matches!(
+                axiom.get("qualified_name").and_then(|value| value.as_str()),
+                Some(
+                    "std::span<unsigned int>::span"
+                        | "std::as_writable_bytes"
+                        | "std::span<std::byte>::data"
+                )
+            ) {
+                continue;
+            }
+            assert_eq!(
+                axiom
+                    .get("declaration_header")
+                    .and_then(|value| value.as_str()),
+                Some(header)
+            );
+            if missing {
+                axiom.remove("declaration_header");
+            } else {
+                axiom.insert(
+                    "declaration_header".into(),
+                    "sysroot/usr/include/c++/12/cstddef".into(),
+                );
+            }
+            changed += 1;
+        }
+        assert_eq!(changed, 3);
+        let bytes = serde_json::to_vec_pretty(&altered).unwrap();
+        let mut altered_lock = lock.clone();
+        altered_lock["artifact_sha256"] = sha256(&bytes).into();
+        altered_lock["artifact_bytes"] = bytes.len().into();
+        altered_lock["identity"] = lock_identity(&altered_lock, schema).into();
+        fs::write(&artifact_path, bytes).unwrap();
+        fs::write(
+            &lock_path,
+            serde_json::to_vec_pretty(&altered_lock).unwrap(),
+        )
+        .unwrap();
+        let altered = load_import(&root.join("span.click.import.json"))
+            .expect("optional legacy header metadata does not claim model equivalence");
+        assert!(
+            altered.library_model_equivalence_assumptions().is_empty(),
+            "missing={missing}: a model requires its own exact declaration header"
+        );
+    }
+    for change in 0..10 {
+        let mut altered = artifact.clone();
+        let target = match change {
+            0 => "std::as_writable_bytes",
+            1 | 2 | 3 | 8 => "std::span<std::byte>::data",
+            _ => "std::span<unsigned int>::span",
+        };
+        let function = altered["reachable_functions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|function| function["axiom"]["qualified_name"] == target)
+            .unwrap();
+        let word_id = "c:@N@std@S@span>#i#Vl18446744073709551615";
+        let word_name = "span__unsigned_int__value_unsigned_long_18446744073709551615";
+        match change {
+            0 => {
+                function["function_kind"] = serde_json::json!({
+                    "kind": "static_method", "record_declaration_id": word_id, "record_name": word_name
+                })
+            }
+            1 => function["function_kind"] = serde_json::json!({"kind": "free"}),
+            2 => function["function_kind"]["is_const"] = false.into(),
+            3 | 6 => function["parameters"][0]["name"] = "ordinary_argument".into(),
+            4 => {
+                let record = function["parameters"][0]["value_type"]["pointee"].clone();
+                function["parameters"][0]["value_type"] = record;
+            }
+            5 => function["parameters"][0]["value_type"]["pointee"]["is_const"] = true.into(),
+            7 => function["parameters"][0]["declaration_id"] = "not_the_implicit_object".into(),
+            8 => {
+                function["function_kind"]["record_declaration_id"] = word_id.into();
+                function["function_kind"]["record_name"] = word_name.into();
+            }
+            9 => {
+                let byte_kind = &artifact["reachable_functions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|function| {
+                        function["axiom"]["qualified_name"] == "std::span<std::byte>::data"
+                    })
+                    .unwrap()["function_kind"];
+                function["function_kind"]["record_declaration_id"] =
+                    byte_kind["record_declaration_id"].clone();
+                function["function_kind"]["record_name"] = byte_kind["record_name"].clone();
+            }
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec_pretty(&altered).unwrap();
+        let mut altered_lock = lock.clone();
+        altered_lock["artifact_sha256"] = sha256(&bytes).into();
+        altered_lock["artifact_bytes"] = bytes.len().into();
+        altered_lock["identity"] = lock_identity(&altered_lock, schema).into();
+        fs::write(&artifact_path, bytes).unwrap();
+        fs::write(
+            &lock_path,
+            serde_json::to_vec_pretty(&altered_lock).unwrap(),
+        )
+        .unwrap();
+        match load_import(&root.join("span.click.import.json")) {
+            Ok(altered) => assert!(
+                altered
+                    .library_model_equivalence_assumptions()
+                    .iter()
+                    .all(|assumption| !assumption.contains(target)),
+                "ABI mutation {change} cannot select {target}"
+            ),
+            Err(error) => assert!(
+                !error.contains("identity does not match"),
+                "ABI mutation {change} must fail actual metadata validation, not stale identity: {error}"
+            ),
+        }
+    }
+    fs::write(&artifact_path, original_artifact_bytes).unwrap();
+    fs::write(&lock_path, original_lock_bytes).unwrap();
+    let original_identity = original.identity().to_owned();
+    let mut replacement = fs::read(root.join(header)).unwrap();
+    replacement.extend_from_slice(b"\n// modified library implementation identity\n");
+    let replacement_digest = sha256(&replacement);
+    assert_ne!(replacement_digest, pinned_digest);
+    fs::write(root.join(header), replacement).unwrap();
+    // Re-extract and rehash every input, rather than failing on a stale lock.
+    let exporter = root.join("click-cpp-exporter");
+    fs::copy(std::env::var("CLICK_CPP_EXPORTER").unwrap(), &exporter).unwrap();
+    let config = root.join("span.click.import.json");
+    refresh_import(&config)
+        .expect("ordinary catalog assumptions permit this separately locked header");
+    fs::remove_file(exporter).unwrap();
+    let replacement =
+        load_import(&config).expect("the changed closure is fully authenticated offline");
+    assert_ne!(replacement.identity(), original_identity);
+    assert_eq!(replacement.export().profile, original.export().profile);
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("span.click.import.json.lock")).unwrap())
+            .unwrap();
+    assert_eq!(
+        lock["dependencies"][header].as_str(),
+        Some(replacement_digest.as_str())
+    );
+    assert!(
+        lock["preprocessor_files"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|file| {
+                file["canonical_path"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("/sysroot/usr/include/c++/12/span"))
+                    && file["sha256"].as_str() == Some(replacement_digest.as_str())
+            })
+    );
+    assert!(
+        replacement
+            .library_model_equivalence_assumptions()
+            .is_empty(),
+        "rehashed header identity cannot authenticate the pinned implementation model"
+    );
     fs::remove_dir_all(root).unwrap();
 }

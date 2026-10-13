@@ -8,6 +8,7 @@ mod budget;
 mod construction;
 mod import;
 mod interface;
+mod library_models;
 mod lifetime;
 mod lowering;
 mod names;
@@ -26,5 +27,6 @@ pub use schema::{
     CppInitializer, CppLibraryAssertion, CppLibraryAssertionKind, CppLibraryMetadata,
     CppLiteralConstructor, CppLiteralMetadata, CppLiteralMetadataBinding, CppPlace,
     CppPlaceReference, CppProfile, CppProjection, CppRecord, CppScalarCastKind,
-    CppScalarConversion, CppSpan, CppStatement, CppType, CppTypeAlias,
+    CppScalarConversion, CppSpan, CppStatement, CppTemplateRecordArgument, CppType, CppTypeAlias,
+    DECLARED_UINT32_BYTE_GUARANTEE,
 };

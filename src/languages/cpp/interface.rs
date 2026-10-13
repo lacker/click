@@ -198,10 +198,15 @@ fn prepare_functions(
             for name in ambiguous {
                 locals.remove(&name);
             }
-            Ok(function_interface(source, kernel, layouts)?
-                .with_read_only_contract(observers.contains(&source.declaration_id))
-                .with_local_struct_values(locals)
-                .with_local_references(references.difference(&objects).cloned().collect()))
+            Ok(function_interface(
+                source,
+                kernel,
+                layouts,
+                super::library_models::selected(import, source).is_some(),
+            )?
+            .with_read_only_contract(observers.contains(&source.declaration_id))
+            .with_local_struct_values(locals)
+            .with_local_references(references.difference(&objects).cloned().collect()))
         })
         .collect::<Result<Vec<_>, String>>()
 }
@@ -213,6 +218,7 @@ fn function_interface(
     source: &super::CppFunction,
     lowered: &crate::kernel::CFunction,
     layouts: &BTreeMap<String, syntax::C0StructLayout>,
+    checked_model: bool,
 ) -> Result<syntax::C0Function, String> {
     let return_reference = matches!(source.return_type, CppType::LvalueReference { .. });
     let return_constant = matches!(&source.return_type, CppType::LvalueReference { pointee } if Scalar::is(pointee, ScalarKind::Int32, true));
@@ -326,7 +332,7 @@ fn function_interface(
             .with_return_reference(return_reference)
             .with_return_pointee_constant(return_constant);
     // An axiom keeps no body: its calls are checked against a contract.
-    if source.axiom.is_none() {
+    if source.axiom.is_none() || checked_model {
         interface = interface.with_prelowered_kernel_function(lowered.clone());
     }
     if let CppType::Record { name, .. } = &source.return_type {

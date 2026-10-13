@@ -16,43 +16,18 @@ pub fn resolve_click_project(
         .entry_source()
         .ok_or_else(|| ClickError::new(format!("missing entry module `{}`", project.entry())))?;
     let source_context = verification::CSourceContext::bundle(c_sources);
-    let (
-        struct_layouts,
-        union_layouts,
-        aggregate_objects,
-        aggregate_array_objects,
-        global_array_shapes,
-        qualified_objects,
-        local_struct_pointers,
-    ) = verification::parse_c_layouts_for_target(
+    let layouts = verification::parse_c_layouts_for_target(
         entry_source,
         &source_context,
         super::selected_project_c_target(project)?,
     )?;
-    resolve_click_project_with_layouts(
-        project,
-        "",
-        struct_layouts,
-        union_layouts,
-        aggregate_objects,
-        aggregate_array_objects,
-        global_array_shapes,
-        qualified_objects,
-        local_struct_pointers,
-    )
+    resolve_click_project_with_layouts(project, "", layouts)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn resolve_click_project_with_layouts(
     project: &ClickProject,
     library_contracts: &str,
-    struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
-    union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
-    aggregate_objects: BTreeMap<String, BTreeMap<String, String>>,
-    aggregate_array_objects: BTreeMap<String, BTreeSet<String>>,
-    global_array_shapes: BTreeMap<String, BTreeMap<String, parser::GlobalArrayShape>>,
-    qualified_objects: BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>,
-    local_struct_pointers: BTreeMap<String, parser::FunctionLocals>,
+    layouts: parser::ProgramLayouts,
 ) -> Result<ClickFile, ClickError> {
     let modules = project
         .modules()
@@ -97,6 +72,26 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
             .filter_map(|imported| locals.get(imported))
             .flat_map(|file| file.algebraic_type_definitions().iter().cloned())
             .collect::<Vec<_>>();
+        let imported_tactic_names = imported_ids
+            .iter()
+            .filter_map(|imported| locals.get(imported))
+            .flat_map(|file| {
+                file.tactic_definitions()
+                    .iter()
+                    .map(|tactic| tactic.name().to_string())
+            })
+            .collect();
+        let imported_callees = imported_ids
+            .iter()
+            .filter_map(|imported| locals.get(imported))
+            .flat_map(|file| {
+                file.function_blocks().iter().chain(
+                    file.tactic_definitions()
+                        .iter()
+                        .map(TacticDefinition::function_block),
+                )
+            })
+            .collect::<Vec<_>>();
         // The entry module is parsed with the frontend's library contracts
         // after its own text, so its positions are unchanged.
         let entry_source;
@@ -111,13 +106,9 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
             identity,
             module.line_offset(),
             &imported_algebraic_types,
-            struct_layouts.clone(),
-            union_layouts.clone(),
-            aggregate_objects.clone(),
-            aggregate_array_objects.clone(),
-            global_array_shapes.clone(),
-            qualified_objects.clone(),
-            local_struct_pointers.clone(),
+            &imported_tactic_names,
+            &imported_callees,
+            layouts.clone(),
         )?;
         if local.imports().len() != module.imports().len() {
             return Err(ClickError::new(format!(
@@ -159,29 +150,6 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
         }
     }
 
-    for identity in order
-        .iter()
-        .filter(|identity| identity.as_str() != project.entry())
-    {
-        let local = &locals[identity];
-        let importing_site = first_importing_site(identity, &modules, &locals);
-        if !local.verifying_sources().is_empty() {
-            return Err(ClickError::new(format!(
-                "{importing_site}: imported module `{identity}` contains `verifying`; only the entry module may select C translation units"
-            )));
-        }
-        if !local.tactic_definitions().is_empty() {
-            return Err(ClickError::new(format!(
-                "{importing_site}: imported module `{identity}` declares a tactic; tactics are applied in the module that declares them in this release"
-            )));
-        }
-        if !local.contract_definitions().is_empty() || !local.function_blocks().is_empty() {
-            return Err(ClickError::new(format!(
-                "{importing_site}: imported module `{identity}` contains a named contract or C function specification; the first import delivery supports only algebraic types, predicates, pure functions, resources, and theorems"
-            )));
-        }
-    }
-
     // Every module is reachable from the entry, so the entry's import
     // closure is every other module and its checked merge above is the
     // project's. Expansion, validation, and field schemas never read the
@@ -197,28 +165,6 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
     }
     reject_theorem_justification_cycles(&combined)?;
     Ok(combined)
-}
-
-fn first_importing_site(
-    imported: &str,
-    modules: &BTreeMap<String, &ClickModuleSource>,
-    locals: &BTreeMap<String, ClickFile>,
-) -> String {
-    for (importer, module) in modules {
-        for (index, target) in module.imports().iter().enumerate() {
-            if target == imported {
-                if let Some(position) = locals
-                    .get(importer)
-                    .and_then(|file| file.imports().get(index))
-                    .map(ImportDeclaration::position)
-                {
-                    return format!("{importer}:{position}");
-                }
-                return format!("module `{importer}` import");
-            }
-        }
-    }
-    "import graph".to_string()
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -434,10 +380,16 @@ fn merge_modules(
         if identity == entry {
             merged.imports = local.imports.clone();
             merged.verifying_sources = local.verifying_sources.clone();
-            merged.contract_definitions = local.contract_definitions.clone();
-            merged.function_blocks = local.function_blocks.clone();
-            merged.tactic_definitions = local.tactic_definitions.clone();
         }
+        merged
+            .contract_definitions
+            .extend(local.contract_definitions.iter().cloned());
+        merged
+            .function_blocks
+            .extend(local.function_blocks.iter().cloned());
+        merged
+            .tactic_definitions
+            .extend(local.tactic_definitions.iter().cloned());
         merged
             .algebraic_type_definitions
             .extend(local.algebraic_type_definitions.iter().cloned());
@@ -771,6 +723,145 @@ int32 identity(int32 x) {
     }
 
     #[test]
+    fn imported_c_contract_and_tactic_are_assumed_until_their_module_is_selected() {
+        let library = ClickModuleSource::new(
+            "library.click",
+            r#"
+verifying "test.c";
+int32 helper(int32 x) { ensures result == x + 1 by { execute(); simp(); } }
+tactic impossible(x: int32) { ensures x == x + 1; } by { simp(); }
+"#,
+            [],
+        );
+        let entry = ClickModuleSource::new(
+            "entry.click",
+            r#"
+import "library.click";
+verifying "test.c";
+int32 caller(int32 x) {
+    ensures result == x + 1 by { execute(); simp(); }
+}
+void user() { ensures 0 == 1; } by { impossible(0); execute(); assumption(); }
+"#,
+            ["library.click".to_string()],
+        );
+        let c = [(
+            "test.c",
+            "int helper(int x) { return x; } int caller(int x) { return helper(x); } void user() {}",
+        )];
+        let project = ClickProject::new("entry.click", [library.clone(), entry]);
+        assert_eq!(
+            project_selected_proof_names(&project, &ProgramInputs::Bundle(c.to_vec())).unwrap(),
+            ["function:caller", "function:user"]
+        );
+        let verified =
+            verify_c0_project(&project, &c).expect("imported interfaces are assumptions");
+        let selection = verified[0].selection.as_ref().unwrap();
+        assert_eq!(
+            selection.selected_proofs,
+            ["function:caller", "function:user"]
+        );
+        assert_eq!(selection.assumed_functions, ["helper", "impossible"]);
+        let inputs = ProgramInputs::Bundle(c.to_vec());
+        let sites = expansion::project_smart_tactic_source_sites(&project, &inputs).unwrap();
+        assert!(
+            sites
+                .iter()
+                .all(|site| site.claim_label.starts_with("caller.")
+                    || site.claim_label.starts_with("user.")),
+            "{sites:?}"
+        );
+        let position =
+            expansion::project_tactic_source_position(&project, &inputs, "caller.ensures_0", 1)
+                .unwrap();
+        let expanded = expansion::expand_project_tactic_source_at(
+            &project,
+            &inputs,
+            position.line,
+            position.column,
+        )
+        .unwrap();
+        verify_c0_project(&project.with_entry_source(expanded), &c)
+            .expect("expanded caller still assumes the imported interfaces");
+        let selected = ClickProject::new("library.click", [library]);
+        verify_c0_project(&selected, &c)
+            .expect_err("selecting the library checks its false proofs");
+        let position =
+            expansion::project_tactic_source_position(&selected, &inputs, "impossible.contract", 0)
+                .unwrap();
+        verify_project_at(&selected, &inputs, position.line, position.column)
+            .expect_err("selecting the tactic itself checks its false proof");
+    }
+
+    #[test]
+    fn explicit_function_selection_respects_imported_proof_ownership() {
+        let library = ClickModuleSource::new(
+            "library.click",
+            r#"
+verifying "test.c";
+int32 helper(int32 x) { ensures result == x by { execute(); simp(); } }
+tactic keep(x: int32) { ensures x == x; } by { have x == x by normalize(); }
+"#,
+            [],
+        );
+        let project = ClickProject::new(
+            "entry.click",
+            [
+                library.clone(),
+                ClickModuleSource::new(
+                    "entry.click",
+                    "import \"library.click\"; verifying \"test.c\";",
+                    ["library.click".to_string()],
+                ),
+            ],
+        );
+        let inputs = ProgramInputs::Bundle(vec![("test.c", "int helper(int x) { return x; }")]);
+        for name in ["helper", "keep"] {
+            let error = verify_project_functions(&project, &inputs, [name.to_string()])
+                .expect_err("an importer must not select a library's proof body");
+            assert!(
+                error.message().contains("imported from `library.click`"),
+                "{error:?}"
+            );
+        }
+        let library = ClickProject::new("library.click", [library]);
+        verify_project_functions(
+            &library,
+            &inputs,
+            ["helper".to_string(), "keep".to_string()],
+        )
+        .expect("the declaring module owns both proofs");
+    }
+
+    #[test]
+    fn imported_c_contract_must_match_implementation_signature() {
+        let project = ClickProject::new(
+            "entry.click",
+            [
+                ClickModuleSource::new(
+                    "library.click",
+                    "verifying \"test.c\"; int32 helper(int32 x) { ensures result == x by auto; }",
+                    [],
+                ),
+                ClickModuleSource::new(
+                    "entry.click",
+                    "import \"library.click\"; verifying \"test.c\"; int32 caller() { ensures result == 0 by { execute(); simp(); } }",
+                    ["library.click".to_string()],
+                ),
+            ],
+        );
+        let error = verify_c0_project(
+            &project,
+            &[(
+                "test.c",
+                "int helper(void) { return 0; } int caller(void) { return helper(); }",
+            )],
+        )
+        .expect_err("an assumed contract still needs the correct signature");
+        assert!(error.message().contains("signature mismatch"), "{error:?}");
+    }
+
+    #[test]
     fn artifacts_bind_imported_inputs_and_retain_the_selection_boundary() {
         let entry = ClickModuleSource::new(
             "entry.click",
@@ -1020,7 +1111,7 @@ theorem sibling_bad() { ensures 0 == 1 by simp; }
     }
 
     #[test]
-    fn imported_proof_ownership_and_collisions_are_rejected() {
+    fn imported_verifying_keeps_entry_sources_and_collisions_are_rejected() {
         let verifying = ClickProject::new(
             "entry.click",
             [
@@ -1032,10 +1123,8 @@ theorem sibling_bad() { ensures 0 == 1 by simp; }
                 ),
             ],
         );
-        let error = resolve_click_project(&verifying, &[])
-            .expect_err("an imported module cannot own C verification declarations");
-        assert!(error.message().contains("entry.click:1:"), "{error:?}");
-        assert!(error.message().contains("library.click"), "{error:?}");
+        let file = resolve_click_project(&verifying, &[]).expect("imported sources stay local");
+        assert!(file.verifying_sources().is_empty());
 
         let collision = ClickProject::new(
             "entry.click",

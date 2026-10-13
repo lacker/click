@@ -1,3 +1,6 @@
+// Match the library's trait-solving depth for verifier values sent to workers.
+#![recursion_limit = "256"]
+
 use click::surface::ProgramInputs;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -1737,466 +1740,6 @@ fn rbtree_erase_color_uses_the_unchanged_pinned_function() {
     );
 }
 
-fn erase_color_refuses_mutation(sidecar: &str, before: &str, after: &str) {
-    // The pinned function repeats each update in its two mirrored arms.
-    // Replacing both preserves statement positions and covers either orientation.
-    erase_source_refuses_replacement(sidecar, "rb_erase_color.c", before, after, 2);
-}
-
-#[test]
-#[ignore = "nightly: erase-color verification takes about 7s"]
-fn rbtree_erase_color_red_left_requires_parent_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_left.click",
-        "rb_set_black(parent);",
-        "parent->__rb_parent_color = parent->__rb_parent_color;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: erase-color verification takes about 7s"]
-fn rbtree_erase_color_red_left_requires_sibling_recoloring() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_left.click",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: erase-color verification takes about 7s"]
-fn rbtree_erase_color_red_left_requires_the_sibling_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_left.click",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
-        "rb_set_parent_color(sibling, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: erase-color verification takes about 4s"]
-fn rbtree_erase_color_root_left_requires_sibling_recoloring() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_root_left.click",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: erase-color verification takes about 4s"]
-fn rbtree_erase_color_root_left_requires_the_sibling_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_root_left.click",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
-        "rb_set_parent_color(sibling, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: erase-color verification takes about 4s"]
-fn rbtree_erase_color_root_left_requires_the_null_parent_cursor() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_root_left.click",
-        "parent = rb_parent(node);",
-        "parent = node;",
-    );
-}
-
-// These mutations exercise the repeated case-2 proof, including its back edge.
-#[test]
-#[ignore = "nightly: repeated erase-color propagation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_requires_cursor_ascent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips.click",
-        "parent = rb_parent(node);",
-        "parent = node;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: repeated erase-color propagation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_requires_focus_ascent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips.click",
-        "node = parent;",
-        "node = node;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: repeated erase-color propagation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_requires_parent_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips.click",
-        "rb_set_black(parent);",
-        "parent->__rb_parent_color = parent->__rb_parent_color;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: repeated erase-color propagation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_requires_sibling_recoloring() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips.click",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_requires_cursor_ascent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips_outer.click",
-        "parent = rb_parent(node);",
-        "parent = node;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_requires_focus_ascent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips_outer.click",
-        "node = parent;",
-        "node = node;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_requires_parent_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips_outer.click",
-        "rb_set_black(parent);",
-        "parent->__rb_parent_color = parent->__rb_parent_color;",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_requires_sibling_recoloring() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips_outer.click",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
-        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_left_requires_parent_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_outer.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_right, tmp2);",
-        "WRITE_ONCE(parent->rb_right, parent);",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `parent->rb_right == tmp2`"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_right_requires_parent_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_outer.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_left, tmp2);",
-        "WRITE_ONCE(parent->rb_left, parent);",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `parent->rb_left == tmp2`"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_requires_far_child_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips_outer.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, sibling, RB_RED);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated erase rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_outer_requires_near_parent() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_outer.click",
-        "rb_erase_color.c",
-        "rb_set_parent(tmp2, parent);",
-        "rb_set_parent(tmp2, sibling);",
-        2,
-    );
-    assert!(
-        error.contains(
-            "`have` failed for `tmp2->__rb_parent_color == (color_bit(nc) | ((uint64)parent))`"
-        ),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_left_requires_sibling_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_left, tmp1);",
-        "WRITE_ONCE(sibling->rb_left, parent);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `sid->rb_left == tmp1"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_right_requires_sibling_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_right, tmp1);",
-        "WRITE_ONCE(sibling->rb_right, parent);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `sid->rb_right == tmp1"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_left_requires_inner_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(tmp2->rb_right, sibling);",
-        "WRITE_ONCE(tmp2->rb_right, parent);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `iid->rb_right == sid"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_right_requires_inner_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(tmp2->rb_left, sibling);",
-        "WRITE_ONCE(tmp2->rb_left, parent);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `iid->rb_left == sid"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_requires_first_grandchild_parent() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `tmp1->__rb_parent_color =="),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_requires_first_grandchild_blackening() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_BLACK);",
-        "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `tmp1->__rb_parent_color =="),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_requires_old_sibling_as_far_child() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "tmp1 = sibling;",
-        "tmp1 = parent;",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `tmp1 == sid"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_rotations_requires_inner_node_as_sibling() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_rotations.click",
-        "rb_erase_color.c",
-        "sibling = tmp2;",
-        "sibling = parent;",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `sibling == iid"),
-        "unexpected refusal: {error}",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_left_requires_parent_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_right, tmp1);",
-        "WRITE_ONCE(parent->rb_right, NULL);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `parent->rb_right == zid"),
-        "unexpected refusal: {error}"
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_left_requires_sibling_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_left, parent);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
-        "WRITE_ONCE(sibling->rb_left, NULL);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `sid->rb_left == parent"),
-        "unexpected refusal: {error}"
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_right_requires_parent_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_left, tmp1);",
-        "WRITE_ONCE(parent->rb_left, NULL);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `parent->rb_left == zid"),
-        "unexpected refusal: {error}"
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_right_requires_sibling_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_right, parent);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
-        "WRITE_ONCE(sibling->rb_right, NULL);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
-        1,
-    );
-    assert!(
-        error.contains("`have` failed for `sid->rb_right == parent"),
-        "unexpected refusal: {error}"
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_requires_near_parent() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `tmp1->__rb_parent_color =="),
-        "unexpected refusal: {error}"
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_requires_near_blackening() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_RED);",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `tmp1->__rb_parent_color =="),
-        "unexpected refusal: {error}"
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_requires_red_parent() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_RED);",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_BLACK);",
-        2,
-    );
-    assert!(error.contains("step"), "unexpected refusal: {error}");
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_exit_requires_near_sibling_cursor() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_exit.click",
-        "rb_erase_color.c",
-        "sibling = tmp1;",
-        "sibling = parent;",
-        2,
-    );
-    assert!(
-        error.contains("`have` failed for `sibling == zid"),
-        "unexpected refusal: {error}"
-    );
-}
-
 #[test]
 #[ignore = "nightly: rotation-helper verification checks both helper contracts"]
 fn rbtree_rotate_set_parents_requires_the_copied_word() {
@@ -2234,86 +1777,6 @@ fn rbtree_rotate_set_parents_requires_root_replacement() {
 }
 
 #[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_left_requires_parent_child_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_left.click",
-        "WRITE_ONCE(parent->rb_right, tmp2);",
-        "WRITE_ONCE(parent->rb_right, parent);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_left_requires_sibling_child_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_left.click",
-        "WRITE_ONCE(sibling->rb_left, parent);",
-        "WRITE_ONCE(sibling->rb_left, 0);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_left_requires_far_child_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_left.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, sibling, RB_RED);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_left_requires_parent_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_left.click",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\tRB_BLACK);",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\tRB_RED);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_right_requires_parent_child_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_right.click",
-        "WRITE_ONCE(parent->rb_left, tmp2);",
-        "WRITE_ONCE(parent->rb_left, parent);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_right_requires_sibling_child_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_right.click",
-        "WRITE_ONCE(sibling->rb_right, parent);",
-        "WRITE_ONCE(sibling->rb_right, 0);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_right_requires_far_child_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_right.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, sibling, RB_RED);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: outer-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_right_requires_parent_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_right.click",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\tRB_BLACK);",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\tRB_RED);",
-    );
-}
-
-#[test]
 #[ignore = "nightly: parent-update mutation verifies a whole sidecar"]
 fn rbtree_set_parent_preserves_color() {
     erase_source_refuses_replacement(
@@ -2337,453 +1800,428 @@ fn rbtree_set_parent_requires_new_parent() {
     );
 }
 
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_nonempty_left_requires_near_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_nonempty_left.click",
-        "rb_set_parent(tmp2, parent);",
-        "rb_set_parent(tmp2, sibling);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_nonempty_left_requires_near_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_nonempty_left.click",
-        "WRITE_ONCE(parent->rb_right, tmp2);",
-        "WRITE_ONCE(parent->rb_right, NULL);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_nonempty_right_requires_near_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_nonempty_right.click",
-        "rb_set_parent(tmp2, parent);",
-        "rb_set_parent(tmp2, sibling);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_outer_nonempty_right_requires_near_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_outer_nonempty_right.click",
-        "WRITE_ONCE(parent->rb_left, tmp2);",
-        "WRITE_ONCE(parent->rb_left, NULL);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: inner-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_inner_left_requires_detached_inner_child() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_inner_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_left, tmp1);",
-        "WRITE_ONCE(sibling->rb_left, tmp2);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: inner-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_inner_left_requires_attached_old_sibling() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_inner_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(tmp2->rb_right, sibling);",
-        "WRITE_ONCE(tmp2->rb_right, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: inner-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_inner_left_requires_old_sibling_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_inner_left.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: inner-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_inner_right_requires_detached_inner_child() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_inner_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_right, tmp1);",
-        "WRITE_ONCE(sibling->rb_right, tmp2);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: inner-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_inner_right_requires_attached_old_sibling() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_inner_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(tmp2->rb_left, sibling);",
-        "WRITE_ONCE(tmp2->rb_left, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: inner-red rotation verifies a whole sidecar"]
-fn rbtree_erase_color_inner_right_requires_old_sibling_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_inner_right.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_left_requires_parent_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_right, tmp1);",
-        "WRITE_ONCE(parent->rb_right, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_left_requires_sibling_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_left, parent);",
-        "WRITE_ONCE(sibling->rb_left, NULL);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_left_requires_red_parent() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_left.click",
-        "rb_erase_color.c",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_RED);",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_BLACK);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_right_requires_parent_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_left, tmp1);",
-        "WRITE_ONCE(parent->rb_left, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_right_requires_sibling_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_right, parent);",
-        "WRITE_ONCE(sibling->rb_right, NULL);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_right_requires_red_parent() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_right.click",
-        "rb_erase_color.c",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_RED);",
-        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_BLACK);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling double rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_left_requires_first_parent_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_outer_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_right, tmp1);",
-        "WRITE_ONCE(parent->rb_right, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling double rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_left_requires_second_parent_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_outer_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_right, tmp2);",
-        "WRITE_ONCE(parent->rb_right, sibling);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling double rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_left_requires_far_child_parent() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_outer_left.click",
-        "rb_erase_color.c",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling double rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_right_requires_first_parent_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_outer_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_left, tmp1);",
-        "WRITE_ONCE(parent->rb_left, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling double rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_right_requires_second_parent_link() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_outer_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(parent->rb_left, tmp2);",
-        "WRITE_ONCE(parent->rb_left, sibling);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling double rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_right_requires_far_child_parent() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_outer_right.click",
-        "rb_erase_color.c",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-        2,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_inner_left_requires_detached_inner_child() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_inner_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_left, tmp1);",
-        "WRITE_ONCE(sibling->rb_left, tmp2);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_inner_left_requires_attached_old_sibling() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_inner_left.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(tmp2->rb_right, sibling);",
-        "WRITE_ONCE(tmp2->rb_right, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_inner_left_requires_old_sibling_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_sibling_inner_left.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_inner_right_requires_detached_inner_child() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_inner_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(sibling->rb_right, tmp1);",
-        "WRITE_ONCE(sibling->rb_right, tmp2);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_inner_right_requires_attached_old_sibling() {
-    erase_source_refuses_replacement(
-        "rbtree_erase_color_red_sibling_inner_right.click",
-        "rb_erase_color.c",
-        "WRITE_ONCE(tmp2->rb_left, sibling);",
-        "WRITE_ONCE(tmp2->rb_left, NULL);",
-        1,
-    );
-}
-
-#[test]
-#[ignore = "nightly: red-sibling inner rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_inner_right_requires_old_sibling_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_sibling_inner_right.click",
-        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
-        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_nonempty_left_requires_near_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_sibling_outer_nonempty_left.click",
-        "rb_set_parent(tmp2, parent);",
-        "rb_set_parent(tmp2, sibling);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_nonempty_left_requires_near_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_sibling_outer_nonempty_left.click",
-        "WRITE_ONCE(parent->rb_right, tmp2);",
-        "WRITE_ONCE(parent->rb_right, NULL);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_nonempty_right_requires_near_parent() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_sibling_outer_nonempty_right.click",
-        "rb_set_parent(tmp2, parent);",
-        "rb_set_parent(tmp2, sibling);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: nonempty-near rotation verifies a whole sidecar"]
-fn rbtree_erase_color_red_sibling_outer_nonempty_right_requires_near_link() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_red_sibling_outer_nonempty_right.click",
-        "WRITE_ONCE(parent->rb_left, tmp2);",
-        "WRITE_ONCE(parent->rb_left, NULL);",
-    );
-}
-
-#[test]
-#[ignore = "nightly: propagated red-sibling outer rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_outer_left_requires_parent_link() {
+// Each mutation below was first pinned against a per-case increment; the
+// general proof subsumes those increments, so it must refuse every one.
+fn erase_color_general_refuses_mutation(
+    before: &str,
+    after: &str,
+    occurrences: usize,
+    expected: &str,
+) {
     let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_outer.click",
+        "rbtree_erase_color_flips_red_all.click",
         "rb_erase_color.c",
+        before,
+        after,
+        occurrences,
+    );
+    assert!(error.contains(expected), "unexpected refusal: {error}");
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_left_requires_parent_blackening() {
+    erase_color_general_refuses_mutation(
+        "rb_set_black(parent);",
+        "parent->__rb_parent_color = parent->__rb_parent_color;",
+        2,
+        "`have` failed for `parent->__rb_parent_color == (at(red_flip, parent->__rb_parent_color) + 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_left_requires_sibling_recoloring() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
+        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
+        2,
+        "`have` failed for `sid->__rb_parent_color == ((uint64)id)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_left_requires_the_sibling_parent() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
+        "rb_set_parent_color(sibling, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
+        2,
+        "`have` failed for `sid->__rb_parent_color == ((uint64)id)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_root_left_requires_the_null_parent_cursor() {
+    erase_color_general_refuses_mutation(
+        "parent = rb_parent(node);",
+        "parent = node;",
+        2,
+        "`have` failed for `parent == above`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_requires_focus_ascent() {
+    erase_color_general_refuses_mutation(
+        "node = parent;",
+        "node = node;",
+        2,
+        "missing resource fact",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_outer_left_requires_parent_child_link() {
+    erase_color_general_refuses_mutation(
         "WRITE_ONCE(parent->rb_right, tmp2);",
         "WRITE_ONCE(parent->rb_right, parent);",
         2,
-    );
-    assert!(
-        error.contains("`have` failed for `parent->rb_right == iid`"),
-        "unexpected refusal: {error}"
+        "`have` failed for `parent->rb_right == iid`",
     );
 }
 
 #[test]
-#[ignore = "nightly: propagated red-sibling outer rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_outer_right_requires_parent_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_outer.click",
-        "rb_erase_color.c",
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_outer_right_requires_parent_child_link() {
+    erase_color_general_refuses_mutation(
         "WRITE_ONCE(parent->rb_left, tmp2);",
         "WRITE_ONCE(parent->rb_left, parent);",
         2,
-    );
-    assert!(
-        error.contains("`have` failed for `parent->rb_left == iid`"),
-        "unexpected refusal: {error}"
+        "`have` failed for `parent->rb_left == iid`",
     );
 }
 
 #[test]
-#[ignore = "nightly: propagated red-sibling outer rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_outer_requires_far_blackening() {
-    erase_color_refuses_mutation(
-        "rbtree_erase_color_flips_red_outer.click",
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_outer_requires_far_child_blackening() {
+    erase_color_general_refuses_mutation(
         "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
         "rb_set_parent_color(tmp1, sibling, RB_RED);",
+        2,
+        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
     );
 }
 
 #[test]
-#[ignore = "nightly: propagated red-sibling outer rotation verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_outer_requires_near_parent() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_outer.click",
-        "rb_erase_color.c",
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_outer_requires_near_parent() {
+    erase_color_general_refuses_mutation(
         "rb_set_parent(tmp2, parent);",
         "rb_set_parent(tmp2, sibling);",
         2,
-    );
-    assert!(
-        error.contains("`have` failed for `tmp2->__rb_parent_color =="),
-        "unexpected refusal: {error}"
+        "`have` failed for `tmp2->__rb_parent_color == (color_bit(nc) | ((uint64)parent))`",
     );
 }
 
 #[test]
-#[ignore = "nightly: propagated red-sibling inner repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_inner_right_requires_detached_child_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_inner_right.click",
-        "rb_erase_color.c",
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_rotations_right_requires_sibling_child_link() {
+    erase_color_general_refuses_mutation(
         "WRITE_ONCE(sibling->rb_right, tmp1);",
         "WRITE_ONCE(sibling->rb_right, parent);",
         1,
-    );
-    assert!(
-        error.contains("rb_right == tmp1"),
-        "unexpected refusal: {error}"
+        "`have` failed for `sid->rb_right == tmp1`",
     );
 }
 
 #[test]
-#[ignore = "nightly: propagated red-sibling inner repair verifies a whole sidecar"]
-fn rbtree_erase_color_flips_red_inner_right_requires_inner_parent_link() {
-    let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_inner_right.click",
-        "rb_erase_color.c",
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_rotations_right_requires_inner_child_link() {
+    erase_color_general_refuses_mutation(
         "WRITE_ONCE(tmp2->rb_left, sibling);",
         "WRITE_ONCE(tmp2->rb_left, parent);",
         1,
+        "`have` failed for `iid->rb_left == sid`",
     );
-    assert!(
-        error.contains("iid->rb_left == sid"),
-        "unexpected refusal: {error}"
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_rotations_requires_first_grandchild_parent() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_BLACK);",
+        "rb_set_parent_color(tmp1, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
+        2,
+        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_rotations_requires_first_grandchild_blackening() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_BLACK);",
+        "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
+        2,
+        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_rotations_requires_old_sibling_as_far_child() {
+    erase_color_general_refuses_mutation(
+        "tmp1 = sibling;",
+        "tmp1 = parent;",
+        2,
+        "`have` failed for `tmp1 == sid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_rotations_requires_inner_node_as_sibling() {
+    erase_color_general_refuses_mutation(
+        "sibling = tmp2;",
+        "sibling = parent;",
+        2,
+        "`have` failed for `sibling == iid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_left_requires_parent_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(parent->rb_right, tmp1);",
+        "WRITE_ONCE(parent->rb_right, NULL);",
+        1,
+        "`have` failed for `parent->rb_right == zid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_left_requires_sibling_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_left, parent);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
+        "WRITE_ONCE(sibling->rb_left, NULL);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
+        1,
+        "`have` failed for `sid->rb_left == parent`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_right_requires_parent_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(parent->rb_left, tmp1);",
+        "WRITE_ONCE(parent->rb_left, NULL);",
+        1,
+        "`have` failed for `parent->rb_left == zid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_right_requires_sibling_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_right, parent);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
+        "WRITE_ONCE(sibling->rb_right, NULL);\n\t\t\t\trb_set_parent_color(tmp1, parent, RB_BLACK);",
+        1,
+        "`have` failed for `sid->rb_right == parent`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_requires_near_parent() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
+        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
+        2,
+        "`have` failed for `tmp1->__rb_parent_color == (((uint64)parent) | 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_requires_near_blackening() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
+        "rb_set_parent_color(tmp1, parent, RB_RED);",
+        2,
+        "`have` failed for `tmp1->__rb_parent_color == (((uint64)parent) | 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_requires_red_parent() {
+    erase_color_general_refuses_mutation(
+        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_RED);",
+        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\t\tRB_BLACK);",
+        2,
+        "`have` failed for `parent->__rb_parent_color == ((uint64)sibling)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_flips_red_exit_requires_near_sibling_cursor() {
+    erase_color_general_refuses_mutation(
+        "sibling = tmp1;",
+        "sibling = parent;",
+        2,
+        "`have` failed for `sibling == zid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_outer_left_requires_sibling_child_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_left, parent);",
+        "WRITE_ONCE(sibling->rb_left, 0);",
+        2,
+        "`have` failed for `sibling->rb_left == parent`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_outer_left_requires_parent_blackening() {
+    erase_color_general_refuses_mutation(
+        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\tRB_BLACK);",
+        "__rb_rotate_set_parents(parent, sibling, root,\n\t\t\t\t\t\tRB_RED);",
+        2,
+        "`have` failed for `parent->__rb_parent_color == (((uint64)iid) + 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_outer_right_requires_sibling_child_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_right, parent);",
+        "WRITE_ONCE(sibling->rb_right, 0);",
+        2,
+        "`have` failed for `sibling->rb_right == parent`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_outer_nonempty_left_requires_near_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(parent->rb_right, tmp2);",
+        "WRITE_ONCE(parent->rb_right, NULL);",
+        2,
+        "`have` failed for `parent->rb_right == iid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_outer_nonempty_right_requires_near_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(parent->rb_left, tmp2);",
+        "WRITE_ONCE(parent->rb_left, NULL);",
+        2,
+        "`have` failed for `parent->rb_left == iid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_inner_left_requires_detached_inner_child() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_left, tmp1);",
+        "WRITE_ONCE(sibling->rb_left, tmp2);",
+        1,
+        "`have` failed for `sid->rb_left == tmp1`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_inner_left_requires_attached_old_sibling() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(tmp2->rb_right, sibling);",
+        "WRITE_ONCE(tmp2->rb_right, NULL);",
+        1,
+        "`have` failed for `iid->rb_right == sid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_inner_left_requires_old_sibling_parent() {
+    erase_color_general_refuses_mutation(
+        "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
+        "rb_set_parent_color(tmp1, parent, RB_BLACK);",
+        2,
+        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_inner_right_requires_detached_inner_child() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_right, tmp1);",
+        "WRITE_ONCE(sibling->rb_right, tmp2);",
+        1,
+        "`have` failed for `sid->rb_right == tmp1`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_inner_right_requires_attached_old_sibling() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(tmp2->rb_left, sibling);",
+        "WRITE_ONCE(tmp2->rb_left, NULL);",
+        1,
+        "`have` failed for `iid->rb_left == sid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_sibling_left_requires_sibling_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_left, parent);",
+        "WRITE_ONCE(sibling->rb_left, NULL);",
+        2,
+        "`have` failed for `sibling->rb_left == parent`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_sibling_right_requires_sibling_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(sibling->rb_right, parent);",
+        "WRITE_ONCE(sibling->rb_right, NULL);",
+        2,
+        "`have` failed for `sibling->rb_right == parent`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_sibling_outer_left_requires_second_parent_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(parent->rb_right, tmp2);",
+        "WRITE_ONCE(parent->rb_right, sibling);",
+        2,
+        "`have` failed for `parent->rb_right == iid`",
+    );
+}
+
+#[test]
+#[ignore = "nightly: the general erase-color proof verifies a whole sidecar"]
+fn rbtree_erase_color_general_red_sibling_outer_right_requires_second_parent_link() {
+    erase_color_general_refuses_mutation(
+        "WRITE_ONCE(parent->rb_left, tmp2);",
+        "WRITE_ONCE(parent->rb_left, sibling);",
+        2,
+        "`have` failed for `parent->rb_left == iid`",
     );
 }
 
@@ -2834,7 +2272,7 @@ fn rbtree_erase_wrapper_uses_the_unchanged_pinned_callbacks_and_body() {
 #[ignore = "nightly: erase wrapper mutation verifies the combined repair sidecar"]
 fn rbtree_erase_wrapper_requires_nonnull_color_repair() {
     let error = erase_source_replacement_error(
-        "rbtree_erase_color_flips_red_all.click",
+        "rbtree_erase_leaf_wrapper.click",
         "rb_erase.c",
         "if (rebalance)",
         "if (!rebalance)",
@@ -2844,4 +2282,161 @@ fn rbtree_erase_wrapper_requires_nonnull_color_repair() {
         error.contains("requires a call to `____rb_erase_color` at the current frontier"),
         "unexpected refusal: {error}"
     );
+}
+
+#[test]
+fn rbtree_augmented_wrappers_keep_the_pinned_c() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    assert_eq!(
+        hex_digest(sha256(
+            &fs::read(root.join("examples/rbtree-augmented/rb_insert_augmented.c")).unwrap()
+        )),
+        "213bdc5c780db8f91b3595d7fdc1dc94cee1b56c8d0f7a54cb5e6859ed79ef58",
+    );
+    assert_eq!(
+        hex_digest(sha256(
+            &fs::read(root.join("examples/rbtree-augmented/rb_erase_augmented.c")).unwrap()
+        )),
+        "62e586fbf9b20527ee6454b9481a0ac0d6cab78dc005f5b189ec602ec63089e5",
+    );
+}
+
+#[test]
+fn rbtree_augmented_wrappers_reject_missing_or_wrong_calls() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for (sidecar, input, before, after, expected) in [
+        (
+            "rbtree_insert_augmented.click",
+            "rb_insert_augmented.c",
+            "\t__rb_insert(node, root, augment_rotate);",
+            "",
+            "requires a call to `__rb_insert` at the current frontier",
+        ),
+        (
+            "rbtree_insert_augmented.click",
+            "rb_insert_augmented.c",
+            "\t__rb_insert_augmented(node, root, augment->rotate);",
+            "\t__rb_insert_augmented(root->rb_node, root, augment->rotate);",
+            "missing resource fact `views root->rb_node`",
+        ),
+        (
+            "rbtree_erase_color.click",
+            "rb_erase_augmented.c",
+            "\t____rb_erase_color(parent, root, augment_rotate);",
+            "",
+            "requires a call to `____rb_erase_color` at the current frontier",
+        ),
+        (
+            "rbtree_erase_leaf.click",
+            "rb_erase_augmented.c",
+            "\t\t__rb_erase_color(rebalance, root, augment->rotate);",
+            "\t\t;",
+            "requires a call to `__rb_erase_color` at the current frontier",
+        ),
+    ] {
+        let path = root.join("examples/rbtree-augmented").join(sidecar);
+        let source = fs::read_to_string(&path).unwrap();
+        let mut inputs = read_verifying_sources(&path, &source).unwrap();
+        let (_, c) = inputs
+            .iter_mut()
+            .find(|(name, _)| name.ends_with(input))
+            .unwrap();
+        assert_eq!(c.matches(before).count(), 1, "{sidecar}: unique mutation");
+        *c = c.replace(before, after);
+        let project = read_click_project_at_root(&path, &source, &root.join("examples")).unwrap();
+        let error = limits::spawn(
+            "augmented wrapper mutation verifier",
+            "click-augmented-wrapper-mutation".to_string(),
+            move || verify_c0_project(&project, &source_refs(&inputs)),
+        )
+        .unwrap()
+        .expect_err("the augmented wrapper must reject the changed call");
+        assert!(
+            error.message().contains(expected),
+            "{sidecar}: {}",
+            error.message()
+        );
+    }
+}
+
+/// Reruns a documented `click verify` session: each `c` or `click` block
+/// with a `filename=` is written to a scratch directory in page order, and
+/// each `console` block starting with `$ click verify FILE` must show exactly
+/// what that command prints there, stdout then stderr.
+fn run_documented_session(page: &str) -> BTreeMap<String, String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join(page)).unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "click-documented-session-{}-{}",
+        page.replace('/', "-"),
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let mut files = BTreeMap::new();
+    let mut sessions = 0;
+    let mut lines = source.lines();
+    while let Some(line) = lines.next() {
+        let Some(info) = line.strip_prefix("```") else {
+            continue;
+        };
+        let body = lines
+            .by_ref()
+            .take_while(|line| *line != "```")
+            .map(|line| format!("{line}\n"))
+            .collect::<String>();
+        if let Some(name) = info
+            .strip_prefix("c filename=")
+            .or_else(|| info.strip_prefix("click filename="))
+        {
+            fs::write(directory.join(name), &body).unwrap();
+            files.insert(name.to_string(), body);
+        } else if info == "console" {
+            let (command, expected) = body.split_once('\n').unwrap();
+            let sidecar = command
+                .strip_prefix("$ click verify ")
+                .unwrap_or_else(|| panic!("{page}: unexpected console command `{command}`"));
+            let output = Command::new(env!("CARGO_BIN_EXE_click"))
+                .args(["verify", sidecar])
+                .current_dir(&directory)
+                .output()
+                .unwrap();
+            // The scratch directory is not a Git worktree, so no incremental
+            // baseline can be recorded; that warning is not part of the session.
+            let stderr = String::from_utf8(output.stderr)
+                .unwrap()
+                .lines()
+                .filter(|line| !line.contains("could not record incremental baseline"))
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
+            let actual = format!("{}{stderr}", String::from_utf8(output.stdout).unwrap());
+            assert_eq!(actual, expected, "{page}: `{command}`");
+            sessions += 1;
+        }
+    }
+    assert!(sessions > 0, "{page} documents no `click verify` session");
+    fs::remove_dir_all(&directory).unwrap();
+    files
+}
+
+/// The README's quick start is `examples/clamp`, and its transcript is what
+/// `click verify` prints.
+#[test]
+fn readme_quick_start_is_the_clamp_example() {
+    let files = run_documented_session("README.md");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/clamp");
+    for name in ["clamp.c", "clamp.click"] {
+        assert_eq!(
+            files[name],
+            fs::read_to_string(example.join(name)).unwrap(),
+            "README `{name}` differs from examples/clamp"
+        );
+    }
+}
+
+/// The first-proof tutorial's commands print what it shows, failure included.
+#[test]
+fn first_proof_tutorial_sessions_match_the_verifier() {
+    let files = run_documented_session("docs/concepts/first-proof.md");
+    assert!(files["increment.click"].contains("requires x < 2147483647;"));
 }

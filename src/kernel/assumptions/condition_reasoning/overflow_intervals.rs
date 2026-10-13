@@ -944,8 +944,13 @@ impl PureFactContext {
             let value = i64::from(value as i32);
             return Some((value, value));
         }
-        let mut lower = i64::from(i32::MIN);
-        let mut upper = i64::from(i32::MAX);
+        let (mut lower, mut upper) = self
+            .equality_graph
+            .signed_int32_interval(term)
+            .unwrap_or((i64::from(i32::MIN), i64::from(i32::MAX)));
+        if lower != i64::from(i32::MIN) && upper != i64::from(i32::MAX) {
+            return Some((lower, upper));
+        }
         // Compound terms are common in pointer and loop arithmetic. Their
         // direct fact key is enough for a recorded bound, while deep
         // canonicalization of every unresolved term would turn this interval
@@ -1492,6 +1497,134 @@ mod tests {
                 "{width:?} bound selection work grew with unrelated bounds: {works:?}"
             );
         }
+    }
+
+    #[test]
+    fn equal_value_intervals_intersect_and_stay_branch_local() {
+        let x = Bitvector32Term::Variable(Variable(190_001));
+        let y = Bitvector32Term::Variable(Variable(190_002));
+        let parent = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(x.clone(), 0u32.into()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(y.clone(), 10u32.into()),
+                true,
+            );
+        let branch = parent
+            .clone()
+            .assume_condition(ConditionTerm::equal(x.clone(), y.clone()), true);
+        assert_eq!(branch.signed_interval(&x), Some((0, 10)));
+        assert_eq!(branch.signed_interval(&y), Some((0, 10)));
+        assert_eq!(parent.signed_interval(&x), Some((0, i64::from(i32::MAX))));
+        assert_eq!(parent.signed_interval(&y), Some((i64::from(i32::MIN), 10)));
+        let withdrawn = branch.assume_condition(ConditionTerm::equal(x.clone(), y.clone()), false);
+        assert_eq!(
+            withdrawn.signed_interval(&x),
+            Some((0, i64::from(i32::MAX)))
+        );
+        assert_eq!(
+            withdrawn.signed_interval(&y),
+            Some((i64::from(i32::MIN), 10))
+        );
+    }
+
+    #[test]
+    fn equal_value_intervals_preserve_signed_order_and_width() {
+        let x = Bitvector32Term::Variable(Variable(190_011));
+        let y = Bitvector32Term::Variable(Variable(190_012));
+        for (condition, value, expected) in [
+            (
+                ConditionTerm::signed_less_than(x.clone(), 10u32.into()),
+                true,
+                (i64::from(i32::MIN), 9),
+            ),
+            (
+                ConditionTerm::signed_less_than(x.clone(), 10u32.into()),
+                false,
+                (10, i64::from(i32::MAX)),
+            ),
+            (
+                ConditionTerm::signed_less_equal(x.clone(), 10u32.into()),
+                false,
+                (11, i64::from(i32::MAX)),
+            ),
+            (
+                ConditionTerm::signed_greater_than(x.clone(), 10u32.into()),
+                true,
+                (11, i64::from(i32::MAX)),
+            ),
+            (
+                ConditionTerm::signed_greater_equal(x.clone(), 10u32.into()),
+                false,
+                (i64::from(i32::MIN), 9),
+            ),
+        ] {
+            let facts = PureFactContext::new()
+                .assume_condition(condition, value)
+                .assume_condition(ConditionTerm::equal(x.clone(), y.clone()), true);
+            assert_eq!(facts.signed_interval(&y), Some(expected));
+        }
+        let wide = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::int64_signed_greater_equal(
+                    x.clone(),
+                    Bitvector32Term::Int64Constant(0),
+                ),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::int64_signed_less_equal(
+                    x.clone(),
+                    Bitvector32Term::Int64Constant(10),
+                ),
+                true,
+            )
+            .assume_condition(ConditionTerm::int64_equal(x.clone(), y.clone()), true);
+        assert_eq!(
+            wide.signed_interval(&y),
+            Some((i64::from(i32::MIN), i64::from(i32::MAX)))
+        );
+    }
+
+    #[test]
+    fn equal_value_interval_queries_scale_with_delta_and_skip_unrelated_facts() {
+        let mut works = Vec::new();
+        for size in [32u64, 64, 128] {
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                let root = Bitvector32Term::Variable(Variable(200_000 + size * 10));
+                let mut facts = PureFactContext::new()
+                    .assume_condition(
+                        ConditionTerm::signed_greater_equal(root.clone(), 0u32.into()),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(root.clone(), 100u32.into()),
+                        true,
+                    );
+                PureFactContext::reset_signed_interval_fallback_fact_visits();
+                for index in 0..size {
+                    let alias = Bitvector32Term::Variable(Variable(300_000 + size * 10 + index));
+                    let unrelated =
+                        Bitvector32Term::Variable(Variable(400_000 + size * 10 + index));
+                    facts = facts
+                        .assume_condition(
+                            ConditionTerm::signed_less_equal(unrelated, 1000u32.into()),
+                            true,
+                        )
+                        .assume_condition(ConditionTerm::equal(root.clone(), alias.clone()), true);
+                    assert_eq!(facts.signed_interval(&alias), Some((0, 100)));
+                }
+                assert_eq!(PureFactContext::signed_interval_fallback_fact_visits(), 0);
+            });
+            assert!(work < 1000 * size as usize, "size={size}, work={work}");
+            works.push(work);
+        }
+        assert!(
+            works[2] < 6 * works[0],
+            "interval lookup work grew too fast: {works:?}"
+        );
     }
 
     #[test]

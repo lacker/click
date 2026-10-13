@@ -122,13 +122,9 @@ fn load_standard_library(source: &str) -> Result<ClickFile, ClickError> {
         "stdlib/prelude.click",
         0,
         &[],
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
+        &BTreeSet::new(),
+        &[],
+        Default::default(),
     )?)?;
     if !file.verifying_sources().is_empty()
         || file
@@ -502,11 +498,6 @@ fn expand_declared_resources_in_function_block(
         .constructs
         .drain(..)
         .map(|resource| expand_declared_resource_clause(resource, resource_definitions))
-        .collect::<Result<Vec<_>, _>>()?;
-    function.structural_clauses = function
-        .structural_clauses
-        .drain(..)
-        .map(|clause| expand_declared_resource_structural_clause(clause, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
     function.grouped_proof = function
         .grouped_proof
@@ -893,6 +884,20 @@ fn expand_declared_resource_certificate(
                                     result: proposition(result)?,
                                 }
                             }
+                            IntegerCertificateNode::NegatedGoal { result } => {
+                                IntegerCertificateNode::NegatedGoal {
+                                    result: proposition(result)?,
+                                }
+                            }
+                            IntegerCertificateNode::Divide {
+                                source,
+                                divisor,
+                                result,
+                            } => IntegerCertificateNode::Divide {
+                                source,
+                                divisor: expression(divisor)?,
+                                result: proposition(result)?,
+                            },
                         })
                     })
                     .collect::<Result<Vec<_>, ClickError>>()?,
@@ -2234,6 +2239,13 @@ fn expand_declared_resource_proposition_one(
             right: expand_declared_resource_expression(right, resource_definitions)?,
         }),
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
+            expression: expand_declared_resource_expression(expression, resource_definitions)?,
+        }),
+        ClickProposition::ValidPlace {
+            expression,
+            pointee_struct,
+        } => Ok(ClickProposition::ValidPlace {
+            pointee_struct: pointee_struct.clone(),
             expression: expand_declared_resource_expression(expression, resource_definitions)?,
         }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {

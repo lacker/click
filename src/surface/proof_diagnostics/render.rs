@@ -12,6 +12,7 @@ use crate::kernel::{
     IntegerTerm, Pointer, PointerOffsetTerm, Proposition, PureFunctionArgument, Sort,
     SpecCaptureRefusal, Term, Variable,
 };
+use crate::surface::ParameterBinding;
 use std::collections::HashMap;
 use std::fmt::Write;
 
@@ -70,12 +71,13 @@ impl SnapshotLabels {
 
     /// Labels that read a scalar the tables name as that name, and an
     /// address inside an object the tables name as its source spelling.
-    pub(crate) fn naming(
-        parameters: &[crate::languages::c::syntax::C0Parameter],
-        arguments: &[crate::kernel::CExpression],
-    ) -> Self {
+    pub(crate) fn naming(parameter_binding: ParameterBinding<'_>) -> Self {
         let mut labels = Self::default();
-        for (parameter, argument) in parameters.iter().zip(arguments) {
+        for (parameter, argument) in parameter_binding
+            .parameters
+            .iter()
+            .zip(parameter_binding.arguments)
+        {
             let crate::kernel::CExpression::Value(value) = argument else {
                 continue;
             };
@@ -104,25 +106,24 @@ impl SnapshotLabels {
                 labels.source_types.insert(*variable, value.c_type());
             }
         }
-        labels.naming = Some(std::rc::Rc::new((parameters.to_vec(), arguments.to_vec())));
+        labels.naming = Some(std::rc::Rc::new((
+            parameter_binding.parameters.to_vec(),
+            parameter_binding.arguments.to_vec(),
+        )));
         labels
     }
 
     /// Current locals take precedence over entry values. This is diagnostic
     /// data only; no proof decision consults these names.
-    pub(crate) fn with_state(
-        parameters: &[crate::languages::c::syntax::C0Parameter],
-        arguments: &[crate::kernel::CExpression],
-        state: &CState,
-    ) -> Self {
-        let mut labels = Self::naming(parameters, arguments);
+    pub(crate) fn with_state(parameter_binding: ParameterBinding<'_>, state: &CState) -> Self {
+        let mut labels = Self::naming(parameter_binding);
         labels.register_current_state(state);
         labels
     }
 
     pub(crate) fn register_current_state(&mut self, state: &CState) {
         let (names, values) = crate::surface::diagnostics::local_naming_tables(state);
-        let current = Self::naming(&names, &values);
+        let current = Self::naming(ParameterBinding::new(&names, &values));
         // A reassigned parameter's entry value is not its current value.
         for (variable, name) in &mut self.source_names {
             if names.iter().any(|local| local.name() == name)
@@ -173,7 +174,7 @@ impl SnapshotLabels {
         let Some(tables) = AMBIENT_NAMING.with(|naming| naming.borrow().clone()) else {
             return Self::default();
         };
-        let mut labels = Self::naming(&tables.0, &tables.1);
+        let mut labels = Self::naming(ParameterBinding::new(&tables.0, &tables.1));
         labels.naming = Some(tables);
         labels
     }
@@ -299,9 +300,12 @@ pub(crate) fn render_memory_history_check(
     let at = at?;
     let written_bytes = history.written_bytes?;
     let address = |pointer: &Pointer, labels: &mut SnapshotLabels| {
-        crate::surface::diagnostics::diagnostic_source_cell(pointer, parameters, arguments)
-            .map(|source| format!("`{source}`"))
-            .unwrap_or_else(|| format!("address {}", labels.pointer_value_name(pointer)))
+        crate::surface::diagnostics::diagnostic_source_cell(
+            pointer,
+            ParameterBinding::new(parameters, arguments),
+        )
+        .map(|source| format!("`{source}`"))
+        .unwrap_or_else(|| format!("address {}", labels.pointer_value_name(pointer)))
     };
     let written = address(written, labels);
     let read = address(read, labels);
@@ -334,12 +338,12 @@ thread_local! {
 }
 
 /// Starts verifying a C function whose parameters hold `arguments`.
-pub(crate) fn enter_ambient_naming(
-    parameters: &[crate::languages::c::syntax::C0Parameter],
-    arguments: &[crate::kernel::CExpression],
-) {
+pub(crate) fn enter_ambient_naming(parameter_binding: ParameterBinding<'_>) {
     AMBIENT_NAMING.with(|naming| {
-        *naming.borrow_mut() = Some(std::rc::Rc::new((parameters.to_vec(), arguments.to_vec())));
+        *naming.borrow_mut() = Some(std::rc::Rc::new((
+            parameter_binding.parameters.to_vec(),
+            parameter_binding.arguments.to_vec(),
+        )));
     });
 }
 
@@ -646,6 +650,19 @@ impl Renderer<'_> {
                 self.push(", pointer=");
                 self.pointer(pointer);
                 self.fmt(format_args!(", bytes={byte_width})"));
+            }
+            Proposition::CValidPlace {
+                memory,
+                pointer,
+                place_type,
+                ..
+            } => {
+                self.push("valid_place(memory=");
+                self.memory(memory);
+                self.push(", pointer=");
+                self.pointer(pointer.pointer());
+                self.fmt(format_args!(", type={place_type:?}"));
+                self.push(")");
             }
             Proposition::CMemoryInitialized {
                 memory,
@@ -1520,7 +1537,10 @@ impl Renderer<'_> {
         // source spelling, not as a block and an offset.
         if let Some(tables) = self.labels.naming.clone() {
             let (parameters, arguments) = &*tables;
-            let spelled = crate::surface::diagnostics::describe_pointer(p, parameters, arguments);
+            let spelled = crate::surface::diagnostics::describe_pointer(
+                p,
+                ParameterBinding::new(parameters, arguments),
+            );
             if !spelled.contains("the pointer value at this program point")
                 && !spelled.contains('…')
             {
@@ -1832,7 +1852,10 @@ mod tests {
         assert!(rendered.starts_with("∃path:Path<Integer>. "), "{rendered}");
         assert!(!rendered.contains("AlgebraicSchemas"), "{rendered}");
         assert_eq!(
-            crate::surface::diagnostics::describe_pure_fact(&proposition, &[], &[]),
+            crate::surface::diagnostics::describe_pure_fact(
+                &proposition,
+                ParameterBinding::default()
+            ),
             "∃path:Path<Integer>. true is true"
         );
     }

@@ -1297,6 +1297,52 @@ fn arithmetic_certificate_is_the_only_integer_family_spelling() {
 }
 
 #[test]
+fn integer_certificate_refutation_and_division_round_trip() {
+    let source = r#"
+        theorem refutation_forms(x: Integer) {
+            requires 2 * x <= 5;
+            ensures x <= 2 by {
+                arithmetic_certificate {
+                    premise 0: 2 * x <= 5 => 2 * x <= 5;
+                    negated_goal => 2 < x;
+                    divide 0 by 2 => x <= 2;
+                    conclusion 2;
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("integer certificate should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    let ProofTactic::ArithmeticCertificate(ArithmeticCertificate {
+        family: ArithmeticCertificateFamily::Integer(certificate),
+    }) = &tactics[0]
+    else {
+        panic!("expected the Integer family");
+    };
+    assert!(matches!(
+        certificate.nodes.as_slice(),
+        [
+            IntegerCertificateNode::Premise { .. },
+            IntegerCertificateNode::NegatedGoal { .. },
+            IntegerCertificateNode::Divide { source: 0, .. },
+        ]
+    ));
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(printed.contains("negated_goal => "), "{printed}");
+    assert!(printed.contains("divide 0 by 2 => "), "{printed}");
+    let reprinted = format!(
+        "theorem refutation_forms(x: Integer) {{\n    requires 2 * x <= 5;\n    ensures x <= 2 by {{\n{printed}\n    }}\n}}\n"
+    );
+    let reparsed = parse(&reprinted).expect("printed certificate should parse again");
+    let SourceProof::Script(again) = reparsed.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    assert_eq!(again, tactics);
+}
+
+#[test]
 fn signed_int32_arithmetic_certificate_round_trips_every_step_spelling() {
     let source = r#"
         theorem signed_certificate_forms(n: int32) {
@@ -2357,10 +2403,7 @@ fn records_checked_surface_forms_for_lowered_propositions() {
         &PureFactContext::new(),
         &values,
         &BTreeMap::new(),
-        &state,
-        &state,
-        None,
-        &RecordedSnapshots::new(),
+        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         SpecDefinitions::new(&predicates, &functions),
     )
     .expect("surface proposition should lower");
@@ -2411,7 +2454,7 @@ fn surface_synthesis_qualifies_a_c_local_named_result() {
     );
     let state = CState::new().with_local("result", CValue::Int32(local));
 
-    let surface = synthesize_surface_proposition(&proposition, &[], &[], &state)
+    let surface = synthesize_surface_proposition(&proposition, ParameterBinding::default(), &state)
         .expect("the local comparison should have a surface form");
     let ClickProposition::Comparison { left, .. } = surface else {
         panic!("expected a comparison form");
@@ -2444,8 +2487,10 @@ fn surface_synthesis_omits_a_predicates_hidden_resource_state_argument() {
 
     let surface = synthesize_surface_proposition(
         &proposition,
-        function.parameters(),
-        &[CExpression::Value(CValue::pointer(pool))],
+        ParameterBinding::new(
+            function.parameters(),
+            &[CExpression::Value(CValue::pointer(pool))],
+        ),
         &CState::new(),
     )
     .expect("the hidden state should not need a surface spelling");
@@ -2492,8 +2537,10 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     );
     let surface = synthesize_surface_proposition(
         &proposition,
-        function.parameters(),
-        &[CExpression::Value(CValue::pointer(owner.clone()))],
+        ParameterBinding::new(
+            function.parameters(),
+            &[CExpression::Value(CValue::pointer(owner.clone()))],
+        ),
         &CState::new(),
     )
     .expect("known struct field load should have a surface spelling");
@@ -2531,8 +2578,10 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     );
     let surface = synthesize_surface_proposition(
         &proposition,
-        function.parameters(),
-        &[CExpression::Value(CValue::pointer(owner))],
+        ParameterBinding::new(
+            function.parameters(),
+            &[CExpression::Value(CValue::pointer(owner))],
+        ),
         &CState::new(),
     )
     .expect("indexed pointer field load should have a surface spelling");
@@ -4830,16 +4879,13 @@ fn a_rust_sidecar_states_its_signature_in_rust_syntax() {
     let parse_with_functions = |functions: &[&str]| {
         parser::parse_with_layouts_and_aggregate_objects(
             &source,
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            functions
-                .iter()
-                .map(|name| ((*name).to_string(), parser::FunctionLocals::default()))
-                .collect(),
+            parser::ProgramLayouts {
+                local_struct_pointers: functions
+                    .iter()
+                    .map(|name| ((*name).to_string(), parser::FunctionLocals::default()))
+                    .collect(),
+                ..Default::default()
+            },
         )
     };
     let named = |file: ClickFile| file.function_blocks()[0].signature().name().to_string();
@@ -4992,7 +5038,10 @@ fn memory_ranges_use_fields_or_correctly_scaled_source_elements() {
             width,
         );
         assert_eq!(
-            super::diagnostics::describe_memory_range(&range, parameters, &arguments),
+            super::diagnostics::describe_memory_range(
+                &range,
+                ParameterBinding::new(parameters, &arguments)
+            ),
             expected
         );
     }

@@ -719,6 +719,42 @@ impl PropositionDerivation {
 }
 
 impl PointerOffsetCongruenceEvidence {
+    pub(in crate::kernel) fn record_provenance(&self, assumptions: &PureFactContext) {
+        let record = |premise: &Proposition| {
+            crate::kernel::record_implicit_reasoning_provenance(assumptions, premise)
+        };
+        match self {
+            Self::Exact | Self::WideScaledConstant { .. } => {}
+            Self::ExactPremise(premise) => record(premise),
+            Self::Add { first, second, .. } => {
+                first.record_provenance(assumptions);
+                second.record_provenance(assumptions);
+            }
+            Self::PointerReadSnapshot { equality, .. } => {
+                equality.check_and_retain(assumptions);
+            }
+            Self::PointerReadSnapshotAlias {
+                premise, equality, ..
+            } => {
+                record(premise);
+                equality.check_and_retain(assumptions);
+            }
+            Self::Int32Scaled { path, .. }
+            | Self::Int64Scaled { path, .. }
+            | Self::ElementIndex { path, .. } => {
+                for step in path {
+                    record(&step.premise);
+                }
+            }
+            Self::Int32ScaledDerived { equality, .. }
+            | Self::ElementIndexDerived { equality, .. } => {
+                for premise in equality.context_premises() {
+                    record(&premise);
+                }
+            }
+        }
+    }
+
     fn equality_paths(&self) -> Vec<&[BitvectorEqualityDerivationStep]> {
         match self {
             Self::Exact | Self::ExactPremise(_) | Self::WideScaledConstant { .. } => Vec::new(),
@@ -727,6 +763,7 @@ impl PointerOffsetCongruenceEvidence {
                 paths.extend(second.equality_paths());
                 paths
             }
+            Self::PointerReadSnapshot { .. } | Self::PointerReadSnapshotAlias { .. } => Vec::new(),
             Self::Int32Scaled { path, .. }
             | Self::Int64Scaled { path, .. }
             | Self::ElementIndex { path, .. } => vec![path],
@@ -781,6 +818,77 @@ impl PointerOffsetCongruenceEvidence {
                 };
                 first.checks(left_a, right_first, assumptions)
                     && second.checks(left_b, right_second, assumptions)
+            }
+            Self::PointerReadSnapshot {
+                byte_width,
+                equality,
+            } => {
+                let (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width: lw,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: right,
+                        byte_width: rw,
+                    },
+                ) = (left, right)
+                else {
+                    return false;
+                };
+                lw == byte_width
+                    && rw == byte_width
+                    && equality.checks_exact_pointer_read_terms(left, right, assumptions)
+            }
+            Self::PointerReadSnapshotAlias {
+                byte_width,
+                intermediate,
+                equality,
+                premise,
+                reversed,
+            } => {
+                let (left, right) = if *reversed {
+                    (right, left)
+                } else {
+                    (left, right)
+                };
+                let (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left_read,
+                        byte_width: left_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: intermediate_read,
+                        byte_width: intermediate_width,
+                    },
+                ) = (left, intermediate.as_ref())
+                else {
+                    return false;
+                };
+                left_width == byte_width
+                    && intermediate_width == byte_width
+                    && equality.checks_exact_pointer_read_terms(
+                        left_read,
+                        intermediate_read,
+                        assumptions,
+                    )
+                    && (premise.as_ref()
+                        == &Proposition::ConditionIs(
+                            ConditionTerm::pointer_offset_equal(
+                                intermediate.as_ref().clone(),
+                                right.clone(),
+                            ),
+                            true,
+                        )
+                        || premise.as_ref()
+                            == &Proposition::ConditionIs(
+                                ConditionTerm::pointer_offset_equal(
+                                    right.clone(),
+                                    intermediate.as_ref().clone(),
+                                ),
+                                true,
+                            ))
+                    && assumptions.contains_assumed_exact(premise)
             }
             Self::Int32Scaled { byte_width, path } => {
                 let (
@@ -902,6 +1010,12 @@ impl SignedConstantEvidence {
 }
 
 impl DirectBitvectorEqualityEvidence {
+    pub(in crate::kernel) fn context_premises(&self) -> Vec<Proposition> {
+        let mut premises = BTreeSet::new();
+        self.collect_context_premises(&mut premises);
+        premises.into_iter().collect()
+    }
+
     pub(in crate::kernel) fn checks(
         &self,
         left: &Bitvector32Term,

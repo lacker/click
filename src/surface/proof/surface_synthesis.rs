@@ -144,16 +144,16 @@ struct StructOwner {
 /// The cast `void *` parameters, with their argument values, and the
 /// struct-pointer locals present in this state. Declared struct-pointer
 /// parameters keep their own parameter-based spelling paths.
-fn struct_owners(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    state: &CState,
-) -> Vec<StructOwner> {
+fn struct_owners(parameter_binding: ParameterBinding<'_>, state: &CState) -> Vec<StructOwner> {
     let Some(owners) = SYNTHESIS_STRUCT_OWNERS.with(|slot| slot.borrow().clone()) else {
         return Vec::new();
     };
     let mut found = Vec::new();
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let (Some((struct_name, layout)), CExpression::Value(CValue::Pointer(base))) =
             (owners.cast_parameters.get(parameter.name()), argument)
         else {
@@ -206,12 +206,15 @@ struct NamedRangeBase {
 }
 
 fn range_struct_owners(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Vec<StructOwner> {
     let mut owners: Vec<StructOwner> = Vec::new();
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         if let (Some(layout), CExpression::Value(CValue::Pointer(base))) = (
             parameter
                 .pointee_struct_layout()
@@ -225,7 +228,7 @@ fn range_struct_owners(
             });
         }
     }
-    owners.extend(struct_owners(parameters, arguments, state));
+    owners.extend(struct_owners(parameter_binding, state));
     owners
 }
 
@@ -235,12 +238,11 @@ fn range_struct_owners(
 fn synthesize_struct_loadable_segment(
     base: &Pointer,
     bytes: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ClickProposition> {
     let bytes = bytes.as_const()?;
-    for owner in range_struct_owners(parameters, arguments, state) {
+    for owner in range_struct_owners(parameter_binding, state) {
         let Some(start) = base
             .element_index_from_base_with_width(&owner.pointer, 1)
             .and_then(|index| index.as_const())
@@ -329,11 +331,10 @@ fn synthesize_struct_loadable_segment(
 /// layouts come from the parameter declarations and the installed local
 /// layout scope; the pointer values come from this state's memory.
 fn field_pointer_bases(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Vec<NamedRangeBase> {
-    let owners = range_struct_owners(parameters, arguments, state);
+    let owners = range_struct_owners(parameter_binding, state);
     let mut bases = Vec::new();
     for owner in owners {
         for (field_name, field) in owner.layout.fields() {
@@ -388,12 +389,11 @@ fn field_pointer_bases(
 }
 
 fn named_range_bases(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: Option<&CState>,
     full_state: &CState,
 ) -> Vec<NamedRangeBase> {
-    let mut bases = named_pointer_bases(parameters, arguments, state)
+    let mut bases = named_pointer_bases(parameter_binding, state)
         .map(|(name, pointer, width)| {
             let lowered = CExpression::Variable(name);
             NamedRangeBase {
@@ -404,7 +404,7 @@ fn named_range_bases(
             }
         })
         .collect::<Vec<_>>();
-    bases.extend(field_pointer_bases(parameters, arguments, full_state));
+    bases.extend(field_pointer_bases(parameter_binding, full_state));
     bases
 }
 
@@ -433,14 +433,13 @@ impl Drop for SynthesisEntryScope {
 
 pub(in crate::surface) fn synthesize_surface_proposition_at_entry_and_post(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     entry: &CState,
     post: &CState,
 ) -> Option<ClickProposition> {
     let _entry =
         SynthesisEntryScope(SYNTHESIS_ENTRY_STATE.with(|slot| slot.replace(Some(entry.clone()))));
-    synthesize_surface_proposition(proposition, parameters, arguments, post)
+    synthesize_surface_proposition(proposition, parameter_binding, post)
 }
 
 /// As above, plus one further reference state addressed by a recorded
@@ -450,8 +449,7 @@ pub(in crate::surface) fn synthesize_surface_proposition_at_entry_and_post(
 /// back to exactly this term at the snapshot the selector names.
 pub(in crate::surface) fn synthesize_surface_proposition_at_entry_post_and_snapshot(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     entry: &CState,
     post: &CState,
     snapshot: Option<(&CState, &SnapshotSelector)>,
@@ -459,13 +457,7 @@ pub(in crate::surface) fn synthesize_surface_proposition_at_entry_post_and_snaps
     let _snapshot = SynthesisSnapshotScope(SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
         slot.replace(snapshot.map(|(state, selector)| (state.clone(), selector.clone())))
     }));
-    synthesize_surface_proposition_at_entry_and_post(
-        proposition,
-        parameters,
-        arguments,
-        entry,
-        post,
-    )
+    synthesize_surface_proposition_at_entry_and_post(proposition, parameter_binding, entry, post)
 }
 
 struct SynthesisSnapshotScope(Option<(CState, SnapshotSelector)>);
@@ -705,15 +697,13 @@ pub(super) fn surface_synthesis_failure(prefix: &str, kernel: &Proposition) -> S
 
 pub(in crate::surface) fn synthesize_surface_proposition(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ClickProposition> {
     let _scope = SurfaceSynthesisScope::enter();
     synthesize_surface_proposition_with_guard_fallback(
         proposition,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         &BTreeMap::new(),
     )
@@ -728,26 +718,23 @@ pub(in crate::surface) fn synthesize_surface_proposition(
 /// proof step, so no candidate needs validating against a kernel form.
 pub(in crate::surface) fn synthesize_surface_machine_expression(
     term: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ContractExpression> {
     let _scope = SurfaceSynthesisScope::enter();
-    synthesize_surface_bitvector(term, parameters, arguments, state, &BTreeMap::new())
+    synthesize_surface_bitvector(term, parameter_binding, state, &BTreeMap::new())
 }
 
 pub(in crate::surface) fn synthesize_surface_proposition_with_bound_variable_names(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
     let _scope = SurfaceSynthesisScope::enter();
     synthesize_surface_proposition_with_guard_fallback(
         proposition,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )
@@ -758,8 +745,7 @@ pub(in crate::surface) fn synthesize_surface_proposition_with_bound_variable_nam
 /// ordinary synthesis must not gain a new global search candidate from it.
 pub(in crate::surface::proof) fn synthesize_source_projection_proposition_with_bound_variable_names(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -768,8 +754,7 @@ pub(in crate::surface::proof) fn synthesize_source_projection_proposition_with_b
         match synthesize_exact_external_zero_based_byte_range(
             base,
             bytes,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         ) {
@@ -780,8 +765,7 @@ pub(in crate::surface::proof) fn synthesize_source_projection_proposition_with_b
     }
     synthesize_surface_proposition_with_guard_fallback(
         proposition,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )
@@ -789,15 +773,13 @@ pub(in crate::surface::proof) fn synthesize_source_projection_proposition_with_b
 
 fn synthesize_surface_proposition_with_guard_fallback(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
     let literal = synthesize_surface_proposition_with_bound_variables(
         proposition,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )?;
@@ -811,7 +793,7 @@ fn synthesize_surface_proposition_with_guard_fallback(
     let Some(candidate) = omit_leading_definedness_spellings(proposition, &literal) else {
         return Some(literal);
     };
-    synthesized_surface_matches_proposition(&candidate, proposition, parameters, arguments, state)
+    synthesized_surface_matches_proposition(&candidate, proposition, parameter_binding, state)
         .then_some(candidate)
         .or(Some(literal))
 }
@@ -819,8 +801,7 @@ fn synthesize_surface_proposition_with_guard_fallback(
 #[inline(never)]
 fn synthesize_surface_proposition_with_bound_variables(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -838,15 +819,13 @@ fn synthesize_surface_proposition_with_bound_variables(
                 };
             let synthesized_left = synthesize_surface_proposition_with_bound_variables(
                 left,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?;
             let synthesized_right = synthesize_surface_proposition_with_bound_variables(
                 right,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?;
@@ -858,16 +837,14 @@ fn synthesize_surface_proposition_with_bound_variables(
         Proposition::ForAll { .. } | Proposition::Exists { .. } => {
             synthesize_surface_quantified_proposition(
                 proposition,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )
         }
         _ => synthesize_surface_atomic_proposition(
             proposition,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         ),
@@ -968,8 +945,7 @@ fn omit_leading_definedness_spellings(
 fn synthesized_surface_matches_proposition(
     candidate: &ClickProposition,
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> bool {
     // A retained call requirement may carry a caller variable as the
@@ -977,7 +953,8 @@ fn synthesized_surface_matches_proposition(
     // expects already-evaluated call values, so resolve only this exact
     // pointer variable through the current state's indexed local binding for
     // the round-trip check. Other expressions remain rejected.
-    let resolved_arguments = arguments
+    let resolved_arguments = parameter_binding
+        .arguments
         .iter()
         .map(|argument| match argument {
             CExpression::Variable(name) => match state.locals().get(name) {
@@ -989,23 +966,27 @@ fn synthesized_surface_matches_proposition(
             _ => argument.clone(),
         })
         .collect::<Vec<_>>();
-    let Ok(parameter_values) = parameter_values(parameters, &resolved_arguments) else {
+    let Ok(parameter_values) = parameter_values(ParameterBinding::new(
+        parameter_binding.parameters,
+        &resolved_arguments,
+    )) else {
         return false;
     };
-    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
+    let array_refs = array_refs_for_parameters(
+        parameter_binding.parameters,
+        &parameter_values,
+        state.memory(),
+    );
     let (values, array_refs) = contract_environment_at_state(&parameter_values, &array_refs, state);
     let lowered = crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
         candidate,
         &PureFactContext::new(),
         &values,
         &array_refs,
-        state,
-        state,
-        None,
-        &RecordedSnapshots::default(),
+        FixedStateFrame::new(state, state, None, &RecordedSnapshots::default()),
         SpecDefinitions::new(&PredicateEnvironment::new(&[]), &ClickFunctionEnvironment::new(&[])),
         &std::collections::BTreeSet::new(),
-        crate::surface::lowering::parameter_pointer_element_widths(parameters),
+        crate::surface::lowering::parameter_pointer_element_widths(parameter_binding.parameters),
     );
     lowered.is_ok_and(|lowered| {
         crate::kernel::proof::propositions_are_alpha_equal(&lowered, proposition)
@@ -1015,8 +996,7 @@ fn synthesized_surface_matches_proposition(
 #[inline(never)]
 fn synthesize_surface_quantified_proposition(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -1030,7 +1010,8 @@ fn synthesize_surface_quantified_proposition(
                 integer_type.c_type(),
             ));
             let conflicts = |candidate: &str| {
-                parameters
+                parameter_binding
+                    .parameters
                     .iter()
                     .any(|parameter| parameter.name() == candidate)
                     || state
@@ -1061,8 +1042,7 @@ fn synthesize_surface_quantified_proposition(
             body_variables.insert(*var, name.clone());
             let body = Box::new(synthesize_surface_proposition_with_bound_variables(
                 body,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 &body_variables,
             )?);
@@ -1092,8 +1072,7 @@ fn synthesize_surface_quantified_proposition(
 fn synthesize_zero_based_loadable_segment(
     base: &Pointer,
     bytes: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -1105,8 +1084,7 @@ fn synthesize_zero_based_loadable_segment(
         && let Some(named) = synthesize_named_range_loadable_segment(
             base,
             bytes,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )
@@ -1137,8 +1115,7 @@ fn synthesize_zero_based_loadable_segment(
         }
         contract_expression_to_c_fragment(&synthesize_surface_bitvector(
             elements,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )?)?
@@ -1149,25 +1126,18 @@ fn synthesize_zero_based_loadable_segment(
         // over a wider element it lowers to `n * w` and is refused.
         contract_expression_to_c_fragment(&synthesize_surface_bitvector(
             bytes,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )?)?
     } else {
         return None;
     };
-    let semantic_base =
-        synthesize_surface_pointer(base, parameters, arguments, state, bound_variables);
+    let semantic_base = synthesize_surface_pointer(base, parameter_binding, state, bound_variables);
     let semantic_base = semantic_base?;
-    let surface_base = synthesize_surface_pointer_offset(
-        &base.offset,
-        parameters,
-        arguments,
-        state,
-        bound_variables,
-    )
-    .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
+    let surface_base =
+        synthesize_surface_pointer_offset(&base.offset, parameter_binding, state, bound_variables)
+            .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
     Some(ClickProposition::Loadable {
         segment: ContractSegment {
             state: ContractSegmentState::Current,
@@ -1194,17 +1164,17 @@ fn synthesize_zero_based_loadable_segment(
 fn synthesize_exact_external_zero_based_byte_range(
     base: &Pointer,
     bytes: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Result<Option<ClickProposition>, ()> {
     if base.block != PointerBlock::ExternalArgument {
         return Ok(None);
     }
-    let mut matches = parameters
+    let mut matches = parameter_binding
+        .parameters
         .iter()
-        .zip(arguments)
+        .zip(parameter_binding.arguments)
         .filter_map(|(parameter, argument)| {
             if parameter
                 .c_type()
@@ -1232,7 +1202,7 @@ fn synthesize_exact_external_zero_based_byte_range(
     if matches.next().is_some() {
         return Err(());
     }
-    let end = synthesize_surface_bitvector(bytes, parameters, arguments, state, bound_variables)
+    let end = synthesize_surface_bitvector(bytes, parameter_binding, state, bound_variables)
         .and_then(|end| contract_expression_to_c_fragment(&end))
         .ok_or(())?;
     let named = CExpression::Variable(name);
@@ -1265,13 +1235,11 @@ fn synthesize_exact_external_zero_based_byte_range(
 fn synthesize_named_range_loadable_segment(
     base: &Pointer,
     bytes: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
-    if let Some(segment) =
-        synthesize_struct_loadable_segment(base, bytes, parameters, arguments, state)
+    if let Some(segment) = synthesize_struct_loadable_segment(base, bytes, parameter_binding, state)
     {
         return Some(segment);
     }
@@ -1285,8 +1253,7 @@ fn synthesize_named_range_loadable_segment(
         && let Some(special) = synthesize_external_symbolic_element_range(
             base,
             bytes,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )
@@ -1302,7 +1269,7 @@ fn synthesize_named_range_loadable_segment(
     };
     if let Some(byte_count) = bytes.as_const() {
         let (named, width, start) =
-            named_range_bases(parameters, arguments, named_pointer_state, state)
+            named_range_bases(parameter_binding, named_pointer_state, state)
                 .into_iter()
                 .filter_map(|named| {
                     if named.pointer.offset == PointerOffsetTerm::Constant(0)
@@ -1320,15 +1287,13 @@ fn synthesize_named_range_loadable_segment(
         let end = Bitvector32Term::add(start.clone(), Bitvector32Term::Constant(element_count));
         let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
             &start,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )?)?;
         let end = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
             &end,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )?)?;
@@ -1361,7 +1326,7 @@ fn synthesize_named_range_loadable_segment(
     };
     // The named pointer this range starts from, and the element index the
     // requirement's base pointer sits at within it.
-    let named = named_range_bases(parameters, arguments, named_pointer_state, state)
+    let named = named_range_bases(parameter_binding, named_pointer_state, state)
         .into_iter()
         .find(|named| {
             named.width == scale
@@ -1371,15 +1336,13 @@ fn synthesize_named_range_loadable_segment(
         })?;
     let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         start,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )?)?;
     let end = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         end,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )?)?;
@@ -1408,14 +1371,14 @@ fn synthesize_named_range_loadable_segment(
 fn synthesize_external_symbolic_element_range(
     base: &Pointer,
     bytes: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
-    let (name, index) = parameters
+    let (name, index) = parameter_binding
+        .parameters
         .iter()
-        .zip(arguments)
+        .zip(parameter_binding.arguments)
         .find_map(|(parameter, argument)| {
             let named_base = match argument {
                 CExpression::Value(CValue::Pointer(pointer)) => pointer,
@@ -1473,7 +1436,7 @@ fn synthesize_external_symbolic_element_range(
         // moving the symbolic index into the named pointer expression and
         // spelling a zero-based one-byte range over that displaced pointer.
         let semantic_base =
-            synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
+            synthesize_surface_pointer(base, parameter_binding, state, bound_variables)?;
         let surface_base = ContractExpression::CFragment(semantic_base.clone());
         let start = CExpression::Value(int32(0));
         let end = CExpression::Value(int32(1));
@@ -1493,16 +1456,14 @@ fn synthesize_external_symbolic_element_range(
     }
     let start = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         &index,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )?)?;
     let end_term = Bitvector32Term::add(index, Bitvector32Term::Constant(1));
     let end = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
         &end_term,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )?)?;
@@ -1546,13 +1507,13 @@ fn int32_scaled_value(offset: &PointerOffsetTerm, width: i64) -> Option<Bitvecto
 /// declared type steps by: the call's own parameters first, then the state's
 /// pointer locals. The walk is over those two named lists only.
 fn named_pointer_bases<'a>(
-    parameters: &'a [syntax::C0Parameter],
-    arguments: &'a [CExpression],
+    parameter_binding: ParameterBinding<'a>,
     state: Option<&'a CState>,
 ) -> impl Iterator<Item = (String, crate::kernel::CPointerValue, u32)> + 'a {
-    parameters
+    parameter_binding
+        .parameters
         .iter()
-        .zip(arguments)
+        .zip(parameter_binding.arguments)
         .filter_map(|(parameter, argument)| {
             let CExpression::Value(CValue::Pointer(base)) = argument else {
                 return None;
@@ -1585,8 +1546,7 @@ fn synthesize_load_defining_equation(
     variable: &Variable,
     memory: &crate::kernel::SharedCMemory,
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -1607,13 +1567,12 @@ fn synthesize_load_defining_equation(
         // to another epoch while the defining equation is presented.
         let left = synthesize_surface_bitvector(
             &Bitvector32Term::Variable(*variable),
-            parameters,
-            arguments,
+            parameter_binding,
             snapshot,
             bound_variables,
         )?;
         let right =
-            synthesize_surface_bitvector(&load, parameters, arguments, snapshot, bound_variables)?;
+            synthesize_surface_bitvector(&load, parameter_binding, snapshot, bound_variables)?;
         Some(ClickProposition::Comparison {
             left,
             operator: ComparisonOperator::Equal,
@@ -1650,8 +1609,7 @@ fn synthesize_load_defining_equation(
 #[inline(never)]
 fn synthesize_surface_atomic_proposition(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -1668,8 +1626,7 @@ fn synthesize_surface_atomic_proposition(
             variable,
             memory,
             pointer,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         );
@@ -1677,8 +1634,7 @@ fn synthesize_surface_atomic_proposition(
     if let Proposition::Equal(Term::Sequence(left), Term::Sequence(right)) = proposition {
         fn sequence(
             value: &crate::kernel::SequenceTerm,
-            parameters: &[syntax::C0Parameter],
-            arguments: &[CExpression],
+            parameter_binding: ParameterBinding<'_>,
             state: &CState,
             bound: &BTreeMap<Variable, String>,
         ) -> Option<ContractExpression> {
@@ -1692,25 +1648,23 @@ fn synthesize_surface_atomic_proposition(
                                 let CValue::Int32(value) = value else {
                                     return None;
                                 };
-                                synthesize_surface_bitvector(
-                                    value, parameters, arguments, state, bound,
-                                )
+                                synthesize_surface_bitvector(value, parameter_binding, state, bound)
                             })
                             .collect::<Option<Vec<_>>>()?,
                     )
                 }
                 crate::kernel::SequenceTermNode::Concat(left, right) => {
                     ContractExpression::SequenceConcat(
-                        Box::new(sequence(left, parameters, arguments, state, bound)?),
-                        Box::new(sequence(right, parameters, arguments, state, bound)?),
+                        Box::new(sequence(left, parameter_binding, state, bound)?),
+                        Box::new(sequence(right, parameter_binding, state, bound)?),
                     )
                 }
             })
         }
         return Some(ClickProposition::Comparison {
-            left: sequence(left, parameters, arguments, state, bound_variables)?,
+            left: sequence(left, parameter_binding, state, bound_variables)?,
             operator: ComparisonOperator::Equal,
-            right: sequence(right, parameters, arguments, state, bound_variables)?,
+            right: sequence(right, parameter_binding, state, bound_variables)?,
         });
     }
     // A declared predicate call starts with its hidden logical resource-state
@@ -1740,8 +1694,7 @@ fn synthesize_surface_atomic_proposition(
                     };
                     call_arguments.push(ContractExpression::CFragment(synthesize_surface_pointer(
                         pointer,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?));
@@ -1750,8 +1703,7 @@ fn synthesize_surface_atomic_proposition(
                 Term::CValue(CValue::Pointer(pointer)) => {
                     call_arguments.push(ContractExpression::CFragment(synthesize_surface_pointer(
                         pointer,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?));
@@ -1760,8 +1712,7 @@ fn synthesize_surface_atomic_proposition(
                 Term::CValue(crate::kernel::int_promoted_c_value!(value)) => {
                     call_arguments.push(synthesize_surface_bitvector(
                         value,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?);
@@ -1779,15 +1730,13 @@ fn synthesize_surface_atomic_proposition(
         return Some(ClickProposition::Separate {
             left: synthesize_surface_resource_subject(
                 left,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
             right: synthesize_surface_resource_subject(
                 right,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
@@ -1803,8 +1752,7 @@ fn synthesize_surface_atomic_proposition(
             synthesize_exact_external_zero_based_byte_range(
                 base,
                 &Bitvector32Term::Constant(*bytes),
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )
@@ -1845,7 +1793,7 @@ fn synthesize_surface_atomic_proposition(
     } = proposition
     {
         let pointer =
-            synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)?;
+            synthesize_surface_pointer(pointer, parameter_binding, state, bound_variables)?;
         let validity = ClickProposition::Defined {
             expression: ContractExpression::CFragment(CExpression::TypedLoad {
                 pointer: Box::new(pointer),
@@ -1890,8 +1838,7 @@ fn synthesize_surface_atomic_proposition(
         let loadable = synthesize_zero_based_loadable_segment(
             base,
             bytes,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             bound_variables,
         )
@@ -1899,8 +1846,7 @@ fn synthesize_surface_atomic_proposition(
             synthesize_named_range_loadable_segment(
                 base,
                 bytes,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )
@@ -1940,8 +1886,7 @@ fn synthesize_surface_atomic_proposition(
         return Some(ClickProposition::Not(Box::new(
             synthesize_surface_proposition_with_bound_variables(
                 body,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
@@ -1956,8 +1901,7 @@ fn synthesize_surface_atomic_proposition(
         return Some(ClickProposition::Defined {
             expression: synthesize_surface_bitvector(
                 &Bitvector32Term::Add(left.clone(), right.clone()),
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
@@ -1978,8 +1922,7 @@ fn synthesize_surface_atomic_proposition(
         return Some(ClickProposition::Comparison {
             left: synthesize_surface_pointer_offset(
                 left,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
@@ -1990,8 +1933,7 @@ fn synthesize_surface_atomic_proposition(
             },
             right: synthesize_surface_pointer_offset(
                 right,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
@@ -2001,8 +1943,7 @@ fn synthesize_surface_atomic_proposition(
         return Some(ClickProposition::Comparison {
             left: synthesize_surface_pointer_expression(
                 left,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
@@ -2013,15 +1954,14 @@ fn synthesize_surface_atomic_proposition(
             },
             right: synthesize_surface_pointer_expression(
                 right,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?,
         });
     }
     if let Some(comparison) =
-        synthesize_unsigned_comparison(condition, parameters, arguments, state, bound_variables)
+        synthesize_unsigned_comparison(condition, parameter_binding, state, bound_variables)
     {
         return Some(if *value {
             comparison
@@ -2055,9 +1995,9 @@ fn synthesize_surface_atomic_proposition(
         _ => return None,
     };
     let surface_left =
-        synthesize_surface_bitvector(left, parameters, arguments, state, bound_variables);
+        synthesize_surface_bitvector(left, parameter_binding, state, bound_variables);
     let surface_right =
-        synthesize_surface_bitvector(right, parameters, arguments, state, bound_variables);
+        synthesize_surface_bitvector(right, parameter_binding, state, bound_variables);
     let comparison = ClickProposition::Comparison {
         left: surface_left?,
         operator,
@@ -2091,8 +2031,7 @@ fn synthesize_surface_atomic_proposition(
 /// Snapshot-relative operands retain the literal sign-bit spelling.
 fn synthesize_unsigned_comparison(
     condition: &ConditionTerm,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
@@ -2154,13 +2093,8 @@ fn synthesize_unsigned_comparison(
                 ))
             })
             .or_else(|| {
-                let expression = synthesize_surface_bitvector(
-                    term,
-                    parameters,
-                    arguments,
-                    state,
-                    bound_variables,
-                )?;
+                let expression =
+                    synthesize_surface_bitvector(term, parameter_binding, state, bound_variables)?;
                 // Keep the literal sign-bit order when an operand is snapshot
                 // relative, preserving loop-ranking observations and refusal
                 // diagnostics. Division/remainder still cast within their own
@@ -2183,8 +2117,7 @@ fn synthesize_unsigned_comparison(
 
 fn synthesize_surface_resource_subject(
     resource: &CResource,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ResourceSubject> {
@@ -2193,11 +2126,10 @@ fn synthesize_surface_resource_subject(
         return None;
     };
     let semantic_base =
-        synthesize_surface_pointer(range.base(), parameters, arguments, state, bound_variables)?;
+        synthesize_surface_pointer(range.base(), parameter_binding, state, bound_variables)?;
     let surface_base = synthesize_surface_pointer_offset(
         &range.base().offset,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )
@@ -2205,9 +2137,9 @@ fn synthesize_surface_resource_subject(
     // The bounds are spelled as the terms they are, in either index kind.
     let (range_start, range_end) = range.bound_terms();
     let surface_start =
-        synthesize_surface_bitvector(range_start, parameters, arguments, state, bound_variables)?;
+        synthesize_surface_bitvector(range_start, parameter_binding, state, bound_variables)?;
     let surface_end =
-        synthesize_surface_bitvector(range_end, parameters, arguments, state, bound_variables)?;
+        synthesize_surface_bitvector(range_end, parameter_binding, state, bound_variables)?;
     let start = contract_expression_to_c_fragment(&surface_start)?;
     let end = contract_expression_to_c_fragment(&surface_end)?;
     Some(ResourceSubject::Memory(ContractSegment {
@@ -2231,8 +2163,7 @@ fn synthesize_surface_resource_subject(
 /// confirm it denotes exactly this kernel fact.
 pub(in crate::surface) fn synthesize_surface_equality_across_points(
     proposition: &Proposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     points: &[(ProgramPointRef, &CState)],
 ) -> Option<ClickProposition> {
     let _scope = SurfaceSynthesisScope::enter();
@@ -2256,38 +2187,25 @@ pub(in crate::surface) fn synthesize_surface_equality_across_points(
         ConditionTerm::Bitvector32Equal(left, right)
         | ConditionTerm::Bitvector64Equal(left, right) => (
             anchored(&|state| {
-                synthesize_surface_bitvector(left, parameters, arguments, state, &bound_variables)
+                synthesize_surface_bitvector(left, parameter_binding, state, &bound_variables)
             })?,
             anchored(&|state| {
-                synthesize_surface_bitvector(right, parameters, arguments, state, &bound_variables)
+                synthesize_surface_bitvector(right, parameter_binding, state, &bound_variables)
             })?,
         ),
         ConditionTerm::PointerOffsetEqual(left, right) => (
             anchored(&|state| {
-                synthesize_surface_pointer_offset(
-                    left,
-                    parameters,
-                    arguments,
-                    state,
-                    &bound_variables,
-                )
+                synthesize_surface_pointer_offset(left, parameter_binding, state, &bound_variables)
             })?,
             anchored(&|state| {
-                synthesize_surface_pointer_offset(
-                    right,
-                    parameters,
-                    arguments,
-                    state,
-                    &bound_variables,
-                )
+                synthesize_surface_pointer_offset(right, parameter_binding, state, &bound_variables)
             })?,
         ),
         ConditionTerm::PointerEqual(left, right) => (
             anchored(&|state| {
                 synthesize_surface_pointer_expression(
                     left,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     &bound_variables,
                 )
@@ -2295,8 +2213,7 @@ pub(in crate::surface) fn synthesize_surface_equality_across_points(
             anchored(&|state| {
                 synthesize_surface_pointer_expression(
                     right,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     &bound_variables,
                 )
@@ -2313,13 +2230,16 @@ pub(in crate::surface) fn synthesize_surface_equality_across_points(
 
 pub(super) fn synthesize_surface_pointer_offset(
     term: &PointerOffsetTerm,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
     let _frame = SurfaceSynthesisFrame::enter("pointer-offset")?;
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         if let CExpression::Value(CValue::Pointer(pointer)) = argument
             && pointer.offset == *term
         {
@@ -2328,9 +2248,7 @@ pub(super) fn synthesize_surface_pointer_offset(
             )));
         }
     }
-    if let Some(field) =
-        synthesize_parameter_field_pointer_value(term, parameters, arguments, state)
-    {
+    if let Some(field) = synthesize_parameter_field_pointer_value(term, parameter_binding, state) {
         return Some(field);
     }
     match term {
@@ -2350,8 +2268,7 @@ pub(super) fn synthesize_surface_pointer_offset(
                     value: Box::new(load),
                     byte_width: 4,
                 },
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )
@@ -2363,20 +2280,15 @@ pub(super) fn synthesize_surface_pointer_offset(
             let Bitvector32Term::MemoryLoad(_, pointer, _) = value.as_ref() else {
                 unreachable!()
             };
-            if let Some(field) = synthesize_struct_field_load(
-                pointer,
-                CType::Int32Pointer,
-                parameters,
-                arguments,
-                state,
-            ) {
+            if let Some(field) =
+                synthesize_struct_field_load(pointer, CType::Int32Pointer, parameter_binding, state)
+            {
                 Some(field)
             } else {
                 Some(ContractExpression::CFragment(CExpression::TypedLoad {
                     pointer: Box::new(synthesize_surface_pointer(
                         pointer,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?),
@@ -2397,8 +2309,7 @@ pub(super) fn synthesize_surface_pointer_offset(
                 }
                 let ContractExpression::CFragment(base) = synthesize_surface_pointer_offset(
                     base,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     bound_variables,
                 )?
@@ -2424,15 +2335,13 @@ pub(super) fn synthesize_surface_pointer_offset(
                     let base =
                         contract_expression_to_c_fragment(&synthesize_surface_pointer_offset(
                             base,
-                            parameters,
-                            arguments,
+                            parameter_binding,
                             state,
                             bound_variables,
                         )?)?;
                     let index = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
                         index,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?)?;
@@ -2447,7 +2356,7 @@ pub(super) fn synthesize_surface_pointer_offset(
                 .or_else(|| dynamically_indexed_pointer(right, left))
         }
         PointerOffsetTerm::Int32Scaled { value, byte_width } if matches!(*byte_width, 1 | 4) => {
-            synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)
+            synthesize_surface_bitvector(value, parameter_binding, state, bound_variables)
         }
         PointerOffsetTerm::Constant(_)
         | PointerOffsetTerm::Variable(_)
@@ -2462,11 +2371,14 @@ pub(super) fn synthesize_surface_pointer_offset(
 /// reverse lookup recovers stable source syntax at each recorded snapshot.
 fn synthesize_parameter_field_pointer_value(
     term: &PointerOffsetTerm,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ContractExpression> {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let (Some(layout), CExpression::Value(CValue::Pointer(base))) =
             (parameter.struct_layout(), argument)
         else {
@@ -2517,7 +2429,7 @@ fn synthesize_parameter_field_pointer_value(
     // The same lookup through a cast `void *` parameter or a struct-pointer
     // local: a pointer field's cell may hold a view's fresh value rather
     // than a registered load, and this is its only spelling.
-    for owner in struct_owners(parameters, arguments, state) {
+    for owner in struct_owners(parameter_binding, state) {
         for (field_name, field) in owner.layout.fields() {
             let value_type = field.c_type().to_kernel_type();
             if !value_type.is_pointer() {
@@ -2600,8 +2512,7 @@ fn synthesize_uint32_operand(expression: ContractExpression) -> Option<ContractE
 
 fn synthesize_surface_bitvector(
     term: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
@@ -2662,7 +2573,7 @@ fn synthesize_surface_bitvector(
     // `n <= at(loop.entry, n)` in a loop that counts `n` down, which lowers
     // to a different proposition, and `both` then refused to split a bundle
     // whose text did not match its goal.
-    if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
+    if let Some(name) = describe_parameter_bitvector(term, parameter_binding) {
         let reassigned = state
             .locals()
             .object_values()
@@ -2688,7 +2599,7 @@ fn synthesize_surface_bitvector(
     if let Some(field) = synthesize_local_aggregate_field(term, state) {
         return Some(field);
     }
-    if let Some(field) = synthesize_local_struct_pointer_field(term, parameters, arguments, state) {
+    if let Some(field) = synthesize_local_struct_pointer_field(term, parameter_binding, state) {
         return Some(field);
     }
     if let Some(snapshot) = synthesize_snapshot_local(term) {
@@ -2698,15 +2609,13 @@ fn synthesize_surface_bitvector(
         Some((
             Box::new(synthesize_surface_bitvector(
                 left,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?),
             Box::new(synthesize_surface_bitvector(
                 right,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?),
@@ -2776,7 +2685,7 @@ fn synthesize_surface_bitvector(
             Some(ContractExpression::BitwiseXor(left, right))
         }
         Bitvector32Term::BitwiseNot(value) => Some(ContractExpression::BitwiseNot(Box::new(
-            synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?,
+            synthesize_surface_bitvector(value, parameter_binding, state, bound_variables)?,
         ))),
         // Floating-point operation terms are not integer surface fragments;
         // callers that need them retain the original C expression instead.
@@ -2786,7 +2695,7 @@ fn synthesize_surface_bitvector(
         | Bitvector32Term::Float64Binary { .. } => None,
         Bitvector32Term::PointerAddress(pointer) => {
             let pointer =
-                synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)?;
+                synthesize_surface_pointer(pointer, parameter_binding, state, bound_variables)?;
             Some(ContractExpression::CFragment(CExpression::Cast {
                 expression: Box::new(pointer),
                 target_type: CType::UInt64,
@@ -2848,13 +2757,7 @@ fn synthesize_surface_bitvector(
                     return None;
                 }
                 Some(ContractExpression::Old(Box::new(
-                    synthesize_surface_bitvector(
-                        &load,
-                        parameters,
-                        arguments,
-                        entry,
-                        bound_variables,
-                    )?,
+                    synthesize_surface_bitvector(&load, parameter_binding, entry, bound_variables)?,
                 )))
             });
             if old.is_some() {
@@ -2872,8 +2775,7 @@ fn synthesize_surface_bitvector(
                                 synthesize_struct_field_load(
                                     kernel_pointer,
                                     value_type,
-                                    parameters,
-                                    arguments,
+                                    parameter_binding,
                                     state,
                                 )
                             })
@@ -2881,9 +2783,10 @@ fn synthesize_surface_bitvector(
                         return Some(field);
                     }
                 }
-                let value_type = parameters
+                let value_type = parameter_binding
+                    .parameters
                     .iter()
-                    .zip(arguments)
+                    .zip(parameter_binding.arguments)
                     .find_map(|(parameter, argument)| {
                         let CExpression::Value(CValue::Pointer(base)) = argument else {
                             return None;
@@ -2898,8 +2801,7 @@ fn synthesize_surface_bitvector(
                     .unwrap_or(CType::Int64);
                 let pointer = synthesize_surface_pointer(
                     kernel_pointer,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     bound_variables,
                 )?;
@@ -2924,50 +2826,43 @@ fn synthesize_surface_bitvector(
                 Some(ContractExpression::CFragment(CExpression::Variable(
                     name.to_string(),
                 )))
-            } else if let Some(field) = synthesize_struct_field_load(
-                kernel_pointer,
-                CType::Int32,
-                parameters,
-                arguments,
-                state,
-            ) {
+            } else if let Some(field) =
+                synthesize_struct_field_load(kernel_pointer, CType::Int32, parameter_binding, state)
+            {
                 Some(field)
             } else if let Some(indexed_field) = synthesize_parameter_field_indexed_int32_load(
                 kernel_pointer,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             ) {
                 Some(indexed_field)
             } else if let Some(indexed_local) = synthesize_local_indexed_int32_load(
                 kernel_pointer,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             ) {
                 Some(indexed_local)
             } else {
-                let value_type =
-                    parameters
-                        .iter()
-                        .zip(arguments)
-                        .find_map(|(parameter, argument)| {
-                            let CExpression::Value(CValue::Pointer(base)) = argument else {
-                                return None;
-                            };
-                            let element_type = parameter.c_type().pointee_type()?;
-                            kernel_pointer.element_index_from_base_with_width(
-                                base,
-                                element_type.to_kernel_type().byte_width(),
-                            )?;
-                            Some(element_type.to_kernel_type())
-                        });
+                let value_type = parameter_binding
+                    .parameters
+                    .iter()
+                    .zip(parameter_binding.arguments)
+                    .find_map(|(parameter, argument)| {
+                        let CExpression::Value(CValue::Pointer(base)) = argument else {
+                            return None;
+                        };
+                        let element_type = parameter.c_type().pointee_type()?;
+                        kernel_pointer.element_index_from_base_with_width(
+                            base,
+                            element_type.to_kernel_type().byte_width(),
+                        )?;
+                        Some(element_type.to_kernel_type())
+                    });
                 let pointer = synthesize_surface_pointer(
                     kernel_pointer,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     bound_variables,
                 );
@@ -3012,8 +2907,7 @@ fn synthesize_surface_bitvector(
             if let Some(load) = registered_load_in_state(variable, state) {
                 return synthesize_surface_bitvector(
                     &load,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     bound_variables,
                 );
@@ -3023,13 +2917,7 @@ fn synthesize_surface_bitvector(
                 let entry = slot.as_ref()?;
                 let load = registered_load_in_state(variable, entry)?;
                 Some(ContractExpression::Old(Box::new(
-                    synthesize_surface_bitvector(
-                        &load,
-                        parameters,
-                        arguments,
-                        entry,
-                        bound_variables,
-                    )?,
+                    synthesize_surface_bitvector(&load, parameter_binding, entry, bound_variables)?,
                 )))
             })
         }
@@ -3044,8 +2932,7 @@ fn synthesize_surface_bitvector(
                 expression: Box::new(contract_expression_to_c_fragment(
                     &synthesize_surface_bitvector(
                         value,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?,
@@ -3065,8 +2952,7 @@ fn synthesize_surface_bitvector(
                 expression: Box::new(contract_expression_to_c_fragment(
                     &synthesize_surface_bitvector(
                         value,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?,
@@ -3084,8 +2970,7 @@ fn synthesize_surface_bitvector(
                 expression: Box::new(contract_expression_to_c_fragment(
                     &synthesize_surface_bitvector(
                         value,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?,
@@ -3165,7 +3050,7 @@ fn synthesize_surface_bitvector(
         }
         Bitvector32Term::Int64BitwiseNot(value) | Bitvector32Term::UInt64BitwiseNot(value) => {
             Some(ContractExpression::BitwiseNot(Box::new(
-                synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?,
+                synthesize_surface_bitvector(value, parameter_binding, state, bound_variables)?,
             )))
         }
         Bitvector32Term::If { .. } | Bitvector32Term::RangeFold { .. } => None,
@@ -3177,20 +3062,14 @@ fn synthesize_surface_bitvector(
             arguments: values
                 .iter()
                 .map(|value| {
-                    synthesize_surface_bitvector(
-                        value,
-                        parameters,
-                        arguments,
-                        state,
-                        bound_variables,
-                    )
+                    synthesize_surface_bitvector(value, parameter_binding, state, bound_variables)
                 })
                 .collect::<Option<Vec<_>>>()?,
         }),
         Bitvector32Term::ClickFunctionApplication {
             name,
             arguments: values,
-        } => synthesize_surface_call(name, values, parameters, arguments, state, bound_variables),
+        } => synthesize_surface_call(name, values, parameter_binding, state, bound_variables),
         Bitvector32Term::AlgebraicMatch { .. } | Bitvector32Term::IntegerToMachine { .. } => None,
     }
 }
@@ -3203,8 +3082,7 @@ fn synthesize_surface_bitvector(
 fn synthesize_surface_call(
     name: &str,
     values: &[crate::kernel::PureFunctionArgument],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
@@ -3216,7 +3094,7 @@ fn synthesize_surface_call(
         }
         let expression = match value {
             crate::kernel::PureFunctionArgument::Value(CValue::Int32(value)) => {
-                synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?
+                synthesize_surface_bitvector(value, parameter_binding, state, bound_variables)?
             }
             crate::kernel::PureFunctionArgument::ArrayRef {
                 memory,
@@ -3227,8 +3105,7 @@ fn synthesize_surface_call(
                 if snapshot == crate::kernel::intern_c_memory_ref(state.memory()) {
                     synthesize_surface_pointer_expression(
                         pointer,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         bound_variables,
                     )?
@@ -3242,8 +3119,7 @@ fn synthesize_surface_call(
                         Some(ContractExpression::Old(Box::new(
                             synthesize_surface_pointer_expression(
                                 pointer,
-                                parameters,
-                                arguments,
+                                parameter_binding,
                                 entry,
                                 bound_variables,
                             )?,
@@ -3263,8 +3139,7 @@ fn synthesize_surface_call(
 
 fn synthesize_parameter_field_indexed_int32_load(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
@@ -3293,8 +3168,7 @@ fn synthesize_parameter_field_indexed_int32_load(
         let field = synthesize_struct_field_load(
             field_pointer,
             CType::Int32Pointer,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
         )?;
         let index = match index {
@@ -3302,9 +3176,7 @@ fn synthesize_parameter_field_indexed_int32_load(
             Some(PointerOffsetTerm::Int32Scaled {
                 value,
                 byte_width: 4,
-            }) => {
-                synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?
-            }
+            }) => synthesize_surface_bitvector(value, parameter_binding, state, bound_variables)?,
             Some(PointerOffsetTerm::Constant(bytes)) if bytes % 4 == 0 => {
                 ContractExpression::CFragment(CExpression::Value(int32(
                     u32::try_from(bytes / 4).ok()?,
@@ -3337,7 +3209,8 @@ fn synthesize_parameter_field_indexed_int32_load(
                     && declaration.union_name().is_none()
             })
         };
-        let declared_array = parameters
+        let declared_array = parameter_binding
+            .parameters
             .iter()
             .find(|parameter| parameter.name() == owner)
             .and_then(|parameter| parameter.struct_layout())
@@ -3395,11 +3268,10 @@ fn synthesize_parameter_field_indexed_int32_load(
 /// layout scope; without one, no local is a candidate.
 fn synthesize_local_struct_pointer_field(
     term: &Bitvector32Term,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ContractExpression> {
-    for owner in struct_owners(parameters, arguments, state) {
+    for owner in struct_owners(parameter_binding, state) {
         for (field_name, field) in owner.layout.fields() {
             let value_type = field.c_type().to_kernel_type();
             if value_type.is_pointer() || value_type.byte_width() == 0 {
@@ -3630,8 +3502,7 @@ pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
 
 fn synthesize_local_indexed_int32_load(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
@@ -3670,8 +3541,7 @@ fn synthesize_local_indexed_int32_load(
             ))),
             Box::new(synthesize_surface_bitvector(
                 &index,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 bound_variables,
             )?),
@@ -3682,10 +3552,13 @@ fn synthesize_local_indexed_int32_load(
 fn synthesize_parameter_field_load(
     pointer: &Pointer,
     value_type: CType,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Option<ContractExpression> {
-    for (parameter, argument) in parameters.iter().zip(arguments) {
+    for (parameter, argument) in parameter_binding
+        .parameters
+        .iter()
+        .zip(parameter_binding.arguments)
+    {
         let (Some(layout), CExpression::Value(CValue::Pointer(base))) =
             (parameter.struct_layout(), argument)
         else {
@@ -3739,11 +3612,10 @@ fn synthesize_parameter_field_load(
 fn synthesize_local_field_load(
     pointer: &Pointer,
     value_type: CType,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ContractExpression> {
-    for owner in struct_owners(parameters, arguments, state) {
+    for owner in struct_owners(parameter_binding, state) {
         // Compare each field's address with the load's pointer directly: an
         // object reached through an opaque `void *` keeps a byte-scaled
         // offset that element arithmetic over the struct width would miss.
@@ -3781,12 +3653,11 @@ fn synthesize_local_field_load(
 fn synthesize_struct_field_load(
     pointer: &Pointer,
     value_type: CType,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Option<ContractExpression> {
-    synthesize_parameter_field_load(pointer, value_type, parameters, arguments)
-        .or_else(|| synthesize_local_field_load(pointer, value_type, parameters, arguments, state))
+    synthesize_parameter_field_load(pointer, value_type, parameter_binding)
+        .or_else(|| synthesize_local_field_load(pointer, value_type, parameter_binding, state))
 }
 
 /// Recover source syntax for an opaque pointer value read from an owned
@@ -3896,8 +3767,7 @@ fn synthesis_element_index(
 
 fn synthesize_surface_pointer(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<CExpression> {
@@ -3905,9 +3775,10 @@ fn synthesize_surface_pointer(
     if pointer == &Pointer::null() {
         return Some(CExpression::Value(int32(0)));
     }
-    if let Some(expression) = parameters
+    if let Some(expression) = parameter_binding
+        .parameters
         .iter()
-        .zip(arguments)
+        .zip(parameter_binding.arguments)
         .find_map(|(parameter, argument)| {
             let CExpression::Value(CValue::Pointer(base)) = argument else {
                 return None;
@@ -3922,13 +3793,8 @@ fn synthesize_surface_pointer(
             if index == Bitvector32Term::Constant(0) {
                 return Some(base);
             }
-            let index = synthesize_surface_bitvector(
-                &index,
-                parameters,
-                arguments,
-                state,
-                bound_variables,
-            )?;
+            let index =
+                synthesize_surface_bitvector(&index, parameter_binding, state, bound_variables)?;
             let ContractExpression::CFragment(index) = index else {
                 return None;
             };
@@ -3948,7 +3814,7 @@ fn synthesize_surface_pointer(
             return Some(base);
         }
         let index =
-            synthesize_surface_bitvector(&index, parameters, arguments, state, bound_variables)?;
+            synthesize_surface_bitvector(&index, parameter_binding, state, bound_variables)?;
         let ContractExpression::CFragment(index) = index else {
             return None;
         };
@@ -3959,7 +3825,7 @@ fn synthesize_surface_pointer(
     if let Some(field) = synthesize_owned_pointer_field(pointer, state) {
         return contract_expression_to_c_fragment(&field);
     }
-    if !arguments.iter().any(|argument| {
+    if !parameter_binding.arguments.iter().any(|argument| {
         matches!(
             argument,
             CExpression::Value(CValue::Pointer(base)) if base.block == pointer.block
@@ -3971,8 +3837,7 @@ fn synthesize_surface_pointer(
     // displaced; the C expression it denotes is the field's lowered load.
     contract_expression_to_c_fragment(&synthesize_surface_pointer_offset(
         &pointer.offset,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         bound_variables,
     )?)
@@ -3980,8 +3845,7 @@ fn synthesize_surface_pointer(
 
 fn synthesize_surface_pointer_expression(
     pointer: &Pointer,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
@@ -3990,11 +3854,11 @@ fn synthesize_surface_pointer_expression(
         return Some(field);
     }
     if let Some(pointer) =
-        synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)
+        synthesize_surface_pointer(pointer, parameter_binding, state, bound_variables)
     {
         return Some(ContractExpression::CFragment(pointer));
     }
-    if !arguments.iter().any(|argument| {
+    if !parameter_binding.arguments.iter().any(|argument| {
         matches!(
             argument,
             CExpression::Value(CValue::Pointer(base)) if base.block == pointer.block
@@ -4002,11 +3866,5 @@ fn synthesize_surface_pointer_expression(
     }) {
         return None;
     }
-    synthesize_surface_pointer_offset(
-        &pointer.offset,
-        parameters,
-        arguments,
-        state,
-        bound_variables,
-    )
+    synthesize_surface_pointer_offset(&pointer.offset, parameter_binding, state, bound_variables)
 }

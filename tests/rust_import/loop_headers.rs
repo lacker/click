@@ -128,6 +128,38 @@ fn charon_loop_headers_import_unchanged_fixtures_and_retain_frontier_gaps() {
     }
 }
 
+/// A loop phase of a Rust function is expanded by its label over the
+/// prepared program, through the program entry point and through the
+/// input-generic one `click expand --claim` uses: the omitted phase becomes
+/// an explicit proof in the `loop` tactic, and the rewrite checks.
+#[test]
+fn charon_loop_phase_expands_by_label_over_the_prepared_program() {
+    let p = project("loops", true);
+    let prepared = load_import(&p.config()).unwrap();
+    let sidecar = fs::read_to_string(p.root.join("borrow.click")).unwrap();
+    let inputs = click::surface::ProgramInputs::program(&prepared);
+    for phase in ["initialize", "preserve"] {
+        let label = format!("count.loop(0).{phase}");
+        let expanded = click::surface::expand_program_prepared_claim_source_by_label(
+            &sidecar, &prepared, &label,
+        )
+        .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+        let insertion = sidecar.find("}\n    execute(); simp();").unwrap();
+        assert!(expanded.starts_with(&sidecar[..insertion]), "{expanded}");
+        assert!(expanded.ends_with(&sidecar[insertion..]), "{expanded}");
+        assert!(
+            expanded[insertion..].starts_with(&format!("    {phase} by {{\n")),
+            "{expanded}"
+        );
+        let generic = click::surface::expand_claim_by_label(None, &sidecar, &inputs, &label, None)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+        assert_eq!(generic.source, expanded, "{label}");
+        assert_eq!(generic.proof_unit, "count.contract", "{label}");
+        C0VerificationSession::new_program_prepared(&expanded, &prepared)
+            .unwrap_or_else(|error| panic!("{label}: {}\n{expanded}", error.message()));
+    }
+}
+
 #[test]
 #[ignore = "nightly: 4s in the parallel gate"]
 fn charon_loop_headers_check_real_guards_final_assignments_and_false_claims() {

@@ -1,127 +1,5 @@
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::surface) fn verify_loop_execution_proofs(
-    expansion_capture: Option<&mut ExpansionCapture>,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    function_environment: &CExecutionEnvironment,
-    spec_definitions: SpecDefinitions<'_>,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    function_source_registry: Arc<FunctionSourceRegistry>,
-) -> Result<Vec<CVerifiedLoopRule>, ClickError> {
-    let has_structural_proofs = function_block
-        .structural_clauses()
-        .iter()
-        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
-    if !has_structural_proofs {
-        return Ok(Vec::new());
-    }
-
-    let label = format!("{}.loop_preservation", function_block.signature().name());
-    let (initial_state, arguments, requirement_facts, surface_propositions) =
-        initial_claim_context(
-            function_block,
-            parsed_function,
-            resource_environment,
-            spec_definitions,
-            &label,
-        )?;
-    // The requirement facts start every planned path, and the list keeps
-    // the context the entry checks below extend, for that path's first step
-    // to extend in turn.
-    let function = annotated_function_with_assumptions(
-        function_block,
-        parsed_function,
-        &initial_state,
-        &arguments,
-        spec_definitions,
-        resource_environment,
-        Some(ResourceFrameEntry {
-            assumptions: &assumptions_from_propositions(&requirement_facts),
-            checked_entry_state: None,
-        }),
-    )?;
-
-    let initial_state = install_borrowed_contract_inputs(
-        initial_state,
-        &function,
-        &arguments,
-        &requirement_facts,
-        parsed_function.parameters(),
-        &label,
-    )?;
-
-    let entry_state = c_function_contract_entry_state(
-        &initial_state,
-        &function,
-        &arguments,
-        &assumptions_from_propositions(&requirement_facts),
-    )
-    .map_err(|message| ClickError::new(format!("`{label}` {message}")))?;
-    // A loop of a function that declares an expression `decreases` measure is
-    // certified under that function's recursion anchor, so a self-call in the
-    // loop body raises the same descent obligations a self-call outside one
-    // does, against the same function-entry measure. The kernel derives the
-    // anchor from the function's own contract interface -- this asks for one
-    // and cannot say what it ranks -- and the rules the loops produce record
-    // which anchor they were stepped under, so omitting this call does not
-    // quietly drop the obligation: the rule then answers for no recursion,
-    // the whole-function proof cannot apply it, and the termination judgment
-    // refuses the self-call by name.
-    let anchored_function_environment =
-        crate::kernel::c_execution_environment_with_recursion_anchor(
-            function_environment.clone(),
-            &function,
-            &initial_state,
-            &arguments,
-        )
-        .map_err(|message| ClickError::new(format!("`{label}`: {message}")))?;
-    let function_environment = &anchored_function_environment;
-
-    let source_layout = SourceExecutionLayout::for_function(parsed_function)?;
-    let environment = ExecutionProofEnvironment {
-        initial_state: &initial_state,
-        function_block,
-        parsed_function,
-        function_environment,
-        spec_definitions,
-        resource_environment,
-        theorem_environment,
-        function: &function,
-        arguments: &arguments,
-        surface_propositions: &surface_propositions,
-        source_layout: &source_layout,
-        function_source_registry,
-        frontier_loop_certificates: None,
-        frontier_loop_source: None,
-        proof_locals: BTreeMap::new(),
-    };
-    let mut verified_loop_rules = Vec::new();
-    let mut next_statement_index = 0;
-    let mut next_loop_index = 0;
-    verify_execution_proofs_forward(
-        expansion_capture,
-        function.body(),
-        vec![PlanningExecutionContext {
-            state: entry_state,
-            pure_facts: requirement_facts,
-            surface_propositions: surface_propositions.clone(),
-            recorded_snapshots: RecordedSnapshots::new(),
-            case_path: Vec::new(),
-            next_opaque_call: 0,
-            next_kernel_variable: 0,
-            resume_at_statement: None,
-        }],
-        &mut next_statement_index,
-        &mut next_loop_index,
-        &environment,
-        &mut verified_loop_rules,
-    )?;
-    Ok(verified_loop_rules)
-}
-
 pub(in crate::surface::proof) fn explicit_loop_preservation_tactics(
     clause: &StructuralClause,
 ) -> Option<&[ProofTactic]> {
@@ -202,8 +80,8 @@ pub(in crate::surface::proof) struct ExecutionProofEnvironment<'a> {
     pub(in crate::surface::proof) source_layout: &'a SourceExecutionLayout,
     pub(in crate::surface::proof) function_source_registry: Arc<FunctionSourceRegistry>,
     pub(in crate::surface::proof) frontier_loop_certificates:
-        Option<&'a std::cell::RefCell<LoopProofCertificates>>,
-    pub(in crate::surface::proof) frontier_loop_source: Option<&'a FrontierLoopProofSource>,
+        &'a std::cell::RefCell<LoopProofCertificates>,
+    pub(in crate::surface::proof) frontier_loop_source: &'a FrontierLoopProofSource,
     /// The proof locals in scope where a frontier loop was written: a proof
     /// `match` arm's bindings, `let { ... } = unfold(...)` names, call-result binders.
     /// The planners resolve them into the loop's written clauses before

@@ -313,7 +313,7 @@ impl Stop {
                 point.snapshot(),
                 resource,
                 &step_effect::Evidence {
-                    assumptions: &PureFactContext::new(),
+                    assumptions: &naming_context(),
                     cross_loop_havoc: false,
                 },
             ) {
@@ -857,6 +857,37 @@ fn recorded_steps_between(from: &ProgramPoint, to: &ProgramPoint) -> usize {
 pub(crate) fn clear_version_memos() {
     CELL_EPOCH_MEMO.with(|memo| memo.borrow_mut().clear());
     BLOCK_EPOCH_MEMO.with(|memo| memo.borrow_mut().clear());
+    NAMING_CONTEXT.with(|context| context.borrow_mut().take());
+}
+
+/// The empty fact context every naming walk asks its questions in.
+///
+/// A naming walk is assumption-free, but answering an alias question still
+/// registers the queried terms, and the reads their addresses depend on, in
+/// the context's equality graph. A fresh empty context per walk re-registered
+/// the same terms for every walk that met them, so a step that named a few
+/// dozen cells paid for the whole dependency chain of each again. One empty
+/// context per verification session registers each term once. It holds no
+/// fact: its graph carries only the producer-recorded read definitions that
+/// any context registers on demand, and it is rebuilt whenever the thread's
+/// read table is replaced.
+fn naming_context() -> std::rc::Rc<PureFactContext> {
+    NAMING_CONTEXT.with(|context| {
+        let mut context = context.borrow_mut();
+        if let Some(current) = context.as_ref()
+            && current.equality_graph.reads_current_logical_reads()
+        {
+            return current.clone();
+        }
+        let fresh = std::rc::Rc::new(PureFactContext::new());
+        *context = Some(fresh.clone());
+        fresh
+    })
+}
+
+thread_local! {
+    static NAMING_CONTEXT: std::cell::RefCell<Option<std::rc::Rc<PureFactContext>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// The snapshot a pure function's array argument names: the latest one that
@@ -1021,7 +1052,7 @@ fn cell_last_same_point(
     // for its own memory delta rather than the entire execution history.
     crate::instrumentation::measure_operation("kernel", "canonical form", "cell epoch walk", || {
         with_extended_dag_bridging(|| {
-            let assumptions = PureFactContext::new();
+            let assumptions = naming_context();
             let evidence = step_effect::Evidence {
                 assumptions: &assumptions,
                 cross_loop_havoc: false,
@@ -1085,7 +1116,7 @@ fn cell_source_for_naming(
     bytes: u32,
 ) -> Option<MemoryDagCell> {
     with_extended_dag_bridging(|| {
-        memory_dag_cell_source(memory, pointer, bytes, &PureFactContext::new(), false)
+        memory_dag_cell_source(memory, pointer, bytes, &naming_context(), false)
     })
 }
 

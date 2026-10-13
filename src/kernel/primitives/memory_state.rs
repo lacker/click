@@ -6228,7 +6228,7 @@ impl CMemory {
         // dropped recorded initialized, and without the zero readings under
         // a dropped value or the write set ([`CMemory::forget_cached_values`]).
         let mut expected = before.clone();
-        expected.record_dropped_local_cells(&dropped_initialized);
+        expected.record_dropped_initialized_cells(&dropped_initialized);
         expected.forget_zero_readings_under(
             dropped_initialized
                 .iter()
@@ -6758,7 +6758,6 @@ impl CMemory {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::kernel) fn write_scalar_array_region(
         mut self,
         base: &Pointer,
@@ -7003,7 +7002,6 @@ impl CMemory {
     // Authority is checked by the statement executor. External argument
     // storage follows ordinary typed-load semantics: unknown initialized
     // bytes remain symbolic. Known automatic storage must be initialized.
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::kernel) fn write_scalar_array_snapshot(
         mut self,
         base: &Pointer,
@@ -7251,7 +7249,6 @@ impl CMemory {
     }
 
     /// The run of [`Self::with_seeded_cells`], its preconditions checked.
-    #[allow(clippy::too_many_arguments)]
     fn with_run_of_cells(
         mut self,
         base: Pointer,
@@ -7651,6 +7648,16 @@ impl CMemory {
         if self.has_initialized_bytes_at(pointer, byte_width) {
             return true;
         }
+        // An exact cached store is initialization evidence at symbolic addresses
+        // too. Keep the query local to this cell; unrelated addresses and bytes
+        // beyond the stored value still require their own evidence.
+        if self
+            .cells
+            .get(pointer)
+            .is_some_and(|value| value.byte_width() >= byte_width)
+        {
+            return true;
+        }
         if let Some(offset) = pointer.offset.as_const() {
             return self.written_interval(&pointer.block, offset, offset + i64::from(byte_width));
         }
@@ -7869,17 +7876,14 @@ impl CMemory {
     }
 
     /// Records the bytes of cells whose cached values an operation dropped
-    /// as initialized, where they are automatic storage: a store only ever
-    /// initializes, so the bytes stay initialized with the value unknown.
-    /// Heap cells need nothing here — a heap store records its bytes as it
-    /// writes them. Costs the dropped cells.
-    fn record_dropped_local_cells(&mut self, dropped: &[(Pointer, u32)]) {
+    /// as initialized: forgetting a value does not end its storage lifetime
+    /// or undo initialization. This also covers symbolic contract inputs whose
+    /// complete typed cells were admitted at entry. Costs the dropped cells.
+    fn record_dropped_initialized_cells(&mut self, dropped: &[(Pointer, u32)]) {
         let mut record = self.heap.initialized.clone();
         let mut changed = false;
         for (pointer, width) in dropped {
-            if pointer.block.starts_with("local:") {
-                changed |= record.record(pointer, *width);
-            }
+            changed |= record.record(pointer, *width);
         }
         if changed {
             std::sync::Arc::make_mut(&mut self.heap).initialized = record;
@@ -7904,12 +7908,12 @@ impl CMemory {
     /// cell and each union view by the same rule; `run_rule` answers for a
     /// run as a whole, as [`CellStore::retain_candidates_outside_by`] asks.
     /// What is [`CachedValueFate::Forgotten`] then also loses its zero
-    /// reading, and, in automatic storage, stays recorded initialized (a
-    /// write only ever initializes). A new representation of cached bytes
+    /// reading, and stays recorded initialized (forgetting a cached value
+    /// does not undo initialization). A new representation of cached bytes
     /// belongs in this function, so no transition can miss it.
     ///
     /// The slots `run_rule` drops as a whole run are recorded initialized
-    /// where they are automatic ([`Self::record_dropped_local_run_slots`]),
+    /// by [`Self::record_dropped_initialized_run_slots`],
     /// whatever `fate` would say of them: a dropped slot was written, and a
     /// caller that retires the storage forgets its record afterwards. A run
     /// carries no zero reading to lose: it is never seeded where a live
@@ -7981,10 +7985,10 @@ impl CMemory {
                 }
             }
         }
-        self.record_dropped_local_cells(&forgotten_cells);
+        self.record_dropped_initialized_cells(&forgotten_cells);
         // A run's slots are cells too, dropped by `run_rule` as a whole run
         // without `fate` being asked; automatic ones stay initialized.
-        self.record_dropped_local_run_slots(&dropped_run_slots);
+        self.record_dropped_initialized_run_slots(&dropped_run_slots);
         self.forget_zero_readings_under(forgotten_cells.iter().map(|(pointer, _)| &pointer.block));
         !forgotten_cells.is_empty()
     }
@@ -8016,29 +8020,34 @@ impl CMemory {
         }
     }
 
-    /// [`Self::record_dropped_local_cells`] for run slots dropped as a whole
+    /// [`Self::record_dropped_initialized_cells`] for run slots dropped as a whole
     /// run. A dropped interval whose bytes the record already holds costs
     /// one covering query: the usual case, as a declaration's initializer,
     /// which is what makes a run of automatic storage, records its whole
     /// object ([`Self::with_initialized_object`]). Otherwise contiguous
-    /// slots are one run of bytes, and only slots strided apart or at a
-    /// symbolic offset are recorded one by one, each as a dropped cell.
-    fn record_dropped_local_run_slots(&mut self, dropped: &[DroppedRunSlots]) {
+    /// slots are one run of bytes, including at symbolic offsets; only slots
+    /// strided apart are recorded one by one, each as a dropped cell.
+    fn record_dropped_initialized_run_slots(&mut self, dropped: &[DroppedRunSlots]) {
         if dropped.is_empty() {
             return;
         }
         let mut record = self.heap.initialized.clone();
         let mut changed = false;
         for DroppedRunSlots { run, elements } in dropped {
-            if !run.base().block.starts_with("local:") {
-                continue;
-            }
             let width = run.value_width();
             for (low, high) in elements.intervals() {
                 if low >= high {
                     continue;
                 }
                 let first = run.slot_pointer(low);
+                // Adjacent slots remain one initialized interval even when
+                // the run's base is a symbolic parameter address.
+                if run.element_width() == width
+                    && let Some(bytes) = (high - low).checked_mul(width)
+                {
+                    changed |= record.record(&first, bytes);
+                    continue;
+                }
                 let span = first.offset.as_const().zip(
                     run.slot_pointer(high - 1)
                         .offset
@@ -8157,7 +8166,7 @@ impl CMemory {
         // or one the store writes only part of, is knowledge the result no
         // longer has: it is `Forgotten`, which is what has to show in the
         // content, keeps automatic bytes initialized (see
-        // `record_dropped_local_cells`), and ends a zero reading under it.
+        // `record_dropped_initialized_cells`), and ends a zero reading under it.
         // Every cell in a block proven distinct from the written one is kept
         // by each ladder below (its bytes are `Separate` and its address is
         // proven distinct on the first rung), so only the candidates are
@@ -11238,7 +11247,7 @@ fn ask_every_slot(_: &CellRun) -> (SlotSet, crate::kernel::primitives::RuleAnswe
     )
 }
 
-/// Collects one dropped cell for [`CMemory::record_dropped_local_cells`],
+/// Collects one dropped cell for [`CMemory::record_dropped_initialized_cells`],
 /// except from inside a debug self-check that re-asks a retain predicate:
 /// that would record, in a debug build only, cells a release build keeps
 /// by a whole-run answer.
@@ -11261,6 +11270,71 @@ fn local_block_entries<'a, K: BlockKeyed, V>(
 #[cfg(test)]
 mod initialization_record_tests {
     use super::*;
+
+    #[test]
+    fn exact_symbolic_cell_proves_only_its_stored_bytes_initialized() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(924_019)), 4),
+        };
+        let assumptions = PureFactContext::new();
+        let empty = CMemory::new();
+        assert!(!empty.has_initialized_bytes_under(&pointer, 8, &assumptions));
+        let memory = empty.store(
+            pointer.clone(),
+            CValue::typed_pointer(Pointer::symbolic(Variable(924_020)), CType::Int32Pointer),
+        );
+        assert!(memory.has_initialized_bytes_under(&pointer, 8, &assumptions));
+        assert!(!memory.has_initialized_bytes_under(&pointer, 9, &assumptions));
+        assert!(!memory.has_initialized_bytes_under(&pointer.offset_by_bytes(8), 1, &assumptions,));
+        let range =
+            CMemoryRange::new_with_element_width(pointer.clone(), 0u32.into(), 8u32.into(), 1);
+        let after = memory.clone().with_call_memory_havoc(
+            Variable(924_021),
+            std::slice::from_ref(&range),
+            &assumptions,
+            None,
+        );
+        assert!(after.known_value(&pointer).is_none());
+        assert!(after.has_initialized_bytes_under(&pointer, 8, &assumptions));
+        assert!(!after.has_initialized_bytes_under(&pointer, 9, &assumptions));
+        assert!(after.matches_call_memory_havoc_result(
+            &memory,
+            std::slice::from_ref(&range),
+            &assumptions,
+            None,
+        ));
+    }
+
+    #[test]
+    fn forgotten_symbolic_initialized_runs_stay_compressed() {
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(924_022)), 4),
+        };
+        let mut samples = Vec::new();
+        for count in [16, 256, 4096] {
+            let before = CMemory::new();
+            let memory = before.clone().with_seeded_cells(
+                pointer.clone(),
+                4,
+                CType::Int32,
+                0,
+                count,
+                crate::kernel::intern_c_memory(before),
+            );
+            let (after, work) =
+                crate::instrumentation::measure_deterministic_work(|| loop_havoc(memory, 924_023));
+            assert!(after.known_value(&pointer).is_none());
+            assert!(after.has_initialized_bytes_at(&pointer, count * 4));
+            assert!(!after.has_initialized_bytes_at(&pointer, count * 4 + 1));
+            samples.push(work);
+        }
+        assert!(
+            samples.iter().all(|work| *work == samples[0]),
+            "{samples:?}"
+        );
+    }
 
     fn element(block: &str, index: i64) -> Pointer {
         Pointer {

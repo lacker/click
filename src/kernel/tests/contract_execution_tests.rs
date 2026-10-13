@@ -3418,6 +3418,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
     };
     let execution = CFunctionContractExecution {
         cases: vec![vec![CContractPathSet {
+            checked_resource_guard_cases: Vec::new(),
             paths: vec![path],
             checked_resource_claims: vec![Vec::new()],
             checked_resource_transitions: vec![false],
@@ -3516,6 +3517,7 @@ fn contract_claims_are_judged_over_each_path_set_of_a_case() {
         loan_evidence: crate::kernel::loans::empty_checked_loan_evidence_sequence(),
     };
     let set = |path: &SymbolicCExecutionPath| CContractPathSet {
+        checked_resource_guard_cases: Vec::new(),
         paths: vec![path.clone()],
         checked_resource_claims: vec![Vec::new()],
         checked_resource_transitions: vec![false],
@@ -3611,6 +3613,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
     };
     let execution = CFunctionContractExecution {
         cases: vec![vec![CContractPathSet {
+            checked_resource_guard_cases: Vec::new(),
             paths: vec![path],
             checked_resource_claims: vec![Vec::new()],
             checked_resource_transitions: vec![false],

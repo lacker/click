@@ -96,15 +96,23 @@ impl<'a> StatedSite<'a> {
     /// One kernel machine term in the user's spelling.
     fn spell_term(&self, term: &Bitvector32Term) -> Option<String> {
         let (parameters, arguments) = self.naming();
-        synthesize_surface_machine_expression(term, parameters, arguments, self.state)
-            .map(|expression| spelled_alone(&expression))
+        synthesize_surface_machine_expression(
+            term,
+            ParameterBinding::new(parameters, arguments),
+            self.state,
+        )
+        .map(|expression| spelled_alone(&expression))
     }
 
     /// One kernel proposition as the user would write it, when reconstruction
     /// can name every value it mentions.
     fn spell_proposition(&self, proposition: &Proposition) -> Option<ClickProposition> {
         let (parameters, arguments) = self.naming();
-        synthesize_surface_proposition(proposition, parameters, arguments, self.state)
+        synthesize_surface_proposition(
+            proposition,
+            ParameterBinding::new(parameters, arguments),
+            self.state,
+        )
     }
 }
 
@@ -825,7 +833,10 @@ fn walk_written_expressions_in_proposition(
             walk_written_expressions(right, visit);
         }
         ClickProposition::FloatClassification { expression, .. }
-        | ClickProposition::Defined { expression } => walk_written_expressions(expression, visit),
+        | ClickProposition::Defined { expression }
+        | ClickProposition::ValidPlace { expression, .. } => {
+            walk_written_expressions(expression, visit)
+        }
         ClickProposition::At { proposition, .. }
         | ClickProposition::Not(proposition)
         | ClickProposition::ForAll {

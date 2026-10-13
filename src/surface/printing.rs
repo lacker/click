@@ -793,6 +793,18 @@ fn write_arithmetic_certificate(
             IntegerCertificateNode::Trivial { result } => {
                 format!("trivial => {};", source_click_proposition(result))
             }
+            IntegerCertificateNode::NegatedGoal { result } => {
+                format!("negated_goal => {};", source_click_proposition(result))
+            }
+            IntegerCertificateNode::Divide {
+                source,
+                divisor,
+                result,
+            } => format!(
+                "divide {source} by {} => {};",
+                describe_contract_expression(divisor),
+                source_click_proposition(result)
+            ),
         };
         line(output, &body, &text);
     }

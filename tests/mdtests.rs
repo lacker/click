@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{
-    CInput, MdTestExpectation, prepare_mdtest_inputs, read_click_project, read_mdtest,
-    read_mdtest_project_if_needed, source_refs,
+    CInput, MdTestExpectation, prepare_mdtest_inputs, read_c_inputs_for_project,
+    read_click_project, read_mdtest, read_mdtest_project_if_needed, source_refs,
 };
 use click::instrumentation::{self, ArtifactReuseRejection};
 use click::surface::{
@@ -252,7 +252,8 @@ fn run_mdtest(path: &Path) -> Result<(), String> {
         let source = fs::read_to_string(path)
             .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
         let project = read_click_project(path, &source)?;
-        return verify_c0_project(&project, &[])
+        let inputs = read_c_inputs_for_project(path, &source, &project)?;
+        return click::surface::verify_project_with_summary(&project, &inputs.program_inputs())
             .map(|_| ())
             .map_err(|error| error.report());
     }

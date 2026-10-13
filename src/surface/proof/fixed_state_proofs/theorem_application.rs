@@ -103,20 +103,17 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
     claim_label: &str,
     tactic_index: usize,
     available: &ProofFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    result: Option<&CValue>,
+    parameter_binding: ParameterBinding<'_>,
+    fixed_state: FixedStateFrame<'_>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
-    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
     unfolded_predicates: &[String],
     effect_facts: &(impl ExecutionFactSource + ?Sized),
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CheckedFixedStateTheoremApplication, ClickError> {
-    let resource_facts = state
+    let resource_facts = fixed_state
+        .state
         .resources()
         .observable_facts_assuming_valid(available.assumptions());
     let mut lowering_assumptions = available.assumptions().clone();
@@ -129,13 +126,9 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         let freshly_lowered = lower_fixed_state_proposition_with_integer_values(
             surface_premise,
             &lowering_assumptions,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
+            parameter_binding,
+            fixed_state,
             integer_values,
-            recorded_snapshots,
             spec_definitions,
         );
         // Prefer the current-state lowering when it is checkable. A retained
@@ -180,9 +173,8 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
                 describe_missing_pure_fact(
                     &premise,
                     &available_facts,
-                    state.resources().facts(),
-                    parameters,
-                    arguments,
+                    fixed_state.state.resources().facts(),
+                    parameter_binding,
                     effect_facts,
                 )
             )));
@@ -200,24 +192,29 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
     }
 
     let evidence_assumptions = assumptions_from_propositions(&explicit_premises);
-    let values = parameter_values(parameters, arguments).map_err(|error| {
+    let values = parameter_values(parameter_binding).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: {}",
             error.message
         ))
     })?;
-    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
-    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let array_refs = array_refs_for_parameters(
+        parameter_binding.parameters,
+        &values,
+        fixed_state.state.memory(),
+    );
+    let (values, array_refs) =
+        contract_environment_at_state(&values, &array_refs, fixed_state.state);
     let application_context = TheoremApplicationContext {
         values: &values,
         array_refs: &array_refs,
         algebraic_values,
-        pre_state,
-        post_state: state,
-        result,
-        recorded_snapshots,
+        pre_state: fixed_state.pre_state,
+        post_state: fixed_state.state,
+        result: fixed_state.result,
+        recorded_snapshots: fixed_state.recorded_snapshots,
         integer_values,
-        pointer_element_widths: parameter_pointer_element_widths(parameters),
+        pointer_element_widths: parameter_pointer_element_widths(parameter_binding.parameters),
     };
     let conclusions = instantiate_theorem_application_with_assumptions(
         theorem_environment,
@@ -252,7 +249,6 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
 /// Lowers one application's requirements against an already-persistent
 /// assumption context. Smart proof-object queries use this entry point so
 /// choosing a candidate does not materialize or rescan every ambient fact.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_assumptions(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
@@ -305,10 +301,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                 &algebraic_values,
                 &integer_values,
                 &bound_array_memories,
-                &pre_state,
-                &post_state,
-                None,
-                context.recorded_snapshots,
+                FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
                 spec_definitions,
                 &BTreeSet::new(),
                 super::super::theorem_application::theorem_application_pointer_element_widths(
@@ -334,8 +327,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
@@ -345,8 +337,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
     let lowering_facts = facts_for_smart_have_lowering(available);
     let check = |surface: &ClickProposition| {
         lower_outcome_proposition_with_recorded_snapshots(
-            parameters,
-            arguments,
+            parameter_binding,
             pre_state,
             post_state,
             result,
@@ -396,8 +387,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
         snapshot_indexed_selectors(kernel, view.recorded_snapshots);
     for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         check_verification_deadline()?;
-        let Some(base) =
-            synthesize_surface_proposition(kernel, parameters, arguments, snapshot_state)
+        let Some(base) = synthesize_surface_proposition(kernel, parameter_binding, snapshot_state)
         else {
             continue;
         };
@@ -429,7 +419,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
             bases.push(surface.clone());
         }
     }
-    if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, post_state)
+    if let Some(surface) = synthesize_surface_proposition(kernel, parameter_binding, post_state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
@@ -459,8 +449,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
     }
     for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         check_verification_deadline()?;
-        let Some(base) =
-            synthesize_surface_proposition(kernel, parameters, arguments, snapshot_state)
+        let Some(base) = synthesize_surface_proposition(kernel, parameter_binding, snapshot_state)
         else {
             continue;
         };
@@ -545,7 +534,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
             ) {
                 check_verification_deadline()?;
                 if let Some(surface) =
-                    synthesize_surface_proposition(fact, parameters, arguments, state)
+                    synthesize_surface_proposition(fact, parameter_binding, state)
                     && !folded_bases.contains(&surface)
                 {
                     folded_bases.push(surface);
@@ -578,7 +567,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
             }
         }
     }
-    let surface = synthesize_surface_proposition(kernel, parameters, arguments, post_state)
+    let surface = synthesize_surface_proposition(kernel, parameter_binding, post_state)
         .ok_or_else(|| {
             ClickError::new(surface_synthesis_failure(
                 "no checked surface form for post-execution fact",

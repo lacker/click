@@ -367,6 +367,7 @@ pub(in crate::surface) fn simp_proposition(
         | Proposition::CFunctionSatisfiesSpecification { .. }
         | Proposition::CFunctionPartiallySatisfiesSpecification { .. }
         | Proposition::CMemoryLoads { .. }
+        | Proposition::CValidPlace { .. }
         | Proposition::CMemoryReadDefined { .. }
         | Proposition::CMemoryInitialized { .. }
         | Proposition::CMemoryLoadable { .. }

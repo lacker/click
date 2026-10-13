@@ -149,6 +149,7 @@ pub(in crate::surface) struct ConcreteMemoryRangeSeed {
     /// C structs. Those ranges are materialized one typed field at a time
     /// using `struct_layout`.
     pub(in crate::surface) element_type: Option<CType>,
+    pub(in crate::surface) observation_count: Option<u32>,
     pub(in crate::surface) struct_layout: Option<syntax::C0StructLayout>,
 }
 
@@ -369,13 +370,12 @@ pub(in crate::surface) fn aggregate_object_inputs_for_contract(
                 // Overlapping member lifetimes are outside the bounded record profile.
                 continue;
             }
-            if let Some(member_type) = member_type {
-                if layout
+            if let Some(member_type) = member_type
+                && layout
                     .member_at_path(&path)
                     .is_none_or(|(_, declared)| declared != member_type)
-                {
-                    continue;
-                }
+            {
+                continue;
             }
             inputs.insert(parameter_index, layout);
         }
@@ -752,16 +752,46 @@ pub(in crate::surface) fn native_span_requirements_for_resource(
                 let (_, name, parent) = declared_type(base, parameters, layouts)?;
                 let layout = layouts.get(name.as_ref()?)?;
                 let declared = layout.field(field)?;
-                let CExpression::TypedLoad { value_type, .. } = lowered else {
-                    return None;
-                };
-                if declared.offset_bytes() != *offset_bytes
-                    || declared.c_type().to_kernel_type() != *value_type
-                {
+                if declared.offset_bytes() != *offset_bytes {
                     return None;
                 }
                 let native_layout = std::sync::Arc::new(layout.to_kernel_aggregate_layout());
                 let path = std::sync::Arc::from([field.clone()]);
+                if !declared.c_type().is_pointer()
+                    && let Some(child_name) = declared.struct_name()
+                {
+                    // Imported embedded records use a nominal Int32 source
+                    // placeholder and lower to an address, not a scalar load.
+                    // Select the genuine retained record boundary instead of
+                    // treating that placeholder as scalar storage or a span.
+                    let child = layouts.get(child_name)?;
+                    let (offset, value_type) = native_layout.member_at_path(&path)?;
+                    if offset != *offset_bytes
+                        || value_type != CType::UInt8Array(child.size_bytes())
+                    {
+                        return None;
+                    }
+                    return Some((
+                        declared.c_type(),
+                        Some(child_name.to_string()),
+                        CExpression::MemberAddress {
+                            object: Box::new(parent),
+                            selection: std::sync::Arc::new(
+                                crate::kernel::CAggregateMemberSelection {
+                                    layout: native_layout,
+                                    path,
+                                    value_type,
+                                },
+                            ),
+                        },
+                    ));
+                }
+                let CExpression::TypedLoad { value_type, .. } = lowered else {
+                    return None;
+                };
+                if declared.c_type().to_kernel_type() != *value_type {
+                    return None;
+                }
                 if native_layout
                     .member_at_path(&path)
                     .is_none_or(|(offset, ty)| offset != *offset_bytes || ty != *value_type)
@@ -772,14 +802,14 @@ pub(in crate::surface) fn native_span_requirements_for_resource(
                 let CExpression::TypedLoad { pointer, .. } = &mut native_load else {
                     unreachable!()
                 };
-                *pointer = Box::new(CExpression::MemberAddress {
+                **pointer = CExpression::MemberAddress {
                     object: Box::new(parent),
                     selection: std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
                         layout: native_layout,
                         path,
                         value_type: *value_type,
                     }),
-                });
+                };
                 Some((
                     declared.c_type(),
                     declared.struct_name().map(str::to_string),
@@ -1070,6 +1100,15 @@ fn native_model_input_parameters(
             SpecProposition::And(left, right) => {
                 pending.push(left);
                 pending.push(right);
+            }
+            SpecProposition::ValidPlace {
+                memory: crate::kernel::SpecMemory::Current,
+                pointer: crate::kernel::SpecExpression::CExpression(CExpression::Variable(name)),
+                ..
+            } => {
+                if let Some((index, _)) = formals.get(name.as_str()) {
+                    selected.insert(*index);
+                }
             }
             SpecProposition::AlgebraicComparison {
                 left,
@@ -1396,13 +1435,30 @@ pub(in crate::surface) fn initial_call_state(
         .with_typed_access_policy(function.contract_interface().typed_access_policy())
         .with_population_creation_tracking();
     let mut state = crate::kernel::initialize_c_function_globals(&initial, function);
-    for (index, bytes) in function.contract_interface().initialization_outputs()
-        .ok_or_else(|| ClickError::new("initialization postconditions require fixed entry-bound mutable byte-parameter ranges"))? {
-        if bytes == 0 { continue; }
-        let CExpression::Value(CValue::Pointer(pointer)) = &arguments[index] else {
-            return Err(ClickError::new("initialization output parameter is not a pointer"));
+    for output in function
+        .contract_interface()
+        .initialization_output_selectors()
+        .ok_or_else(|| {
+            ClickError::new(
+                "initialization postconditions require fixed entry-bound mutable byte ranges",
+            )
+        })?
+    {
+        if output.field().is_some() || output.bytes() == 0 {
+            continue;
+        }
+        let CExpression::Value(CValue::Pointer(pointer)) = &arguments[output.parameter_index()]
+        else {
+            return Err(ClickError::new(
+                "initialization output parameter is not a pointer",
+            ));
         };
-        state = state.clone().with_memory(state.memory().clone().with_uninitialized_object(pointer.pointer().clone(), bytes));
+        state = state.clone().with_memory(
+            state
+                .memory()
+                .clone()
+                .with_uninitialized_object(pointer.pointer().clone(), output.bytes()),
+        );
     }
     if function.contract_interface().aggregate_return_mode()
         == crate::kernel::CAggregateReturnMode::Construction
@@ -1482,8 +1538,10 @@ pub(in crate::surface) fn initial_call_state(
         // aggregate image using the same typed copy operation as C calls,
         // before resource clauses follow any pointer fields. This image is
         // caller storage; the callee still receives its own fresh copy.
-        state = crate::kernel::c_function_entry_state(&state, function, &arguments)
-            .ok_or_else(|| ClickError::new("could not materialize aggregate argument values"))?;
+        state = crate::kernel::materialize_symbolic_declaration_parameters(
+            &state, function, &arguments,
+        )
+        .ok_or_else(|| ClickError::new("could not materialize aggregate argument values"))?;
         for (parameter, argument) in parameters.iter().zip(&mut arguments) {
             if parameter.is_struct_value() {
                 *argument = c_typed_pointer_value(
@@ -1497,14 +1555,22 @@ pub(in crate::surface) fn initial_call_state(
             }
         }
     }
+    state = crate::kernel::mark_initialization_output_fields(state, function.contract_interface())
+        .ok_or_else(|| {
+            ClickError::new("initialization output field requires a defined by-value entry pointer")
+        })?;
     let mut loadable_ranges = BTreeMap::new();
     for requirement in requires {
-        if let Some((name, bytes)) = concrete_loadable_block(requirement, parameters, &arguments)? {
+        if let Some((name, bytes)) =
+            concrete_loadable_block(requirement, ParameterBinding::new(parameters, &arguments))?
+        {
             loadable_ranges.insert(name, bytes);
         }
         if let Requirement::Resource(resource) = requirement {
-            for (name, bytes) in concrete_access_resource_blocks(resource, parameters, &arguments)?
-            {
+            for (name, bytes) in concrete_access_resource_blocks(
+                resource,
+                ParameterBinding::new(parameters, &arguments),
+            )? {
                 loadable_ranges.insert(name, bytes);
             }
         }
@@ -1517,12 +1583,15 @@ pub(in crate::surface) fn initial_call_state(
     let memory = materialize_symbolic_access_resource_cells(
         memory,
         requires,
-        parameters,
-        &arguments,
+        ParameterBinding::new(parameters, &arguments),
         &PureFactContext::new(),
     )?;
     let state = state.with_memory(memory);
-    let resources = resource_context_from_requirements(requires, parameters, &arguments, &state)?;
+    let resources = resource_context_from_requirements(
+        requires,
+        ParameterBinding::new(parameters, &arguments),
+        &state,
+    )?;
     let mut state =
         crate::kernel::c_state_with_assumed_mutex_inputs(state.with_resource_context(resources));
     {
@@ -1704,11 +1773,16 @@ pub(in crate::surface) fn materialize_checked_entry_input_cells(
     }
     let mut loadable_ranges = BTreeMap::new();
     for requirement in requires {
-        if let Some((name, range)) = concrete_loadable_block(requirement, parameters, arguments)? {
+        if let Some((name, range)) =
+            concrete_loadable_block(requirement, ParameterBinding::new(parameters, arguments))?
+        {
             loadable_ranges.insert(name, range);
         }
         if let Requirement::Resource(resource) = requirement {
-            for (name, range) in concrete_access_resource_blocks(resource, parameters, arguments)? {
+            for (name, range) in concrete_access_resource_blocks(
+                resource,
+                ParameterBinding::new(parameters, arguments),
+            )? {
                 loadable_ranges.insert(name, range);
             }
         }
@@ -1721,8 +1795,7 @@ pub(in crate::surface) fn materialize_checked_entry_input_cells(
     let memory = materialize_symbolic_access_resource_cells(
         memory,
         requires,
-        parameters,
-        arguments,
+        ParameterBinding::new(parameters, arguments),
         assumptions,
     )?;
     Ok(state.with_memory(memory))
@@ -1779,10 +1852,26 @@ fn memory_with_symbolic_loadable_cells_under(
         // Name initialized input elements as one run, preserving existing
         // cells and leaving raw output footprints unwritten. Naming these
         // observations is not a C store.
-        let count = range.bytes.checked_div(range.element_width).unwrap_or(0);
+        // Aggregate resource coordinates may use four-byte units even for
+        // an eight-byte pointer field. A pointer observation names one whole
+        // pointer cell, never two overlapping pointer cells four bytes apart.
+        let cell_width = if element_type.is_pointer() {
+            element_type.byte_width()
+        } else {
+            range.element_width
+        };
+        let count = range
+            .observation_count
+            .unwrap_or_else(|| range.bytes.checked_div(cell_width).unwrap_or(0));
+        if count
+            .checked_mul(cell_width)
+            .is_none_or(|bytes| bytes > range.bytes)
+        {
+            continue;
+        }
         memory = memory.with_proof_entry_cells_under(
             range.base.clone(),
-            range.element_width,
+            cell_width,
             element_type,
             0,
             count,
@@ -1838,8 +1927,7 @@ pub(in crate::surface) fn visit_struct_field_cells(
 fn materialize_symbolic_access_resource_cells(
     mut memory: CMemory,
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     assumptions: &PureFactContext,
 ) -> Result<CMemory, ClickError> {
     for requirement in requires {
@@ -1857,8 +1945,7 @@ fn materialize_symbolic_access_resource_cells(
                 memory = materialize_access_segment_cells(
                     memory,
                     segment,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     assumptions,
                 )?;
             }
@@ -1867,8 +1954,7 @@ fn materialize_symbolic_access_resource_cells(
                     memory = materialize_access_segment_cells(
                         memory,
                         segment,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         assumptions,
                     )?;
                 }
@@ -1899,8 +1985,7 @@ fn materialize_symbolic_access_resource_cells(
 /// than inventing a second one for one defect.
 pub(in crate::surface) fn check_resource_segment_base_loadability(
     function_block: &FunctionBlock,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Result<(), ClickError> {
@@ -1941,8 +2026,7 @@ pub(in crate::surface) fn check_resource_segment_base_loadability(
         for segment in segments {
             let Err(message) = check_segment_base_loadability(
                 &segment.base,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 assumptions,
             ) else {
@@ -1976,8 +2060,7 @@ pub(in crate::surface) fn check_resource_segment_base_loadability(
 /// not hold rather than the last.
 fn check_segment_base_loadability(
     base: &CExpression,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Result<(), String> {
@@ -1989,7 +2072,7 @@ fn check_segment_base_loadability(
     else {
         return Ok(());
     };
-    check_segment_base_loadability(pointer, parameters, arguments, state, assumptions)?;
+    check_segment_base_loadability(pointer, parameter_binding, state, assumptions)?;
     // An inline array field is addressed by a typed load of the array
     // itself. That reads no cell: the elements are the struct's own storage,
     // and the segment covers them directly.
@@ -2010,10 +2093,11 @@ fn check_segment_base_loadability(
     ) {
         return Ok(());
     }
-    let Ok(values) = parameter_values(parameters, arguments) else {
+    let Ok(values) = parameter_values(parameter_binding) else {
         return Ok(());
     };
-    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let array_refs =
+        array_refs_for_parameters(parameter_binding.parameters, &values, state.memory());
     // The address of the cell, not its content: a base whose address this
     // entry cannot evaluate is reported by the clause's own lowering.
     let Ok(CValue::Pointer(cell)) = crate::surface::proof::evaluate_c_fragment_through_kernel(
@@ -2041,11 +2125,10 @@ fn check_segment_base_loadability(
             &obligation,
             &[],
             &[],
-            parameters,
-            arguments,
+            parameter_binding,
             &[],
         ),
-        folded_matched_instance_note(state, parameters, arguments, assumptions)
+        folded_matched_instance_note(state, parameter_binding, assumptions)
     ))
 }
 
@@ -2061,8 +2144,7 @@ fn check_segment_base_loadability(
 /// reads the clause set this entry state already holds.
 pub(in crate::surface) fn folded_matched_instance_note(
     state: &CState,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     assumptions: &PureFactContext,
 ) -> String {
     // Only an instance whose arm nothing selects explains a missing cell. One
@@ -2111,8 +2193,7 @@ pub(in crate::surface) fn folded_matched_instance_note(
     let declared = crate::surface::diagnostics::format_declared_resource(
         instance.name(),
         instance.arguments(),
-        parameters,
-        arguments,
+        parameter_binding,
     );
     // The premises may have refuted some arms without deciding one. Then the
     // cells every surviving arm owns are readable and this cell is not one of
@@ -2138,13 +2219,12 @@ pub(in crate::surface) fn folded_matched_instance_note(
 fn materialize_access_segment_cells(
     mut memory: CMemory,
     segment: &ContractSegment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     assumptions: &PureFactContext,
 ) -> Result<CMemory, ClickError> {
     let state = CState::new().with_memory(memory.clone());
     let source_segment = segment;
-    let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, source_segment)
+    let Ok(segment) = evaluate_requirement_segment(parameter_binding, &state, source_segment)
     else {
         return Ok(memory);
     };
@@ -2162,7 +2242,7 @@ fn materialize_access_segment_cells(
     // A complete object (`*p`) is one struct at the base: its cells
     // take the field types of the layout, so a `uint64` or pointer field
     // reads back with its own type rather than as int32 words.
-    if let Some(layout) = object_segment_layout(parameters, source_segment) {
+    if let Some(layout) = object_segment_layout(parameter_binding.parameters, source_segment) {
         let base_memory = memory.clone();
         for field in layout.fields().values() {
             memory = visit_struct_field_cells(
@@ -2186,7 +2266,9 @@ fn materialize_access_segment_cells(
         }
         return Ok(memory);
     }
-    if let Some(layout) = contract_segment_struct_layout(parameters, source_segment) {
+    if let Some(layout) =
+        contract_segment_struct_layout(parameter_binding.parameters, source_segment)
+    {
         let base_memory = memory.clone();
         for index in *start..*end {
             let element_pointer = offset_pointer_by_elements(
@@ -2218,17 +2300,49 @@ fn materialize_access_segment_cells(
         return Ok(memory);
     }
 
-    let element_type = contract_segment_element_type(parameters, &segment.source);
-    let element_width = contract_segment_element_width(parameters, &segment.source);
+    let element_type = contract_segment_element_type(parameter_binding.parameters, &segment.source);
+    let element_width =
+        contract_segment_element_width(parameter_binding.parameters, &segment.source);
     let source = crate::kernel::intern_c_memory(memory.clone());
-    // One run for the segment's elements, spelled from the segment's own
-    // base as each element's pointer is (see `memory_with_symbolic_loadable_cells`).
+    // Coordinate units belong to the resource. The cached observation has
+    // the selected declaration's full physical width, including pointer pairs.
+    let cell_width = element_type.byte_width();
+    let first_byte = start
+        .checked_mul(element_width)
+        .ok_or_else(|| ClickError::new("resource observation offset overflows"))?;
+    let end_byte = end
+        .checked_mul(element_width)
+        .ok_or_else(|| ClickError::new("resource observation endpoint overflows"))?;
+    if !first_byte.is_multiple_of(cell_width) {
+        return Ok(memory);
+    }
+    let first = first_byte / cell_width;
+    let end = if let Some(count) = declared_segment_observation_count(source_segment) {
+        let last_byte = first_byte
+            .checked_add(
+                count
+                    .checked_mul(cell_width)
+                    .ok_or_else(|| ClickError::new("declared observation extent overflows"))?,
+            )
+            .ok_or_else(|| ClickError::new("declared observation extent overflows"))?;
+        if last_byte > end_byte {
+            return Ok(memory);
+        }
+        first
+            .checked_add(count)
+            .ok_or_else(|| ClickError::new("declared observation count overflows"))?
+    } else {
+        if !end_byte.is_multiple_of(cell_width) {
+            return Ok(memory);
+        }
+        end_byte / cell_width
+    };
     Ok(memory.with_proof_entry_cells_under(
         segment.base.clone(),
-        element_width,
+        cell_width,
         element_type,
-        *start,
-        *end,
+        first,
+        end,
         source,
         assumptions,
     ))
@@ -2236,15 +2350,13 @@ fn materialize_access_segment_cells(
 
 pub(in crate::surface) fn requirement_propositions(
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<Proposition>, ClickError> {
     requirement_propositions_with_assumptions(
         requires,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         spec_definitions,
         &PureFactContext::new(),
@@ -2253,16 +2365,14 @@ pub(in crate::surface) fn requirement_propositions(
 
 pub(in crate::surface) fn requirement_propositions_with_assumptions(
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
     initial_assumptions: &PureFactContext,
 ) -> Result<Vec<Proposition>, ClickError> {
     Ok(requirement_propositions_with_sources_and_assumptions(
         requires,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         spec_definitions,
         initial_assumptions,
@@ -2293,8 +2403,7 @@ pub(in crate::surface) enum LoweredRequirementFactRole {
 
 pub(in crate::surface) fn requirement_propositions_with_sources_and_assumptions(
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
     initial_assumptions: &PureFactContext,
@@ -2330,16 +2439,14 @@ pub(in crate::surface) fn requirement_propositions_with_sources_and_assumptions(
             let result = match requirement {
                 Requirement::LoadableSegment { .. } => loadable_requirement_props(
                     requirement,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state.memory(),
                     &assumptions,
                 )
                 .map(Some),
                 Requirement::Proposition(proposition) => {
                     requirement_proposition_and_facts_with_assumptions(
-                        parameters,
-                        arguments,
+                        parameter_binding,
                         state,
                         proposition,
                         spec_definitions,
@@ -2351,8 +2458,7 @@ pub(in crate::surface) fn requirement_propositions_with_sources_and_assumptions(
                 }
                 Requirement::Resource(resource) => resource_clause_loadable_props_at_state(
                     resource,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     &assumptions,
                 ),
@@ -2466,6 +2572,9 @@ pub(in crate::surface) fn requirement_definedness_surfaces(
                     expressions.push(expression);
                 }
             }
+            ClickProposition::ValidPlace { expression, .. } => {
+                expressions.push(expression);
+            }
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)
             | ClickProposition::Implies(left, right) => {
@@ -2512,15 +2621,14 @@ pub(in crate::surface) fn requirement_definedness_surfaces(
 
 pub(in crate::surface) fn requirement_definedness_propositions(
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Vec<(ClickProposition, Proposition)>, ClickError> {
     let mut result = Vec::new();
     for surface in requirement_definedness_surfaces(requires) {
         let kernel =
-            requirement_proposition_prop(parameters, arguments, state, &surface, spec_definitions)?;
+            requirement_proposition_prop(parameter_binding, state, &surface, spec_definitions)?;
         if matches!(normalize_proposition(&kernel), SimpProposition::True)
             || result
                 .iter()
@@ -2535,8 +2643,7 @@ pub(in crate::surface) fn requirement_definedness_propositions(
 
 pub(in crate::surface) fn resource_context_from_requirements(
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Result<ResourceContext, ClickError> {
     let mut context = state.resources().clone();
@@ -2555,8 +2662,7 @@ pub(in crate::surface) fn resource_context_from_requirements(
             // clause supplies are available.
             context = context.unchecked_with_facts(lower_resource_clause_facts_at_state_for_entry(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 &lowering_state,
             )?);
             lowering_state = lowering_state.with_resource_context(context.clone());
@@ -2568,12 +2674,11 @@ pub(in crate::surface) fn resource_context_from_requirements(
 #[cfg(test)]
 pub(in crate::surface) fn lower_resource_clause(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: &CMemory,
 ) -> Result<CResourceFact, ClickError> {
     if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
-        let mut facts = lower_resource_clause_facts(resource, parameters, arguments, memory)?;
+        let mut facts = lower_resource_clause_facts(resource, parameter_binding, memory)?;
         if facts.len() != 1 {
             return Err(ClickError::new(format!(
                 "resource clause expands to {} typed memory facts where one fact is required",
@@ -2583,33 +2688,42 @@ pub(in crate::surface) fn lower_resource_clause(
         return Ok(facts.pop().expect("resource clause fact count was checked"));
     }
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
     let state = CState::new().with_memory(memory.clone());
-    lower_resource_clause_with_values(resource, parameters, &values, &state, None)
+    lower_resource_clause_with_values(
+        resource,
+        parameter_binding.parameters,
+        &values,
+        &state,
+        None,
+    )
 }
 
 #[cfg(test)]
 pub(in crate::surface) fn lower_resource_clause_facts(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: &CMemory,
 ) -> Result<Vec<CResourceFact>, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
     let state = CState::new().with_memory(memory.clone());
-    lower_resource_clause_facts_with_values(resource, parameters, &values, &state, None)
+    lower_resource_clause_facts_with_values(
+        resource,
+        parameter_binding.parameters,
+        &values,
+        &state,
+        None,
+    )
 }
 
 pub(in crate::surface) fn lower_resource_clause_at_state(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Result<CResourceFact, ClickError> {
     if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
-        let mut facts =
-            lower_resource_clause_facts_at_state(resource, parameters, arguments, state)?;
+        let mut facts = lower_resource_clause_facts_at_state(resource, parameter_binding, state)?;
         if facts.len() != 1 {
             return Err(ClickError::new(format!(
                 "resource clause expands to {} typed memory facts where one fact is required",
@@ -2619,43 +2733,52 @@ pub(in crate::surface) fn lower_resource_clause_at_state(
         return Ok(facts.pop().expect("resource clause fact count was checked"));
     }
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    lower_resource_clause_with_values(resource, parameters, &values, state, None)
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
+    lower_resource_clause_with_values(resource, parameter_binding.parameters, &values, state, None)
 }
 
 pub(in crate::surface) fn lower_resource_clause_facts_at_state(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Result<Vec<CResourceFact>, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    lower_resource_clause_facts_with_values(resource, parameters, &values, state, None)
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
+    lower_resource_clause_facts_with_values(
+        resource,
+        parameter_binding.parameters,
+        &values,
+        state,
+        None,
+    )
 }
 
 fn lower_resource_clause_facts_at_state_for_entry(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Result<Vec<CResourceFact>, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    lower_resource_clause_facts_with_values_mode(resource, parameters, &values, state, None, true)
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
+    lower_resource_clause_facts_with_values_mode(
+        resource,
+        parameter_binding.parameters,
+        &values,
+        state,
+        None,
+        true,
+    )
 }
 
 pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     result: &CValue,
 ) -> Result<CResourceFact, ClickError> {
     lower_resource_clause_at_state_with_assumptions(
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         Some(result),
         &PureFactContext::new(),
@@ -2667,18 +2790,17 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
 /// graph; do not reconstruct facts or publish ambient resources at this query.
 pub(in crate::surface) fn lower_resource_clause_at_state_with_assumptions(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     result: Option<&CValue>,
     assumptions: &PureFactContext,
 ) -> Result<CResourceFact, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
     if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
         let mut facts = lower_resource_clause_facts_with_values_mode_at_entry(
             resource,
-            parameters,
+            parameter_binding.parameters,
             &values,
             state,
             state,
@@ -2696,7 +2818,7 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_assumptions(
     }
     lower_resource_clause_with_values_mode_at_entry(
         resource,
-        parameters,
+        parameter_binding.parameters,
         &values,
         state,
         state,
@@ -2720,16 +2842,22 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_assumptions(
 /// its fields did not describe.
 pub(in crate::surface) fn lower_resource_clause_at_current_locals(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
+    let array_refs =
+        array_refs_for_parameters(parameter_binding.parameters, &values, state.memory());
     let (values, _) = contract_environment_at_state(&values, &array_refs, state);
-    lower_resource_clause_with_values(resource, parameters, &values, state, result)
+    lower_resource_clause_with_values(
+        resource,
+        parameter_binding.parameters,
+        &values,
+        state,
+        result,
+    )
 }
 
 /// [`lower_resource_clause_at_current_locals`] under the facts the proof
@@ -2738,15 +2866,13 @@ pub(in crate::surface) fn lower_resource_clause_at_current_locals(
 /// it stands there, exactly as the `fold` that built the resource read it.
 pub(in crate::surface) fn lower_interface_resource_clause(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Result<CResourceFact, ClickError> {
     lower_resource_clause_at_current_locals_with_assumptions(
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         None,
         assumptions,
@@ -2758,20 +2884,20 @@ pub(in crate::surface) fn lower_interface_resource_clause(
 /// owned cell through an alias; they do not assume the proposed fold's body.
 pub(in crate::surface) fn lower_resource_clause_at_current_locals_with_assumptions(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     result: Option<&CValue>,
     assumptions: &PureFactContext,
 ) -> Result<CResourceFact, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
-    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
+    let array_refs =
+        array_refs_for_parameters(parameter_binding.parameters, &values, state.memory());
     let (values, _) = contract_environment_at_state(&values, &array_refs, state);
     if matches!(resource, ResourceClause::MemoryAggregate { .. }) {
         let mut facts = lower_resource_clause_facts_with_values_mode_at_entry(
             resource,
-            parameters,
+            parameter_binding.parameters,
             &values,
             state,
             state,
@@ -2789,7 +2915,7 @@ pub(in crate::surface) fn lower_resource_clause_at_current_locals_with_assumptio
     }
     lower_resource_clause_with_values_mode_at_entry(
         resource,
-        parameters,
+        parameter_binding.parameters,
         &values,
         state,
         state,
@@ -2801,18 +2927,17 @@ pub(in crate::surface) fn lower_resource_clause_at_current_locals_with_assumptio
 
 pub(in crate::surface) fn lower_resource_clause_facts_at_state_with_result_and_entry(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     entry_state: &CState,
     state: &CState,
     result: &CValue,
     base_assumptions: &PureFactContext,
 ) -> Result<Vec<CResourceFact>, ClickError> {
     let values =
-        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+        parameter_values(parameter_binding).map_err(|error| ClickError::new(error.message))?;
     lower_resource_clause_facts_with_values_mode_at_entry(
         resource,
-        parameters,
+        parameter_binding.parameters,
         &values,
         entry_state,
         state,
@@ -3102,8 +3227,7 @@ fn lower_resource_clause_with_values_mode_at_entry(
                         ),
                         crate::surface::diagnostics::describe_c_value(
                             &value,
-                            &naming_parameters,
-                            &naming_arguments
+                            ParameterBinding::new(&naming_parameters, &naming_arguments)
                         ),
                         crate::kernel::c_type_spelling(value.c_type()),
                         crate::surface::validation::describe_c0_type(*parameter_type)
@@ -3339,10 +3463,7 @@ fn evaluate_resource_argument_with_snapshot(
             assumptions,
             values,
             array_refs,
-            entry_state,
-            state,
-            result,
-            &RecordedSnapshots::new(),
+            FixedStateFrame::new(entry_state, state, result, &RecordedSnapshots::new()),
             SpecDefinitions::new(
                 &PredicateEnvironment::new(&[]),
                 &ClickFunctionEnvironment::new(&[]),
@@ -3390,10 +3511,7 @@ fn evaluate_resource_argument_with_snapshot(
                 assumptions,
                 values,
                 array_refs,
-                &candidate_entry,
-                state,
-                result,
-                &RecordedSnapshots::new(),
+                FixedStateFrame::new(&candidate_entry, state, result, &RecordedSnapshots::new()),
                 SpecDefinitions::new(
                     &PredicateEnvironment::new(&[]),
                     &ClickFunctionEnvironment::new(&[]),
@@ -3843,8 +3961,7 @@ fn lower_resource_segment_with_values(
 
 fn loadable_requirement_props(
     requirement: &Requirement,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: &CMemory,
     assumptions: &PureFactContext,
 ) -> Result<Vec<Proposition>, ClickError> {
@@ -3852,15 +3969,15 @@ fn loadable_requirement_props(
         && segment.state == ContractSegmentState::Current
     {
         let state = CState::new().with_memory(memory.clone());
-        let values = parameter_values(parameters, arguments)?;
+        let values = parameter_values(parameter_binding)?;
         let range = lower_resource_segment_with_values(
             "viewable",
             segment,
             &values,
-            &array_refs_for_parameters(parameters, &values, memory),
+            &array_refs_for_parameters(parameter_binding.parameters, &values, memory),
             &state,
             None,
-            contract_segment_element_width(parameters, segment),
+            contract_segment_element_width(parameter_binding.parameters, segment),
         )?;
         let guards = memory_range_loadable_guards(&range);
         reject_impossible_range_guards(&guards, assumptions)?;
@@ -3868,7 +3985,7 @@ fn loadable_requirement_props(
         propositions.extend(guards);
         return Ok(propositions);
     }
-    let (base, bytes, guards) = loadable_base_and_bytes(requirement, parameters, arguments)?;
+    let (base, bytes, guards) = loadable_base_and_bytes(requirement, parameter_binding)?;
     reject_impossible_range_guards(&guards, assumptions)?;
     let mut propositions = vec![Proposition::CMemoryLoadable {
         memory: memory.clone(),
@@ -3882,26 +3999,22 @@ fn loadable_requirement_props(
 
 pub(in crate::surface) fn resource_clause_loadable_prop(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     memory: &CMemory,
 ) -> Result<Option<Proposition>, ClickError> {
     resource_clause_loadable_prop_at_state(
         resource,
-        parameters,
-        arguments,
+        parameter_binding,
         &CState::new().with_memory(memory.clone()),
     )
 }
 
 pub(in crate::surface) fn resource_clause_loadable_prop_at_state(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Result<Option<Proposition>, ClickError> {
-    let Some(ranges) =
-        resource_clause_memory_ranges_at_state(resource, parameters, arguments, state)?
+    let Some(ranges) = resource_clause_memory_ranges_at_state(resource, parameter_binding, state)?
     else {
         return Ok(None);
     };
@@ -3920,13 +4033,11 @@ pub(in crate::surface) fn resource_clause_loadable_prop_at_state(
 
 pub(in crate::surface) fn resource_clause_loadable_props_at_state(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     assumptions: &PureFactContext,
 ) -> Result<Option<Vec<Proposition>>, ClickError> {
-    let Some(ranges) =
-        resource_clause_memory_ranges_at_state(resource, parameters, arguments, state)?
+    let Some(ranges) = resource_clause_memory_ranges_at_state(resource, parameter_binding, state)?
     else {
         return Ok(None);
     };
@@ -3968,15 +4079,14 @@ fn reject_impossible_range_guards(
 
 pub(in crate::surface) fn resource_clause_memory_ranges_at_state(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
 ) -> Result<Option<Vec<CMemoryRange>>, ClickError> {
     let ranges = match resource {
         ResourceClause::Conditional { .. } => return Ok(None),
         ResourceClause::Named { .. } => return Ok(None),
         ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => {
-            let lowered = lower_resource_clause_at_state(resource, parameters, arguments, state)?;
+            let lowered = lower_resource_clause_at_state(resource, parameter_binding, state)?;
             vec![
                 lowered
                     .memory_view_range()
@@ -3986,7 +4096,7 @@ pub(in crate::surface) fn resource_clause_memory_ranges_at_state(
             ]
         }
         ResourceClause::MemoryAggregate { .. } => {
-            lower_resource_clause_facts_at_state(resource, parameters, arguments, state)?
+            lower_resource_clause_facts_at_state(resource, parameter_binding, state)?
                 .into_iter()
                 .map(|lowered| {
                     lowered
@@ -4033,15 +4143,14 @@ pub(in crate::surface) fn memory_range_loadable_guards(range: &CMemoryRange) -> 
 
 pub(in crate::surface) fn concrete_loadable_block(
     requirement: &Requirement,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     match requirement {
         Requirement::LoadableSegment { segment } => {
             let state = CState::new();
             let source_segment = segment;
             let Ok(segment) =
-                evaluate_requirement_segment(parameters, arguments, &state, source_segment)
+                evaluate_requirement_segment(parameter_binding, &state, source_segment)
             else {
                 return Ok(None);
             };
@@ -4053,13 +4162,16 @@ pub(in crate::surface) fn concrete_loadable_block(
             let Bitvector32Term::Constant(end) = segment.end else {
                 return Ok(None);
             };
-            if let Some(layout) = object_segment_layout(parameters, source_segment) {
+            if let Some(layout) =
+                object_segment_layout(parameter_binding.parameters, source_segment)
+            {
                 return Ok(Some((
                     format!("{:?}", segment.source),
                     object_range_seed(segment.base, layout),
                 )));
             }
-            let element_width = contract_segment_element_width(parameters, &segment.source);
+            let element_width =
+                contract_segment_element_width(parameter_binding.parameters, &segment.source);
             let bytes = end
                 .checked_mul(element_width)
                 .ok_or_else(|| ClickError::new("`viewable` segment overflows byte count"))?;
@@ -4069,13 +4181,19 @@ pub(in crate::surface) fn concrete_loadable_block(
                     base: segment.base,
                     bytes,
                     element_width,
+                    observation_count: declared_segment_observation_count(source_segment),
                     element_type: (!contract_expression_is_struct_array(
-                        parameters,
+                        parameter_binding.parameters,
                         &segment.source.base,
                     ))
-                    .then(|| contract_segment_element_type(parameters, &segment.source)),
-                    struct_layout: contract_segment_struct_layout(parameters, source_segment)
-                        .cloned(),
+                    .then(|| {
+                        contract_segment_element_type(parameter_binding.parameters, &segment.source)
+                    }),
+                    struct_layout: contract_segment_struct_layout(
+                        parameter_binding.parameters,
+                        source_segment,
+                    )
+                    .cloned(),
                 },
             )))
         }
@@ -4085,8 +4203,7 @@ pub(in crate::surface) fn concrete_loadable_block(
 
 pub(in crate::surface) fn concrete_access_resource_blocks(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Result<Vec<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segments = match resource {
         ResourceClause::Conditional { .. } => return Ok(vec![]),
@@ -4105,8 +4222,7 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
     for segment in segments {
         let state = CState::new();
         let source_segment = segment;
-        let Ok(segment) =
-            evaluate_requirement_segment(parameters, arguments, &state, source_segment)
+        let Ok(segment) = evaluate_requirement_segment(parameter_binding, &state, source_segment)
         else {
             continue;
         };
@@ -4120,7 +4236,7 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
                 "resource segment has an end before its start: {start}..{end}"
             )));
         }
-        if let Some(layout) = object_segment_layout(parameters, source_segment)
+        if let Some(layout) = object_segment_layout(parameter_binding.parameters, source_segment)
             && *start == 0
         {
             result.push((
@@ -4129,7 +4245,8 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
             ));
             continue;
         }
-        let element_width = contract_segment_element_width(parameters, &segment.source);
+        let element_width =
+            contract_segment_element_width(parameter_binding.parameters, &segment.source);
         let element_count = end - start;
         let bytes = element_count
             .checked_mul(element_width)
@@ -4140,12 +4257,19 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
                 base: offset_pointer_by_elements(segment.base, segment.start, element_width),
                 bytes,
                 element_width,
+                observation_count: declared_segment_observation_count(source_segment),
                 element_type: (!contract_expression_is_struct_array(
-                    parameters,
+                    parameter_binding.parameters,
                     &segment.source.base,
                 ))
-                .then(|| contract_segment_element_type(parameters, &segment.source)),
-                struct_layout: contract_segment_struct_layout(parameters, source_segment).cloned(),
+                .then(|| {
+                    contract_segment_element_type(parameter_binding.parameters, &segment.source)
+                }),
+                struct_layout: contract_segment_struct_layout(
+                    parameter_binding.parameters,
+                    source_segment,
+                )
+                .cloned(),
             },
         ));
     }
@@ -4154,13 +4278,12 @@ pub(in crate::surface) fn concrete_access_resource_blocks(
 
 pub(in crate::surface) fn loadable_base_and_bytes(
     requirement: &Requirement,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Result<(Pointer, Bitvector32Term, Vec<Proposition>), ClickError> {
     match requirement {
         Requirement::LoadableSegment { segment } => {
             let state = CState::new();
-            let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
+            let segment = evaluate_requirement_segment(parameter_binding, &state, segment)
                 .map_err(|message| {
                     ClickError::new(format!("could not lower `viewable` segment: {message}"))
                 })?;
@@ -4172,7 +4295,8 @@ pub(in crate::surface) fn loadable_base_and_bytes(
                     "`viewable` segment has an end before its start: {start}..{end}"
                 )));
             }
-            let element_width = contract_segment_element_width(parameters, &segment.source);
+            let element_width =
+                contract_segment_element_width(parameter_binding.parameters, &segment.source);
             let bytes = crate::kernel::memory_range_byte_count(
                 segment.start.clone(),
                 segment.end.clone(),
@@ -4244,6 +4368,7 @@ fn object_range_seed(base: Pointer, layout: &syntax::C0StructLayout) -> Concrete
         bytes: layout.size_bytes(),
         element_width: layout.size_bytes(),
         element_type: None,
+        observation_count: None,
         struct_layout: Some(layout.clone()),
     }
 }
@@ -4314,10 +4439,35 @@ pub(in crate::surface) fn contract_segment_element_width_with_pointer_types(
         })
 }
 
+pub(in crate::surface) fn declared_segment_observation_count(
+    segment: &ContractSegment,
+) -> Option<u32> {
+    segment.field_element_type()?;
+    match &segment.base {
+        CExpression::TypedLoad { value_type, .. } => value_type
+            .array_element_and_count()
+            .map(|(_, count)| count)
+            .or(Some(1)),
+        _ => Some(1),
+    }
+}
+
 pub(in crate::surface) fn contract_segment_element_type(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
 ) -> CType {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("CLICK_SELECTED_STORAGE_PROBE").is_some()
+        && let ContractSegmentSurface::Field {
+            name, element_type, ..
+        } = &segment.surface
+        && (name == "self" || name == "data")
+    {
+        eprintln!(
+            "selected-storage-type field={name} explicit={element_type:?} base={:?}",
+            segment.base
+        );
+    }
     segment
         .field_element_type()
         .or_else(|| contract_expression_element_type(parameters, &segment.base))
@@ -4485,15 +4635,13 @@ pub(in crate::surface) fn symbolic_value_from_load(
 }
 
 pub(in crate::surface) fn requirement_proposition_prop(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     proposition: &ClickProposition,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, ClickError> {
     requirement_proposition_prop_with_assumptions(
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         proposition,
         spec_definitions,
@@ -4502,16 +4650,14 @@ pub(in crate::surface) fn requirement_proposition_prop(
 }
 
 pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     proposition: &ClickProposition,
     spec_definitions: SpecDefinitions<'_>,
     assumptions: &PureFactContext,
 ) -> Result<Proposition, ClickError> {
     requirement_proposition_and_facts_with_assumptions(
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         proposition,
         spec_definitions,
@@ -4521,8 +4667,7 @@ pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
 }
 
 fn requirement_proposition_and_facts_with_assumptions(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     proposition: &ClickProposition,
     spec_definitions: SpecDefinitions<'_>,
@@ -4532,14 +4677,14 @@ fn requirement_proposition_and_facts_with_assumptions(
     // lowered by the kernel at the entry state, with the parameters bound
     // to their argument values where the state does not bind them.
     let spec = crate::surface::lowering::elaborate_requirement_proposition(
-        parameters,
+        parameter_binding.parameters,
         state,
         proposition,
         spec_definitions,
     )
     .map_err(ClickError::new)?;
     let mut lowering_state = state.clone();
-    for (name, value) in parameter_values(parameters, arguments)? {
+    for (name, value) in parameter_values(parameter_binding)? {
         if lowering_state.locals().get(&name).is_none() {
             lowering_state = lowering_state.with_local(name, value);
         }
@@ -4568,11 +4713,10 @@ fn requirement_proposition_and_facts_with_assumptions(
                 obligation,
                 &[],
                 &[],
-                parameters,
-                arguments,
+                parameter_binding,
                 &[],
             ),
-            folded_matched_instance_note(&lowering_state, parameters, arguments, assumptions)
+            folded_matched_instance_note(&lowering_state, parameter_binding, assumptions)
         )));
     }
     // The kernel selected this lowering path, and every outstanding read
@@ -4584,12 +4728,12 @@ fn requirement_proposition_and_facts_with_assumptions(
 }
 
 pub(in crate::surface) fn parameter_values(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> Result<BTreeMap<String, CValue>, ClickError> {
-    parameters
+    parameter_binding
+        .parameters
         .iter()
-        .zip(arguments)
+        .zip(parameter_binding.arguments)
         .map(|(parameter, argument)| {
             let CExpression::Value(value) = argument else {
                 return Err(ClickError::new(format!(
@@ -4655,6 +4799,41 @@ pub(in crate::surface) fn lower_resource_reference_arguments(
 #[cfg(test)]
 mod input_identity_tests {
     use super::*;
+
+    #[test]
+    fn pointer_field_input_naming_uses_complete_nonoverlapping_cells() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = Pointer::symbolic(crate::kernel::Variable(998_400));
+        for (bytes, complete) in [(4, false), (8, true), (16, true)] {
+            let ranges = BTreeMap::from([(
+                "field".to_string(),
+                ConcreteMemoryRangeSeed {
+                    base: pointer.clone(),
+                    bytes,
+                    element_width: 4,
+                    element_type: Some(CType::Int32Pointer),
+                    observation_count: Some(1),
+                    struct_layout: None,
+                },
+            )]);
+            let memory = memory_with_symbolic_loadable_cells(CMemory::new(), &ranges);
+            assert_eq!(
+                matches!(
+                    memory.load(&pointer),
+                    CExpressionOutcome::Value(CValue::Pointer(_))
+                ),
+                complete
+            );
+            assert!(!matches!(
+                memory.load(&pointer.offset_by_bytes(4)),
+                CExpressionOutcome::Value(CValue::Pointer(_))
+            ));
+            assert!(!matches!(
+                memory.load(&pointer.offset_by_bytes(8)),
+                CExpressionOutcome::Value(CValue::Pointer(_))
+            ));
+        }
+    }
 
     #[test]
     fn unprofiled_union_record_inputs_keep_legacy_enrollment_without_authority() {
@@ -4782,13 +4961,10 @@ mod input_identity_tests {
         let parsed = syntax::parse_function("struct Pair { int first; int second; }; int probe(struct Pair* pair) { return pair->second; }").unwrap();
         let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
             "int32 probe(struct Pair* pair) { views pair->second; } by { execute(); }",
-            parsed.structs().clone(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
+            crate::surface::parser::ProgramLayouts {
+                struct_layouts: parsed.structs().clone(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let places = native_record_places_for_resource(
@@ -4872,10 +5048,10 @@ mod input_identity_tests {
             } => base,
             _ => panic!("source member path is retained"),
         };
-        *base = Box::new(ContractExpression::Index(
+        **base = ContractExpression::Index(
             base.clone(),
             Box::new(ContractExpression::CFragment(c_int32_literal(0))),
-        ));
+        );
         assert!(
             aggregate_object_inputs_for_contract(
                 &[Requirement::Resource(indexed)],
@@ -4900,13 +5076,10 @@ mod input_identity_tests {
             );
             let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
                 &source,
-                parsed.structs().clone(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
+                crate::surface::parser::ProgramLayouts {
+                    struct_layouts: parsed.structs().clone(),
+                    ..Default::default()
+                },
             )
             .unwrap();
             let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
@@ -4929,13 +5102,10 @@ mod input_identity_tests {
         let parsed = syntax::parse_function("struct packet { int values[2][3]; }; int update(struct packet *p) { p->values[1][2] = 7; return p->values[1][2]; }").unwrap();
         let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
             "int32 update(struct packet* p) { owns p->values[1][2]; } by { execute(); }",
-            parsed.structs().clone(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
+            crate::surface::parser::ProgramLayouts {
+                struct_layouts: parsed.structs().clone(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
@@ -4957,12 +5127,7 @@ mod input_identity_tests {
     #[test]
     fn loaded_record_place_requirements_retain_the_exact_carrier() {
         let parsed = syntax::parse_function("struct node { int second; struct node *next; }; int probe(struct node *p) { return p->next->second; }").unwrap();
-        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
-            "int32 probe(struct node* p) { views p->next; views p->next->second; } by { execute(); }",
-            parsed.structs().clone(), Default::default(), Default::default(),
-            Default::default(), Default::default(), Default::default(),
-            Default::default(),
-        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects("int32 probe(struct node* p) { views p->next; views p->next->second; } by { execute(); }", crate::surface::parser::ProgramLayouts { struct_layouts: parsed.structs().clone(), ..Default::default() }).unwrap();
         let requirements = file.function_blocks()[0].requires();
         let places = |index: usize| {
             let Requirement::Resource(resource) = &requirements[index] else {
@@ -4988,13 +5153,10 @@ mod input_identity_tests {
         assert_eq!(referent[0].layout, referent[1].layout);
         let object_file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
             "int32 probe(struct node* p) { views p->next; owns *p->next; } by { execute(); }",
-            parsed.structs().clone(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
+            crate::surface::parser::ProgramLayouts {
+                struct_layouts: parsed.structs().clone(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let Requirement::Resource(resource) = &object_file.function_blocks()[0].requires()[1]
@@ -5012,11 +5174,7 @@ mod input_identity_tests {
         let parsed = syntax::parse_function(
             "struct callbacks { void (*propagate)(int *node, int *stop); }; int probe(const struct callbacks *p) { return 0; }",
         ).unwrap();
-        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
-            "resource suite(p: const struct callbacks*) { owns p->propagate; } int32 probe(const struct callbacks* p) { views suite(p); } by { execute(); }",
-            parsed.structs().clone(), Default::default(), Default::default(),
-            Default::default(), Default::default(), Default::default(), Default::default(),
-        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects("resource suite(p: const struct callbacks*) { owns p->propagate; } int32 probe(const struct callbacks* p) { views suite(p); } by { execute(); }", crate::surface::parser::ProgramLayouts { struct_layouts: parsed.structs().clone(), ..Default::default() }).unwrap();
         let clause = &file.resource_definitions()[0]
             .composite_body()
             .unwrap()
@@ -5082,8 +5240,8 @@ mod input_identity_tests {
         assert_eq!(
             native_span_input_parameters(
                 parsed.parameters(),
-                &[head.clone()],
-                &[definition.clone()]
+                std::slice::from_ref(&head),
+                std::slice::from_ref(&definition)
             ),
             BTreeSet::from([0])
         );
@@ -5136,7 +5294,8 @@ mod input_identity_tests {
             &[],
         )
         .unwrap();
-        let values = parameter_values(parsed.parameters(), &arguments).unwrap();
+        let values =
+            parameter_values(ParameterBinding::new(parsed.parameters(), &arguments)).unwrap();
         for (index, parameter) in parsed.parameters().iter().enumerate() {
             let CExpression::Value(CValue::Pointer(pointer)) = &arguments[index] else {
                 panic!("pointer input");
@@ -5201,11 +5360,7 @@ mod input_identity_tests {
     #[test]
     fn scalar_constant_start_ranges_preserve_the_required_end_prefix() {
         let parsed = syntax::parse_function("int32 probe(int32* p) { return 0; }").unwrap();
-        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
-            "int32 probe(int32* p) { owns p[0..1]; owns p[1..2]; views p[4..5]; views p[2..2]; } by { execute(); }",
-            Default::default(), Default::default(), Default::default(), Default::default(),
-            Default::default(), Default::default(), Default::default(),
-        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects("int32 probe(int32* p) { owns p[0..1]; owns p[1..2]; views p[4..5]; views p[2..2]; } by { execute(); }", crate::surface::parser::ProgramLayouts { ..Default::default() }).unwrap();
         let mut spans = Vec::new();
         for requirement in file.function_blocks()[0].requires() {
             let Requirement::Resource(resource) = requirement else {
@@ -5243,11 +5398,7 @@ mod input_identity_tests {
             "struct holder { int *pointer; }; int probe(struct holder *h) { return *h->pointer; }",
         )
         .unwrap();
-        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
-            "int32 probe(struct holder* h) { views h->pointer; views h->pointer[0..1]; } by { execute(); }",
-            parsed.structs().clone(), Default::default(), Default::default(),
-            Default::default(), Default::default(), Default::default(), Default::default(),
-        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects("int32 probe(struct holder* h) { views h->pointer; views h->pointer[0..1]; } by { execute(); }", crate::surface::parser::ProgramLayouts { struct_layouts: parsed.structs().clone(), ..Default::default() }).unwrap();
         let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[1] else {
             panic!("referent resource");
         };
@@ -5364,11 +5515,7 @@ mod input_identity_tests {
         let parsed = syntax::parse_function(
             "struct holder { int *pointer; int capacity; }; int probe(struct holder *h, int *p, int count) { return count; }",
         ).unwrap();
-        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
-            "int32 probe(struct holder* h, int32* p, int32 count) { views p[0..count]; views h->pointer[0..h->capacity]; views p[1..count]; } by { execute(); }",
-            parsed.structs().clone(), Default::default(), Default::default(),
-            Default::default(), Default::default(), Default::default(), Default::default(),
-        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects("int32 probe(struct holder* h, int32* p, int32 count) { views p[0..count]; views h->pointer[0..h->capacity]; views p[1..count]; } by { execute(); }", crate::surface::parser::ProgramLayouts { struct_layouts: parsed.structs().clone(), ..Default::default() }).unwrap();
         let spans = file.function_blocks()[0]
             .requires()
             .iter()
@@ -5422,13 +5569,10 @@ mod input_identity_tests {
             );
             let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
                 &source,
-                parsed.structs().clone(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
+                crate::surface::parser::ProgramLayouts {
+                    struct_layouts: parsed.structs().clone(),
+                    ..Default::default()
+                },
             )
             .unwrap();
             let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[0] else {
@@ -5463,11 +5607,7 @@ mod input_identity_tests {
         let parsed = syntax::parse_function(
             "struct holder { unsigned char *pointer; }; int probe(struct holder *h, unsigned char *bytes) { return 0; }",
         ).unwrap();
-        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
-            "int32 probe(struct holder* h, uint8* bytes) { views bytes[0..2]; views h->pointer[0..2]; } by { execute(); }",
-            parsed.structs().clone(), Default::default(), Default::default(),
-            Default::default(), Default::default(), Default::default(), Default::default(),
-        ).unwrap();
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects("int32 probe(struct holder* h, uint8* bytes) { views bytes[0..2]; views h->pointer[0..2]; } by { execute(); }", crate::surface::parser::ProgramLayouts { struct_layouts: parsed.structs().clone(), ..Default::default() }).unwrap();
         let resources = file.function_blocks()[0]
             .requires()
             .iter()
@@ -5601,6 +5741,258 @@ mod input_identity_tests {
         assert_ne!(
             input_pointer_variable(first, 0).unwrap(),
             input_pointer_variable(second, 0).unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod global_native_place_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn global_loaded_pointer_requires_its_explicit_typed_place_guarantee() {
+        let source = "int32 value = 7; int32* alias = &value; int32 probe() { return *alias; }";
+        let positive = "verifying \"global.c\"; int32 probe() { owns alias[0]; ensures result == old(alias[0]); } by { execute(); simp(); }";
+        crate::surface::verify_c0_sources(positive, &[("global.c", source)])
+            .expect("an explicit global pointer place supplies typed validity and its permission");
+        for requirements in ["", "requires alias == &value;"] {
+            let proof = format!(
+                "verifying \"global.c\"; int32 probe() {{ {requirements} ensures result == result; }} by {{ execute(); simp(); }}"
+            );
+            let error = crate::surface::verify_c0_sources(&proof, &[("global.c", source)])
+                .expect_err(
+                    "a global pointer declaration or address equality cannot grant a referent",
+                );
+            assert!(
+                error.message().contains("invalid memory access")
+                    || error.message().contains("missing resource fact"),
+                "{}",
+                error.message()
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_global_pointer_range_uses_the_actual_declaration_without_adding_parameters() {
+        let parsed = syntax::parse_function(
+            "const int32* const alias = 0; int32 probe() { return *alias; }",
+        )
+        .unwrap();
+        let declarations = parsed.native_resource_pointer_declarations();
+        let declaration = declarations
+            .iter()
+            .find(|declaration| declaration.name() == "alias")
+            .unwrap();
+        assert_eq!(declaration.c_type(), syntax::C0Type::Int32Pointer);
+        assert!(declaration.is_constant());
+        assert!(declaration.pointee_is_constant());
+        assert!(parsed.parameters().is_empty());
+        assert!(parsed.to_kernel_function().parameters().is_empty());
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(int32* alias, int32* undeclared) { views alias[0..1]; views undeclared[0..1]; requires alias == undeclared; } by { execute(); }",
+            Default::default(),
+        ).unwrap();
+        let resources = file.function_blocks()[0]
+            .requires()
+            .iter()
+            .filter_map(|requirement| {
+                if let Requirement::Resource(resource) = requirement {
+                    Some(resource)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let spans =
+            native_span_requirements_for_resource(resources[0], &declarations, parsed.structs())
+                .unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].carrier, c_variable("alias"));
+        assert_eq!(spans[0].element_type, CType::Int32);
+        assert_eq!(
+            spans[0].access_policy,
+            crate::kernel::CTypedAccessPolicy::CAllocatedAccessAllowed
+        );
+        assert!(
+            native_span_requirements_for_resource(resources[1], &declarations, parsed.structs())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            native_span_requirements_for_resource(
+                resources[0],
+                parsed.parameters(),
+                parsed.structs()
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn parsed_record_pointer_field_keeps_declared_storage_type_during_entry_naming() {
+    let parsed = syntax::parse_function("struct Node { int* self; int value; }; int probe(struct Node* target, const struct Node* source) { return 0; }").unwrap();
+    let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+        "int32 probe(struct Node* target, const struct Node* source) { owns target->self; owns target->value; views source->self; views source->value; } by { execute(); }",
+        crate::surface::parser::ProgramLayouts { struct_layouts: parsed.structs().clone(), ..Default::default() },
+    ).unwrap();
+    let parameters = parsed.parameters();
+    let arguments = vec![
+        CExpression::Value(CValue::typed_pointer(
+            Pointer::symbolic(Variable(991_200)),
+            CType::Int32Pointer,
+        )),
+        CExpression::Value(CValue::typed_pointer(
+            Pointer::symbolic(Variable(991_201)),
+            CType::Int32Pointer,
+        )),
+    ];
+    let requirements = file.function_blocks()[0].requires();
+    for index in [0usize, 2] {
+        let Requirement::Resource(resource) = &requirements[index] else {
+            panic!("field resource");
+        };
+        let seeds = concrete_access_resource_blocks(
+            resource,
+            ParameterBinding::new(parameters, &arguments),
+        )
+        .unwrap();
+        let [(_, seed)] = seeds.as_slice() else {
+            panic!("one selected leaf seed");
+        };
+        let base = seed.base.clone();
+        assert_eq!(seed.element_type, Some(CType::Int32Pointer));
+        assert_eq!(seed.bytes, 8);
+        let named = memory_with_symbolic_loadable_cells(
+            CMemory::new(),
+            &seeds.into_iter().collect::<BTreeMap<_, _>>(),
+        );
+        let CExpressionOutcome::Value(value) = named.load(&base) else {
+            panic!("selected pointer cell");
+        };
+        assert_eq!(value.c_type(), CType::Int32Pointer);
+        assert!(matches!(
+            named.load(&base.offset_by_bytes(4)),
+            CExpressionOutcome::UndefinedBehavior(crate::kernel::CUndefinedBehavior::InvalidMemory)
+        ));
+    }
+    // The value clause owns its ABI tail padding, but only the one declared
+    // scalar field supplies an input value; padding remains unnamed.
+    let Requirement::Resource(resource) = &requirements[1] else {
+        panic!("scalar field");
+    };
+    let seeds =
+        concrete_access_resource_blocks(resource, ParameterBinding::new(parameters, &arguments))
+            .unwrap();
+    let base = seeds[0].1.base.clone();
+    assert_eq!(seeds[0].1.observation_count, Some(1));
+    let named = memory_with_symbolic_loadable_cells(
+        CMemory::new(),
+        &seeds.into_iter().collect::<BTreeMap<_, _>>(),
+    );
+    let CExpressionOutcome::Value(value) = named.load(&base) else {
+        panic!("selected scalar cell");
+    };
+    assert_eq!(value.c_type(), CType::Int32);
+    assert!(matches!(
+        named.load(&base.offset_by_bytes(4)),
+        CExpressionOutcome::UndefinedBehavior(crate::kernel::CUndefinedBehavior::InvalidMemory)
+    ));
+}
+
+#[cfg(test)]
+mod embedded_reference_span_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn nested_reference_pointer_prefix_selects_declared_record_before_loaded_leaf() {
+        let child = syntax::C0StructLayout::from_explicit_fields(
+            vec![("pointer".to_string(), syntax::C0Type::Int32Pointer, 0, 8)],
+            8,
+            8,
+        )
+        .unwrap()
+        .with_cpp_declaration_identity("reference-fixture", "Child");
+        let mut layouts = BTreeMap::from([("Child".to_string(), child)]);
+        let outer = syntax::C0StructLayout::from_explicit_fields_with_structs(
+            vec![
+                (
+                    "child".to_string(),
+                    syntax::C0Type::Int32,
+                    Some("Child".to_string()),
+                    0,
+                    8,
+                ),
+                ("stamp".to_string(), syntax::C0Type::Int32, None, 8, 4),
+            ],
+            16,
+            8,
+            &layouts,
+        )
+        .unwrap()
+        .with_cpp_declaration_identity("reference-fixture", "Outer");
+        layouts.insert("Outer".to_string(), outer.clone());
+        let parameter = syntax::C0Parameter::new(
+            syntax::C0Type::Int32Pointer,
+            syntax::reference_carrier_name("state"),
+            None,
+        )
+        .with_pointee_struct_layout("Outer".to_string(), outer)
+        .with_reference(true)
+        .with_pointee_constant(true)
+        .with_native_pointer_input(true);
+        let file = crate::surface::parser::parse_with_layouts_and_aggregate_objects(
+            "int32 probe(const struct Outer& state) { views state.child.pointer; views state.child.pointer[0..1]; } by { execute(); }",
+            crate::surface::parser::ProgramLayouts { struct_layouts: layouts.clone(), ..Default::default() },
+        ).unwrap();
+        let Requirement::Resource(resource) = &file.function_blocks()[0].requires()[1] else {
+            panic!("pointer prefix");
+        };
+        let spans = native_span_requirements_for_resource(
+            resource,
+            std::slice::from_ref(&parameter),
+            &layouts,
+        )
+        .unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].element_type, CType::Int32);
+        assert_eq!(
+            spans[0].access_policy,
+            crate::kernel::CTypedAccessPolicy::NativeObjectOnly
+        );
+        let CExpression::TypedLoad {
+            pointer,
+            value_type,
+            pointee_constant,
+            ..
+        } = &spans[0].carrier
+        else {
+            panic!("declared pointer leaf");
+        };
+        assert_eq!(*value_type, CType::Int32Pointer);
+        assert!(!pointee_constant);
+        let CExpression::MemberAddress { object, selection } = pointer.as_ref() else {
+            panic!("leaf selection");
+        };
+        assert_eq!(selection.path(), &["pointer".to_string()]);
+        let CExpression::MemberAddress {
+            object: root,
+            selection,
+        } = object.as_ref()
+        else {
+            panic!("embedded record address");
+        };
+        assert_eq!(root.as_ref(), &c_variable("&state"));
+        assert_eq!(selection.path(), &["child".to_string()]);
+        assert_eq!(selection.value_type(), CType::UInt8Array(8));
+        assert!(parameter.is_reference());
+        assert!(parameter.pointee_is_constant());
+        assert!(
+            native_span_requirements_for_resource(resource, &[], &layouts)
+                .unwrap()
+                .is_empty()
         );
     }
 }

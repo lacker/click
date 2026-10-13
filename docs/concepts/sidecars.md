@@ -74,16 +74,20 @@ project (`../rbtree-model/rbtree_model.click`) selects their common parent,
 the same root the directory form of the command uses; directory-target
 verification passes its selected Click project root explicitly. This keeps
 import boundaries independent of version control while permitting an
-intentional project to share specifications across sibling directories. In the first import delivery, libraries may export
-algebraic types, predicates, pure functions, resources, and theorem
-statements. Imported `verifying` declarations, named contracts, and C function
-specifications are rejected.
+intentional project to share specifications across sibling directories.
+Libraries may export algebraic types, predicates, pure functions, resources,
+theorem statements, named contracts, C function specifications, and tactics.
+An imported file's `verifying` declarations select sources when that file is
+verified itself; they do not add translation units to the importer. The entry
+file selects the C sources for its own verification, including implementations
+whose imported contracts it uses.
 
 An import provides declarations, not a request to run proofs. Verifying an
-entry sidecar checks only theorem and C proof units owned by that entry. It may
-assume imported theorem statements and the well-formed contracts of unselected
-called C functions. Select a library file itself—or a directory scope that
-contains it—to check the library's proofs. Circular theorem justification and
+entry sidecar checks only theorem, C function, and tactic proofs owned by that
+entry. It may assume imported theorem statements and the well-formed contracts
+of imported functions and tactics. Imported C signatures must still match the
+implementations supplied by the entry. Select a library file itself—or a
+directory scope that contains it—to check the library's proofs. Circular theorem justification and
 the existing checked-recursion rules are enforced independently of this
 selection boundary.
 

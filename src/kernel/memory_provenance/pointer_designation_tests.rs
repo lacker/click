@@ -219,6 +219,121 @@ fn unknown_full_pointer_values_frame_only_through_their_exact_read_pairs() {
 }
 
 #[test]
+fn native_prefix_carrier_frames_metadata_and_separated_pointee_store() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let cell = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(986_230)),
+    };
+    let before = CMemory::new();
+    let snapshot = intern_c_memory_ref(&before);
+    let Bitvector32Term::Variable(variable) = crate::kernel::eval::canonical_form_of_load(
+        snapshot.clone(),
+        cell.clone(),
+        LoadKind::Pointer,
+    ) else {
+        panic!("the full pointer read has an immutable producer name");
+    };
+    let original = CPointerValue::new(
+        Pointer::loaded(cell.block.clone(), Bitvector32Term::Variable(variable), 4),
+        CType::Int32Pointer,
+    )
+    .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+        snapshot,
+        cell.clone(),
+    )));
+    let admitted = before
+        .with_native_input_span(
+            original.clone(),
+            CType::Int32,
+            IntegerTerm::constant_i64(1).into(),
+        )
+        .unwrap();
+    let range =
+        |base, end, width| CMemoryRange::new_with_element_width(base, 0u32.into(), end, width);
+    let composition = Proposition::CResourceComposition(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(range(
+                cell.clone(),
+                2u32.into(),
+                4,
+            )))
+            .unchecked_with_fact(CResourceFact::own_memory(range(
+                original.pointer().clone(),
+                1u32.into(),
+                4,
+            ))),
+    );
+    let context = PureFactContext::new().assume_proposition(composition.clone());
+    let after = admitted.clone().store(original.pointer().clone(), int32(0));
+    let read = |memory: &CMemory| {
+        let snapshot = intern_c_memory_ref(memory);
+        let Bitvector32Term::Variable(variable) = crate::kernel::eval::canonical_form_of_load(
+            snapshot.clone(),
+            cell.clone(),
+            LoadKind::Pointer,
+        ) else {
+            panic!("a complete pointer read");
+        };
+        let Some(Bitvector32Term::MemoryLoad(defining, address, LoadKind::Pointer)) =
+            crate::kernel::registered_load_term_for_variable(&variable)
+        else {
+            panic!("the producer retains its full immutable definition");
+        };
+        CPointerValue::new(
+            Pointer::loaded(
+                address.block.clone(),
+                Bitvector32Term::Variable(variable),
+                4,
+            ),
+            CType::Int32Pointer,
+        )
+        .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+            defining, *address,
+        )))
+    };
+    assert!(!extended_dag_bridging_active());
+    assert!(!explicit_dag_check_active());
+    let framed = canonical_loaded_pointer_carrier(&read(&after), &context).unwrap();
+    assert_eq!(framed.designation(), original.designation());
+    assert!(after.native_input_span(&framed).is_some());
+    assert!(!extended_dag_bridging_active());
+    assert!(!explicit_dag_check_active());
+    let current = read(&after);
+    let mut work_samples = Vec::new();
+    for unrelated in [16u64, 128, 1024] {
+        let mut facts = context.clone();
+        for index in 0..unrelated {
+            facts = facts.assume_condition(
+                ConditionTerm::signed_less_than(
+                    Bitvector32Term::Variable(Variable(986_300 + index)),
+                    100u32.into(),
+                ),
+                true,
+            );
+        }
+        let _scope = facts.enter_id_scope();
+        let (framed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            canonical_loaded_pointer_carrier(&current, &facts)
+        });
+        assert_eq!(framed.unwrap().designation(), original.designation());
+        work_samples.push(work);
+    }
+    assert_eq!(
+        work_samples[0], work_samples[2],
+        "checking the selected three-hop read cannot visit unrelated order facts: {work_samples:?}"
+    );
+    // Compositions are retained separately from exact proposition facts;
+    // use a context that never admitted this ownership authority.
+    let withdrawn = PureFactContext::new();
+    let unproved = canonical_loaded_pointer_carrier(&read(&after), &withdrawn);
+    assert!(unproved.is_none_or(|value| value.designation() != original.designation()));
+    let partial = admitted.store(cell.clone(), int32(7));
+    let changed = canonical_loaded_pointer_carrier(&read(&partial), &context);
+    assert!(changed.is_none_or(|value| value.designation() != original.designation()));
+}
+
+#[test]
 fn loaded_pointer_designation_refuses_stale_partial_numeric_and_havoc_origins() {
     let _session = crate::kernel::VerificationSession::enter();
     let context = PureFactContext::new();

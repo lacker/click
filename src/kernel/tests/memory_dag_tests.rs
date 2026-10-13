@@ -5148,3 +5148,69 @@ fn pointer_read_single_store_aligns_same_block_parameter_aliases() {
         "one-store alias admission visited unrelated facts: {samples:?}"
     );
 }
+
+/// Recording the edge of a snapshot the recording itself interns cannot
+/// change any earlier answer, since no earlier question could name that
+/// snapshot, so it leaves the derivation generation that keys negative memos
+/// alone. Bumping it at every program step emptied those memos at every step.
+#[test]
+fn recording_a_fresh_snapshot_keeps_the_derivation_generation() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let cell = Pointer {
+        block: "generation-block".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let base = CMemory::new().with_block("generation-block", 8);
+    let before = crate::kernel::primitives::c_memory_derivation_generation();
+    let stored = base.store(cell.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
+    assert!(
+        crate::kernel::intern_c_memory_ref(&stored)
+            .derivation()
+            .is_some(),
+        "the store recorded its edge"
+    );
+    assert_eq!(
+        crate::kernel::primitives::c_memory_derivation_generation(),
+        before,
+        "a fresh snapshot's edge invalidates no earlier answer"
+    );
+}
+
+/// A kept range's base is asked about by every walk that crosses its call,
+/// each inside lookups of its own. A negative answer that no in-progress
+/// lookup cut holds under any lookups, so the next walk reuses it instead of
+/// proving the same failing equality again.
+#[test]
+fn a_failed_kept_base_equality_is_reused_across_cell_lookups() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let base = |variable: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    };
+    let assumptions = PureFactContext::new();
+    let memory = crate::kernel::intern_c_memory_ref(&CMemory::new());
+    let ask = |lookup: u64| {
+        let _lookup = crate::kernel::resource_tracker::cell_source::CellLookupGuard::enter(
+            &memory,
+            &base(lookup),
+        )
+        .expect("a fresh lookup enters");
+        crate::instrumentation::measure_deterministic_work(|| {
+            crate::kernel::reasoning::memory_resolution::kept_range_bases_proven_equal(
+                &base(998_001),
+                &base(998_002),
+                &assumptions,
+            )
+        })
+    };
+    let (first, _) = ask(998_100);
+    let (second, reused) = ask(998_101);
+    assert!(
+        !first && !second,
+        "distinct parameters are not proven equal"
+    );
+    assert_eq!(reused, 0, "the second walk reuses the first walk's answer");
+}

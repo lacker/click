@@ -4,7 +4,7 @@ Click files are sidecar specifications for C0 sources.
 
 They may begin with local specification imports such as
 `import "../models/common.click";`. Imports contribute declarations but do not
-select the imported file's theorem proofs. See
+select the imported file's theorem, C function, or tactic proofs. See
 [Files and sidecars](../../concepts/sidecars.md#local-specification-imports)
 for the module and selection rules.
 
@@ -1288,7 +1288,7 @@ requirement. An empty viewable or memory range does not establish that its
 base has object provenance.
 
 `aligned(pointer, n)` states that the pointer's address is a multiple of `n`,
-a power of two. It is sugar for `address(pointer) & (n - 1) == 0`. Click
+a power of two. It is sugar for `(address(pointer) & (n - 1)) == 0`. Click
 decides it from how the pointer was formed, never from its pointee type: a
 successful heap allocation is 16-byte aligned; a declared local's block is
 aligned for its type from its declaration, a struct local's for its
@@ -2467,6 +2467,12 @@ exists (k: int32) { 0 <= k and k < n and p[k] == x }
 Do not use C logical operators such as `&&`, `||`, or `!` in Click
 propositions. Those remain C-fragment syntax.
 
+A comparison binds looser than every expression operator, which differs from C
+for `&`, `^` and `|`. Parenthesize a comparison operand whose outermost
+operator is one of those three: `(x & 1) == 0`, not `x & 1 == 0`, which is
+refused. See
+[Contract-expression precedence](grammar.md#contract-expression-precedence).
+
 Range proposition helpers:
 
 <!-- verified-example: mdtests/pure_click_functions.md -->
@@ -2575,10 +2581,21 @@ ensures range_filled((struct range_job *)argument);
 
 The cast retypes the pointer for the clause; it does not change the pointer's
 value or provenance, and the C body's own conversion reaches the same object.
-Only `void *` parameters may use these struct casts, and a block casts each parameter to one
-struct, so the proof and its synthesized certificates read the parameter with
-one layout. Struct casts of other pointers, and struct casts inside resource or predicate
-definitions (whose parameters are already typed), are rejected.
+The direct `(struct T*)argument` form accepts a `void*` C parameter and
+records one target struct per parameter for proof synthesis. Contracts may
+also write `(struct T*)(void*)pointer` for a current object-pointer expression,
+including a typed struct pointer, field, or resource parameter. This explicit
+form retains the target layout on the expression and does not assign a layout
+to the source parameter. Integer and function-pointer operands are rejected.
+Source const qualifications survive the conversion; field reads and writes
+still require their ordinary memory permissions. Put `old(...)` or `at(...)`
+around the complete cast or field expression to select a snapshot.
+
+<!-- verified-example: mdtests/contract_object_pointer_casts.md -->
+<!-- verified-example: mdtests/contract_object_pointer_casts_rejects_missing_view.md -->
+<!-- verified-example: mdtests/contract_object_pointer_casts_rejects_const_write.md -->
+<!-- verified-example: mdtests/contract_object_pointer_casts_rejects_integer.md -->
+<!-- verified-example: mdtests/contract_object_pointer_casts_rejects_function_pointer.md -->
 
 When `old(p)` is passed as an array argument to a pure Click function or
 predicate, it becomes an entry-state Click array ref. For example,

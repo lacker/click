@@ -33,8 +33,7 @@ fn equality_arguments(
 /// its recorded snapshot. The caller checks each candidate's exact lowering.
 pub(super) fn byte_premises_at_snapshot(
     derivation: &PropositionDerivation,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     anchor: &ProgramPointRef,
 ) -> Option<Vec<(Proposition, ClickProposition)>> {
@@ -42,7 +41,9 @@ pub(super) fn byte_premises_at_snapshot(
     // The retained word keeps its live snapshot and source address. Its
     // canonical load variable may instead name a projection before initialization.
     let raw = super::surface_synthesis::synthesize_surface_machine_expression(
-        word, parameters, arguments, state,
+        word,
+        parameter_binding,
+        state,
     );
     let ContractExpression::CFragment(CExpression::Variable(local)) = raw? else {
         return None;

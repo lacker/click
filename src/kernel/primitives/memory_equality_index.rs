@@ -15,6 +15,15 @@ use read_intervals::ReadIntervals;
 use super::*;
 use crate::kernel::equality_graph::{AffineOffset, EqualityGraph, PointerClassMerge};
 
+/// A selected full-pointer frame can select the same supplier without entering
+/// the caller's unconditional graph. The derived input lineage is local to
+/// this query, so an index with its checked union cannot serve a weakened
+/// context that no longer proves the frame's authority.
+fn graph_for_memory_query(assumptions: &PureFactContext, pointer: &Pointer) -> EqualityGraph {
+    assumptions
+        .with_selected_pointer_read_frames(&[pointer], |context| context.equality_graph.clone())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum AddressKind {
     OwnedStart,
@@ -1190,7 +1199,9 @@ impl ResourceContext {
         query: Option<&Pointer>,
     ) -> std::sync::Arc<PairedMemoryIndex> {
         self.pair_memory_equalities_in_graph(
-            assumptions.equality_graph.clone(),
+            query
+                .map(|pointer| graph_for_memory_query(assumptions, pointer))
+                .unwrap_or_else(|| assumptions.equality_graph.clone()),
             register_input,
             query.map(MemoryQuery::Address),
         )
@@ -1905,7 +1916,7 @@ impl ResourceContext {
         assumptions: &PureFactContext,
     ) -> MemoryFactCandidates {
         let index = self.pair_memory_equalities_in_graph(
-            assumptions.equality_graph.clone(),
+            graph_for_memory_query(assumptions, range.base()),
             false,
             Some(MemoryQuery::Footprint(range)),
         );
@@ -1930,6 +1941,96 @@ impl ResourceContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_read_frame_selects_suppliers_only_under_current_authority() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let field = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let read = |context: &PureFactContext, memory: &CMemory| {
+            let snapshot = crate::kernel::intern_c_memory_ref(memory);
+            let variable = crate::kernel::load_variable_for_cell_with_origin(
+                &snapshot,
+                &field,
+                LoadKind::Pointer,
+                C_POINTER_BYTE_WIDTH,
+                &snapshot,
+            );
+            let value =
+                Pointer::loaded(field.block.clone(), Bitvector32Term::Variable(variable), 4);
+            context.register_pointer_read(&value, &snapshot, &field);
+            value
+        };
+        let range = |base, end, stride| {
+            CMemoryRange::new_with_element_width(base, 0u32.into(), end, stride)
+        };
+        let before = CMemory::new();
+        let source = read(&PureFactContext::new(), &before);
+        let separation = Proposition::CResourceSeparate {
+            left: Box::new(CResource::Memory(range(field.clone(), 2u32.into(), 4))),
+            right: Box::new(CResource::Memory(range(source.clone(), 4u32.into(), 4))),
+        };
+        let context = PureFactContext::new().assume_proposition(separation.clone());
+        let resources = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(range(
+                field.clone(),
+                2u32.into(),
+                4,
+            )))
+            .unchecked_with_fact(CResourceFact::own_memory(range(
+                source.clone(),
+                4u32.into(),
+                4,
+            )));
+        resources.synchronize_memory_equalities(&context);
+        let after = before
+            .with_block("local:pointer-frame-metadata", 4)
+            .store(source.offset_by_bytes(4), CValue::Int32(7u32.into()));
+        let current = read(&context, &after);
+        assert!(context.pointers_known_equal(&source, &current));
+        assert!(!context.equality_graph.are_equal(&source, &current));
+        let required = CResourceFact::own_memory(range(current.clone(), 1u32.into(), 4));
+        let source_range = CResource::Memory(range(source.clone(), 4u32.into(), 4));
+        let current_range = CResource::Memory(range(current.clone(), 1u32.into(), 4));
+        let field_range = CResource::Memory(range(field.clone(), 2u32.into(), 4));
+        assert!(context.proves_resource_contains(&source_range, &current_range));
+        assert!(context.proves_resource_separate(&field_range, &current_range));
+        assert!(
+            resources
+                .clone()
+                .without_fact_incrementally(&required, &context)
+                .is_some()
+        );
+        assert!(!context.equality_graph.are_equal(&source, &current));
+        let withdrawn = context.without_exact_fact(&separation);
+        assert!(!withdrawn.proves_resource_contains(&source_range, &current_range));
+        assert!(!withdrawn.proves_resource_separate(&field_range, &current_range));
+        assert!(
+            resources
+                .clone()
+                .without_fact_incrementally(&required, &withdrawn)
+                .is_none()
+        );
+        assert!(
+            resources
+                .clone()
+                .without_fact_incrementally(&required, &context.restricted_to_facts(&[], &[]),)
+                .is_none()
+        );
+        let partial = after.store(field.clone(), CValue::Int32(9u32.into()));
+        let changed = read(&context, &partial);
+        let changed_range = CResource::Memory(range(changed.clone(), 1u32.into(), 4));
+        assert!(!context.proves_resource_contains(&source_range, &changed_range));
+        assert!(!context.proves_resource_separate(&field_range, &changed_range));
+        let changed = CResourceFact::own_memory(range(changed, 1u32.into(), 4));
+        assert!(
+            resources
+                .without_fact_incrementally(&changed, &context)
+                .is_none()
+        );
+    }
 
     // A partial resource frame leaves a constant-base range covering two
     // fields. A modeled pointer alias must still select an interior field.

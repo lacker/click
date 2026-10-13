@@ -39,6 +39,7 @@ verifying "simp_composes_a_pointer_field_chain_across_a_call.c";
 
 void touch(struct region* region) {
     owns *region;
+    requires valid_place(region->arena);
     owns region->arena->data;
     requires separate(memory(*region), memory(region->arena->data));
     ensures region->arena == old(region->arena);
@@ -52,6 +53,8 @@ int32 caller(struct arena* arena, struct region* first, struct region* second) {
     owns *arena;
     owns *first;
     owns *second;
+    requires valid_place(first->arena);
+    requires valid_place(second->arena);
     requires first->arena == arena;
     requires second->arena == arena;
     ensures result == 0;

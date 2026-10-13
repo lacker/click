@@ -286,6 +286,7 @@ impl PropositionSearch for PureFactContext {
                         .derive_forall_rule(proposition, *var, body, false)
                         .is_some_and(|rule| proposition_derivation(proposition, rule).check(self))
             }
+            Proposition::CValidPlace { .. } => self.proves_atomic_without_search(proposition),
             Proposition::CMemoryInitialized {
                 memory,
                 base,
@@ -438,6 +439,17 @@ impl PropositionSearch for PureFactContext {
         for_simp: bool,
         exclude_exact_goal: bool,
     ) -> Option<(PureFactContext, u64, AtomicPropositionDerivationEvidence)> {
+        // A retained object declaration/input can settle validity without
+        // any pure premise. Ask the checked atomic leaf before searching for
+        // dependencies; the complete carrier and snapshot are in the goal.
+        if matches!(proposition, Proposition::CValidPlace { .. }) {
+            let direct = PureFactContext::new();
+            let (evidence, premises_id) =
+                direct.proves_atomic_for_derivation_with_id(proposition, for_simp);
+            if let Some(evidence) = evidence {
+                return Some((direct, premises_id, evidence));
+            }
+        }
         if !exclude_exact_goal && self.proves_exact(proposition) {
             let exact = PureFactContext::new().assume_proposition(proposition.clone());
             let (evidence, premises_id) =
@@ -1886,6 +1898,22 @@ type AtomicPremiseSelection = (
 /// Walk syntax adjacency, never rebuilding an index of the ambient context.
 /// A wider smart fallback follows recent havoc bounds and general facts;
 /// its result still has to pass the restricted kernel query.
+/// The condition facts connected to `goal` through shared atoms, the same
+/// component `simp` selects. The solver behind `auto` reads its premises
+/// from this component; it never scans facts unconnected to the goal.
+pub(crate) fn solver_connected_premises(
+    context: &PureFactContext,
+    goal: &Proposition,
+) -> Option<Vec<Proposition>> {
+    let (conditions, _, _, _) = connected_atomic_premises(context, goal, &[], false, true, true)?;
+    Some(
+        conditions
+            .into_iter()
+            .map(|(condition, value)| Proposition::ConditionIs(condition, value))
+            .collect(),
+    )
+}
+
 fn connected_atomic_premises(
     context: &PureFactContext,
     goal: &Proposition,

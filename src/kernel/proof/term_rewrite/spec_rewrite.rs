@@ -63,7 +63,11 @@ fn collect_spec_proposition_carriers(
             collect_spec_expression_carriers(right, variables, integer_seen);
         }
         SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression) => {
+        | SpecProposition::Defined(expression)
+        | SpecProposition::ValidPlace {
+            pointer: expression,
+            ..
+        } => {
             collect_spec_expression_carriers(expression, variables, integer_seen);
         }
         SpecProposition::And(left, right)
@@ -1016,6 +1020,17 @@ impl<'a> TermRewrite<'a> {
                 start: self.rewrite_spec_expression(start)?,
                 end: self.rewrite_spec_expression(end)?,
                 element_width: *element_width,
+            },
+            SpecProposition::ValidPlace {
+                memory,
+                pointer,
+                place_type,
+                access_policy,
+            } => SpecProposition::ValidPlace {
+                memory: memory.clone(),
+                pointer: self.rewrite_spec_expression(pointer)?,
+                place_type: place_type.clone(),
+                access_policy: *access_policy,
             },
             SpecProposition::Defined(expression) => {
                 SpecProposition::Defined(self.rewrite_spec_expression(expression)?)

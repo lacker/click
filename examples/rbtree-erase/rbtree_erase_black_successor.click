@@ -1,31 +1,8 @@
-verifying "rb_erase_augmented.c";
+verifying "rb_erase.c";
+import "rbtree_erase_callbacks.click";
 
 import "../rbtree-model/rbtree_resources.click";
 import "../rbtree-model/rbtree_erase_splice.click";
-
-contract void AugmentRotate(struct rb_node* old, struct rb_node* new) {
-    requires new != 0;
-    ensures 1 == 1;
-}
-
-contract void ErasePropagate(struct rb_node* node, struct rb_node* stop) {
-    ensures 1 == 1;
-}
-
-contract void EraseCopy(struct rb_node* node, struct rb_node* successor) {
-    requires node != 0;
-    requires successor != 0;
-    ensures 1 == 1;
-}
-
-resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
-    owns augment->propagate;
-    owns augment->copy;
-    owns augment->rotate;
-    fact ErasePropagate(augment->propagate);
-    fact EraseCopy(augment->copy);
-    fact AugmentRotate(augment->rotate);
-}
 
 # Immediate black-leaf successor: retain the deficit for erase fixup.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
@@ -44,10 +21,6 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     requires is_rb(tree.model) == 1;
     requires rb_parent_consistent(tree.model, 0) == 1;
     views erase_callbacks(augment);
-    requires separate(memory(*augment), memory(*root));
-    requires separate(memory(*augment), memory(node->rb_left->__rb_parent_color));
-    requires separate(memory(*augment), memory(node->rb_right->__rb_parent_color));
-    requires separate(memory(*augment), memory(node->rb_right->rb_left));
     produces node->__rb_parent_color;
     produces node->rb_left;
     produces node->rb_right;
@@ -61,6 +34,8 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     ensures rb_inorder(plug(deficit.model, hole.model)) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))));
     ensures result == old(node->rb_right);
     ensures result != 0;
+    ensures deficit.model != Context::Top;
+    ensures ctx_node_is(deficit.model, result) == 1;
 } by {
     match tree.model {
         RbTree::Empty => { contradiction(tree.model == RbTree::Empty); },
@@ -199,6 +174,12 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     == plug(Context::Top, rb_successor_splice(sid, parent, color, left_model, right_model)));
                                 unfold(plug(Context::Top, rb_successor_splice(sid, parent, color, left_model, right_model)));
                                 rewrite(rb_left(old(tree.model)) == left_model); rewrite(rb_right(old(tree.model)) == right_model); assumption();
+                            }
+                            have result == sid;
+                            have ctx_node_is(deficit.model, result) == 1 by {
+                                rewrite(deficit.model == Context::Right(sid, 0, Color::Black, RbTree::Node(lid, sid, lc, ll, lr), Context::Top));
+                                rewrite(result == sid);
+                                unfold(ctx_node_is(Context::Right(sid, 0, Color::Black, RbTree::Node(lid, sid, lc, ll, lr), Context::Top), sid)); normalize();
                             }
                             simp();
                         },

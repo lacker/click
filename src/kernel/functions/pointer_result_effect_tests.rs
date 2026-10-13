@@ -106,10 +106,10 @@ fn pointer_result_effect_is_inferred_from_checked_body_and_instantiated_modularl
         unreachable!()
     };
     assert_eq!(result.designation(), input.designation());
-    assert_ne!(
+    assert_eq!(
         result.pointer(),
         input.pointer(),
-        "designation transport must keep the fresh address"
+        "a certified identity returns the complete actual carrier"
     );
 }
 
@@ -134,6 +134,38 @@ fn result_effect_does_not_upgrade_an_actual_undesignated_argument() {
         instantiate_pointer_result_effect(result.clone(), &[effect], &[input], &CMemory::new()),
         result
     );
+}
+
+#[test]
+fn uncertified_pointer_result_preserves_integer_origin_boundary() {
+    let result_variable = Variable(9_898_042);
+    let result = CValue::typed_pointer(Pointer::symbolic(result_variable), CType::Int32Pointer);
+    for has_designation in [false, true] {
+        let origin =
+            CPointerValue::new(Pointer::symbolic(Variable(9_898_043)), CType::Int32Pointer);
+        let origin = if has_designation {
+            origin.with_designation(PointerDesignation::Unresolved(Variable(9_898_044)))
+        } else {
+            origin
+        };
+        let argument = CValue::PointerInteger(Arc::new(
+            CPointerIntegerValue::from_pointer(origin, CType::UInt64).unwrap(),
+        ));
+        let observed =
+            instantiate_pointer_result_effect(result.clone(), &[], &[argument], &CMemory::new());
+        let CValue::Pointer(pointer) = observed else {
+            unreachable!()
+        };
+        assert_eq!(pointer.pointer(), &Pointer::symbolic(result_variable));
+        if has_designation {
+            assert_eq!(
+                pointer.designation(),
+                Some(&PointerDesignation::Unresolved(result_variable))
+            );
+        } else {
+            assert!(pointer.designation().is_none());
+        }
+    }
 }
 
 #[test]
@@ -539,6 +571,7 @@ fn complete_body_certifies_a_full_pointer_member_store() {
         value_type: CType::Int32Pointer,
         source: CPointerEffectRoot::Parameter(1),
         source_path: Default::default(),
+        source_field: None,
     }));
 }
 
@@ -670,4 +703,213 @@ fn extra_entry_premise_cannot_authorize_a_universal_pointer_effect() {
         !independent_entry::matches(&rule.function, &arguments, &state, &specialized),
         "an additional caller fact is not a universally declared entry premise"
     );
+}
+
+#[test]
+fn certified_pointer_result_keeps_local_storage_and_result_qualifiers() {
+    let address = Pointer {
+        block: "local:identity-array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new()
+        .with_declared_array_block(address.block.clone(), CType::Int32, 3)
+        .expect("actual scalar array declaration");
+    let input = memory
+        .declared_array_pointer(&address, CType::Int32, 3)
+        .expect("actual declaration authenticates the complete array");
+    let result = CPointerValue::new(Pointer::symbolic(Variable(9_898_020)), CType::Int32Pointer)
+        .with_pointee_constant(true);
+    let value = instantiate_pointer_result_effect(
+        CValue::Pointer(result.clone()),
+        &[
+            CPointerResultEffect::FromParameter {
+                parameter: 0,
+                child_path: Default::default(),
+            },
+            CPointerResultEffect::ExactFromParameter {
+                parameter: 0,
+                child_path: Default::default(),
+            },
+        ],
+        &[CValue::Pointer(input.clone())],
+        &memory,
+    );
+    assert_eq!(
+        value,
+        CValue::Pointer(input.with_type(result.c_type()).with_pointee_constant(true))
+    );
+    let opaque = instantiate_pointer_result_effect(
+        CValue::Pointer(result.clone()),
+        &[CPointerResultEffect::Opaque],
+        &[value],
+        &memory,
+    );
+    let CValue::Pointer(opaque) = opaque else {
+        unreachable!()
+    };
+    assert_eq!(opaque.pointer(), result.pointer());
+    assert!(matches!(
+        opaque.designation(),
+        Some(PointerDesignation::Unresolved(_))
+    ));
+}
+
+#[test]
+fn displaced_return_keeps_domain_effect_without_certifying_exact_parameter_address() {
+    let span = CResourceSpec::viewed_memory(CMemorySegment::new(
+        c_variable("p"),
+        c_int32_literal(0),
+        c_int32_literal(3),
+    ))
+    .with_native_span_requirements(vec![CNativeSpanRequirement {
+        carrier: c_variable("p"),
+        element_type: CType::Int32,
+        count: c_int32_literal(3),
+        access_policy: CTypedAccessPolicy::NativeObjectOnly,
+    }]);
+    let function = c_function(
+        CType::Int32Pointer,
+        "displaced_result",
+        vec![c_parameter("p", CType::Int32Pointer).with_native_pointer_input(true)],
+        c_return(c_add(c_variable("p"), c_int32_literal(1))),
+    )
+    .with_resource_summary(vec![span], vec![])
+    .with_contract(
+        vec![],
+        vec![],
+        vec![],
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let entry = independent_entry::construct(
+        &function,
+        &[CExpression::Value(designated(9_898_221))],
+        None,
+        false,
+    )
+    .expect("independent typed span entry");
+    let rule = certify_in_state(entry.caller, function, entry.arguments);
+    assert!(
+        rule.pointer_result_effects
+            .contains(&CPointerResultEffect::FromParameter {
+                parameter: 0,
+                child_path: Default::default()
+            })
+    );
+    assert!(
+        !rule
+            .pointer_result_effects
+            .iter()
+            .any(|effect| matches!(effect, CPointerResultEffect::ExactFromParameter { .. }))
+    );
+    let input = designated(9_898_222);
+    let result = CValue::typed_pointer(Pointer::symbolic(Variable(9_898_223)), CType::Int32Pointer);
+    let value = instantiate_pointer_result_effect(
+        result.clone(),
+        &rule.pointer_result_effects,
+        std::slice::from_ref(&input),
+        &CMemory::new(),
+    );
+    let (CValue::Pointer(value), CValue::Pointer(result), CValue::Pointer(input)) =
+        (value, result, input)
+    else {
+        unreachable!()
+    };
+    assert_eq!(value.pointer(), result.pointer());
+    assert_eq!(value.designation(), input.designation());
+}
+
+#[test]
+fn private_by_value_pointer_store_is_not_exported_to_the_argument_image() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let layout = Arc::new(CAggregateLayout::new(
+        8,
+        8,
+        vec![CAggregateField::new("kid", 0, CType::Int32Pointer)],
+    ));
+    let field = CExpression::MemberAddress {
+        object: Box::new(c_variable("copy")),
+        selection: Arc::new(CAggregateMemberSelection {
+            layout: layout.clone(),
+            path: vec!["kid".into()].into(),
+            value_type: CType::Int32Pointer,
+        }),
+    };
+    let function = c_function(
+        CType::Void,
+        "retarget_private_copy",
+        vec![
+            c_parameter_with_aggregate_layout("copy", CType::VoidPointer, layout.as_ref().clone()),
+            c_parameter("kid", CType::Int32Pointer).with_native_pointer_input(true),
+        ],
+        c_seq(
+            c_typed_store(field, c_variable("kid"), CType::Int32Pointer),
+            c_return(c_void_value()),
+        ),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let incoming = vec![
+        CExpression::Value(CValue::typed_pointer(
+            Pointer::symbolic(Variable(9_898_301)),
+            CType::VoidPointer,
+        )),
+        CExpression::Value(designated(9_898_302)),
+    ];
+    let staging = constructor_input::materialize_symbolic_declaration_parameters(
+        &CState::new(),
+        &function,
+        &incoming,
+    )
+    .unwrap();
+    let image = staging.locals().aggregate_object_pointer("copy").unwrap();
+    let arguments = vec![
+        CExpression::Value(CValue::typed_pointer(image.clone(), CType::VoidPointer)),
+        incoming[1].clone(),
+    ];
+    let entry = independent_entry::construct(&function, &arguments, None, false).unwrap();
+    let rule = certify_in_state(entry.caller, function, entry.arguments);
+    assert!(
+        rule.pointer_store_effects.is_empty(),
+        "private stores do not modify the caller's value image"
+    );
+}
+
+#[test]
+fn aggregate_contract_views_bind_incoming_images_even_with_a_caller_name_collision() {
+    let layout = CAggregateLayout::new(4, 4, vec![CAggregateField::new("value", 0, CType::Int32)]);
+    let function = c_function(
+        CType::Void,
+        "observe_copy",
+        vec![c_parameter_with_aggregate_layout(
+            "copy",
+            CType::VoidPointer,
+            layout.clone(),
+        )],
+        c_return(c_void_value()),
+    );
+    let image = Pointer::symbolic(Variable(9_898_401));
+    let arguments = [CValue::typed_pointer(image.clone(), CType::VoidPointer)];
+    for collision in [false, true] {
+        let mut caller = CState::new();
+        if collision {
+            caller.locals.set_aggregate_object_at(
+                "copy",
+                layout.clone(),
+                Pointer::symbolic(Variable(9_898_402)),
+            );
+        }
+        let view = with_contract_interface_argument_views(
+            &caller,
+            function.contract_interface(),
+            &arguments,
+        );
+        assert_eq!(view.locals().aggregate_object_pointer("copy"), Some(&image));
+        assert_eq!(view.resources(), caller.resources());
+    }
 }

@@ -73,7 +73,7 @@ uint32 uint32_remainder_high_bit() {
 }
 
 uint32 uint32_bitwise(uint32 value) {
-    ensures bitwise: result == (value & 255u32) | (value ^ 4294967295u32) by auto;
+    ensures bitwise: result == ((value & 255u32) | (value ^ 4294967295u32)) by auto;
 }
 
 uint32 uint32_bitwise_not() {

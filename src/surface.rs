@@ -30,11 +30,10 @@ use crate::kernel::{
     c_condition_fact_memories, c_contract_refinement_context, c_declare,
     c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
     c_function_contract_entry_state, c_function_contract_refinement_arguments,
-    c_function_contract_refinement_context, c_function_entry_state,
-    c_function_entry_state_with_assumptions, c_function_specification, c_function_termination_plan,
-    c_if, c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
-    c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
-    c_termination_height_plan, c_typed_pointer_value,
+    c_function_contract_refinement_context, c_function_entry_state_with_assumptions,
+    c_function_specification, c_function_termination_plan, c_if, c_loop_invariants_hold_at_entry,
+    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect,
+    c_resources_directly_match, c_seq, c_termination_height_plan, c_typed_pointer_value,
     c_unverified_function_contract_claims_diagnostic,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
@@ -261,6 +260,8 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "entry",
     "equal_from_bounds",
     "less_equal_from_equal",
+    "negated_goal",
+    "divide",
     "enum",
     "enumerate",
     "execute",
@@ -1676,6 +1677,11 @@ pub enum ClickProposition {
     Initialized {
         segment: ContractSegment,
     },
+    /// Nominal source typing survives value substitution and snapshot capture.
+    ValidPlace {
+        expression: ContractExpression,
+        pointee_struct: Option<String>,
+    },
     Defined {
         expression: ContractExpression,
     },
@@ -1766,6 +1772,13 @@ fn clone_click_proposition_atom(proposition: &ClickProposition) -> ClickProposit
             segment: segment.clone(),
         },
         ClickProposition::Defined { expression } => ClickProposition::Defined {
+            expression: expression.clone(),
+        },
+        ClickProposition::ValidPlace {
+            expression,
+            pointee_struct,
+        } => ClickProposition::ValidPlace {
+            pointee_struct: pointee_struct.clone(),
             expression: expression.clone(),
         },
         ClickProposition::PredicateCall { name, arguments } => ClickProposition::PredicateCall {
@@ -2336,7 +2349,8 @@ fn collect_current_proposition_variables(
             ClickProposition::Initialized { segment } | ClickProposition::Loadable { segment } => {
                 collect_current_segment_variables(segment, names);
             }
-            ClickProposition::Defined { expression } => {
+            ClickProposition::Defined { expression }
+            | ClickProposition::ValidPlace { expression, .. } => {
                 collect_current_contract_expression_variables(expression, names);
             }
             // The proposition itself is anchored, so current-local writes cannot
@@ -5846,6 +5860,18 @@ pub enum IntegerCertificateNode {
     Trivial {
         result: ClickProposition,
     },
+    /// The integer negation of a non-strict or strict goal, assumed for a
+    /// refutation; the certificate then concludes with a contradiction.
+    NegatedGoal {
+        result: ClickProposition,
+    },
+    /// Divide a non-strict bound by a positive common factor of its
+    /// coefficients, rounding the constant.
+    Divide {
+        source: usize,
+        divisor: ContractExpression,
+        result: ClickProposition,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -6022,12 +6048,57 @@ pub enum SmartTactic {
     Simp,
 }
 
+/// The fixed state a proposition is evaluated in: the entry state, the
+/// current state, the function's result if it has returned, and the states
+/// recorded at named snapshots.
+#[derive(Clone, Copy)]
+pub(in crate::surface) struct FixedStateFrame<'a> {
+    pub(in crate::surface) pre_state: &'a CState,
+    pub(in crate::surface) state: &'a CState,
+    pub(in crate::surface) result: Option<&'a CValue>,
+    pub(in crate::surface) recorded_snapshots: &'a RecordedSnapshots,
+}
+
+impl<'a> FixedStateFrame<'a> {
+    pub(in crate::surface) fn new(
+        pre_state: &'a CState,
+        state: &'a CState,
+        result: Option<&'a CValue>,
+        recorded_snapshots: &'a RecordedSnapshots,
+    ) -> Self {
+        Self {
+            pre_state,
+            state,
+            result,
+            recorded_snapshots,
+        }
+    }
+}
+
+/// A C function's parameters and the argument expressions bound to them,
+/// position by position.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ParameterBinding<'a> {
+    pub(crate) parameters: &'a [syntax::C0Parameter],
+    pub(crate) arguments: &'a [CExpression],
+}
+
+impl<'a> ParameterBinding<'a> {
+    pub(crate) fn new(parameters: &'a [syntax::C0Parameter], arguments: &'a [CExpression]) -> Self {
+        Self {
+            parameters,
+            arguments,
+        }
+    }
+}
+
 /// The pure definitions a specification is lowered against: its predicates
 /// and its Click functions.
 #[derive(Clone, Copy)]
 struct SpecDefinitions<'a> {
     predicates: &'a PredicateEnvironment,
     functions: &'a ClickFunctionEnvironment,
+    struct_layouts: Option<&'a BTreeMap<String, syntax::C0StructLayout>>,
 }
 
 impl<'a> SpecDefinitions<'a> {
@@ -6035,7 +6106,15 @@ impl<'a> SpecDefinitions<'a> {
         Self {
             predicates,
             functions,
+            struct_layouts: None,
         }
+    }
+    fn with_struct_layouts(
+        mut self,
+        layouts: &'a BTreeMap<String, syntax::C0StructLayout>,
+    ) -> Self {
+        self.struct_layouts = Some(layouts);
+        self
     }
 }
 
@@ -6338,6 +6417,7 @@ fn click_proposition_reads_memory(
         // predicates all observe the C state.
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::Initialized { .. }
         | ClickProposition::Loadable { .. }
         | ClickProposition::At { .. }
@@ -6853,6 +6933,14 @@ impl ClickFile {
 
     fn declaration_owner(&self, identity: &DeclarationIdentity) -> Option<&str> {
         self.declaration_owners.get(identity).map(String::as_str)
+    }
+
+    fn function_is_selected(&self, name: &str) -> bool {
+        self.entry_module.as_ref().is_none_or(|entry| {
+            self.declaration_owner(&DeclarationIdentity::CFunction(name.to_string()))
+                .or_else(|| self.declaration_owner(&DeclarationIdentity::Tactic(name.to_string())))
+                == Some(entry.as_str())
+        })
     }
 
     fn theorem_is_selected(&self, name: &str) -> bool {

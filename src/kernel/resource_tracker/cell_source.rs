@@ -289,6 +289,7 @@ impl AccessInRangeEvidence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::kernel) enum RangeBoundEvidence {
     Intrinsic,
+    PinnedConstants(Box<PinnedRangeBound>),
     SignedOrderPath(Vec<SignedOrderDerivationStep>),
     EndpointEdge(SignedOrderDerivationStep),
     /// `left < base + 1` and `base < right` imply `left < right` over
@@ -497,7 +498,7 @@ pub(in crate::kernel) enum PositiveTermEvidence {
 }
 
 impl MemoryDagHopJustification {
-    fn is_typed(&self) -> bool {
+    pub(in crate::kernel) fn is_typed(&self) -> bool {
         match self {
             Self::AssumptionDependent(_) => false,
             Self::SeededStores { hops } => hops.iter().all(Self::is_typed),
@@ -1073,6 +1074,15 @@ thread_local! {
     static CELL_LOOKUPS_IN_PROGRESS: std::cell::RefCell<
         std::collections::BTreeSet<((u32, u32), Pointer)>,
     > = const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+    static CELL_LOOKUP_REFUSALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many cell lookups have been refused because the same lookup was in
+/// progress. The set of lookups in progress changes an answer only through
+/// such a refusal, so an answer computed while this count stayed put is the
+/// one any set of lookups in progress would allow, or stronger.
+pub(in crate::kernel) fn memory_dag_cell_lookup_refusals() -> u64 {
+    CELL_LOOKUP_REFUSALS.with(std::cell::Cell::get)
 }
 
 pub(in crate::kernel) struct CellLookupGuard {
@@ -1084,9 +1094,12 @@ impl CellLookupGuard {
         let key = (memory.arena_id(), pointer.clone());
         // `then`, not `then_some`: a guard built eagerly and discarded on
         // the cycle path would run `drop` and unregister the outer lookup.
-        CELL_LOOKUPS_IN_PROGRESS
-            .with(|lookups| lookups.borrow_mut().insert(key.clone()))
-            .then(|| Self { key })
+        let entered =
+            CELL_LOOKUPS_IN_PROGRESS.with(|lookups| lookups.borrow_mut().insert(key.clone()));
+        if !entered {
+            CELL_LOOKUP_REFUSALS.with(|refusals| refusals.set(refusals.get() + 1));
+        }
+        entered.then(|| Self { key })
     }
 }
 
@@ -1123,6 +1136,14 @@ pub(in crate::kernel) fn memory_dag_cell_lookups_fingerprint() -> u64 {
     })
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::kernel) struct PinnedRangeBound {
+    left_value: i32,
+    right_value: i32,
+    left_equality: DirectBitvectorEqualityEvidence,
+    right_equality: DirectBitvectorEqualityEvidence,
+}
+
 impl RangeBoundEvidence {
     // The retained proof is also the exact dependency list for transport
     // certificates. Checking with a captured context must keep its bounds.
@@ -1135,6 +1156,13 @@ impl RangeBoundEvidence {
         };
         match self {
             Self::Intrinsic => {}
+            Self::PinnedConstants(bound) => {
+                for equality in [&bound.left_equality, &bound.right_equality] {
+                    for premise in equality.context_premises() {
+                        crate::kernel::record_implicit_reasoning_provenance(assumptions, &premise);
+                    }
+                }
+            }
             Self::EndpointEdge(step) => record(step),
             Self::SignedOrderPath(path) => path.iter().for_each(record),
             Self::StrictUpperViaSuccessor {
@@ -1175,6 +1203,9 @@ impl RangeBoundEvidence {
         if let Some(step) = assumptions.exact_direct_order_step(&left, &right, strict) {
             return Some(Self::SignedOrderPath(vec![step]));
         }
+        if let Some(bound) = Self::pinned_constants(&left, &right, strict, assumptions) {
+            return Some(bound);
+        }
         assumptions
             .signed_order_bound_entries(&left)
             .chain(assumptions.signed_order_bound_entries(&right))
@@ -1195,17 +1226,55 @@ impl RangeBoundEvidence {
             })
     }
 
+    fn pinned_constants(
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        strict: bool,
+        assumptions: &PureFactContext,
+    ) -> Option<Self> {
+        let pinned = |term: &Bitvector32Term| {
+            let (value, equality) = if let Some(value) = signed_bitvector_constant(term) {
+                (
+                    value,
+                    DirectBitvectorEqualityEvidence::EqualSignedConstants {
+                        value,
+                        left: SignedConstantEvidence::Constant,
+                        right: SignedConstantEvidence::Constant,
+                    },
+                )
+            } else {
+                let Bitvector32Term::Variable(variable) = term else {
+                    return None;
+                };
+                assumptions.singleton_constant_equality_evidence(*variable)?
+            };
+            Some((i32::try_from(value).ok()?, equality))
+        };
+        let (left_value, left_equality) = pinned(left)?;
+        let (right_value, right_equality) = pinned(right)?;
+        (if strict {
+            left_value < right_value
+        } else {
+            left_value <= right_value
+        })
+        .then(|| {
+            Self::PinnedConstants(Box::new(PinnedRangeBound {
+                left_value,
+                right_value,
+                left_equality,
+                right_equality,
+            }))
+        })
+    }
+
     fn for_true_condition(
         condition: &ConditionTerm,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
-        if Self::intrinsically_true(condition) {
-            return Some(Self::Intrinsic);
+        if let Some(selected) = Self::for_selected_condition(condition, assumptions) {
+            return Some(selected);
         }
         let (left, right, strict) = condition_as_order_fact(condition, true)?;
-        if let Some(step) = assumptions.exact_direct_order_step(&left, &right, strict) {
-            return Some(Self::SignedOrderPath(vec![step]));
-        }
         if strict {
             let successor = assumptions.signed_order_bound_entries(&left).find_map(
                 |(fact_endpoint, successor, strict, forward)| {
@@ -1243,6 +1312,23 @@ impl RangeBoundEvidence {
     fn checks(&self, condition: &ConditionTerm, assumptions: &PureFactContext) -> bool {
         match self {
             Self::Intrinsic => Self::intrinsically_true(condition),
+            Self::PinnedConstants(bound) => {
+                condition_as_order_fact(condition, true).is_some_and(|(left, right, strict)| {
+                    (if strict {
+                        bound.left_value < bound.right_value
+                    } else {
+                        bound.left_value <= bound.right_value
+                    }) && bound.left_equality.checks(
+                        &left,
+                        &(bound.left_value as u32).into(),
+                        assumptions,
+                    ) && bound.right_equality.checks(
+                        &right,
+                        &(bound.right_value as u32).into(),
+                        assumptions,
+                    )
+                })
+            }
             Self::EndpointEdge(step) => {
                 condition_as_order_fact(condition, true).is_some_and(|(left, right, strict)| {
                     Self::intrinsic_connection(&left, &step.lower)
@@ -1382,7 +1468,8 @@ impl PointerInRangeEvidence {
                 block: range.base().block.clone(),
                 offset: PointerOffsetTerm::add(range.base().offset.clone(), displacement.clone()),
             };
-            let membership = Self::for_pointer_direct(&alias, range, assumptions)?;
+            let membership = Self::for_pointer_direct(&alias, range, assumptions);
+            let membership = membership?;
             // An equal base helps only when this displacement
             // supplies a checked member of the selected range.
             // Do not resolve load histories for failed members.
@@ -2181,5 +2268,64 @@ mod ordered_range_tests {
             samples.windows(2).all(|pair| pair[0] == pair[1]),
             "selected extent evidence visited unrelated bounds: {samples:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod pinned_range_bound_tests {
+    use super::*;
+
+    #[test]
+    fn indexed_access_pinned_to_zero_retains_its_equality_and_complete_width() {
+        let mut samples = Vec::new();
+        for unrelated in [16u64, 128, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let base = Pointer::symbolic(crate::kernel::Variable(9_899_000));
+            let index = Bitvector32Term::Variable(crate::kernel::Variable(9_899_001));
+            let pointer = base.offset_by_elements(index.clone(), 4);
+            let range = CMemoryRange::new(base, 0u32.into(), 1u32.into());
+            let equality = Proposition::ConditionIs(ConditionTerm::equal(index, 0u32.into()), true);
+            let mut context = PureFactContext::new().assume_proposition(equality.clone());
+            for i in 0..unrelated {
+                context = context.assume_condition(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(crate::kernel::Variable(9_900_000 + i)),
+                        7u32.into(),
+                    ),
+                    true,
+                );
+            }
+            let ((proof, premises), work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    crate::kernel::collect_reasoning_provenance(|| {
+                        crate::kernel::capture_implicit_reasoning_provenance(|| {
+                            AccessInRangeEvidence::for_access(&pointer, 4, &range, &context)
+                        })
+                    })
+                });
+            let proof = proof.expect("zero index belongs to one complete int32 element");
+            assert!(premises.contains(&equality));
+            assert!(proof.checks(&pointer, 4, &range, &context));
+            assert!(!proof.checks(&pointer, 4, &range, &context.without_exact_fact(&equality)));
+            assert!(AccessInRangeEvidence::for_access(&pointer, 8, &range, &context).is_none());
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "unrelated equalities changed work: {samples:?}"
+        );
+    }
+
+    #[test]
+    fn pinned_index_outside_the_range_is_not_membership() {
+        let base = Pointer::symbolic(crate::kernel::Variable(9_899_100));
+        let index = Bitvector32Term::Variable(crate::kernel::Variable(9_899_101));
+        let pointer = base.offset_by_elements(index.clone(), 4);
+        let range = CMemoryRange::new(base, 0u32.into(), 1u32.into());
+        for value in [1u32, u32::MAX] {
+            let context = PureFactContext::new()
+                .assume_condition(ConditionTerm::equal(index.clone(), value.into()), true);
+            assert!(AccessInRangeEvidence::for_access(&pointer, 4, &range, &context).is_none());
+        }
     }
 }

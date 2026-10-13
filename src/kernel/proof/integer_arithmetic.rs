@@ -59,6 +59,18 @@ pub(crate) enum IntegerArithmeticNode {
     },
     /// Context-free tautologies such as `x + 1 > x` and `x - x == 0`.
     Trivial { result: IntegerAffineClaim },
+    /// Assume the integer negation of a non-strict goal: from the goal
+    /// `t <= 0`, the claim `-t + 1 <= 0`. A certificate that uses it must
+    /// conclude with the goal or with a contradiction.
+    NegatedGoal { result: IntegerAffineClaim },
+    /// Divide a non-strict claim by a positive common factor of its
+    /// coefficients and round the constant up (a Chvatal-Gomory step):
+    /// `g*t + k <= 0` gives `t + ceil(k / g) <= 0` over the integers.
+    Divide {
+        source: usize,
+        divisor: BigInt,
+        result: IntegerAffineClaim,
+    },
 }
 
 /// A flat, locally checkable linear arithmetic certificate.
@@ -77,6 +89,8 @@ pub(crate) enum IntegerArithmeticCheckError {
     NodeResultMismatch(usize),
     InvalidCoefficient(usize),
     InvalidRelation(usize),
+    InvalidDivisor(usize),
+    NegatedGoalUnsupported(usize),
     WorkLimitExceeded,
     DoesNotFollow,
 }
@@ -246,6 +260,43 @@ impl IntegerArithmeticCertificate {
                     }
                     result.clone()
                 }
+                IntegerArithmeticNode::NegatedGoal { result } => {
+                    if expected.relation != IntegerAffineRelation::LessEqual {
+                        return Err(IntegerArithmeticCheckError::NegatedGoalUnsupported(
+                            node_index,
+                        ));
+                    }
+                    if !charge_claim_work(&expected) {
+                        return Err(IntegerArithmeticCheckError::WorkLimitExceeded);
+                    }
+                    let mut negated = negate_claim(&expected, IntegerAffineRelation::LessEqual);
+                    negated.constant += BigInt::one();
+                    if &negated != result {
+                        return Err(IntegerArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    negated
+                }
+                IntegerArithmeticNode::Divide {
+                    source,
+                    divisor,
+                    result,
+                } => {
+                    let source = checked
+                        .get(*source)
+                        .ok_or(IntegerArithmeticCheckError::InvalidNodeReference(*source))?;
+                    if source.relation != IntegerAffineRelation::LessEqual {
+                        return Err(IntegerArithmeticCheckError::InvalidRelation(node_index));
+                    }
+                    if !charge_claim_work(source) {
+                        return Err(IntegerArithmeticCheckError::WorkLimitExceeded);
+                    }
+                    let expected = divide_claim(source, divisor)
+                        .ok_or(IntegerArithmeticCheckError::InvalidDivisor(node_index))?;
+                    if &expected != result {
+                        return Err(IntegerArithmeticCheckError::NodeResultMismatch(node_index));
+                    }
+                    expected
+                }
             };
             if !charge_claim_work(&result) {
                 return Err(IntegerArithmeticCheckError::WorkLimitExceeded);
@@ -258,7 +309,10 @@ impl IntegerArithmeticCertificate {
         if !charge_claim_work(actual) || !charge_claim_work(&expected) {
             return Err(IntegerArithmeticCheckError::WorkLimitExceeded);
         }
-        (actual == &expected)
+        // A contradiction proves any supported goal: either the premises
+        // are inconsistent, or they are inconsistent with the negated goal,
+        // and then the goal holds.
+        (actual == &expected || claim_is_contradiction(actual))
             .then_some(())
             .ok_or(IntegerArithmeticCheckError::DoesNotFollow)
     }
@@ -282,7 +336,10 @@ fn charge_integer_product(left: &BigInt, right: &BigInt) -> bool {
     true
 }
 
-fn scale_claim(claim: &IntegerAffineClaim, coefficient: &BigInt) -> Option<IntegerAffineClaim> {
+pub(crate) fn scale_claim(
+    claim: &IntegerAffineClaim,
+    coefficient: &BigInt,
+) -> Option<IntegerAffineClaim> {
     let mut terms = Vec::with_capacity(claim.terms.len());
     for (term, value) in &claim.terms {
         if !charge_integer_product(value, coefficient) {
@@ -303,7 +360,10 @@ fn scale_claim(claim: &IntegerAffineClaim, coefficient: &BigInt) -> Option<Integ
     })
 }
 
-fn add_claim(left: &IntegerAffineClaim, right: &IntegerAffineClaim) -> IntegerAffineClaim {
+pub(crate) fn add_claim(
+    left: &IntegerAffineClaim,
+    right: &IntegerAffineClaim,
+) -> IntegerAffineClaim {
     let mut terms = left.terms.clone();
     for (term, coefficient) in &right.terms {
         let value = terms.get(term).cloned().unwrap_or_else(BigInt::zero) + coefficient;
@@ -320,7 +380,10 @@ fn add_claim(left: &IntegerAffineClaim, right: &IntegerAffineClaim) -> IntegerAf
     }
 }
 
-fn negate_claim(claim: &IntegerAffineClaim, relation: IntegerAffineRelation) -> IntegerAffineClaim {
+pub(crate) fn negate_claim(
+    claim: &IntegerAffineClaim,
+    relation: IntegerAffineRelation,
+) -> IntegerAffineClaim {
     let terms = claim
         .terms
         .iter()
@@ -332,6 +395,47 @@ fn negate_claim(claim: &IntegerAffineClaim, relation: IntegerAffineRelation) -> 
         terms,
         constant: -&claim.constant,
     }
+}
+
+/// Divide every coefficient exactly by `divisor` and round the constant up.
+/// Over the integers, `g*t + k <= 0` means `t <= -k/g`, so `t <= floor(-k/g)`,
+/// which is `t + ceil(k/g) <= 0`.
+fn divide_claim(claim: &IntegerAffineClaim, divisor: &BigInt) -> Option<IntegerAffineClaim> {
+    if divisor <= &BigInt::zero() {
+        return None;
+    }
+    let mut terms = BTreeMap::new();
+    for (term, value) in &claim.terms {
+        if !charge_integer_product(value, divisor) {
+            return None;
+        }
+        if !(value % divisor).is_zero() {
+            return None;
+        }
+        terms.insert(term.clone(), value / divisor);
+    }
+    if !charge_integer_product(&claim.constant, divisor) {
+        return None;
+    }
+    // BigInt division truncates toward zero; ceil(k/g) = -floor(-k/g).
+    let negated = -&claim.constant;
+    let mut floor = &negated / divisor;
+    if (&floor * divisor) > negated {
+        floor -= BigInt::one();
+    }
+    Some(IntegerAffineClaim {
+        relation: IntegerAffineRelation::LessEqual,
+        terms,
+        constant: -floor,
+    })
+}
+
+fn claim_is_contradiction(claim: &IntegerAffineClaim) -> bool {
+    claim.terms.is_empty()
+        && match claim.relation {
+            IntegerAffineRelation::LessEqual => claim.constant > BigInt::zero(),
+            IntegerAffineRelation::Equal => !claim.constant.is_zero(),
+        }
 }
 
 fn claims_are_opposites(lower: &IntegerAffineClaim, upper: &IntegerAffineClaim) -> bool {
@@ -1502,5 +1606,260 @@ mod tests {
             wide_certificate.check(&wide_goal, std::slice::from_ref(&premise_proposition))
         });
         assert!(wide_work > narrow_work);
+    }
+
+    fn less_equal(left: IntegerTerm, right: IntegerTerm) -> Proposition {
+        proposition(ConditionTerm::integer_less_equal(left, right))
+    }
+
+    fn scaled(id: u64, coefficient: i64) -> IntegerTerm {
+        IntegerTerm::multiply(IntegerTerm::constant_i64(coefficient), variable(id))
+    }
+
+    fn constant_claim(relation: IntegerAffineRelation, constant: i64) -> IntegerAffineClaim {
+        IntegerAffineClaim {
+            relation,
+            terms: BTreeMap::new(),
+            constant: BigInt::from(constant),
+        }
+    }
+
+    fn negated_goal_claim(goal: &Proposition) -> IntegerAffineClaim {
+        let mut negated = negate_claim(&claim(goal), IntegerAffineRelation::LessEqual);
+        negated.constant += BigInt::one();
+        negated
+    }
+
+    #[test]
+    fn negated_goal_refutation_proves_the_goal() {
+        // 2x <= 10 proves x <= 5: assume x >= 6, double it, and add.
+        let goal = less_equal(variable(97001), IntegerTerm::constant_i64(5));
+        let premise_proposition = less_equal(scaled(97001, 2), IntegerTerm::constant_i64(10));
+        let negated = negated_goal_claim(&goal);
+        let doubled = scale_claim(&negated, &BigInt::from(2)).unwrap();
+        let premise_claim = claim(&premise_proposition);
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![
+                premise(0, &premise_proposition),
+                IntegerArithmeticNode::NegatedGoal { result: negated },
+                IntegerArithmeticNode::Scale {
+                    source: 1,
+                    coefficient: BigInt::from(2),
+                    result: doubled.clone(),
+                },
+                IntegerArithmeticNode::Add {
+                    left: 0,
+                    right: 2,
+                    result: add_claim(&premise_claim, &doubled),
+                },
+            ],
+            conclusion: 3,
+        };
+        assert_eq!(
+            certificate.nodes.last().map(|node| match node {
+                IntegerArithmeticNode::Add { result, .. } => result.clone(),
+                _ => unreachable!(),
+            }),
+            Some(constant_claim(IntegerAffineRelation::LessEqual, 2))
+        );
+        assert_eq!(
+            certificate.check(&goal, std::slice::from_ref(&premise_proposition)),
+            Ok(())
+        );
+        // The same refutation does not prove a stronger goal.
+        let stronger = less_equal(variable(97001), IntegerTerm::constant_i64(4));
+        assert!(
+            certificate
+                .check(&stronger, std::slice::from_ref(&premise_proposition))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn negated_goal_must_state_the_exact_integer_negation() {
+        let goal = less_equal(variable(97002), IntegerTerm::constant_i64(5));
+        // `x >= 5` is the rational negation, not the integer one (`x >= 6`).
+        let weak = negate_claim(&claim(&goal), IntegerAffineRelation::LessEqual);
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::NegatedGoal { result: weak }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&goal, &[]),
+            Err(IntegerArithmeticCheckError::NodeResultMismatch(0))
+        );
+    }
+
+    #[test]
+    fn negated_goal_refuses_an_equality_goal() {
+        let goal = proposition(ConditionTerm::integer_equal(
+            variable(97003),
+            IntegerTerm::constant_i64(5),
+        ));
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![IntegerArithmeticNode::NegatedGoal {
+                result: constant_claim(IntegerAffineRelation::LessEqual, 0),
+            }],
+            conclusion: 0,
+        };
+        assert_eq!(
+            certificate.check(&goal, &[]),
+            Err(IntegerArithmeticCheckError::NegatedGoalUnsupported(0))
+        );
+    }
+
+    #[test]
+    fn contradictory_premises_prove_any_supported_goal() {
+        let x = || variable(97004);
+        let low = less_equal(x(), IntegerTerm::constant_i64(0));
+        let high = less_equal(IntegerTerm::constant_i64(1), x());
+        let goal = less_equal(variable(97005), IntegerTerm::constant_i64(-7));
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![
+                premise(0, &low),
+                premise(1, &high),
+                IntegerArithmeticNode::Add {
+                    left: 0,
+                    right: 1,
+                    result: constant_claim(IntegerAffineRelation::LessEqual, 1),
+                },
+            ],
+            conclusion: 2,
+        };
+        assert_eq!(
+            certificate.check(&goal, &[low.clone(), high.clone()]),
+            Ok(())
+        );
+        // A consistent non-goal conclusion still does not follow.
+        let consistent = IntegerArithmeticCertificate {
+            nodes: vec![premise(0, &low)],
+            conclusion: 0,
+        };
+        assert_eq!(
+            consistent.check(&goal, &[low, high]),
+            Err(IntegerArithmeticCheckError::DoesNotFollow)
+        );
+    }
+
+    #[test]
+    fn divide_rounds_the_constant_toward_the_integer_bound() {
+        // 2x <= 5 gives x <= 2 over the integers.
+        let premise_proposition = less_equal(scaled(97006, 2), IntegerTerm::constant_i64(5));
+        let goal = less_equal(variable(97006), IntegerTerm::constant_i64(2));
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![
+                premise(0, &premise_proposition),
+                IntegerArithmeticNode::Divide {
+                    source: 0,
+                    divisor: BigInt::from(2),
+                    result: claim(&goal),
+                },
+            ],
+            conclusion: 1,
+        };
+        assert_eq!(
+            certificate.check(&goal, std::slice::from_ref(&premise_proposition)),
+            Ok(())
+        );
+        // Claiming the unrounded x <= 3 is a different result and is refused,
+        // as is a stronger x <= 1.
+        for wrong in [3, 1] {
+            let wrong_goal = less_equal(variable(97006), IntegerTerm::constant_i64(wrong));
+            let certificate = IntegerArithmeticCertificate {
+                nodes: vec![
+                    premise(0, &premise_proposition),
+                    IntegerArithmeticNode::Divide {
+                        source: 0,
+                        divisor: BigInt::from(2),
+                        result: claim(&wrong_goal),
+                    },
+                ],
+                conclusion: 1,
+            };
+            assert_eq!(
+                certificate.check(&wrong_goal, std::slice::from_ref(&premise_proposition)),
+                Err(IntegerArithmeticCheckError::NodeResultMismatch(1))
+            );
+        }
+    }
+
+    #[test]
+    fn divide_requires_a_positive_exact_common_factor() {
+        let premise_proposition = less_equal(scaled(97007, 3), IntegerTerm::constant_i64(5));
+        for divisor in [2, 0, -3] {
+            let certificate = IntegerArithmeticCertificate {
+                nodes: vec![
+                    premise(0, &premise_proposition),
+                    IntegerArithmeticNode::Divide {
+                        source: 0,
+                        divisor: BigInt::from(divisor),
+                        result: claim(&premise_proposition),
+                    },
+                ],
+                conclusion: 1,
+            };
+            assert_eq!(
+                certificate.check(
+                    &premise_proposition,
+                    std::slice::from_ref(&premise_proposition)
+                ),
+                Err(IntegerArithmeticCheckError::InvalidDivisor(1)),
+                "divisor {divisor}"
+            );
+        }
+        let equality = proposition(ConditionTerm::integer_equal(
+            scaled(97007, 2),
+            IntegerTerm::constant_i64(4),
+        ));
+        let certificate = IntegerArithmeticCertificate {
+            nodes: vec![
+                premise(0, &equality),
+                IntegerArithmeticNode::Divide {
+                    source: 0,
+                    divisor: BigInt::from(2),
+                    result: claim(&equality),
+                },
+            ],
+            conclusion: 1,
+        };
+        assert_eq!(
+            certificate.check(&equality, std::slice::from_ref(&equality)),
+            Err(IntegerArithmeticCheckError::InvalidRelation(1))
+        );
+    }
+
+    #[test]
+    fn divide_preserves_every_small_integer_model() {
+        // For c*x + k <= 0 and every x in a window, the divided claim holds
+        // whenever its source does, and is no weaker than the integer bound.
+        let atom = IntegerAffineAtom::Variable(Variable(97008));
+        for coefficient in [-6i64, -4, -3, -2, 2, 3, 4, 6] {
+            for divisor in [2i64, 3] {
+                if coefficient % divisor != 0 {
+                    continue;
+                }
+                for constant in -13i64..=13 {
+                    let source = IntegerAffineClaim {
+                        relation: IntegerAffineRelation::LessEqual,
+                        terms: BTreeMap::from([(atom.clone(), BigInt::from(coefficient))]),
+                        constant: BigInt::from(constant),
+                    };
+                    let divided = divide_claim(&source, &BigInt::from(divisor)).unwrap();
+                    let reduced = coefficient / divisor;
+                    let rounded: i64 = divided.constant.clone().try_into().unwrap();
+                    assert_eq!(divided.terms.get(&atom), Some(&BigInt::from(reduced)));
+                    for x in -40i64..=40 {
+                        let source_holds = coefficient * x + constant <= 0;
+                        let result_holds = reduced * x + rounded <= 0;
+                        // Sound: the source implies the result. Tight: over
+                        // the integers they are equivalent.
+                        assert_eq!(
+                            source_holds, result_holds,
+                            "{coefficient}x + {constant} <= 0 divided by {divisor}, x = {x}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

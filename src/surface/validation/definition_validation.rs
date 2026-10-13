@@ -39,6 +39,11 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 "`same_object` is a built-in proposition and cannot be redefined",
             ));
         }
+        if definition.name() == "valid_place" {
+            return Err(ClickError::new(
+                "`valid_place` is a built-in proposition and cannot be redefined",
+            ));
+        }
         if matches!(
             definition.name(),
             "held" | crate::kernel::MUTEX_HELD_PREDICATE_NAME
@@ -74,6 +79,11 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                 "`same_object` is a built-in proposition and cannot be redefined",
             ));
         }
+        if definition.name() == "valid_place" {
+            return Err(ClickError::new(
+                "`valid_place` is a built-in proposition and cannot be redefined",
+            ));
+        }
         if matches!(
             definition.name(),
             "held" | crate::kernel::MUTEX_HELD_PREDICATE_NAME
@@ -104,6 +114,7 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
     let mut proposition_calls = predicates.clone();
     proposition_calls.insert("same_object".to_string(), 2);
     proposition_calls.insert("held".to_string(), 1);
+    proposition_calls.insert("valid_place".to_string(), 1);
     proposition_calls.extend(contracts.keys().map(|name| (name.clone(), 1)));
 
     let mut click_functions = BTreeMap::new();
@@ -516,28 +527,6 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
             }
         }
 
-        for structural_clause in function.structural_clauses() {
-            for item in structural_clause.items() {
-                {
-                    let proposition = item.proposition();
-                    let context = format!("invariant clause in `{}`", function.signature().name());
-                    validate_predicate_calls_in_proposition(
-                        proposition,
-                        &proposition_calls,
-                        &click_functions,
-                        &context,
-                    )?;
-                    validate_contract_applications_in_proposition(
-                        proposition,
-                        &contracts,
-                        &requires_type_environment,
-                        &click_function_types,
-                        &context,
-                    )?;
-                }
-            }
-        }
-
         for ensure in function.ensures() {
             match ensure.ensure() {
                 Ensure::Proposition(proposition) => {
@@ -887,6 +876,7 @@ fn validate_contract_applications_in_proposition_one(
         | ClickProposition::Contains { .. }
         | ClickProposition::Initialized { .. }
         | ClickProposition::Loadable { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::Defined { .. } => Ok(()),
     }
 }
@@ -1260,7 +1250,6 @@ fn validate_resource_definition<'a>(
 /// read its shape, the index shadows nothing, the guard reads only cells the
 /// same body owns (so no one can change it while the resource is folded), and
 /// the guard cells are not themselves elements.
-#[allow(clippy::too_many_arguments)]
 fn validate_iterated_resource_clauses(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
@@ -1566,8 +1555,7 @@ fn validate_resource_fact_memory_read_authority(
         definition.name(),
         composite_body,
         &substitutions,
-        &validation_parameters,
-        &arguments,
+        ParameterBinding::new(&validation_parameters, &arguments),
         CMemory::new(),
     )
     .map_err(|message| {
@@ -1647,6 +1635,7 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
         | ClickProposition::FloatClassification { .. }
         | ClickProposition::Initialized { .. }
         | ClickProposition::Loadable { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::Defined { .. } => {
             let source = describe_click_proposition(proposition);
             let state = CState::new().with_memory(memory.clone());
@@ -1656,10 +1645,7 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
                     &PureFactContext::new(),
                     values,
                     array_refs,
-                    &state,
-                    &state,
-                    None,
-                    &RecordedSnapshots::new(),
+                    FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
                     spec_definitions,
                 )
             {
@@ -1852,7 +1838,8 @@ fn collect_resource_fact_reads_from_proposition(
                 resource_name,
             )
         }
-        ClickProposition::Defined { expression } => {
+        ClickProposition::Defined { expression }
+        | ClickProposition::ValidPlace { expression, .. } => {
             collect_resource_fact_reads_from_contract_expression(
                 expression,
                 predicate_definitions,
@@ -2835,10 +2822,7 @@ fn symbolic_segment_covers_range(
             &PureFactContext::new(),
             values,
             array_refs,
-            &state,
-            &state,
-            None,
-            &RecordedSnapshots::new(),
+            FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
             spec_definitions,
             &BTreeSet::new(),
         )
@@ -2887,10 +2871,7 @@ fn symbolic_segment_covers_index(
             &PureFactContext::new(),
             values,
             array_refs,
-            &state,
-            &state,
-            None,
-            &RecordedSnapshots::new(),
+            FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
             spec_definitions,
             &BTreeSet::new(),
         )

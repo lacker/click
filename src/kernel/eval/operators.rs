@@ -379,7 +379,7 @@ pub(in crate::kernel) fn apply_c_add(
             else {
                 return Vec::new();
             };
-            let Some(byte_width) = left_step_width else {
+            let Some(byte_width) = pointer_value_step_width(&pointer, left_step_width) else {
                 return vec![CExpressionPath {
                     outcome: CExpressionOutcome::RuntimeError(
                         CRuntimeError::IndeterminatePointeeType,
@@ -407,7 +407,7 @@ pub(in crate::kernel) fn apply_c_add(
             else {
                 return Vec::new();
             };
-            let Some(byte_width) = right_step_width else {
+            let Some(byte_width) = pointer_value_step_width(&pointer, right_step_width) else {
                 return vec![CExpressionPath {
                     outcome: CExpressionOutcome::RuntimeError(
                         CRuntimeError::IndeterminatePointeeType,
@@ -1518,6 +1518,16 @@ pub(in crate::kernel) fn apply_c_bitwise_not(
     }
 }
 
+fn pointer_value_step_width(pointer: &CPointerValue, expression_width: Option<u32>) -> Option<u32> {
+    // GNU C treats void-pointer arithmetic as byte arithmetic. Other
+    // pointers still require the expression's existing pointee evidence.
+    if pointer.c_type() == CType::VoidPointer {
+        Some(1)
+    } else {
+        expression_width
+    }
+}
+
 fn pointer_operation_step_width(
     left_step_width: Option<u32>,
     right_step_width: Option<u32>,
@@ -2068,7 +2078,10 @@ pub(in crate::kernel) fn apply_c_subtract(
             let Some(right) = promote_c_int32_path_value(right) else {
                 return Vec::new();
             };
-            let Some(byte_width) = pointer_operation_step_width(left_step_width, None) else {
+            let Some(byte_width) = pointer_operation_step_width(
+                pointer_value_step_width(&pointer, left_step_width),
+                None,
+            ) else {
                 return vec![c_type_mismatch_expression_path(facts, obligations)];
             };
             pointer_offset_by_elements_paths(
@@ -2082,6 +2095,83 @@ pub(in crate::kernel) fn apply_c_subtract(
                 obligations,
                 assumptions,
             )
+        }
+        (
+            CValue::Pointer(pointer),
+            right @ (CValue::UInt32(_) | CValue::Int64(_) | CValue::UInt64(_)),
+        ) => {
+            let Some(byte_width) = pointer_operation_step_width(
+                pointer_value_step_width(&pointer, left_step_width),
+                None,
+            ) else {
+                return vec![c_type_mismatch_expression_path(facts, obligations)];
+            };
+            let (offset, unsigned) = match right {
+                CValue::UInt32(value) => (Bitvector32Term::uint64_from_32(value), true),
+                CValue::Int64(value) => (value, false),
+                CValue::UInt64(value) => (value, true),
+                _ => unreachable!(),
+            };
+            // Negate the mathematical displacement, not a wrapping unsigned
+            // C value. Guard the conversion/negation before reusing addition's
+            // pointer formation and object-bound checks.
+            let guard = if unsigned {
+                PointerFormationGuard {
+                    condition: ConditionTerm::uint64_less_equal(
+                        offset.clone(),
+                        Bitvector32Term::UInt64Constant(i64::MAX as u64),
+                    ),
+                    value: true,
+                }
+            } else {
+                PointerFormationGuard {
+                    condition: ConditionTerm::int64_signed_subtract_overflows(
+                        Bitvector32Term::Int64Constant(0),
+                        offset.clone(),
+                    ),
+                    value: false,
+                }
+            };
+            let guarded = apply_pointer_formation_guards(
+                pointer,
+                vec![guard],
+                facts,
+                obligations,
+                assumptions,
+            );
+            let offset = if unsigned {
+                Bitvector32Term::int64_from_uint64_bits(offset)
+            } else {
+                offset
+            };
+            let negated =
+                Bitvector32Term::int64_subtract(Bitvector32Term::Int64Constant(0), offset);
+            guarded
+                .into_iter()
+                .flat_map(|path| {
+                    let CExpressionOutcome::Value(CValue::Pointer(pointer)) = path.outcome else {
+                        return vec![path];
+                    };
+                    // Keep the existing zero-displacement treatment for null and
+                    // otherwise unbounded pointers independent of integer width.
+                    let (negated, wide) = if negated.int64_as_const() == Some(0) {
+                        (Bitvector32Term::Constant(0), false)
+                    } else {
+                        (negated.clone(), true)
+                    };
+                    pointer_offset_by_elements_paths(
+                        state,
+                        pointer,
+                        negated,
+                        byte_width,
+                        false,
+                        wide,
+                        path.facts,
+                        path.obligations,
+                        assumptions,
+                    )
+                })
+                .collect()
         }
         (CValue::Pointer(left), CValue::Pointer(right)) => {
             if left.c_type() != right.c_type() {

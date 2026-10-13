@@ -380,6 +380,16 @@ fn walk_c_expression_outcome<S: VariableSubstitution + ?Sized>(
 
 fn walk_c_function<S: VariableSubstitution + ?Sized>(function: &CFunction, s: &S) -> CFunction {
     let mut interface = function.contract_interface().clone();
+    interface.native_span_expression_inputs = interface
+        .native_span_expression_inputs
+        .iter()
+        .map(|span| CNativeSpanRequirement {
+            carrier: s.c_expression(&span.carrier),
+            count: s.c_expression(&span.count),
+            element_type: span.element_type,
+            access_policy: span.access_policy,
+        })
+        .collect();
     interface.resource_requires = function
         .resource_requires()
         .iter()
@@ -1237,6 +1247,22 @@ fn walk_proposition<S: VariableSubstitution + ?Sized>(
             pointer: s.pointer(pointer),
             outcome: walk_c_expression_outcome(outcome, s),
         },
+        Proposition::CValidPlace {
+            memory,
+            pointer,
+            place_type,
+            access_policy,
+        } => {
+            let CValue::Pointer(pointer) = s.c_value(&CValue::Pointer(pointer.clone())) else {
+                unreachable!("substitution preserves pointer types")
+            };
+            Proposition::CValidPlace {
+                memory: s.memory(memory),
+                pointer,
+                place_type: place_type.clone(),
+                access_policy: *access_policy,
+            }
+        }
         Proposition::CMemoryInitialized {
             memory,
             base,
@@ -1431,6 +1457,7 @@ fn walk_resource_spec<S: VariableSubstitution + ?Sized>(
     )
     .expect("pointer substitution preserves resource validity")
     .with_resource_arguments(resource.resource_arguments().to_vec())
+    .with_declared_storage_observation(resource.declared_storage_observation())
     .with_native_record_places(
         resource
             .native_record_places()
@@ -2315,6 +2342,12 @@ fn collect_proposition_bound_variables_one(
             collect_pointer_bound_variables(pointer, variables);
             collect_expression_outcome_bound_variables(outcome, variables);
         }
+        Proposition::CValidPlace {
+            memory, pointer, ..
+        } => {
+            collect_memory_bound_variables(memory, variables);
+            collect_c_value_bound_variables(&CValue::Pointer(pointer.clone()), variables);
+        }
         Proposition::CMemoryInitialized {
             memory,
             base: pointer,
@@ -2847,6 +2880,10 @@ pub(in crate::kernel) fn collect_c_function_contract_interface_bound_variables(
     interface: &CFunctionContractInterface,
     variables: &mut BTreeSet<Variable>,
 ) {
+    for span in interface.native_span_expression_inputs() {
+        collect_c_expression_bound_variables(&span.carrier, variables);
+        collect_c_expression_bound_variables(&span.count, variables);
+    }
     for resource in interface
         .proof_parameters()
         .iter()
@@ -7570,6 +7607,17 @@ fn substitute_pointer_variable_in_spec_proposition(
             start: substitute_pointer_variable_in_spec_expression(start, from, to),
             end: substitute_pointer_variable_in_spec_expression(end, from, to),
             element_width: *element_width,
+        },
+        SpecProposition::ValidPlace {
+            memory,
+            pointer,
+            place_type,
+            access_policy,
+        } => SpecProposition::ValidPlace {
+            memory: substitute_pointer_variable_in_spec_memory(memory, from, to),
+            pointer: substitute_pointer_variable_in_spec_expression(pointer, from, to),
+            place_type: place_type.clone(),
+            access_policy: *access_policy,
         },
         SpecProposition::Defined(expression) => SpecProposition::Defined(
             substitute_pointer_variable_in_spec_expression(expression, from, to),

@@ -136,7 +136,6 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
 /// splitting into the cases a C execution would have to choose between. The
 /// one-term spec load rule already governs the non-symbolic spec path in
 /// `crate::kernel::spec`; this is the same rule on the symbolic one.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
     memory: &CMemory,
     pointer: Pointer,
@@ -1358,7 +1357,6 @@ fn evaluate_c_memory_load_case(
 /// path's value; nothing is named by it. Only a program read asks: a
 /// specification read denotes the named snapshot's value, and a volatile one
 /// may observe a write no recorded step made.
-#[allow(clippy::too_many_arguments)]
 fn cell_value_recorded_on_path(
     memory: &CMemory,
     pointer: &Pointer,
@@ -4216,11 +4214,11 @@ fn load_variable_for_term_with_width(
     let key = (bits.clone(), bytes);
     // Kind and access width must both agree with the cached immutable producer.
     // Embedded snapshots hash by interned identity, so this is a selected lookup.
-    if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
-        if load_variable_has_exact_access(bits, hit.0, bytes) {
-            record_wide_load_observation(bits, hit.0);
-            return Some(hit);
-        }
+    if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(&key).cloned())
+        && load_variable_has_exact_access(bits, hit.0, bytes)
+    {
+        record_wide_load_observation(bits, hit.0);
+        return Some(hit);
     }
     crate::instrumentation::record_deterministic_work(1);
     let computed = load_variable_for_term_uncached(bits, bytes)?;
@@ -5447,6 +5445,103 @@ mod tests {
             forged.retain_pointer_read_definition(&forged_context);
         }
         assert!(!arguments_equal(&forged_context));
+    }
+
+    /// Naming a load after a call whose kept memory shares the load's block
+    /// asks whether the load's address is one of the kept ranges' bases. A
+    /// load through a pointer read out of memory registers that read, and the
+    /// reads its own address depends on, in the asking context's equality
+    /// graph. Naming walks are assumption-free, so they ask in one empty
+    /// context per session: each read is registered once, and naming the
+    /// load after each later call costs the same however deep the address's
+    /// chain of reads is. A fresh context per walk paid for the whole chain
+    /// again at every call, which made each call step slower in proportion
+    /// to how its arguments were reached.
+    #[test]
+    fn naming_a_load_after_a_call_is_flat_in_its_address_read_depth() {
+        use crate::kernel::primitives::{CallKeptOwnership, CallKeptRanges};
+        const CALLS: u64 = 8;
+        let mut samples = Vec::new();
+        for depth in [1_u64, 2, 4, 8, 16] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let empty = PureFactContext::new();
+            let base = CMemory::new();
+            let read = |address: &Pointer| {
+                let CValue::Pointer(value) = canonicalized_symbolic_load_value_with_identity(
+                    &base,
+                    address,
+                    CType::Int32Pointer,
+                    &mut Vec::new().into(),
+                    &empty,
+                    false,
+                    None,
+                    LoadPurpose::Logical,
+                )
+                .unwrap() else {
+                    panic!("expected a typed pointer read");
+                };
+                value.pointer().clone()
+            };
+            let mut array = Pointer::symbolic(Variable(992_000));
+            for _ in 0..depth {
+                array = read(&array);
+            }
+            let element = |index: u64| {
+                array.offset_by_elements(Bitvector32Term::Variable(Variable(index)), 4)
+            };
+            let range = |start: Pointer| {
+                CMemoryRange::new(
+                    start,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(1),
+                )
+            };
+            // The callee may write one element, and the caller keeps another,
+            // each at an unrelated index: neither decides the cell.
+            let written = [range(element(992_101))];
+            let kept = CallKeptOwnership::new(
+                ResourceContext::new(),
+                CallKeptRanges::new(
+                    ResourceContext::new()
+                        .unchecked_with_facts([CResourceFact::own_memory(range(element(992_102)))]),
+                    Vec::new(),
+                ),
+                &empty,
+            );
+            let cell = element(992_103);
+            let mut memory = base.clone();
+            let mut work = Vec::new();
+            for call in 0..CALLS {
+                memory = memory.with_call_memory_havoc(
+                    Variable(992_200 + call),
+                    &written,
+                    &empty,
+                    Some(&kept),
+                );
+                let load = Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory_ref(&memory),
+                    Box::new(cell.clone()),
+                    LoadKind::Bits32,
+                );
+                let (named, units) = crate::instrumentation::measure_deterministic_work(|| {
+                    load_variable_for_term(&load)
+                });
+                assert!(named.is_some(), "a load term has a name");
+                work.push(units);
+            }
+            // The first call registers the chain; every later one is the
+            // per-call cost being measured.
+            let later = work[1..].iter().copied().max().unwrap();
+            samples.push((depth, later));
+        }
+        eprintln!("naming after a call (address read depth, units): {samples:?}");
+        let (_, shallow) = samples[0];
+        for (depth, units) in &samples {
+            assert!(
+                *units <= shallow + 8,
+                "naming after a call grew with address read depth {depth}: {samples:?}"
+            );
+        }
     }
 
     #[test]

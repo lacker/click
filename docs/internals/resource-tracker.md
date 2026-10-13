@@ -146,6 +146,16 @@ agrees about its block, so equal names mean equal terms. The stop information
 is *computed from the point the walk stopped at* rather than recorded along the
 way, which is why naming pays nothing for it.
 
+Naming walks ask their questions in one empty fact context per verification
+session (`naming_context`). It holds no fact, but an alias question still
+registers the queried pointers, and the producer-recorded reads their
+addresses depend on, in the context's equality graph. A fresh context per walk
+registered a load's whole chain of address reads again at every call it was
+named after, so a call step's cost grew with how deeply its arguments were
+reached (`naming_a_load_after_a_call_is_flat_in_its_address_read_depth`). The
+shared context registers each read once, and is rebuilt when a session restore
+replaces the logical-read table it reads.
+
 `cell_value_on_path` is the one question asked under a path's facts, and it
 names nothing. A store at an address the facts could not place when it ran —
 `buf[u] = 7` — drops the cached cells it may write, so a later C read of

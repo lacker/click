@@ -35,6 +35,7 @@ mod resources;
 mod signed_definedness;
 mod smart_closures;
 mod smart_execution;
+mod solver_bridges;
 mod structural;
 mod surface_certificates;
 mod surface_construction;
@@ -77,7 +78,6 @@ use checked_drivers::*;
 use execution_planning::*;
 pub(super) use execution_planning::{
     StatementFactTransportPolicy, StatementPrerequisitePolicy, certified_statement_transitions,
-    verify_loop_execution_proofs,
 };
 use execution_state::*;
 pub(super) use execution_state::{
@@ -143,13 +143,14 @@ pub(super) fn discharge_instantiated_guards(
     premises: &[Proposition],
 ) -> Result<(Vec<Proposition>, Proposition), String> {
     crate::kernel::proof::fact_reasoning::discharge_instantiated_guards(instantiated, premises)
-        .map_err(|error| format_forall_int32_instantiation_error(error, &[], &[]))
+        .map_err(|error| {
+            format_forall_int32_instantiation_error(error, ParameterBinding::default())
+        })
 }
 
 pub(super) fn format_forall_int32_instantiation_error(
     error: crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     use crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError as Error;
     match error {
@@ -162,9 +163,7 @@ pub(super) fn format_forall_int32_instantiation_error(
         // owes is exactly what they have to write down.
         Error::MissingGuard(missing) => format!(
             "instantiated premise `{}` does not follow from the listed evidence",
-            crate::surface::diagnostics::describe_pure_fact_spelled(
-                &missing, parameters, arguments
-            ),
+            crate::surface::diagnostics::describe_pure_fact_spelled(&missing, parameter_binding),
         ),
         Error::KernelRejected => "kernel rejected the `instantiate` application".to_string(),
         Error::InvalidTheorem => "invalid universal instantiation theorem".to_string(),
@@ -220,7 +219,14 @@ mod certificate_tests {
             true,
         );
 
-        assert!(synthesize_surface_proposition(&proposition, &[], &[], &CState::new()).is_none());
+        assert!(
+            synthesize_surface_proposition(
+                &proposition,
+                ParameterBinding::default(),
+                &CState::new()
+            )
+            .is_none()
+        );
         let reason = surface_synthesis_failure("could not reconstruct test fact", &proposition);
         assert!(reason.contains("bounded bitvector search"), "{reason}");
         assert!(!reason.contains("Variable("), "{reason}");
@@ -328,8 +334,7 @@ mod certificate_tests {
             &kernel,
             SurfaceFactMatch::CanonicalExact,
             &[],
-            &[],
-            &[],
+            ParameterBinding::default(),
             &state,
             SpecDefinitions::new(
                 &PredicateEnvironment::new(&[]),
@@ -1556,7 +1561,8 @@ pub(super) fn initial_claim_context_with_caller_owner(
             .to_kernel_function()
             .with_contract(requires, ensures, mutable, claims, opaque)
             .with_exceptional_ensures(exceptional_ensures)
-            .with_resource_summary(resource_requires, resource_ensures);
+            .with_resource_summary(resource_requires, resource_ensures)
+            .with_composite_resource_definitions(authority_definitions.clone());
         initial_call_state(
             function_block.requires(),
             parsed_function.parameters(),
@@ -1564,10 +1570,10 @@ pub(super) fn initial_claim_context_with_caller_owner(
             &authority_definitions,
         )?
     };
-    crate::surface::proof_diagnostics::render::enter_ambient_naming(
+    crate::surface::proof_diagnostics::render::enter_ambient_naming(ParameterBinding::new(
         parsed_function.parameters(),
         &arguments,
-    );
+    ));
     let mut observed_population_families = BTreeSet::new();
     let mut pending_predicates = BTreeSet::new();
     for requirement in function_block.requires() {
@@ -1621,8 +1627,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     )?;
     state = materialize_folded_composite_resource_cells(
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         state,
         claim_label,
         spec_definitions,
@@ -1633,8 +1638,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
         if iteration > 0
             && requirement_propositions(
                 function_block.requires(),
-                parsed_function.parameters(),
-                &arguments,
+                ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &projection_state,
                 spec_definitions,
             )
@@ -1644,15 +1648,13 @@ pub(super) fn initial_claim_context_with_caller_owner(
         }
         let available_pure_facts = available_initial_requirement_propositions(
             function_block.requires(),
-            parsed_function.parameters(),
-            &arguments,
+            ParameterBinding::new(parsed_function.parameters(), &arguments),
             &projection_state,
             spec_definitions,
         );
         let projected = project_initial_composite_resource_cores(
             resource_environment,
-            parsed_function.parameters(),
-            &arguments,
+            ParameterBinding::new(parsed_function.parameters(), &arguments),
             projection_state.clone(),
             &available_pure_facts,
             claim_label,
@@ -1668,8 +1670,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     let lowered_requirement_facts =
         crate::surface::lowering::requirement_propositions_with_sources_and_assumptions(
             function_block.requires(),
-            parsed_function.parameters(),
-            &arguments,
+            ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             spec_definitions,
             &PureFactContext::new(),
@@ -1757,8 +1758,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
         .map(|requirement| {
             requirement_propositions_with_assumptions(
                 std::slice::from_ref(requirement),
-                parsed_function.parameters(),
-                &arguments,
+                ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &state,
                 spec_definitions,
                 &requirement_context,
@@ -1789,8 +1789,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
         }
         let lowered = requirement_propositions_with_assumptions(
             std::slice::from_ref(requirement),
-            parsed_function.parameters(),
-            &arguments,
+            ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             spec_definitions,
             &requirement_context,
@@ -1811,8 +1810,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     entry_fact_origins.resize(unfolded_requirement_facts.len(), EntryFactOrigin::Derived);
     state = project_initial_composite_resource_cores(
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         state,
         &unfolded_requirement_facts,
         claim_label,
@@ -1821,8 +1819,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     )?;
     requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         &state,
         &unfolded_requirement_facts,
         spec_definitions,
@@ -1831,8 +1828,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     entry_fact_origins.resize(requirement_pure_facts.len(), EntryFactOrigin::Derived);
     let definedness_state = project_initial_composite_resource_cores(
         resource_environment,
-        parsed_function.parameters(),
-        &arguments,
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         state.clone(),
         &requirement_pure_facts,
         claim_label,
@@ -1879,8 +1875,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
         let projected =
             crate::surface::lowering::requirement_propositions_with_sources_and_assumptions(
                 std::slice::from_ref(requirement),
-                parsed_function.parameters(),
-                &arguments,
+                ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &definedness_state,
                 spec_definitions,
                 &definedness_context,
@@ -1922,8 +1917,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     }
     let definedness = requirement_definedness_propositions(
         function_block.requires(),
-        parsed_function.parameters(),
-        &arguments,
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         &definedness_state,
         spec_definitions,
     )?;
@@ -2014,8 +2008,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
         record_initial_composite_surface_facts(
             resource_environment,
             resource,
-            parsed_function.parameters(),
-            &arguments,
+            ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &requirement_pure_facts,
             &mut surface_propositions,
@@ -2116,7 +2109,9 @@ fn refuse_overlapping_returned_places(
             continue;
         }
         let Ok(fact) = crate::surface::lowering::lower_resource_clause_at_state(
-            resource, parameters, arguments, state,
+            resource,
+            ParameterBinding::new(parameters, arguments),
+            state,
         ) else {
             continue;
         };
@@ -2143,7 +2138,10 @@ fn refuse_overlapping_returned_places(
             .find(|(candidate, _)| candidate == range)
             .map(|(_, segment)| crate::surface::diagnostics::describe_contract_segment(segment))
             .unwrap_or_else(|| {
-                crate::surface::diagnostics::describe_memory_range(range, parameters, arguments)
+                crate::surface::diagnostics::describe_memory_range(
+                    range,
+                    ParameterBinding::new(parameters, arguments),
+                )
             })
     };
     Err(ClickError::new(format!(
@@ -2211,6 +2209,7 @@ fn collect_conjunctive_loadability_segments(
         | ClickProposition::FloatClassification { .. }
         | ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::Defined { .. }
         | ClickProposition::At { .. }
         | ClickProposition::Or(..)
@@ -2237,8 +2236,7 @@ fn explicit_entry_loadability_facts(
             Requirement::LoadableSegment { .. } => {
                 let lowered = crate::surface::lowering::requirement_propositions_with_assumptions(
                     std::slice::from_ref(requirement),
-                    parsed_function.parameters(),
-                    arguments,
+                    ParameterBinding::new(parsed_function.parameters(), arguments),
                     state,
                     spec_definitions,
                     &PureFactContext::new(),
@@ -2258,8 +2256,7 @@ fn explicit_entry_loadability_facts(
                     let lowered =
                         crate::surface::lowering::requirement_propositions_with_assumptions(
                             std::slice::from_ref(&loadable),
-                            parsed_function.parameters(),
-                            arguments,
+                            ParameterBinding::new(parsed_function.parameters(), arguments),
                             state,
                             spec_definitions,
                             &PureFactContext::new(),
@@ -2299,6 +2296,7 @@ fn evaluate_entry_resource_context(
     entry_resources: &ResourceContext,
     entry_memory: &CMemory,
 ) -> Result<(CState, Vec<Proposition>, Vec<Proposition>), ClickError> {
+    let parameter_binding = ParameterBinding::new(parsed_function.parameters(), arguments);
     let (resource_specs, _) = crate::surface::verification::function_resource_summary(
         function_block,
         parsed_function,
@@ -2313,8 +2311,10 @@ fn evaluate_entry_resource_context(
     // environment.  Entry lowering already has their exact symbolic values;
     // install those values without rebinding frames or inspecting a concrete
     // function body (named contracts deliberately have none).
-    let values =
-        crate::surface::lowering::parameter_values(parsed_function.parameters(), arguments)?;
+    let values = crate::surface::lowering::parameter_values(ParameterBinding::new(
+        parsed_function.parameters(),
+        arguments,
+    ))?;
     let explicit_entry_facts = entry_resources
         .facts()
         .iter()
@@ -2408,11 +2408,7 @@ fn evaluate_entry_resource_context(
         Ok(Err(error)) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` setup failed: could not evaluate the contract entry resources: {}",
-                crate::surface::diagnostics::describe_runtime_error(
-                    &error,
-                    parsed_function.parameters(),
-                    arguments
-                )
+                crate::surface::diagnostics::describe_runtime_error(&error, parameter_binding)
             )));
         }
         Err(limit) => {
@@ -2443,8 +2439,7 @@ fn evaluate_entry_resource_context(
                 if let Err(surface_error) =
                     crate::surface::lowering::check_resource_segment_base_loadability(
                         function_block,
-                        parsed_function.parameters(),
-                        arguments,
+                        parameter_binding,
                         &state,
                         &assumptions,
                     )
@@ -2453,11 +2448,7 @@ fn evaluate_entry_resource_context(
                 }
                 return Err(ClickError::new(format!(
                     "`{claim_label}` setup failed: could not evaluate the contract entry resources: {}",
-                    crate::surface::diagnostics::describe_runtime_error(
-                        &error,
-                        parsed_function.parameters(),
-                        arguments
-                    )
+                    crate::surface::diagnostics::describe_runtime_error(&error, parameter_binding)
                 )));
             }
             Err(limit) => {
@@ -2483,8 +2474,7 @@ fn evaluate_entry_resource_context(
     let entry_quantity_facts = { quantity_assumptions };
     let state = project_initial_composite_resource_cores(
         resource_environment,
-        parsed_function.parameters(),
-        arguments,
+        parameter_binding,
         state,
         pure_facts,
         claim_label,
@@ -2515,14 +2505,14 @@ fn click_proposition_mentions_defined(proposition: &ClickProposition) -> bool {
         | ClickProposition::Contains { .. }
         | ClickProposition::Initialized { .. }
         | ClickProposition::Loadable { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::PredicateCall { .. } => false,
     }
 }
 
 fn available_initial_requirement_propositions(
     requires: &[Requirement],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Vec<Proposition> {
@@ -2530,8 +2520,7 @@ fn available_initial_requirement_propositions(
     for requirement in requires {
         let Ok(lowered) = requirement_propositions(
             std::slice::from_ref(requirement),
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             spec_definitions,
         ) else {
@@ -2570,9 +2559,8 @@ fn canonical_claim_caller_state(
 fn install_borrowed_contract_inputs(
     state: CState,
     function: &CFunction,
-    arguments: &[CExpression],
     pure_facts: &(impl PropositionSource + ?Sized),
-    parameters: &[syntax::C0Parameter],
+    parameter_binding: ParameterBinding<'_>,
     proof_label: &str,
 ) -> Result<CState, ClickError> {
     if let Some(message) = crate::kernel::guard_contract_refusal(function.contract_interface()) {
@@ -2581,13 +2569,13 @@ fn install_borrowed_contract_inputs(
     crate::kernel::c_state_with_borrowed_contract_inputs(
         state,
         function,
-        arguments,
+        parameter_binding.arguments,
         &assumptions_from_propositions(pure_facts),
     )
     .map_err(|diagnostic| {
         ClickError::new(format!(
             "`{proof_label}` could not establish stable authority for a contract input view: {}",
-            crate::surface::diagnostics::describe_loan_refusal(&diagnostic, parameters, arguments,)
+            crate::surface::diagnostics::describe_loan_refusal(&diagnostic, parameter_binding,)
         ))
     })
 }

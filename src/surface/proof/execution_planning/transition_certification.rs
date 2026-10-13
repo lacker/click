@@ -114,8 +114,7 @@ fn proof_condition_runtime_error(
         {
             let required = crate::surface::diagnostics::describe_resource_fact(
                 resource,
-                &parameters,
-                &arguments,
+                ParameterBinding::new(&parameters, &arguments),
             );
             (
                 format!("the read requires `{required}`, which is not available"),
@@ -123,7 +122,10 @@ fn proof_condition_runtime_error(
             )
         }
         _ => (
-            crate::surface::diagnostics::describe_runtime_error(error, &parameters, &arguments),
+            crate::surface::diagnostics::describe_runtime_error(
+                error,
+                ParameterBinding::new(&parameters, &arguments),
+            ),
             "",
         ),
     };

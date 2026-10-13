@@ -143,7 +143,7 @@ pub fn lower_import(import: &PreparedCppImport) -> Result<LoweredCppFunction, St
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let library_contracts = super::standard_library::contracts(import.export(), &names)?;
+    let library_contracts = super::standard_library::contracts(import, &names)?;
     let execution = std::sync::Arc::new(super::interface::prepare(
         import,
         &function,
@@ -223,6 +223,7 @@ fn lower_function(
         names,
         source_names: places.values().map(|place| place.name.as_str()).collect(),
         next_call_capture: 0,
+        full_expression_records: Vec::new(),
         places,
         records,
         constants,
@@ -243,6 +244,11 @@ fn lower_function(
         &mut LifetimeState::default(),
         0,
     )?;
+    if !context.full_expression_records.is_empty() {
+        return Err(
+            "C++ record argument temporaries escaped their full-expression lowering".into(),
+        );
+    }
     let return_type = match &source.function_kind {
         CppFunctionKind::Constructor { .. } | CppFunctionKind::Destructor { .. } => CType::Void,
         _ if source.return_type == CppType::Void => CType::Void,
@@ -313,7 +319,7 @@ fn lower_function(
             function.with_return_aggregate_layout(context.record_layout(name)?)
         };
     }
-    Ok(function)
+    super::library_models::implementation(import, source, function, kernel_layouts)
 }
 
 pub(super) use crate::languages::c::syntax::reference_carrier_name;
@@ -452,12 +458,33 @@ struct LoweringContext<'a> {
     nested_capture_name: String,
     source_names: std::collections::BTreeSet<&'a str>,
     next_call_capture: u64,
+    full_expression_records: Vec<String>,
     unwind_exception_name: String,
     unwind_cleanups: bool,
 }
 
 impl LoweringContext<'_> {
     fn lower_statement(&mut self, statement: &CppStatement) -> Result<CStatement, String> {
+        let mark = self.full_expression_records.len();
+        let lowered = self.lower_statement_inner(statement)?;
+        if self.full_expression_records.len() == mark {
+            return Ok(lowered);
+        }
+        self.full_expression_records.truncate(mark);
+        if let CppStatement::Declare { local, .. } = statement {
+            let name = if is_reference_local(local) {
+                reference_carrier_name(&local.name)
+            } else {
+                local.name.clone()
+            };
+            return self.scope_declaration_expression(lowered, name);
+        }
+        Ok(CStatement::Scope {
+            body: Box::new(lowered),
+        })
+    }
+
+    fn lower_statement_inner(&mut self, statement: &CppStatement) -> Result<CStatement, String> {
         match statement {
             CppStatement::TrivialCopy { target, source, .. } => {
                 let root = self.place(target)?;
@@ -812,6 +839,103 @@ impl LoweringContext<'_> {
         }
     }
 
+    fn finish_record_expression(&mut self, body: CStatement) -> CStatement {
+        if self.full_expression_records.is_empty() {
+            body
+        } else {
+            self.full_expression_records.clear();
+            CStatement::Scope {
+                body: Box::new(body),
+            }
+        }
+    }
+
+    fn scope_declaration_expression(
+        &mut self,
+        body: CStatement,
+        name: String,
+    ) -> Result<CStatement, String> {
+        fn detach(
+            statement: CStatement,
+            name: &str,
+            capture: &str,
+            declarations: &mut Vec<CStatement>,
+        ) -> CStatement {
+            match statement {
+                CStatement::Seq(first, second) => c_seq(
+                    detach(
+                        std::sync::Arc::unwrap_or_clone(first),
+                        name,
+                        capture,
+                        declarations,
+                    ),
+                    detach(
+                        std::sync::Arc::unwrap_or_clone(second),
+                        name,
+                        capture,
+                        declarations,
+                    ),
+                ),
+                CStatement::Declare {
+                    name: ref declared, ..
+                } if declared == name => {
+                    let mut declaration = statement.clone();
+                    let CStatement::Declare {
+                        initializer,
+                        c_type,
+                        ..
+                    } = &mut declaration
+                    else {
+                        unreachable!()
+                    };
+                    if let Some(value) = initializer.take() {
+                        *initializer = Some(c_variable(capture));
+                        declarations.push(c_declare(capture, *c_type));
+                        declarations.push(declaration);
+                        c_assign(capture, value)
+                    } else {
+                        declarations.insert(0, declaration);
+                        c_skip()
+                    }
+                }
+                CStatement::DeclareAggregate {
+                    name: ref declared, ..
+                } if declared == name => {
+                    declarations.insert(0, statement);
+                    c_skip()
+                }
+                statement => statement,
+            }
+        }
+        let capture = self.fresh_call_capture()?;
+        let mut declarations = Vec::new();
+        let body = detach(body, &name, &capture, &mut declarations);
+        let mut before = c_skip();
+        let mut after = c_skip();
+        for declaration in declarations {
+            if matches!(
+                &declaration,
+                CStatement::Declare {
+                    initializer: Some(_),
+                    ..
+                }
+            ) {
+                after = evaluate_then(after, declaration);
+            } else {
+                before = evaluate_then(before, declaration);
+            }
+        }
+        Ok(evaluate_then(
+            before,
+            evaluate_then(
+                CStatement::Scope {
+                    body: Box::new(body),
+                },
+                after,
+            ),
+        ))
+    }
+
     /// Capture the result before destruction. A throwing return call takes the
     /// same cleanup chain on its exceptional edge and never produces a return.
     fn lower_captured_return(
@@ -887,7 +1011,7 @@ impl LoweringContext<'_> {
                 let temporary = self.fresh_aggregate_capture()?;
                 // The RHS is a separate object: the live LHS may be read by
                 // the factory and cannot serve as unwritten construction storage.
-                Ok(evaluate_then(
+                let operation = evaluate_then(
                     prefix,
                     c_seq(
                         c_allocate_aggregate_destination(temporary.clone(), layout.clone()),
@@ -907,7 +1031,8 @@ impl LoweringContext<'_> {
                             ),
                         ),
                     ),
-                ))
+                );
+                Ok(self.finish_record_expression(operation))
             }
             CppStatement::ReturnConstruct {
                 callee, arguments, ..
@@ -918,7 +1043,7 @@ impl LoweringContext<'_> {
                     CType::Int32Pointer,
                 )];
                 actual.extend(arguments);
-                Ok(evaluate_then(
+                let operation = evaluate_then(
                     prefix,
                     c_seq(
                         c_call(
@@ -927,13 +1052,14 @@ impl LoweringContext<'_> {
                         ),
                         c_return(c_variable(crate::kernel::C_CONTRACT_RESULT_NAME)),
                     ),
-                ))
+                );
+                Ok(self.finish_record_expression(operation))
             }
             CppStatement::ReturnAggregateCall {
                 callee, arguments, ..
             } => {
                 let (prefix, arguments) = self.normalize_arguments(arguments)?;
-                Ok(evaluate_then(
+                let operation = evaluate_then(
                     prefix,
                     c_seq(
                         c_call_assign(
@@ -943,7 +1069,8 @@ impl LoweringContext<'_> {
                         ),
                         c_return(c_variable(crate::kernel::C_CONTRACT_RESULT_NAME)),
                     ),
-                ))
+                );
+                Ok(self.finish_record_expression(operation))
             }
             CppStatement::ReturnRecord {
                 source, value_type, ..
@@ -1001,7 +1128,7 @@ impl LoweringContext<'_> {
                 else_branch,
                 ..
             } => {
-                let evaluation = self.normalize_scalar(match condition {
+                let mut evaluation = self.normalize_scalar(match condition {
                     CppCondition::Expression(value) => ScalarInput::Value(value),
                     CppCondition::Call { call } => ScalarInput::Call {
                         callee: &call.callee,
@@ -1010,6 +1137,19 @@ impl LoweringContext<'_> {
                         conversions: &[],
                     },
                 })?;
+                if !self.full_expression_records.is_empty() {
+                    let capture = self.fresh_call_capture()?;
+                    let body = evaluate_then(
+                        evaluation.prefix,
+                        c_assign(capture.clone(), c_cast(evaluation.value, CType::Bool)),
+                    );
+                    evaluation.prefix = c_seq(
+                        c_declare(capture.clone(), CType::Bool),
+                        self.finish_record_expression(body),
+                    );
+                    evaluation.value = c_variable(capture);
+                    evaluation.value_type = CType::Bool;
+                }
                 let prefix = if evaluation.may_throw {
                     self.lower_throwing_statement(evaluation.prefix, state.exit(unwind_base))?
                 } else {
@@ -1200,6 +1340,63 @@ impl LoweringContext<'_> {
             crate::instrumentation::record_deterministic_work(1);
             if let Some(snapshot) = snapshot {
                 lowered.push(snapshot);
+            } else if matches!(
+                argument,
+                CppCallArgument::RecordConstruct { .. }
+                    | CppCallArgument::Call {
+                        value_type: CppType::Record { .. },
+                        ..
+                    }
+            ) {
+                let (callee, arguments, value_type, constructing) = match argument {
+                    CppCallArgument::RecordConstruct {
+                        callee,
+                        arguments,
+                        value_type,
+                        ..
+                    } => (callee, arguments, value_type, true),
+                    CppCallArgument::Call {
+                        callee,
+                        arguments,
+                        value_type,
+                        ..
+                    } => (callee, arguments, value_type, false),
+                    _ => unreachable!(),
+                };
+                let CppType::Record { name, .. } = value_type else {
+                    return Err("C++ record argument temporary has no record layout".into());
+                };
+                let layout = self.record_layout(name)?;
+                let temporary = self.fresh_aggregate_capture()?;
+                let (inner_prefix, mut actual) = self.normalize_arguments(arguments)?;
+                let call = if constructing {
+                    actual.insert(
+                        0,
+                        c_cast(c_variable(temporary.clone()), CType::Int32Pointer),
+                    );
+                    c_call(
+                        self.names.require(&callee.declaration_id)?.to_owned(),
+                        actual,
+                    )
+                } else {
+                    c_call_assign(
+                        temporary.clone(),
+                        self.names.require(&callee.declaration_id)?.to_owned(),
+                        actual,
+                    )
+                };
+                evaluation = evaluate_then(
+                    evaluation,
+                    evaluate_then(
+                        inner_prefix,
+                        c_seq(
+                            c_allocate_aggregate_destination(temporary.clone(), layout),
+                            call,
+                        ),
+                    ),
+                );
+                self.full_expression_records.push(temporary.clone());
+                lowered.push(c_cast(c_variable(temporary), CType::UInt8Pointer));
             } else if let CppCallArgument::Call {
                 callee,
                 arguments,
@@ -1236,12 +1433,29 @@ impl LoweringContext<'_> {
         cleanups: &[&CppCleanup],
         unwind_cleanups: &[&CppCleanup],
     ) -> Result<CStatement, String> {
+        let temporary_records = !self.full_expression_records.is_empty();
+        self.full_expression_records.clear();
         if cleanups.is_empty() {
-            return Ok(evaluate_then(evaluation.prefix, c_return(evaluation.value)));
+            let body = evaluate_then(evaluation.prefix, c_return(evaluation.value));
+            return Ok(if temporary_records {
+                CStatement::Scope {
+                    body: Box::new(body),
+                }
+            } else {
+                body
+            });
         }
         let capture = self.return_capture_name.clone();
+        let evaluation_body = evaluate_then(evaluation.prefix, c_assign(capture, evaluation.value));
+        let evaluation_body = if temporary_records {
+            CStatement::Scope {
+                body: Box::new(evaluation_body),
+            }
+        } else {
+            evaluation_body
+        };
         self.lower_captured_return(
-            evaluate_then(evaluation.prefix, c_assign(capture, evaluation.value)),
+            evaluation_body,
             evaluation.value_type,
             cleanups,
             unwind_cleanups,
@@ -1450,7 +1664,7 @@ impl LoweringContext<'_> {
                 };
                 Ok(c_cast(address, pointer_type))
             }
-            CppCallArgument::Call { .. } => {
+            CppCallArgument::Call { .. } | CppCallArgument::RecordConstruct { .. } => {
                 Err("nested C++ call bypassed scalar evaluation normalization".into())
             }
         }

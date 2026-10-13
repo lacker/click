@@ -1499,6 +1499,114 @@ impl PureFactContext {
         None
     }
 
+    fn pointer_read_snapshot_scaled_evidence(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        byte_width: i64,
+    ) -> Option<PointerOffsetCongruenceEvidence> {
+        if matches!(
+            crate::kernel::eval::viewed_as_memory_load(left),
+            Some(Bitvector32Term::MemoryLoad(_, _, LoadKind::Pointer))
+        ) && matches!(
+            crate::kernel::eval::viewed_as_memory_load(right),
+            Some(Bitvector32Term::MemoryLoad(_, _, LoadKind::Pointer))
+        ) {
+            let capture =
+                crate::kernel::memory_provenance::CheckedLoadEqualityCapture::start_active();
+            let equal = crate::kernel::memory_provenance::checked_recorded_atomic_load_equality(
+                left, right, self,
+            ) || crate::kernel::memory_provenance::checked_origin_load_equality(
+                left, right, self,
+            );
+            let mut witnesses = capture.finish();
+            if equal && witnesses.len() == 1 {
+                let equality = witnesses.pop()?;
+                if equality.checks_exact_pointer_read_terms(left, right, self) {
+                    return Some(PointerOffsetCongruenceEvidence::PointerReadSnapshot {
+                        byte_width,
+                        equality: Box::new(equality),
+                    });
+                }
+            }
+        }
+        for (read, other, reversed) in [(left, right, false), (right, left, true)] {
+            let Some(Bitvector32Term::MemoryLoad(_, address, LoadKind::Pointer)) =
+                crate::kernel::eval::viewed_as_memory_load(read)
+            else {
+                continue;
+            };
+            let other_offset = PointerOffsetTerm::scale_int32(other.clone(), byte_width);
+            // Only aliases of the selected target offset, never an ambient
+            // fact scan. The existing direct path search uses this same bound.
+            for intermediate in self
+                .pointer_offset_aliases
+                .get(&other_offset)
+                .into_iter()
+                .flat_map(|aliases| aliases.iter())
+                .take(8)
+            {
+                crate::instrumentation::record_deterministic_work(1);
+                let PointerOffsetTerm::Int32Scaled {
+                    value,
+                    byte_width: width,
+                } = intermediate
+                else {
+                    continue;
+                };
+                if *width != byte_width {
+                    continue;
+                }
+                let Some(Bitvector32Term::MemoryLoad(_, intermediate_address, LoadKind::Pointer)) =
+                    crate::kernel::eval::viewed_as_memory_load(value)
+                else {
+                    continue;
+                };
+                if address != intermediate_address {
+                    continue;
+                }
+                let forward = Proposition::ConditionIs(
+                    ConditionTerm::pointer_offset_equal(intermediate.clone(), other_offset.clone()),
+                    true,
+                );
+                let backward = Proposition::ConditionIs(
+                    ConditionTerm::pointer_offset_equal(other_offset.clone(), intermediate.clone()),
+                    true,
+                );
+                let premise = if self.contains_assumed_exact(&forward) {
+                    forward
+                } else if self.contains_assumed_exact(&backward) {
+                    backward
+                } else {
+                    continue;
+                };
+                let capture =
+                    crate::kernel::memory_provenance::CheckedLoadEqualityCapture::start_active();
+                let equal = crate::kernel::memory_provenance::checked_recorded_atomic_load_equality(
+                    read, value, self,
+                ) || crate::kernel::memory_provenance::checked_origin_load_equality(
+                    read, value, self,
+                );
+                let mut witnesses = capture.finish();
+                if !equal || witnesses.len() != 1 {
+                    continue;
+                }
+                let equality = witnesses.pop()?;
+                if !equality.checks_exact_pointer_read_terms(read, value, self) {
+                    continue;
+                }
+                return Some(PointerOffsetCongruenceEvidence::PointerReadSnapshotAlias {
+                    byte_width,
+                    intermediate: Box::new(intermediate.clone()),
+                    equality: Box::new(equality),
+                    premise: Box::new(premise),
+                    reversed,
+                });
+            }
+        }
+        None
+    }
+
     pub(in crate::kernel) fn pointer_offset_congruence_evidence(
         &self,
         left: &PointerOffsetTerm,
@@ -1579,7 +1687,8 @@ impl PureFactContext {
                                 equality,
                             },
                         )
-                }),
+                })
+                .or_else(|| self.pointer_read_snapshot_scaled_evidence(left, right, *left_width)),
             (
                 PointerOffsetTerm::Int64Scaled {
                     value: left,
@@ -2407,5 +2516,131 @@ impl PureFactContext {
         let left = self.signed_constant_known_equal(left)?;
         let right = self.signed_constant_known_equal(right)?;
         Some(compare(left, right))
+    }
+}
+
+#[cfg(test)]
+mod selected_pointer_read_offset_tests {
+    use super::*;
+
+    #[test]
+    fn full_pointer_read_snapshot_direct_offset_keeps_stride_and_exact_endpoints() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let cell = Pointer::symbolic(Variable(991_610));
+        let before = CMemory::new();
+        let original = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&before),
+            Box::new(cell.clone()),
+            LoadKind::Pointer,
+        );
+        let held = CValue::typed_pointer(
+            Pointer::loaded(cell.block.clone(), original.clone(), 4),
+            CType::Int32Pointer,
+        );
+        let after = before.materialize_named_cell(cell.clone(), held);
+        let current = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&after),
+            Box::new(cell.clone()),
+            LoadKind::Pointer,
+        );
+        let scaled = |value| PointerOffsetTerm::scale_int32(value, 4);
+        let context = PureFactContext::new();
+        let left = scaled(original.clone());
+        let right = scaled(current.clone());
+        let evidence = context
+            .pointer_offset_congruence_evidence(&left, &right)
+            .expect("a checked full-pointer reread preserves its numeric offset");
+        assert!(evidence.checks(&left, &right, &context));
+        assert!(!evidence.checks(&left, &PointerOffsetTerm::scale_int32(current, 8), &context));
+        let changed = after.store(
+            cell.clone(),
+            CValue::typed_pointer(Pointer::symbolic(Variable(991_611)), CType::Int32Pointer),
+        );
+        let changed = scaled(Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&changed),
+            Box::new(cell),
+            LoadKind::Pointer,
+        ));
+        assert!(!evidence.checks(&left, &changed, &context));
+        assert!(
+            context
+                .pointer_offset_congruence_evidence(&left, &changed)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn full_pointer_read_snapshot_rebases_only_a_numeric_offset_premise() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let cell = Pointer::symbolic(Variable(991_600));
+        let before = CMemory::new();
+        let original = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&before),
+            Box::new(cell.clone()),
+            LoadKind::Pointer,
+        );
+        let held = CValue::typed_pointer(
+            Pointer::loaded(cell.block.clone(), original.clone(), 4),
+            CType::Int32Pointer,
+        );
+        let after = before.clone().materialize_named_cell(cell.clone(), held);
+        let current = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(&after),
+            Box::new(cell.clone()),
+            LoadKind::Pointer,
+        );
+        let target =
+            PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(991_601)), 4);
+        let premise = Proposition::ConditionIs(
+            ConditionTerm::pointer_offset_equal(
+                PointerOffsetTerm::scale_int32(current, 4),
+                target.clone(),
+            ),
+            true,
+        );
+        let context = PureFactContext::new().assume_proposition(premise.clone());
+        let wanted = PointerOffsetTerm::scale_int32(original.clone(), 4);
+        let evidence = context
+            .pointer_offset_congruence_evidence(&wanted, &target)
+            .expect("same full pointer cell can transport its numeric offset spelling");
+        assert!(evidence.checks(&wanted, &target, &context));
+        assert!(!evidence.checks(&wanted, &target, &context.without_exact_fact(&premise)));
+        let narrow = PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(&before),
+                Box::new(cell.clone()),
+                LoadKind::Bits32,
+            ),
+            4,
+        );
+        assert!(
+            context
+                .pointer_offset_congruence_evidence(&narrow, &target)
+                .is_none()
+        );
+        let stale = before.store(
+            cell.clone(),
+            CValue::typed_pointer(Pointer::null(), CType::Int32Pointer),
+        );
+        let stale_premise = Proposition::ConditionIs(
+            ConditionTerm::pointer_offset_equal(
+                PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory_ref(&stale),
+                        Box::new(cell),
+                        LoadKind::Pointer,
+                    ),
+                    4,
+                ),
+                target.clone(),
+            ),
+            true,
+        );
+        let changed = PureFactContext::new().assume_proposition(stale_premise);
+        assert!(
+            changed
+                .pointer_offset_congruence_evidence(&wanted, &target)
+                .is_none()
+        );
     }
 }

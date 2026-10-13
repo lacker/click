@@ -1910,3 +1910,89 @@ fn observable_projection_tracks_supported_views_caches_and_owner_retirement() {
         );
     }
 }
+
+fn argument_base(variable: u64) -> Pointer {
+    Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(variable))),
+            byte_width: 4,
+        },
+    }
+}
+
+/// Composing a call's footprint asks whether each pair of its ranges
+/// overlaps, rebasing both through the exact aliases the facts state for
+/// their bases. Along a path those alias classes grow (`arena`,
+/// `first->arena`, `second->arena`, ...), and asking every pair of aliases
+/// made the same footprint's composition cost the product of the two classes
+/// in endpoint decisions, so each later call in `examples/arena` paid more
+/// than the last. An alias pair whose bases are a symbolic distance apart is
+/// the same question about equal addresses, so only constant displacements
+/// are asked beyond the ranges' own spellings; what remains per extra alias
+/// pair is one structural comparison.
+#[test]
+fn footprint_composition_does_not_decide_every_alias_pair() {
+    const STRUCT: u64 = 994_000;
+    const ARRAY: u64 = 994_001;
+    const LENGTH: u64 = 994_002;
+    let footprint = [
+        owned_range(argument_base(STRUCT), 0, 2),
+        owned_range(argument_base(STRUCT), 2, 4),
+        owned_range(argument_base(STRUCT), 4, 6),
+        CResourceFact::own_memory(CMemoryRange::new(
+            argument_base(ARRAY),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Variable(Variable(LENGTH)),
+        )),
+    ];
+    let mut samples = Vec::new();
+    for aliases in [1_u64, 2, 4, 8] {
+        let _session = crate::kernel::VerificationSession::enter();
+        // A path's order facts about the array length, which an endpoint
+        // decision about the array's range searches.
+        let ordered = (0..32_u64).fold(PureFactContext::new(), |facts, index| {
+            let below = if index == 0 {
+                LENGTH
+            } else {
+                997_000 + index - 1
+            };
+            facts.assume_condition(
+                ConditionTerm::signed_less_than(
+                    Bitvector32Term::Variable(Variable(below)),
+                    Bitvector32Term::Variable(Variable(997_000 + index)),
+                ),
+                true,
+            )
+        });
+        let assumptions = (0..aliases).fold(ordered, |facts, index| {
+            facts
+                .assume_condition(
+                    pointer_equal(argument_base(STRUCT), argument_base(995_000 + index)),
+                    true,
+                )
+                .assume_condition(
+                    pointer_equal(argument_base(ARRAY), argument_base(996_000 + index)),
+                    true,
+                )
+        });
+        let (composed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            ResourceContext::new().try_compose_with_facts(footprint.iter().cloned(), &assumptions)
+        });
+        assert!(composed.is_ok(), "the footprint is a partition");
+        samples.push((aliases as usize, work));
+    }
+    eprintln!("footprint composition (aliases per base, units): {samples:?}");
+    let (_, base_work) = samples[0];
+    for (aliases, work) in &samples {
+        // A bounded structural cost per alias pair, never an endpoint
+        // decision that searches the path's order facts: asking every pair
+        // charged 2198, 5124, 15296 and 52920 units here.
+        let allowed = base_work + 48 * aliases * aliases;
+        assert!(
+            *work <= allowed,
+            "composition with {aliases} aliases per base charged {work} units, above \
+             {allowed}: {samples:?}"
+        );
+    }
+}

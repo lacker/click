@@ -20,7 +20,9 @@ pub(super) fn same_native_record_obligations(
     left: &CFunctionContractInterface,
     right: &CFunctionContractInterface,
 ) -> bool {
-    if left.native_span_inputs() != right.native_span_inputs()
+    if normalize(left).native_span_expression_inputs
+        != normalize(right).native_span_expression_inputs
+        || left.native_span_inputs() != right.native_span_inputs()
         || !crate::kernel::functions::typed_access_policy_refinement_compatible(left, right)
         || left.parameters().len() != right.parameters().len()
         || left
@@ -35,6 +37,14 @@ pub(super) fn same_native_record_obligations(
     enum NativeRequirement {
         Record(CNativeRecordPlaceRequirement),
         Span(CNativeSpanRequirement),
+        Storage(
+            CExpression,
+            CExpression,
+            CExpression,
+            u32,
+            CType,
+            Option<u32>,
+        ),
     }
     type Key = (
         String,
@@ -50,7 +60,9 @@ pub(super) fn same_native_record_obligations(
         outer_guard: Option<&SpecProposition>,
     ) {
         for spec in specs {
-            if spec.native_record_places().is_empty() && spec.native_span_requirements().is_empty()
+            if spec.native_record_places().is_empty()
+                && spec.native_span_requirements().is_empty()
+                && spec.declared_storage_type().is_none()
             {
                 continue;
             }
@@ -64,6 +76,29 @@ pub(super) fn same_native_record_obligations(
             };
             if let Some(guard) = &mut guard {
                 names.proposition(guard);
+            }
+            if let Some(storage_type) = spec.declared_storage_type()
+                && let Some(segment) = spec.memory_segment()
+            {
+                let mut base = segment.base.clone();
+                let mut start = segment.start.clone();
+                let mut end = segment.end.clone();
+                names.c(&mut base);
+                names.c(&mut start);
+                names.c(&mut end);
+                keys.insert((
+                    scope.to_string(),
+                    spec.snapshot(),
+                    guard.clone(),
+                    NativeRequirement::Storage(
+                        base,
+                        start,
+                        end,
+                        segment.element_width,
+                        storage_type,
+                        spec.declared_storage_count(),
+                    ),
+                ));
             }
             for place in spec.native_record_places() {
                 let mut place = place.clone();
@@ -167,6 +202,16 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
     for parameter in &mut interface.parameters {
         names.bind(&mut parameter.name);
     }
+    interface.native_span_expression_inputs = interface
+        .native_span_expression_inputs
+        .iter()
+        .map(|span| {
+            let mut span = span.clone();
+            names.c(&mut span.carrier);
+            names.c(&mut span.count);
+            span
+        })
+        .collect();
     for proposition in interface
         .contract_requires
         .iter_mut()
@@ -211,6 +256,41 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_span_geometry_is_an_exact_alpha_normalized_interface_obligation() {
+        let requirement = |name: &str| CNativeSpanRequirement {
+            carrier: c_variable(name),
+            count: c_int32_literal(1),
+            element_type: CType::UInt32,
+            access_policy: CTypedAccessPolicy::NativeObjectOnly,
+        };
+        let function = |name: &str| {
+            c_function(
+                CType::Void,
+                "span",
+                vec![c_parameter(name, CType::UInt32Pointer)],
+                c_skip(),
+            )
+            .with_native_span_expression_inputs(vec![requirement(name)])
+        };
+        let left = function("left");
+        let right = function("right");
+        assert!(same_native_record_obligations(
+            left.contract_interface(),
+            right.contract_interface()
+        ));
+        let absent = right.clone().with_native_span_expression_inputs(Vec::new());
+        assert!(!same_native_record_obligations(
+            left.contract_interface(),
+            absent.contract_interface()
+        ));
+        assert!(
+            !left
+                .contract_interface()
+                .exactly_matches(absent.contract_interface())
+        );
+    }
 
     #[test]
     fn typed_source_policy_survives_lexical_interface_normalization() {
@@ -761,7 +841,9 @@ impl Names {
                 self.expression(left);
                 self.expression(right);
             }
-            Defined(e) | FloatClassification { expression: e, .. } => self.expression(e),
+            ValidPlace { pointer: e, .. }
+            | Defined(e)
+            | FloatClassification { expression: e, .. } => self.expression(e),
             And(a, b) | Or(a, b) | Implies(a, b) => {
                 self.proposition(a);
                 self.proposition(b);
@@ -853,6 +935,7 @@ impl Names {
             self.proposition(guard);
         }
         let quantity_snapshot = resource.quantity_snapshot();
+        let declared_storage_observation = resource.declared_storage_observation();
         *resource = CResourceSpec::new(
             term,
             resource.access(),
@@ -861,6 +944,7 @@ impl Names {
             resource.snapshot(),
         )
         .expect("interface identity normalization preserves resource validity")
+        .with_declared_storage_observation(declared_storage_observation)
         .with_native_record_places(native_record_places)
         .with_native_span_requirements(native_span_requirements)
         .with_quantity_snapshot(quantity_snapshot);

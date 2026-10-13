@@ -25,7 +25,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (8)
+## P1: before launch (10)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -89,6 +89,8 @@ reference-counted version differs from the sequential one.
 Specification and proof:
 
 - [Verify the Linux rbtree example on the recursive structure models](rbtree-example.md)
+- [SMT-backed automation with kernel-checked certificates](smt-auto.md)
+- [Launch design review: open critiques, each to be fixed or ruled wontfix](design-review.md) (depends on smt-auto.md)
 
 ## P2: after launch (20)
 

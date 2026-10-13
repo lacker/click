@@ -3684,19 +3684,18 @@ pub(super) fn comparison_snapshot_variants(
     Some(variants)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn lower_surface_candidate_in_state_with_assumptions(
     view: ExecutionView<'_>,
     candidate: &ClickProposition,
     assumptions: &PureFactContext,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, ClickError> {
     check_verification_deadline()?;
-    let values = parameter_values(parameters, arguments)?;
-    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let values = parameter_values(parameter_binding)?;
+    let array_refs =
+        array_refs_for_parameters(parameter_binding.parameters, &values, state.memory());
     let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
     let assumptions = assumptions.clone().allow_symbolic_contract_loads();
     lower_fixed_state_proposition_through_kernel(
@@ -3704,10 +3703,12 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
         &assumptions,
         &values,
         &array_refs,
-        view.old_reference_state(state),
-        state,
-        None,
-        view.recorded_snapshots,
+        FixedStateFrame::new(
+            view.old_reference_state(state),
+            state,
+            None,
+            view.recorded_snapshots,
+        ),
         spec_definitions,
     )
     .map_err(ClickError::new)

@@ -547,12 +547,34 @@ impl PureFactContext {
         }
     }
 
-    /// Query equality already known to the trusted graph. This performs no
-    /// arithmetic proof search, alias-component walk, or resource check.
+    /// Query the trusted graph or an exact producer-retained read pair.
+    /// A retained pair checks its selected authority in the current context;
+    /// no arithmetic search, alias-component walk, or new frame search runs.
     /// `false` means unknown, not unequal. Memory consumers must retain their
     /// structural-distinctness and separation checks around this query.
     pub(in crate::kernel) fn pointers_known_equal(&self, left: &Pointer, right: &Pointer) -> bool {
-        self.equality_graph.are_equal(left, right)
+        if self.equality_graph.are_equal(left, right) {
+            return true;
+        }
+        let Some(equality) = self
+            .equality_graph
+            .supported_pointer_read_equality(left, right)
+        else {
+            return false;
+        };
+        for support in equality.supports.iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            if !self.contains_assumed_exact(support) {
+                return false;
+            }
+        }
+        if !equality.proof.check_and_retain(self) {
+            return false;
+        }
+        for support in equality.supports.iter() {
+            crate::kernel::record_implicit_reasoning_provenance(self, support);
+        }
+        true
     }
 
     /// True when some exact order fact strictly bounds `term` above

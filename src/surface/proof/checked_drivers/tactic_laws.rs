@@ -167,8 +167,8 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         surface_propositions: &execution.presentation.surface_propositions,
         source_layout: &source_layout,
         function_source_registry: proof_context.function_source_registry(),
-        frontier_loop_certificates: Some(&loop_certificates),
-        frontier_loop_source: Some(&loop_source),
+        frontier_loop_certificates: &loop_certificates,
+        frontier_loop_source: &loop_source,
         proof_locals: proof_locals.clone(),
     };
     let case_path = execution
@@ -336,12 +336,8 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
         let lowered_exit_condition = lower_fixed_state_proposition(
             &exit_surface,
             available_pure_facts,
-            parsed_function.parameters(),
-            arguments,
-            &initial_state,
-            state,
-            None,
-            &execution.presentation.recorded_snapshots,
+            ParameterBinding::new(parsed_function.parameters(), arguments),
+            FixedStateFrame::new(&initial_state, state, None, &execution.presentation.recorded_snapshots),
             SpecDefinitions::new(predicate_environment, click_function_environment),
         )
         .map_err(|message| {

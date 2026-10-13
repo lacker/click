@@ -1210,6 +1210,40 @@ pub(in crate::kernel) fn checked_typed_pointer_span(
     checked_c_typed_pointer_span(state, pointer, start, end, element_type, assumptions)
 }
 
+/// A native byte-access contract preserves the selected object's representation
+/// domain. It does not promise a newly declared array of byte objects. Admission
+/// of the source-language byte operation remains the frontend's responsibility.
+pub(in crate::kernel) fn checked_native_byte_pointer_span(
+    state: &CState,
+    pointer: &CPointerValue,
+    start: IntegerTerm,
+    end: IntegerTerm,
+    assumptions: &PureFactContext,
+) -> Result<PointerDomainCheck, PointerDomainRefusal> {
+    if !matches!(
+        pointer.c_type().pointee_type(),
+        Some(CType::Int8 | CType::UInt8)
+    ) {
+        return Err(PointerDomainRefusal::IncompatibleType);
+    }
+    let resolved = resolved_carrier(state, pointer, assumptions)?;
+    if state.memory().allocated_scalar_extent(&resolved).is_some()
+        || state.memory().native_input_span_policy(&resolved)
+            == Some(CTypedAccessPolicy::CAllocatedAccessAllowed)
+    {
+        return Err(PointerDomainRefusal::UnauthenticatedDomain);
+    }
+    checked_pointer_span(
+        state,
+        pointer,
+        start,
+        end,
+        1,
+        PointerDomainView::ObjectRepresentationBytes,
+        assumptions,
+    )
+}
+
 /// A C typed-place contract also admits the separately authenticated bounded
 /// allocation profile. This never installs a native object witness.
 pub(in crate::kernel) fn checked_c_typed_pointer_span(
@@ -1325,6 +1359,13 @@ mod tests {
             0.into(),
             1.into(),
             CType::Int32,
+            &context
+        )));
+        assert!(!check(checked_native_byte_pointer_span(
+            &state,
+            &pointer.clone().with_type(CType::UInt8Pointer),
+            0.into(),
+            4.into(),
             &context
         )));
         assert!(check(checked_pointer_access(

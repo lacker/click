@@ -5244,8 +5244,7 @@ fn resource_reference_entry_setup_has_near_linear_work() {
             crate::instrumentation::measure_deterministic_work(|| {
                 crate::surface::lowering::resource_context_from_requirements(
                     file.function_blocks()[0].requires(),
-                    &[],
-                    &[],
+                    ParameterBinding::default(),
                     &crate::kernel::CState::new(),
                 )
                 .unwrap()
@@ -7152,17 +7151,33 @@ fn callback_parsing_and_explicit_steps_scale_with_written_calls() {
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
         let source = click.replace("execute();", &"step(); ".repeat(3 * (count + 2) + 1));
-        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
-            verify_c0_sources(&source, &sources)
+        let ((result, work), events) = crate::instrumentation::collect(|| {
+            crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &sources)
+            })
         });
+        let selected_work = events
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::instrumentation::VerificationEvent::OperationFinished {
+                    name, work, ..
+                } if name == "callback selected Pointer8 equality" => Some(work),
+                _ => None,
+            })
+            .sum::<usize>();
         result.unwrap_or_else(|error| panic!("{count} callback statements: {}", error.message()));
-        work
+        (work, selected_work)
     });
-    assert!(samples[0] > 0);
+    assert!(samples[0].0 > 0);
+    assert!(samples[0].1 > 0);
     for pair in samples.windows(2) {
         assert!(
-            pair[1] * 2 <= pair[0] * 5,
+            pair[1].0 * 2 <= pair[0].0 * 5,
             "callback source steps must scale with their written calls: {samples:?}"
+        );
+        assert!(
+            pair[1].1 * 2 <= pair[0].1 * 5,
+            "selected callback reads must share checked frame prefixes: {samples:?}"
         );
     }
 }

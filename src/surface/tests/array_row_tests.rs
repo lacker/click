@@ -128,9 +128,35 @@ fn c_array_row_unsigned_indices_keep_their_native_bounds() {
         requires i < 2u32; ensures result == 7;
     } by {
         if i == 0u32 { execute(); simp(); }
-        else { have i == 1u32 by simp; execute(); simp(); }
+        else {
+            have i == 1u32 by {
+                have 0u32 < i by apply(uint32_nonzero_implies_positive(i)) using { i != 0u32; }
+                have 0 < to_integer(i) by apply(uint32_less_than_to_integer(0u32, i)) using { 0u32 < i; }
+                have to_integer(i) < 2 by apply(uint32_less_than_to_integer(i, 2u32)) using { i < 2u32; }
+                have to_integer(i) == 1 by arithmetic() using { 0 < to_integer(i); to_integer(i) < 2; }
+                apply(uint32_to_integer_equal_implies_equal(i, 1u32)) using { to_integer(i) == 1; }
+            }
+            execute(); simp();
+        }
     }"#;
     verify_c0_sources(proof, &[("row.c", c)]).unwrap();
     let invalid = proof.replace("i < 2u32", "i == 2u32");
     assert!(verify_c0_sources(&invalid, &[("row.c", c)]).is_err());
+}
+
+#[test]
+fn derived_uint32_nonzero_positive_preserves_unsigned_boundaries_and_requires_its_premise() {
+    for value in [1u32, 2, 0x7fff_ffff, 0x8000_0000, u32::MAX] {
+        let proof = format!(
+            "theorem boundary() {{ ensures 0u32 < {value}u32 by apply(uint32_nonzero_implies_positive({value}u32)) using {{ {value}u32 != 0u32; }} }}"
+        );
+        verify_c0_sources(&proof, &[]).expect("positive UInt32 endpoint proof");
+    }
+    for proof in [
+        "theorem missing(value: uint32) { ensures 0u32 < value by apply(uint32_nonzero_implies_positive(value)); }",
+        "theorem mutated(value: uint32) { requires value == 0u32; ensures 0u32 < value by apply(uint32_nonzero_implies_positive(value)) using { value != 0u32; } }",
+        "theorem signed(value: int32) { requires value != 0; ensures 0 < value by apply(uint32_nonzero_implies_positive(value)); }",
+    ] {
+        assert!(verify_c0_sources(proof, &[]).is_err(), "{proof}");
+    }
 }

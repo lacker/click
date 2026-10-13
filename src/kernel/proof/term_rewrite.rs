@@ -1032,6 +1032,9 @@ fn collect_integer_substitution_variables_with_carriers(
             // read carry the selected pointer and byte-count terms directly.  The
             // memory snapshot is intentionally opaque: only these expressions
             // participate in capture reservation.
+            Proposition::CValidPlace { pointer, .. } => {
+                collect_c_value_carriers(&CValue::Pointer(pointer.clone()), carriers);
+            }
             Proposition::CMemoryReadDefined { pointer, .. }
             | Proposition::CMemoryInitialized { base: pointer, .. } => {
                 collect_pointer_carriers(pointer, carriers);
@@ -2256,6 +2259,24 @@ impl<'a> TermRewrite<'a> {
                     memory: memory.clone(),
                     pointer,
                     value_type: *value_type,
+                }
+            }
+            Proposition::CValidPlace {
+                memory,
+                pointer,
+                place_type,
+                access_policy,
+            } => {
+                let Term::CValue(CValue::Pointer(pointer)) =
+                    self.term(&Term::CValue(CValue::Pointer(pointer.clone())))
+                else {
+                    return exhausted_proposition();
+                };
+                Proposition::CValidPlace {
+                    memory: memory.clone(),
+                    pointer,
+                    place_type: place_type.clone(),
+                    access_policy: *access_policy,
                 }
             }
             Proposition::CMemoryInitialized {

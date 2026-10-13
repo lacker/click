@@ -30,13 +30,9 @@ pub(in crate::surface::proof) struct PureProofContext<'a> {
 pub(in crate::surface::proof) struct FixedStateProofContext<'a> {
     pub(in crate::surface::proof) claim_label: &'a str,
     pub(in crate::surface::proof) tactic_index: usize,
-    pub(in crate::surface::proof) parameters: &'a [syntax::C0Parameter],
-    pub(in crate::surface::proof) arguments: &'a [CExpression],
-    pub(in crate::surface::proof) pre_state: &'a CState,
-    pub(in crate::surface::proof) state: &'a CState,
-    pub(in crate::surface::proof) result: Option<&'a CValue>,
+    pub(in crate::surface::proof) parameter_binding: ParameterBinding<'a>,
+    pub(in crate::surface::proof) fixed_state: FixedStateFrame<'a>,
     pub(in crate::surface::proof) premise_anchor: Option<ProgramPointRef>,
-    pub(in crate::surface::proof) recorded_snapshots: &'a RecordedSnapshots,
     pub(in crate::surface::proof) surface_propositions: &'a SurfacePropositionMap,
     pub(in crate::surface::proof) spec_definitions: SpecDefinitions<'a>,
     pub(in crate::surface::proof) theorem_environment: &'a TheoremEnvironment,
@@ -225,6 +221,11 @@ pub(in crate::surface::proof) struct ExecutionProofContext<'a> {
 }
 
 impl<'a> ExecutionProofContext<'a> {
+    /// The function's parameters and the argument expressions bound to them.
+    pub(in crate::surface::proof) fn parameter_binding(&self) -> ParameterBinding<'a> {
+        ParameterBinding::new(self.parsed_function.parameters(), self.arguments)
+    }
+
     /// The immutable ordinary-callee source registry shared by this proof and
     /// all of its derived tactic contexts.
     pub(in crate::surface::proof) fn function_source_registry(

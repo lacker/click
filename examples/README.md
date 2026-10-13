@@ -14,6 +14,12 @@ the gate refreshes the import and verifies it.
 Most fixtures should stay small. Keep everything directly under `examples/`
 unless there is a concrete reason to add hierarchy.
 
+An example keeps its general proof and that proof's regressions. Per-case
+increments are useful while a proof is developed, but once a general proof
+subsumes an increment, delete the increment and point its mutation checks at
+the general proof
+([design/proof-reuse.md](../design/proof-reuse.md#r1-retire-superseded-increments-process)).
+
 ## Source provenance
 
 Examples have three distinct provenance classes:
@@ -37,6 +43,8 @@ version and version-string bytes under the explicit kernel target.
 
 Current projects:
 
+- `clamp/` is the README quick start: a branchy `int` function proved in range
+  with `by auto`.
 - `basic-rust/` verifies scalar branches, reference reborrows, parent reuse, and
   disjoint struct fields through the pinned Rust compiler import.
 - `rust-move-drop/` verifies a moved Rust guard that restores borrowed storage

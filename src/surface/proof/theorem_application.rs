@@ -312,10 +312,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             &algebraic_values,
             &integer_values,
             &bound_array_memories,
-            &pre_state,
-            &post_state,
-            None,
-            context.recorded_snapshots,
+            FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
             spec_definitions,
             &BTreeSet::new(),
             pointer_element_widths.clone(),
@@ -415,8 +412,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                         crate::surface::diagnostics::describe_click_proposition(requirement),
                         crate::surface::diagnostics::describe_pure_fact_spelled(
                             &guard,
-                            &parameters,
-                            &arguments,
+                            ParameterBinding::new(&parameters, &arguments),
                         ),
                     )
                 },
@@ -567,10 +563,12 @@ fn instantiate_integer_range_fold_theorem_application(
         assumptions,
         context.values,
         context.array_refs,
-        context.pre_state,
-        context.post_state,
-        context.result,
-        context.recorded_snapshots,
+        FixedStateFrame::new(
+            context.pre_state,
+            context.post_state,
+            context.result,
+            context.recorded_snapshots,
+        ),
         spec_definitions,
     )
     .map_err(|message| {
@@ -632,7 +630,7 @@ fn instantiate_integer_range_fold_theorem_application(
         {
             return Err(error(format!(
                 "required exact fold guard is unavailable: {}",
-                describe_pure_fact(premise, &[], &[])
+                describe_pure_fact(premise, ParameterBinding::default())
             )));
         }
     }
@@ -652,7 +650,6 @@ pub(super) fn collect_conjunctive_guard_facts<'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_generic_theorem_application(
     definition: &TheoremDefinition,
     application: &TheoremApplication,
@@ -695,7 +692,6 @@ fn resolve_generic_theorem_application(
     Ok(concrete)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn instantiate_generic_theorem_application_definition(
     definition: &TheoremDefinition,
     application: &TheoremApplication,
@@ -729,7 +725,6 @@ pub(in crate::surface::proof) fn instantiate_generic_theorem_application_definit
     generics::instantiate_theorem(definition, &substitution)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn theorem_application_argument_type(
     argument: &ContractExpression,
     assumptions: &PureFactContext,
@@ -761,10 +756,12 @@ fn theorem_application_argument_type(
         argument,
         context.values,
         context.array_refs,
-        context.pre_state,
-        context.post_state,
-        context.result,
-        context.recorded_snapshots,
+        FixedStateFrame::new(
+            context.pre_state,
+            context.post_state,
+            context.result,
+            context.recorded_snapshots,
+        ),
         spec_definitions,
     ) {
         return Ok(Some(generics::click_type_from_algebraic_value_type(
@@ -826,10 +823,12 @@ pub(super) fn theorem_application_bindings(
                         assumptions,
                         context.values,
                         context.array_refs,
-                        context.pre_state,
-                        context.post_state,
-                        context.result,
-                        context.recorded_snapshots,
+                        FixedStateFrame::new(
+                            context.pre_state,
+                            context.post_state,
+                            context.result,
+                            context.recorded_snapshots,
+                        ),
                         spec_definitions,
                     )?,
                 ),
@@ -861,10 +860,12 @@ pub(super) fn theorem_application_bindings(
                 context.values,
                 context.array_refs,
                 algebraic_bindings,
-                context.pre_state,
-                context.post_state,
-                context.result,
-                context.recorded_snapshots,
+                FixedStateFrame::new(
+                    context.pre_state,
+                    context.post_state,
+                    context.result,
+                    context.recorded_snapshots,
+                ),
                 spec_definitions,
             )?;
             fn click_type_matches_algebraic_value_type(
@@ -947,10 +948,12 @@ pub(super) fn theorem_application_bindings(
                 assumptions,
                 context.values,
                 context.array_refs,
-                context.pre_state,
-                context.post_state,
-                context.result,
-                context.recorded_snapshots,
+                FixedStateFrame::new(
+                    context.pre_state,
+                    context.post_state,
+                    context.result,
+                    context.recorded_snapshots,
+                ),
                 spec_definitions,
             )?;
             let expected_element_type =
@@ -1001,8 +1004,7 @@ pub(super) fn theorem_application_bindings(
                     describe_c0_type(parameter_type),
                     crate::surface::diagnostics::describe_c_value(
                         &value,
-                        &naming_parameters,
-                        &naming_arguments
+                        ParameterBinding::new(&naming_parameters, &naming_arguments)
                     ),
                     crate::kernel::c_type_spelling(value.c_type())
                 ));

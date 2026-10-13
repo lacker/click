@@ -1098,8 +1098,7 @@ fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
 
     let surface = super::proof::synthesize_surface_proposition(
         &proposition,
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
         &CState::new(),
     )
     .expect("pointer-offset equality should have a surface form");
@@ -1163,8 +1162,7 @@ fn synthesizes_dynamically_indexed_pointer_offset_equality() {
 
     let surface = super::proof::synthesize_surface_proposition(
         &proposition,
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
         &CState::new(),
     )
     .expect("dynamically indexed pointer equality should have a surface form");

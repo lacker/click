@@ -3170,7 +3170,120 @@ impl PureFactContext {
                 &Pointer::loaded_value(memory, address),
                 &Pointer::loaded_value(&source, address),
             );
+        } else {
+            self.register_supported_pointer_read_frame(memory, address, &derivation);
         }
+    }
+
+    fn register_supported_pointer_read_frame(
+        &self,
+        memory: &SharedCMemory,
+        address: &Pointer,
+        derivation: &CMemoryDerivation,
+    ) {
+        let CMemoryDerivation::Store {
+            pointer: write,
+            value,
+            ..
+        } = derivation
+        else {
+            return;
+        };
+        let (selected, supports) = collect_reasoning_provenance(|| {
+            capture_implicit_reasoning_provenance(|| {
+                let proof = crate::kernel::memory_provenance::typed_store_separated_ranges_evidence(
+                    write,
+                    value.byte_width(),
+                    address,
+                    crate::kernel::C_POINTER_BYTE_WIDTH,
+                    self,
+                );
+                let proof = proof?;
+                let crate::kernel::resource_tracker::cell_source::MemoryDagHopJustification::StoreSeparatedRanges {
+                    left, right, ..
+                } = proof else { return None; };
+                let current = Bitvector32Term::MemoryLoad(
+                    memory.clone(),
+                    Box::new(address.clone()),
+                    LoadKind::Pointer,
+                );
+                // Only the two ranges already selected by the complete-span
+                // separation proof can supply an older pointer observation.
+                for range in [&left, &right] {
+                    crate::instrumentation::record_deterministic_work(1);
+                    let selected_read = self.equality_graph.pointer_read_term(range.base());
+                    let Some(old @ Bitvector32Term::MemoryLoad(_, _, LoadKind::Pointer)) =
+                        selected_read
+                    else {
+                        continue;
+                    };
+                    let Bitvector32Term::MemoryLoad(old_memory, old_address, _) = &old else {
+                        unreachable!();
+                    };
+                    if old_address.as_ref() != address || old_memory.arena_id() == memory.arena_id()
+                    {
+                        continue;
+                    }
+                    let equality = crate::kernel::memory_provenance::CheckedLoadEquality::for_pointer_read_frame(
+                        &current, &old, self,
+                    );
+                    if let Some(equality) = equality {
+                        return Some((current, old, equality));
+                    }
+                }
+                None
+            })
+        });
+        if let Some((current, old, proof)) = selected
+            && proof.checks_exact_pointer_read_terms(&current, &old, self)
+        {
+            self.equality_graph
+                .add_supported_pointer_read_equality(&current, &old, proof, supports);
+        }
+    }
+
+    /// Check a memory query with only its selected, certified Pointer8 frames.
+    /// The cloned context is confined to the query: its numeric unions must
+    /// never be installed in the caller's semantic proof context.
+    pub(in crate::kernel) fn with_selected_pointer_read_frames<T>(
+        &self,
+        pointers: &[&Pointer],
+        query: impl FnOnce(&Self) -> T,
+    ) -> T {
+        let mut context: Option<Self> = None;
+        for pointer in pointers {
+            let mut offsets = vec![&pointer.offset];
+            while let Some(offset) = offsets.pop() {
+                if let PointerOffsetTerm::Add(left, right) = offset {
+                    offsets.push(right);
+                    offsets.push(left);
+                    continue;
+                }
+                let selected = Pointer {
+                    block: pointer.block.clone(),
+                    offset: offset.clone(),
+                };
+                let Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer)) =
+                    self.equality_graph.pointer_read_term(&selected)
+                else {
+                    continue;
+                };
+                let context = context.get_or_insert_with(|| self.clone());
+                // Definition observation may have used a scratch context.
+                // Recheck only this producer's frame under the live facts.
+                context.register_pointer_read(&selected, &memory, &address);
+                if let Some(older) = context
+                    .equality_graph
+                    .supported_pointer_read_source(&selected)
+                    && context.pointers_known_equal(&selected, &older)
+                {
+                    context
+                        .equality_graph
+                        .add_checked_read_equality(&selected, &older);
+                }
+            }
+        }
+        query(context.as_ref().unwrap_or(self))
     }
 
     fn file_typed_pointer_read(
@@ -4115,6 +4228,7 @@ impl PureFactContext {
         self.rebuild_atomic_connection_facts();
         self.rebuild_stated_proposition_index();
         self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
+        self.function_contract_read_cells = Default::default();
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());
         self.algebraic_constructor_field_equalities = crate::persistent::PersistentMap::default();
         self.algebraic_constructor_conflicts = crate::persistent::PersistentMap::default();
@@ -4177,19 +4291,35 @@ impl PureFactContext {
         Some((pointer.pointer().clone(), contract_name.to_string()))
     }
 
+    fn exact_function_pointer_read(pointer: &Pointer) -> Option<Bitvector32Term> {
+        let Pointer {
+            block: PointerBlock::FunctionSymbolic(variable),
+            offset: PointerOffsetTerm::Constant(0),
+        } = pointer
+        else {
+            return None;
+        };
+        if crate::kernel::registered_load_kind_for_variable(variable) != Some(LoadKind::Pointer)
+            || crate::kernel::registered_load_bytes_for_variable(variable)
+                != Some(C_POINTER_BYTE_WIDTH)
+        {
+            return None;
+        }
+        crate::kernel::registered_load_origin_term_for_variable(variable)
+    }
+
     fn adjust_function_contract_fact(&mut self, proposition: &Proposition, insert: bool) {
         let Some((pointer, name)) = Self::proposition_function_contract(proposition) else {
             return;
         };
         let index = std::sync::Arc::make_mut(&mut self.function_contract_facts);
-        if insert {
+        let remove_pointer = if insert {
             index
-                .entry(pointer)
+                .entry(pointer.clone())
                 .or_default()
                 .insert(name, proposition.clone());
-            return;
-        }
-        let remove_pointer = if let Some(contracts) = index.get_mut(&pointer) {
+            false
+        } else if let Some(contracts) = index.get_mut(&pointer) {
             contracts.remove(&name);
             contracts.is_empty()
         } else {
@@ -4198,11 +4328,33 @@ impl PureFactContext {
         if remove_pointer {
             index.remove(&pointer);
         }
+        let Some(Bitvector32Term::MemoryLoad(_, address, LoadKind::Pointer)) =
+            Self::exact_function_pointer_read(&pointer)
+        else {
+            return;
+        };
+        let mut candidates = self
+            .function_contract_read_cells
+            .get(address.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        if insert {
+            candidates.insert(pointer, ());
+        } else if remove_pointer {
+            candidates.remove(&pointer);
+        }
+        if candidates.is_empty() {
+            self.function_contract_read_cells.remove(address.as_ref());
+        } else {
+            self.function_contract_read_cells
+                .insert(*address, candidates);
+        }
     }
 
     #[cfg(test)]
     fn rebuild_function_contract_facts(&mut self) {
         self.function_contract_facts = std::sync::Arc::new(BTreeMap::new());
+        self.function_contract_read_cells = Default::default();
         let facts = self.prop_facts.iter().cloned().collect::<Vec<_>>();
         for proposition in facts {
             self.adjust_function_contract_fact(&proposition, true);
@@ -4214,11 +4366,103 @@ impl PureFactContext {
         pointer: &Pointer,
     ) -> impl Iterator<Item = (&String, &Proposition)> {
         crate::instrumentation::record_deterministic_work(1);
-        self.function_contract_facts
-            .get(pointer)
+        let mut contracts = BTreeMap::new();
+        if let Some(exact) = self.function_contract_facts.get(pointer) {
+            contracts.extend(exact.iter());
+        }
+        if let Some(read @ Bitvector32Term::MemoryLoad(_, _, LoadKind::Pointer)) =
+            Self::exact_function_pointer_read(pointer)
+        {
+            let Bitvector32Term::MemoryLoad(_, address, _) = &read else {
+                unreachable!()
+            };
+            if let Some(candidates) = self.function_contract_read_cells.get(address.as_ref()) {
+                for candidate in candidates.keys() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    if candidate == pointer {
+                        continue;
+                    }
+                    let Some(origin) = Self::exact_function_pointer_read(candidate) else {
+                        continue;
+                    };
+                    if crate::instrumentation::measure_operation(
+                        "kernel",
+                        "function contract matching",
+                        "callback selected Pointer8 equality",
+                        || {
+                            crate::kernel::memory_provenance::checked_recorded_atomic_load_equality(
+                                &read, &origin, self,
+                            )
+                        },
+                    ) && let Some(selected) = self.function_contract_facts.get(candidate)
+                    {
+                        for (name, fact) in selected {
+                            contracts.entry(name).or_insert(fact);
+                        }
+                    }
+                }
+            }
+        }
+        contracts
             .into_iter()
-            .flat_map(|contracts| contracts.iter())
             .inspect(|_| crate::instrumentation::record_deterministic_work(1))
+    }
+
+    pub(crate) fn function_contract_facts_for_value<'a>(
+        &'a self,
+        pointer: &'a CPointerValue,
+    ) -> impl Iterator<Item = (&'a String, &'a Proposition)> {
+        self.function_contract_facts_for(pointer.pointer())
+            .filter(|(_, fact)| {
+                let Proposition::Predicate { arguments, .. } = fact else {
+                    return false;
+                };
+                let [Term::CState(state), Term::CValue(CValue::Pointer(value))] =
+                    arguments.as_slice()
+                else {
+                    return false;
+                };
+                state.as_ref() == &CState::new()
+                    && pointer.c_type() == value.c_type()
+                    && pointer.pointee_volatile() == value.pointee_volatile()
+                    && pointer.pointee_constant() == value.pointee_constant()
+                    && pointer.same_designation(value)
+            })
+    }
+
+    /// A nominal callback fact may reuse only the same complete function
+    /// read, independently checked through its retained snapshots. Predicate
+    /// state and all full-value type metadata remain exact.
+    pub(crate) fn function_contract_fact_is_established(&self, proposition: &Proposition) -> bool {
+        let Proposition::Predicate { name, arguments } = proposition else {
+            return false;
+        };
+        let Some(contract) = CFunctionContract::surface_name_from_predicate(name) else {
+            return false;
+        };
+        let [Term::CState(state), Term::CValue(CValue::Pointer(pointer))] = arguments.as_slice()
+        else {
+            return false;
+        };
+
+        self.function_contract_facts_for_value(pointer)
+            .any(|(candidate, fact)| {
+                if candidate != contract {
+                    return false;
+                }
+                let Proposition::Predicate { arguments, .. } = fact else {
+                    return false;
+                };
+                let [Term::CState(source), Term::CValue(CValue::Pointer(_))] = arguments.as_slice()
+                else {
+                    return false;
+                };
+                let matched = state == source;
+                if matched {
+                    record_implicit_reasoning_provenance(self, fact);
+                }
+                matched
+            })
     }
 
     fn proposition_memory_separation(
@@ -4976,6 +5220,9 @@ impl PureFactContext {
                 &self.function_contract_facts,
                 &other.function_contract_facts,
             )
+            && self
+                .function_contract_read_cells
+                .shares_root_with(&other.function_contract_read_cells)
             && self
                 .algebraic_constructor_field_equalities
                 .shares_root_with(&other.algebraic_constructor_field_equalities)
@@ -8439,3 +8686,242 @@ mod dynamic_current_load_tests {
         assert!(current_memory_loads_in_term(&term, &memory).is_err());
     }
 }
+
+#[cfg(test)]
+mod callback_read_transport_tests {
+    use super::*;
+
+    fn read(memory: &CMemory, address: &Pointer, kind: LoadKind) -> CPointerValue {
+        let snapshot = crate::kernel::intern_c_memory(memory.clone());
+        let variable = crate::kernel::load_variable_for_cell_with_origin(
+            &snapshot,
+            address,
+            kind,
+            kind.byte_width(),
+            &snapshot,
+        );
+        CPointerValue::new(
+            Pointer::symbolic_function(variable),
+            CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
+        )
+    }
+
+    fn fact(name: &str, pointer: CPointerValue) -> Proposition {
+        Proposition::Predicate {
+            name: CFunctionContract::predicate_name_for(name),
+            arguments: vec![
+                Term::CState(Box::new(CState::new())),
+                Term::CValue(CValue::Pointer(pointer)),
+            ],
+        }
+    }
+
+    fn separated_write(before: &CMemory, address: &Pointer) -> (CMemory, Proposition) {
+        let write = Pointer {
+            block: address.block.clone(),
+            offset: PointerOffsetTerm::Variable(Variable(991_302)),
+        };
+        let range = |base, width| {
+            CResource::Memory(CMemoryRange::new_with_element_width(
+                base,
+                0u32.into(),
+                1u32.into(),
+                width,
+            ))
+        };
+        let separate = Proposition::CResourceSeparate {
+            left: Box::new(range(address.clone(), 8)),
+            right: Box::new(range(write.clone(), 4)),
+        };
+        (before.clone().store(write, int32(1)), separate)
+    }
+
+    #[test]
+    fn callback_read_transport_keeps_complete_cell_type_snapshot_and_fact_authority() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = Pointer {
+            block: "callback:selected-cell".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CMemory::new().with_block(address.block.clone(), 32);
+        let source = read(&before, &address, LoadKind::Pointer);
+        let held = fact("Selected", source.clone());
+        let (after, separation) = separated_write(&before, &address);
+        let context = PureFactContext::new()
+            .assume_proposition(held.clone())
+            .assume_proposition(separation.clone());
+        let current = read(&after, &address, LoadKind::Pointer);
+        let goal = fact("Selected", current.clone());
+        assert_ne!(source.pointer(), current.pointer());
+        let capture = crate::kernel::memory_provenance::CheckedLoadEqualityCapture::start();
+        assert!(context.function_contract_fact_is_established(&goal));
+        let proofs = capture.finish();
+        assert!(!proofs.is_empty());
+        assert!(proofs.iter().all(|proof| proof.checks(&context)));
+        assert!(
+            !context
+                .without_exact_fact(&separation)
+                .function_contract_fact_is_established(&goal)
+        );
+        assert_eq!(
+            context.function_contract_facts_for_value(&current).count(),
+            1
+        );
+        assert!(
+            !context
+                .without_exact_fact(&held)
+                .function_contract_fact_is_established(&goal)
+        );
+        assert!(
+            !context
+                .restricted_to_facts(&[], &[])
+                .function_contract_fact_is_established(&goal)
+        );
+        let overlap = before.clone().store(address.offset_by_bytes(4), int32(1));
+        assert!(!context.function_contract_fact_is_established(&fact(
+            "Selected",
+            read(&overlap, &address, LoadKind::Pointer)
+        )));
+        let different_cell = read(&after, &address.offset_by_bytes(8), LoadKind::Pointer);
+        assert!(!context.function_contract_fact_is_established(&fact("Selected", different_cell)));
+        let wrong_type = current
+            .clone()
+            .with_type(CType::FunctionPointer(CallbackSignature::from_encoded(1)));
+        assert!(!context.function_contract_fact_is_established(&fact("Selected", wrong_type)));
+        let mut wrong_state = goal.clone();
+        let Proposition::Predicate { arguments, .. } = &mut wrong_state else {
+            unreachable!()
+        };
+        arguments[0] = Term::CState(Box::new(CState::new().with_local("other", int32(1))));
+        assert!(!context.function_contract_fact_is_established(&wrong_state));
+        let numeric = fact("Selected", read(&before, &address, LoadKind::Bits32));
+        assert!(
+            !PureFactContext::new()
+                .assume_proposition(numeric)
+                .function_contract_fact_is_established(&goal)
+        );
+
+        let second = fact("Other", source);
+        let both = context.assume_proposition(second.clone());
+        let first_removed = both.without_exact_fact(&held);
+        assert!(
+            first_removed
+                .function_contract_read_cells
+                .get(&address)
+                .is_some()
+        );
+        let all_removed = first_removed.without_exact_fact(&second);
+        assert!(
+            all_removed
+                .function_contract_read_cells
+                .get(&address)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn callback_read_transport_work_ignores_unrelated_contract_cells() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = Pointer {
+            block: "callback:work-selected".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CMemory::new().with_block(address.block.clone(), 32);
+        let source = read(&before, &address, LoadKind::Pointer);
+        let (after, separation) = separated_write(&before, &address);
+        let goal = fact("Selected", read(&after, &address, LoadKind::Pointer));
+        let root = PureFactContext::new()
+            .assume_proposition(fact("Selected", source))
+            .assume_proposition(separation);
+        let mut work = Vec::new();
+        for size in [16, 128, 1024] {
+            let mut context = root.clone();
+            for index in 0..size {
+                let address = Pointer {
+                    block: format!("callback:unrelated-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                };
+                context = context
+                    .assume_proposition(fact("Other", read(&before, &address, LoadKind::Pointer)));
+            }
+            let (matched, charged) = crate::instrumentation::measure_deterministic_work(|| {
+                context.function_contract_fact_is_established(&goal)
+            });
+            assert!(matched);
+            work.push(charged);
+        }
+        assert!(
+            work.iter().all(|charged| *charged <= work[0] + 16),
+            "selected callback work changed with unrelated cells: {work:?}"
+        );
+    }
+
+    #[test]
+    fn callback_successive_pointer8_frames_share_checked_prefixes_near_linearly() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let write = Pointer {
+            block: address.block.clone(),
+            offset: PointerOffsetTerm::Variable(Variable(995_000)),
+        };
+        let written = CMemoryRange::new_with_element_width(write, 0u32.into(), 1u32.into(), 4);
+        let before = CMemory::new();
+        let source = read(&before, &address, LoadKind::Pointer);
+        let separation = Proposition::CResourceSeparate {
+            left: Box::new(CResource::Memory(CMemoryRange::new_with_element_width(
+                address.clone(),
+                0u32.into(),
+                1u32.into(),
+                8,
+            ))),
+            right: Box::new(CResource::Memory(written.clone())),
+        };
+        let root = PureFactContext::new()
+            .assume_proposition(fact("Selected", source))
+            .assume_proposition(separation);
+        let mut samples = Vec::new();
+        for size in [32u64, 64, 128] {
+            crate::kernel::memory_provenance::clear_provenance_memos();
+            let mut memory = before.clone();
+            let mut context = root.clone();
+            let mut total = 0;
+            for index in 0..size {
+                context = context.assume_condition(
+                    ConditionTerm::equal(
+                        Bitvector32Term::Variable(Variable(996_000 + index)),
+                        0u32.into(),
+                    ),
+                    true,
+                );
+                memory = memory.with_call_memory_havoc(
+                    Variable(997_000 + index),
+                    std::slice::from_ref(&written),
+                    &context,
+                    None,
+                );
+                let goal = fact("Selected", read(&memory, &address, LoadKind::Pointer));
+                let (matched, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    context.function_contract_fact_is_established(&goal)
+                });
+                assert!(
+                    matched,
+                    "callback frame {index}/{size} must preserve the complete read"
+                );
+                total += work;
+            }
+            samples.push(total);
+        }
+        assert!(samples[0] > 0);
+        assert!(
+            samples.windows(2).all(|pair| pair[1] * 2 <= pair[0] * 5),
+            "successive pointer frames must share checked prefixes: {samples:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+#[path = "assumptions/pointer_read_frame_tests.rs"]
+mod pointer_read_frame_tests;

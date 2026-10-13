@@ -90,18 +90,12 @@ impl<'a> Proof<'a> {
         let selected = if let Some(result) = result {
             lower_resource_clause_at_state_with_result(
                 resource,
-                context.parsed_function.parameters(),
-                context.arguments,
+                context.parameter_binding(),
                 state,
                 result,
             )
         } else {
-            lower_resource_clause_at_state(
-                resource,
-                context.parsed_function.parameters(),
-                context.arguments,
-                state,
-            )
+            lower_resource_clause_at_state(resource, context.parameter_binding(), state)
         };
         if selected.is_ok_and(|selected| state.tracks_authority_member(&selected)) {
             return false;
@@ -183,8 +177,7 @@ impl<'a> Proof<'a> {
         let before_facts = self.facts().clone();
         let selected = lower_resource_clause_at_state(
             resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             &execution.core.state,
         )?;
         let compiled_definition = context
@@ -236,8 +229,10 @@ impl<'a> Proof<'a> {
                                 instantiate_resource_clause(clause, &substitutions).ok()?;
                             let fact = lower_resource_clause_at_state(
                                 &clause,
-                                context.parsed_function.parameters(),
-                                context.arguments,
+                                ParameterBinding::new(
+                                    context.parsed_function.parameters(),
+                                    context.arguments,
+                                ),
                                 &execution.core.state,
                             )
                             .ok()?;
@@ -332,8 +327,7 @@ impl<'a> Proof<'a> {
         let before_facts = self.facts().clone();
         let selected = lower_resource_clause_at_state(
             resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             &execution.core.state,
         )?;
         let (after_state, witness) = execution
@@ -425,8 +419,7 @@ impl<'a> Proof<'a> {
             let resource = &self.substitute_fixed_state_locals_in_resource_arguments(resource)?;
             let lowered = lower_resource_clause_at_current_locals_with_assumptions(
                 resource,
-                context.parsed_function.parameters(),
-                context.arguments,
+                context.parameter_binding(),
                 before,
                 outcome.map(|goal| &*goal.data.core.result),
                 self.facts().assumptions(),
@@ -450,7 +443,10 @@ impl<'a> Proof<'a> {
             if supplied.len() != schema.fields().len() {
                 return Err(self.step_error("fold must explicitly supply every resource field"));
             }
-            let values = parameter_values(context.parsed_function.parameters(), context.arguments)?;
+            let values = parameter_values(ParameterBinding::new(
+                context.parsed_function.parameters(),
+                context.arguments,
+            ))?;
             let array_refs = array_refs_for_parameters(
                 context.parsed_function.parameters(),
                 &values,
@@ -483,8 +479,10 @@ impl<'a> Proof<'a> {
                             &expression,
                             before,
                             pre_state,
-                            context.parsed_function.parameters(),
-                            context.arguments,
+                            ParameterBinding::new(
+                                context.parsed_function.parameters(),
+                                context.arguments,
+                            ),
                         )
                         .unwrap_or(message);
                     self.step_error(format!("fold field `{name}`: {message}"))
@@ -672,7 +670,10 @@ impl<'a> Proof<'a> {
                 context.spec_definitions.functions,
                 instance,
                 &rewrite.body_clauses,
-                &parameter_values(context.parsed_function.parameters(), context.arguments)?,
+                &parameter_values(ParameterBinding::new(
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                ))?,
                 in_scope,
             )?
         } else {
@@ -709,8 +710,7 @@ impl<'a> Proof<'a> {
             crate::surface::proof::resources::materialize_unfolded_instance_arm_cells(
                 context.resource_environment,
                 context.spec_definitions.functions,
-                context.parsed_function.parameters(),
-                context.arguments,
+                context.parameter_binding(),
                 after,
                 instance,
                 facts.assumptions(),
@@ -881,20 +881,20 @@ impl<'a> Proof<'a> {
                             .unwrap_or_default(),
                     ),
                     &context.theorem_context.integer_values,
-                    &state,
-                    &state,
-                    None,
-                    &RecordedSnapshots::new(),
+                    FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
                     context.spec_definitions,
                     BTreeMap::new(),
                 )
             }
             ProofContext::FixedState(context) => {
-                let values = parameter_values(context.parameters, context.arguments)?;
-                let array_refs =
-                    array_refs_for_parameters(context.parameters, &values, context.state.memory());
+                let values = parameter_values(context.parameter_binding)?;
+                let array_refs = array_refs_for_parameters(
+                    context.parameter_binding.parameters,
+                    &values,
+                    context.fixed_state.state.memory(),
+                );
                 let (values, array_refs) =
-                    contract_environment_at_state(&values, &array_refs, context.state);
+                    contract_environment_at_state(&values, &array_refs, context.fixed_state.state);
                 self.apply_function_unfold_in_state(
                     application,
                     premises,
@@ -902,23 +902,25 @@ impl<'a> Proof<'a> {
                     array_refs,
                     local_algebraic_values(BTreeMap::new()),
                     self.local_integer_values(),
-                    context.pre_state,
-                    context.state,
-                    context.result,
-                    context.recorded_snapshots,
+                    context.fixed_state,
                     context.spec_definitions,
-                    crate::surface::lowering::parameter_pointer_element_widths(context.parameters),
+                    crate::surface::lowering::parameter_pointer_element_widths(
+                        context.parameter_binding.parameters,
+                    ),
                 )
             }
             ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
                     .outcome_fixed_state_view()
                     .expect("a focused outcome judgment resolves its fixed-state view");
-                let values = parameter_values(view.parameters, view.arguments)?;
-                let array_refs =
-                    array_refs_for_parameters(view.parameters, &values, view.state.memory());
+                let values = parameter_values(view.parameter_binding)?;
+                let array_refs = array_refs_for_parameters(
+                    view.parameter_binding.parameters,
+                    &values,
+                    view.fixed_state.state.memory(),
+                );
                 let (values, array_refs) =
-                    contract_environment_at_state(&values, &array_refs, view.state);
+                    contract_environment_at_state(&values, &array_refs, view.fixed_state.state);
                 self.apply_function_unfold_in_state(
                     application,
                     premises,
@@ -926,20 +928,21 @@ impl<'a> Proof<'a> {
                     array_refs,
                     local_algebraic_values(BTreeMap::new()),
                     self.local_integer_values(),
-                    view.pre_state,
-                    view.state,
-                    view.result,
-                    view.recorded_snapshots,
+                    view.fixed_state,
                     view.spec_definitions,
-                    crate::surface::lowering::parameter_pointer_element_widths(view.parameters),
+                    crate::surface::lowering::parameter_pointer_element_widths(
+                        view.parameter_binding.parameters,
+                    ),
                 )
             }
             ProofContext::Execution(context) => {
                 let execution = self.execution().ok_or_else(|| {
                     self.step_error("function `unfold` lost its semantic execution state")
                 })?;
-                let values =
-                    parameter_values(context.parsed_function.parameters(), context.arguments)?;
+                let values = parameter_values(ParameterBinding::new(
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                ))?;
                 let array_refs = array_refs_for_parameters(
                     context.parsed_function.parameters(),
                     &values,
@@ -956,10 +959,12 @@ impl<'a> Proof<'a> {
                     array_refs,
                     local_algebraic_values(BTreeMap::new()),
                     self.local_integer_values(),
-                    pre_state,
-                    &execution.core.state,
-                    None,
-                    &execution.presentation.recorded_snapshots,
+                    FixedStateFrame::new(
+                        pre_state,
+                        &execution.core.state,
+                        None,
+                        &execution.presentation.recorded_snapshots,
+                    ),
                     context.spec_definitions,
                     crate::surface::lowering::parameter_pointer_element_widths(
                         context.parsed_function.parameters(),
@@ -981,10 +986,7 @@ impl<'a> Proof<'a> {
             String,
             crate::kernel::SpecIntegerExpression,
         >,
-        pre_state: &CState,
-        state: &CState,
-        result: Option<&CValue>,
-        recorded_snapshots: &RecordedSnapshots,
+        fixed_state: FixedStateFrame<'_>,
         spec_definitions: SpecDefinitions<'_>,
         parameter_pointer_element_widths: BTreeMap<String, u32>,
     ) -> Result<CheckedFocusedTransition, ClickError> {
@@ -1054,10 +1056,7 @@ impl<'a> Proof<'a> {
                 &array_refs,
                 &algebraic_values,
                 integer_values,
-                pre_state,
-                state,
-                result,
-                recorded_snapshots,
+                fixed_state,
                 spec_definitions,
                 &BTreeSet::from([application.name.clone()]),
                 parameter_pointer_element_widths.clone(),
@@ -1085,10 +1084,7 @@ impl<'a> Proof<'a> {
                 &array_refs,
                 &algebraic_values,
                 integer_values,
-                pre_state,
-                state,
-                result,
-                recorded_snapshots,
+                fixed_state,
                 spec_definitions,
                 &parameter_pointer_element_widths,
             )?;
@@ -1137,10 +1133,7 @@ impl<'a> Proof<'a> {
                                 &array_refs,
                                 &algebraic_values,
                                 integer_values,
-                                pre_state,
-                                state,
-                                result,
-                                recorded_snapshots,
+                                fixed_state,
                                 spec_definitions,
                                 &opaque_calls,
                                 parameter_pointer_element_widths.clone(),
@@ -1271,10 +1264,7 @@ impl<'a> Proof<'a> {
                         &array_refs,
                         &algebraic_values,
                         integer_values,
-                        pre_state,
-                        state,
-                        result,
-                        recorded_snapshots,
+                        fixed_state,
                         spec_definitions,
                         &opaque_calls,
                         parameter_pointer_element_widths,
@@ -1346,10 +1336,7 @@ impl<'a> Proof<'a> {
             String,
             crate::kernel::SpecIntegerExpression,
         >,
-        pre_state: &CState,
-        state: &CState,
-        result: Option<&CValue>,
-        recorded_snapshots: &RecordedSnapshots,
+        fixed_state: FixedStateFrame<'_>,
         spec_definitions: SpecDefinitions<'_>,
         parameter_pointer_element_widths: &BTreeMap<String, u32>,
     ) -> Result<Proposition, ClickError> {
@@ -1369,10 +1356,7 @@ impl<'a> Proof<'a> {
                     array_refs,
                     algebraic_values,
                     integer_values,
-                    pre_state,
-                    state,
-                    result,
-                    recorded_snapshots,
+                    fixed_state,
                     spec_definitions,
                     &opaque_calls,
                     parameter_pointer_element_widths.clone(),
@@ -1387,7 +1371,7 @@ impl<'a> Proof<'a> {
             if !self.facts().listed_premise_available(&lowered, &[], false) {
                 return Err(self.step_error(format!(
                     "`peel({name}(...)) using` requires an unavailable exact premise: {}",
-                    describe_pure_fact(&lowered, &[], &[])
+                    describe_pure_fact(&lowered, ParameterBinding::default())
                 )));
             }
             available.push(lowered);
@@ -1487,8 +1471,9 @@ impl<'a> Proof<'a> {
         }
         if !append_missing.is_empty() {
             let (names, values) = self.diagnostic_naming_tables();
-            let mut labels =
-                crate::surface::proof_diagnostics::render::SnapshotLabels::naming(&names, &values);
+            let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
+                ParameterBinding::new(&names, &values),
+            );
             return Err(self.step_error(format!(
                 "`peel({name}(...)) using` found no listed guard that decides the range. The empty-range equation needs {}; the append-last-cell equation needs {}.",
                 describe_missing_fold_guards(&empty_missing, &mut labels),
@@ -1780,12 +1765,8 @@ impl<'a> Proof<'a> {
                         lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
-                            context.parameters,
-                            context.arguments,
-                            context.pre_state,
-                            context.state,
-                            context.result,
-                            context.recorded_snapshots,
+                            context.parameter_binding,
+                            context.fixed_state,
                             context.spec_definitions,
                         )
                         .map_err(|message| self.step_error(message))?
@@ -1800,12 +1781,8 @@ impl<'a> Proof<'a> {
                         lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
-                            view.parameters,
-                            view.arguments,
-                            view.pre_state,
-                            view.state,
-                            view.result,
-                            view.recorded_snapshots,
+                            view.parameter_binding,
+                            view.fixed_state,
                             view.spec_definitions,
                         )
                         .map_err(|message| self.step_error(message))?
@@ -1892,12 +1869,16 @@ impl<'a> Proof<'a> {
                         lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
-                            context.parsed_function.parameters(),
-                            context.arguments,
-                            pre_state,
-                            &execution.core.state,
-                            None,
-                            &execution.presentation.recorded_snapshots,
+                            ParameterBinding::new(
+                                context.parsed_function.parameters(),
+                                context.arguments,
+                            ),
+                            FixedStateFrame::new(
+                                pre_state,
+                                &execution.core.state,
+                                None,
+                                &execution.presentation.recorded_snapshots,
+                            ),
                             context.spec_definitions,
                         )
                         .map_err(|message| {
@@ -1969,8 +1950,7 @@ impl<'a> Proof<'a> {
             |segment: &ContractSegment| -> Result<crate::kernel::CMemoryRange, ClickError> {
                 let lowered = lower_resource_clause_at_current_locals(
                     &ResourceClause::OwnMemory(segment.clone()),
-                    parameters,
-                    context.arguments,
+                    ParameterBinding::new(parameters, context.arguments),
                     state,
                     None,
                 )?;
@@ -1984,8 +1964,7 @@ impl<'a> Proof<'a> {
                 context.resource_environment,
                 resource,
                 name,
-                parameters,
-                context.arguments,
+                ParameterBinding::new(parameters, context.arguments),
                 state,
                 context.claim_label,
                 context.tactic_index,
@@ -2053,8 +2032,7 @@ impl<'a> Proof<'a> {
             context.function,
             context.resource_environment,
             resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,
@@ -2129,8 +2107,7 @@ impl<'a> Proof<'a> {
             context.function.composite_resource_definitions(),
             context.resource_environment,
             resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,
@@ -2221,8 +2198,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             self.facts().clone(),
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             &pre_state,
             (*execution.core.state).clone(),
             context.spec_definitions,
@@ -2231,8 +2207,7 @@ impl<'a> Proof<'a> {
         )?;
         let selected = lower_resource_clause_at_state_with_assumptions(
             resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             &checked.state,
             None,
             checked.facts.assumptions(),
@@ -2316,8 +2291,7 @@ impl<'a> Proof<'a> {
             context.function.composite_resource_definitions(),
             context.resource_environment,
             &resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             (*data.core.state).clone(),
             self.facts().clone(),
             &mut data.surface_propositions,
@@ -2436,8 +2410,7 @@ impl<'a> Proof<'a> {
             goal.path_index,
             &goal.data.core.effect_facts,
             self.facts().clone(),
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             pre_state,
             outcome,
             context.spec_definitions,
@@ -2451,8 +2424,7 @@ impl<'a> Proof<'a> {
         if self.is_authority_transfer_wrapper(resource) && family_reaches_population {
             let selected = lower_resource_clause_at_state_with_assumptions(
                 resource,
-                context.parsed_function.parameters(),
-                context.arguments,
+                context.parameter_binding(),
                 &state,
                 Some(&value),
                 checked.facts.assumptions(),
@@ -2517,8 +2489,7 @@ impl<'a> Proof<'a> {
         let state = (*goal.data.core.state).clone();
         let fact = lower_resource_clause_at_state_with_result(
             resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             &state,
             &value,
         )?;

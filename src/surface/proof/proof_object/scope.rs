@@ -578,6 +578,41 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
+    /// `auto` on a stated fact: it executes no C, so it is the solver, then
+    /// the `simp` closure when the solver misses.
+    pub(in crate::surface::proof) fn try_auto_fact_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        if let Some(closed) = self.try_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        let bridged = match self.body.try_bridged_solver_closure()? {
+            Some(body) => Some(body),
+            None => match self.body.try_machine_goal_solver_closure()? {
+                Some(body) => Some(body),
+                None => match self.body.try_solver_equality_closure()? {
+                    Some(body) => Some(body),
+                    None => self.body.try_definedness_solver_closure()?,
+                },
+            },
+        };
+        if let Some(body) = bridged {
+            let mut next = self.clone();
+            next.body = body;
+            return Ok(Some(next));
+        }
+        self.try_simp_closure()
+    }
+
+    pub(in crate::surface::proof) fn try_solver_closure(&self) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_solver_closure()? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     pub(in crate::surface::proof) fn try_restricted_simp_closure(
         &self,
         surfaces: &[ClickProposition],
@@ -942,8 +977,10 @@ impl<'a> ProofScope<'a> {
                         context.claim_label,
                         context.tactic_index,
                         facts.clone(),
-                        context.parsed_function.parameters(),
-                        context.arguments,
+                        ParameterBinding::new(
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                        ),
                         &pre_state,
                         (*execution.core.state).clone(),
                         context.spec_definitions,
@@ -952,8 +989,10 @@ impl<'a> ProofScope<'a> {
                     )?;
                     let lowered = lower_resource_clause_at_state(
                         &resource,
-                        context.parsed_function.parameters(),
-                        context.arguments,
+                        ParameterBinding::new(
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                        ),
                         &checked.state,
                     )?;
                     // The `open(...)` clause spells no access, so it lowers

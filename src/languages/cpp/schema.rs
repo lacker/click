@@ -56,12 +56,32 @@ impl<'a> ValidationPlaces<'a> {
     }
 }
 
-pub(crate) const EXPORT_SCHEMA: u32 = 59;
+pub(crate) const EXPORT_SCHEMA: u32 = 60;
 pub(crate) const MAX_PREPROCESSOR_FILES: usize = 4096;
 pub(crate) const LANGUAGE: &str = "c++";
 pub(crate) const STANDARD: &str = "c++20";
 pub(crate) const TARGET: &str = "x86_64-unknown-linux-gnu";
 pub(crate) const CLANG_VERSION: &str = "19.1.7";
+
+/// Parse the version token in Clang's full one-line version, retaining vendor
+/// prefixes (for example Debian) and parenthesized build metadata. A version
+/// mentioned elsewhere, a longer version or a prerelease cannot borrow this
+/// pinned compiler's implementation guarantee.
+fn is_pinned_clang_version(version: &str) -> bool {
+    if version.len() > 1024
+        || !version.is_ascii()
+        || version.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return false;
+    }
+    let mut words = version.split_ascii_whitespace();
+    words.find(|word| *word == "clang").is_some()
+        && words.next() == Some("version")
+        && words.next() == Some(CLANG_VERSION)
+}
+
+/// Versioned implementation assumption, not a C++20 language guarantee.
+pub const DECLARED_UINT32_BYTE_GUARANTEE: &str = "clang19_1_7_lp64_le_declared_uint32_bytes_v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -340,6 +360,14 @@ pub struct CppField {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CppProfile {
+    /// Required in artifacts and locks, including imports that do not use byte
+    /// access. Its version scopes the pinned implementation assumption only.
+    pub byte_representation_guarantee: String,
+    pub byte_order: String,
+    pub byte_width: u32,
+    pub pointer_width: u32,
+    pub long_width: u32,
+    pub uint32_width: u32,
     pub frontend: String,
     pub frontend_version: String,
     pub standard: String,
@@ -351,6 +379,36 @@ pub struct CppProfile {
     pub compilation_command: Vec<String>,
 }
 
+impl CppProfile {
+    pub(crate) fn validate_byte_representation_guarantee(&self) -> Result<(), String> {
+        if self.byte_representation_guarantee != DECLARED_UINT32_BYTE_GUARANTEE
+            || self.frontend != "clang"
+            || !is_pinned_clang_version(&self.frontend_version)
+            || self.standard != STANDARD
+            || self.target != TARGET
+            || self.byte_order != "little"
+            || self.byte_width != 8
+            || self.pointer_width != 64
+            || self.long_width != 64
+            || self.uint32_width != 32
+        {
+            return Err(format!(
+                "C++ byte representation guarantee must be {DECLARED_UINT32_BYTE_GUARANTEE} on pinned Clang {CLANG_VERSION}, LP64 little-endian with 8-bit bytes and 32-bit unsigned int"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Report the implementation assumption separately from ordinary byte-array
+    /// semantics and the explicitly assumed standard-library contracts.
+    pub fn byte_representation_assumption(&self) -> String {
+        format!(
+            "{}: pinned compiler guarantee for read/write traversal of a live declared uint32's four representation bytes; preserves object, lifetime and pointer domain, grants no authority or initialization; not a C++20 guarantee",
+            self.byte_representation_guarantee
+        )
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CppFunction {
@@ -359,6 +417,9 @@ pub struct CppFunction {
     pub function_kind: CppFunctionKind,
     pub return_type: CppType,
     pub parameters: Vec<CppPlace>,
+    /// Concrete function-template record arguments retain checked nominal declarations.
+    #[serde(default)]
+    pub template_record_arguments: Vec<CppTemplateRecordArgument>,
     pub declared_noexcept: bool,
     pub span: CppSpan,
     pub body: Vec<CppStatement>,
@@ -369,12 +430,53 @@ pub struct CppFunction {
     pub axiom: Option<CppAxiom>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CppTemplateRecordArgument {
+    pub index: u32,
+    pub declaration_id: String,
+    pub name: String,
+}
+
+impl CppTemplateRecordArgument {
+    fn name_token(&self) -> String {
+        use std::fmt::Write;
+        let mut token = format!("__record_type_arg_{}_", self.index);
+        for byte in self.declaration_id.bytes() {
+            write!(token, "{byte:02x}").expect("writing to String");
+        }
+        token
+    }
+}
+
 /// The standard interface an axiomatic function is keyed on.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CppAxiom {
     pub qualified_name: String,
     pub signature: String,
+    /// Actual normalized declaration file; separate from the synthetic system
+    /// diagnostic span. Legacy catalog assumptions may omit this, while a
+    /// pinned implementation model must require its exact header identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration_header: Option<String>,
+}
+
+impl CppAxiom {
+    fn validate_declaration_header(&self, dependencies: &[String]) -> Result<(), String> {
+        if let Some(header) = &self.declaration_header
+            && (!valid_relative_source_path(header)
+                || !Path::new(header)
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+                || dependencies.binary_search(header).is_err())
+        {
+            return Err(
+                "C++ axiom declaration header must be a normalized locked dependency".into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -689,6 +791,13 @@ pub enum CppCallArgument {
     /// Clang resolved a trivial copy construction of a by-value parameter.
     RecordCopy {
         place: CppPlaceReference,
+        value_type: CppType,
+        span: CppSpan,
+    },
+    /// A complete trivial record prvalue with source-checked copy equivalence.
+    RecordConstruct {
+        callee: CppFunctionReference,
+        arguments: Vec<CppCallArgument>,
         value_type: CppType,
         span: CppSpan,
     },
@@ -1088,6 +1197,7 @@ impl CppExport {
                 "C++ export profile must match the configured Clang {STANDARD} profile for {TARGET}"
             ));
         }
+        self.profile.validate_byte_representation_guarantee()?;
         if self.exception_behavior != expected_exception_behavior
             || (matches!(self.exception_behavior, CppExceptionBehavior::ScalarInt32)
                 && !self.profile.exceptions)
@@ -1096,7 +1206,7 @@ impl CppExport {
                 "C++ exception behavior differs from the configured compiler profile".into(),
             );
         }
-        if !self.profile.frontend_version.contains(CLANG_VERSION) {
+        if !is_pinned_clang_version(&self.profile.frontend_version) {
             return Err(format!(
                 "C++ export used `{}`; expected Clang {CLANG_VERSION}",
                 self.profile.frontend_version
@@ -1231,7 +1341,8 @@ impl CppExport {
         let mut functions = BTreeMap::new();
         let mut referenced_constants = BTreeSet::new();
         for source in std::iter::once(&self.function).chain(&self.reachable_functions) {
-            if source.axiom.is_some() {
+            if let Some(axiom) = &source.axiom {
+                axiom.validate_declaration_header(&self.dependencies)?;
                 source.validate_axiom(&records)?;
                 if functions
                     .insert(source.declaration_id.clone(), source)
@@ -1577,6 +1688,10 @@ fn validate_reachable_records(
         // the body. Its result layout is still part of the reachable interface.
         crate::instrumentation::record_deterministic_work(1);
         reference(&function.return_type, &mut referenced);
+        for argument in &function.template_record_arguments {
+            crate::instrumentation::record_deterministic_work(1);
+            referenced.insert(argument.declaration_id.as_str());
+        }
         for parameter in &function.parameters {
             crate::instrumentation::record_deterministic_work(1);
             reference(&parameter.value_type, &mut referenced);
@@ -1833,9 +1948,45 @@ impl CppRecord {
 }
 
 impl CppFunction {
+    fn validate_template_record_arguments(&self, records: &RecordIndex<'_>) -> Result<(), String> {
+        if self.template_record_arguments.len() > 32
+            || self.name.matches("__record_type_arg_").count()
+                != self.template_record_arguments.len()
+        {
+            return Err(
+                "C++ function template record argument metadata does not match its name".into(),
+            );
+        }
+        let mut previous = None;
+        let mut remaining_name = self.name.as_str();
+        for argument in &self.template_record_arguments {
+            crate::instrumentation::record_deterministic_work(1);
+            if argument.index >= 32 || previous.is_some_and(|index| index >= argument.index) {
+                return Err("C++ function template record arguments require ordered distinct indices below 32".into());
+            }
+            validate_record_reference(records, &argument.declaration_id, &argument.name)?;
+            let token = argument.name_token();
+            let Some((_, suffix)) = remaining_name.split_once(&token) else {
+                return Err(
+                    "C++ function template record argument identity does not match its name".into(),
+                );
+            };
+            // A token is delimited by the next argument suffix or the end, never a USR prefix.
+            if !suffix.is_empty() && !suffix.starts_with("__") {
+                return Err(
+                    "C++ function template record argument identity does not match its name".into(),
+                );
+            }
+            remaining_name = suffix;
+            previous = Some(argument.index);
+        }
+        Ok(())
+    }
+
     /// An axiom has an interface and no body; its record references must
     /// still name checked records.
     fn validate_axiom(&self, records: &RecordIndex<'_>) -> Result<(), String> {
+        self.validate_template_record_arguments(records)?;
         if !self.body.is_empty() || !self.declared_noexcept {
             return Err(format!(
                 "C++ standard-library axiom `{}` must be a noexcept interface without a body",
@@ -1866,6 +2017,7 @@ impl CppFunction {
         exceptions_enabled: bool,
         exception_behavior: CppExceptionBehavior,
     ) -> Result<(), String> {
+        self.validate_template_record_arguments(records)?;
         super::budget::check_function(self)?;
         super::validity::check_function(self, logical_source, alias_sources)?;
         match &self.function_kind {
@@ -2111,10 +2263,13 @@ impl CppFunction {
                         arguments,
                         span,
                     } => {
-                        if arguments
-                            .iter()
-                            .any(|argument| matches!(argument, CppCallArgument::Call { .. }))
-                        {
+                        if arguments.iter().any(|argument| {
+                            matches!(
+                                argument,
+                                CppCallArgument::Call { .. }
+                                    | CppCallArgument::RecordConstruct { .. }
+                            )
+                        }) {
                             return Err(
                                 "nested C++ calls in constructor arguments remain unsupported"
                                     .into(),
@@ -3108,10 +3263,12 @@ impl CppInitializer {
                 },
                 CppType::Record { .. },
             ) => {
-                if arguments
-                    .iter()
-                    .any(|argument| matches!(argument, CppCallArgument::Call { .. }))
-                {
+                if arguments.iter().any(|argument| {
+                    matches!(
+                        argument,
+                        CppCallArgument::Call { .. } | CppCallArgument::RecordConstruct { .. }
+                    )
+                }) {
                     return Err(
                         "nested C++ calls in constructor arguments remain unsupported".into(),
                     );
@@ -3176,7 +3333,12 @@ fn validate_call_in_context(
     }
     let nested_calls = arguments
         .iter()
-        .filter(|argument| matches!(argument, CppCallArgument::Call { .. }))
+        .filter(|argument| {
+            matches!(
+                argument,
+                CppCallArgument::Call { .. } | CppCallArgument::RecordConstruct { .. }
+            )
+        })
         .count();
     let isolated = arguments
         .iter()
@@ -3187,15 +3349,26 @@ fn validate_call_in_context(
         .unwrap_or(false);
     if nested_calls > 1
         || (nested_calls == 1
-            && arguments.iter().any(|argument| match argument {
-                CppCallArgument::Call { .. } => false,
-                CppCallArgument::Value { value } => {
-                    !stable_scalar_argument(value, places)
-                        && !(isolated && field_scalar_argument(value))
-                }
-                CppCallArgument::Reference { .. } => true,
-                CppCallArgument::RecordCopy { .. } => false,
-            }))
+            && arguments
+                .iter()
+                .enumerate()
+                .any(|(index, argument)| match argument {
+                    CppCallArgument::Call { .. } | CppCallArgument::RecordConstruct { .. } => false,
+                    CppCallArgument::Value { value } => {
+                        !stable_scalar_argument(value, places)
+                            && !(isolated && field_scalar_argument(value))
+                    }
+                    // A direct record receiver contributes only its stable
+                    // address, sequenced before the method's argument evaluation.
+                    CppCallArgument::Reference { place } => {
+                        index != 0
+                            || validate_root_reference(place, places, logical_source)
+                                .ok()
+                                .and_then(|root| resolve_reference_type(root, place, records).ok())
+                                .is_none_or(|(actual, _)| !matches!(actual, CppType::Record { .. }))
+                    }
+                    CppCallArgument::RecordCopy { .. } => true,
+                }))
     {
         return Err("nested C++ call arguments require one call and order-independent scalar siblings to preserve evaluation order".into());
     }
@@ -3223,6 +3396,7 @@ fn scalar_only_arguments(arguments: &[CppCallArgument]) -> bool {
         match argument {
             CppCallArgument::Value { value } => Scalar::of(value.value_type()).is_some(),
             CppCallArgument::Call { .. }
+            | CppCallArgument::RecordConstruct { .. }
             | CppCallArgument::Reference { .. }
             | CppCallArgument::RecordCopy { .. } => false,
         }
@@ -3321,6 +3495,25 @@ impl CppCallArgument {
         logical_source: &str,
     ) -> Result<(), String> {
         match self {
+            Self::RecordConstruct {
+                callee,
+                arguments,
+                value_type,
+                span,
+            } => {
+                let CppType::Record {
+                    declaration_id,
+                    name,
+                    is_const: false,
+                } = value_type
+                else {
+                    return Err(
+                        "C++ prvalue construction requires a mutable trivial record type".into(),
+                    );
+                };
+                validate_trivial_record_value(records, declaration_id, name)?;
+                validate_call(callee, arguments, span, places, records, logical_source)
+            }
             Self::RecordCopy {
                 place,
                 value_type,
@@ -3360,7 +3553,14 @@ impl CppCallArgument {
                 value_type,
                 span,
             } => {
-                if require_scalar_integer(value_type, "nested-call value").is_err()
+                if let CppType::Record {
+                    declaration_id,
+                    name,
+                    is_const: false,
+                } = value_type
+                {
+                    validate_trivial_record_value(records, declaration_id, name)?;
+                } else if require_scalar_integer(value_type, "nested-call value").is_err()
                     && require_native_object_pointer(value_type, "nested-call value").is_err()
                 {
                     require_bool(value_type, false, "nested-call value")?;
@@ -4719,6 +4919,33 @@ pub(super) fn observer_callees(import: &super::PreparedCppImport) -> BTreeSet<St
     result
 }
 
+pub(super) fn prvalue_argument_calls(function: &CppFunction) -> Vec<(&CppFunctionReference, bool)> {
+    let mut calls = Vec::new();
+    collect_calls(&function.body, &mut calls);
+    let mut result = Vec::new();
+    for call in calls {
+        let arguments = match call {
+            CollectedCall::Ordinary { arguments, .. }
+            | CollectedCall::Constructor { arguments, .. }
+            | CollectedCall::ReturnedConstructor { arguments, .. }
+            | CollectedCall::MemberConstructor { arguments, .. } => arguments,
+            _ => continue,
+        };
+        for argument in arguments {
+            match argument {
+                CppCallArgument::RecordConstruct { callee, .. } => result.push((callee, true)),
+                CppCallArgument::Call {
+                    callee,
+                    value_type: CppType::Record { .. },
+                    ..
+                } => result.push((callee, false)),
+                _ => {}
+            }
+        }
+    }
+    result
+}
+
 fn collect_scalar_call<'a>(
     callee: &'a CppFunctionReference,
     arguments: &'a [CppCallArgument],
@@ -4737,6 +4964,20 @@ fn collect_scalar_call<'a>(
 
 fn collect_nested_calls<'a>(arguments: &'a [CppCallArgument], calls: &mut Vec<CollectedCall<'a>>) {
     for argument in arguments {
+        if let CppCallArgument::RecordConstruct {
+            callee,
+            arguments,
+            value_type,
+            ..
+        } = argument
+        {
+            calls.push(CollectedCall::ReturnedConstructor {
+                value_type,
+                callee,
+                arguments,
+            });
+            collect_nested_calls(arguments, calls);
+        }
         if let CppCallArgument::Value { value } = argument {
             collect_expression_calls(value, calls);
         }
@@ -4777,11 +5018,17 @@ fn validate_call_arguments(
     }
     for (index, (argument, parameter)) in arguments.iter().zip(parameters).enumerate() {
         let compatible = match (argument, &parameter.value_type) {
-            (CppCallArgument::RecordCopy { value_type, .. }, CppType::Record { .. }) => {
-                value_type == &parameter.value_type
-            }
+            (
+                CppCallArgument::RecordCopy { value_type, .. }
+                | CppCallArgument::RecordConstruct { value_type, .. },
+                CppType::Record { .. },
+            ) => value_type == &parameter.value_type,
             (CppCallArgument::Call { value_type, .. }, expected) => {
-                same_scalar_type(value_type, expected)
+                if matches!(value_type, CppType::Record { .. }) {
+                    value_type == expected
+                } else {
+                    same_scalar_type(value_type, expected)
+                }
             }
             (
                 CppCallArgument::Value { value },
@@ -5300,7 +5547,7 @@ impl CppCallArgument {
             Self::Reference { place } | Self::RecordCopy { place, .. } => {
                 place.declaration_id == declaration_id
             }
-            Self::Call { arguments, .. } => arguments
+            Self::Call { arguments, .. } | Self::RecordConstruct { arguments, .. } => arguments
                 .iter()
                 .any(|argument| argument.references_place(declaration_id)),
         }
@@ -5315,7 +5562,7 @@ impl CppCallArgument {
             Self::Value { value } => {
                 value.validate_constant_references(logical_source, constants, referenced_constants)
             }
-            Self::Call { arguments, .. } => {
+            Self::Call { arguments, .. } | Self::RecordConstruct { arguments, .. } => {
                 for argument in arguments {
                     argument.validate_constant_references(
                         logical_source,
@@ -5728,6 +5975,131 @@ mod tests {
     }
 
     #[test]
+    fn axiom_declaration_header_is_optional_but_when_present_belongs_to_the_dependency_closure() {
+        let dependencies = vec!["sysroot/usr/include/c++/12/span".into()];
+        let legacy: CppAxiom = serde_json::from_value(serde_json::json!({
+            "qualified_name": "std::span<unsigned int>::span",
+            "signature": "void (unsigned int *, unsigned long) noexcept"
+        }))
+        .unwrap();
+        assert_eq!(legacy.declaration_header, None);
+        legacy.validate_declaration_header(&dependencies).unwrap();
+        let mut axiom = legacy;
+        axiom.declaration_header = Some("sysroot/usr/include/c++/12/span".into());
+        axiom.validate_declaration_header(&dependencies).unwrap();
+        for header in [
+            "",
+            "<system>",
+            "/sysroot/usr/include/c++/12/span",
+            "../span",
+            "./sysroot/usr/include/c++/12/span",
+            "sysroot/usr/include/c++/12/other",
+        ] {
+            axiom.declaration_header = Some(header.into());
+            assert!(
+                axiom.validate_declaration_header(&dependencies).is_err(),
+                "{header}"
+            );
+        }
+    }
+
+    #[test]
+    fn function_template_record_arguments_retain_exact_identity_and_reject_missing_metadata() {
+        let record = |id: &str, name: &str| CppRecord {
+            byte_template_arguments: vec![],
+            declaration_id: id.into(),
+            name: name.into(),
+            size_bytes: 4,
+            alignment_bytes: 4,
+            destructor: None,
+            span: cleanup_span(),
+            base: None,
+            fields: vec![CppField {
+                declaration_id: format!("{id}@field"),
+                name: "state".into(),
+                value_type: signed_integer(32, false),
+                offset_bytes: 0,
+                size_bytes: 4,
+                span: cleanup_span(),
+            }],
+        };
+        let first = record("c:@S@First", "First");
+        let second = record("c:@S@Second", "Second");
+        let records = RecordIndex::new(BTreeMap::from([
+            (first.declaration_id.clone(), &first),
+            (second.declaration_id.clone(), &second),
+        ]));
+        let argument = CppTemplateRecordArgument {
+            index: 0,
+            declaration_id: first.declaration_id.clone(),
+            name: first.name.clone(),
+        };
+        let mut function = CppFunction {
+            declaration_id: "function".into(),
+            name: format!("read{}", argument.name_token()),
+            function_kind: CppFunctionKind::Free,
+            return_type: CppType::Void,
+            parameters: vec![],
+            template_record_arguments: vec![argument],
+            declared_noexcept: true,
+            span: cleanup_span(),
+            body: vec![],
+            axiom: None,
+        };
+        function
+            .validate_template_record_arguments(&records)
+            .unwrap();
+        let serialized = serde_json::to_value(&function).unwrap();
+        let mut missing = serialized.clone();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("template_record_arguments");
+        let missing: CppFunction = serde_json::from_value(missing).unwrap();
+        assert!(
+            missing
+                .validate_template_record_arguments(&records)
+                .is_err()
+        );
+        let original = function.template_record_arguments.clone();
+        function.template_record_arguments[0].declaration_id = second.declaration_id.clone();
+        function.template_record_arguments[0].name = second.name.clone();
+        assert!(
+            function
+                .validate_template_record_arguments(&records)
+                .is_err(),
+            "equal field geometry does not merge template record identities"
+        );
+        function.template_record_arguments = original.clone();
+        function.template_record_arguments[0].name = "Second".into();
+        assert!(
+            function
+                .validate_template_record_arguments(&records)
+                .is_err()
+        );
+        function.template_record_arguments = original.clone();
+        function.template_record_arguments[0].index = 32;
+        assert!(
+            function
+                .validate_template_record_arguments(&records)
+                .is_err()
+        );
+        function.template_record_arguments = original.clone();
+        function.template_record_arguments.push(original[0].clone());
+        function.name.push_str(&original[0].name_token());
+        assert!(
+            function
+                .validate_template_record_arguments(&records)
+                .is_err()
+        );
+        function.name = "ordinary".into();
+        function.template_record_arguments.clear();
+        function
+            .validate_template_record_arguments(&records)
+            .unwrap();
+    }
+
+    #[test]
     fn null_pointer_literals_require_the_supported_pointer_type() {
         let places = validation_places([]);
         let records = RecordIndex::default();
@@ -5872,6 +6244,7 @@ mod tests {
             span: span.clone(),
         };
         let mut function = CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: "root".into(),
             name: "root".into(),
@@ -6028,6 +6401,7 @@ mod tests {
     #[test]
     fn static_helper_artifacts_require_class_identity_and_scalar_signature() {
         let mut function = CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: "static_function".into(),
             name: "Math_echo".into(),
@@ -6343,6 +6717,7 @@ mod tests {
                 .is_err()
         );
         let function = |name: &str, body, parameters| CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: name.into(),
             name: name.into(),
@@ -6416,6 +6791,7 @@ mod tests {
             span: cleanup_span(),
         };
         let function = |name: &str, body, parameters| CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: name.into(),
             name: name.into(),
@@ -6524,6 +6900,7 @@ mod tests {
     #[test]
     fn return_call_graphs_check_callee_identity_destination_arguments_and_cycles() {
         let function = |name: &str, body| CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: name.into(),
             name: name.into(),
@@ -6669,6 +7046,7 @@ mod tests {
             span: cleanup_span(),
         };
         let mut function = CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: "method".into(),
             name: "State_update".into(),
@@ -6801,6 +7179,7 @@ mod tests {
     fn wide_artifact_function_boundaries_require_matching_types() {
         let sources = BTreeSet::from(["fixture.cpp".into()]);
         let mut function = CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: "root".into(),
             name: "root".into(),
@@ -7246,6 +7625,7 @@ mod tests {
                 span: cleanup_span(),
             };
             let mut caller = CppFunction {
+                template_record_arguments: vec![],
                 axiom: None,
                 declaration_id: "caller".into(),
                 name: "caller".into(),
@@ -7288,6 +7668,7 @@ mod tests {
                 });
             }
             let callee = CppFunction {
+                template_record_arguments: vec![],
                 axiom: None,
                 declaration_id: "read".into(),
                 name: "read".into(),
@@ -7348,6 +7729,7 @@ mod tests {
             span: cleanup_span(),
         };
         let mut function = CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: "root".into(),
             name: "root".into(),
@@ -7427,6 +7809,7 @@ mod tests {
             };
             let mut functions = (0..size)
                 .map(|index| CppFunction {
+                    template_record_arguments: vec![],
                     axiom: None,
                     declaration_id: format!("f{index}"),
                     name: format!("f{index}"),
@@ -7567,6 +7950,7 @@ mod tests {
                 .contains("outside the selected")
         );
         let function = CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: "function".into(),
             name: "read".into(),
@@ -7794,6 +8178,117 @@ mod tests {
         }
     }
 
+    fn byte_profile() -> CppProfile {
+        CppProfile {
+            byte_representation_guarantee: DECLARED_UINT32_BYTE_GUARANTEE.into(),
+            byte_order: "little".into(),
+            byte_width: 8,
+            pointer_width: 64,
+            long_width: 64,
+            uint32_width: 32,
+            frontend: "clang".into(),
+            frontend_version: "clang version 19.1.7".into(),
+            standard: STANDARD.into(),
+            target: TARGET.into(),
+            exceptions: false,
+            rtti: false,
+            compilation_directory: "/fixture".into(),
+            compilation_file: "fixture.cpp".into(),
+            compilation_command: vec!["clang++".into()],
+        }
+    }
+
+    #[test]
+    fn pinned_clang_version_requires_one_exact_version_token() {
+        for version in [
+            "clang version 19.1.7",
+            "clang version 19.1.7 (https://github.com/llvm/llvm-project.git revision)",
+            "Debian clang version 19.1.7 (++20250114082451+cd708029e0b2-1~exp1)",
+            "Homebrew clang version 19.1.7",
+        ] {
+            assert!(is_pinned_clang_version(version), "{version}");
+            let mut profile = byte_profile();
+            profile.frontend_version = version.into();
+            profile.validate_byte_representation_guarantee().unwrap();
+        }
+        for version in [
+            "clang version 19.1.70",
+            "clang version 119.1.7",
+            "clang version 19.1.7.1",
+            "clang version 19.1.7git",
+            "clang version 19.1.7+1",
+            "not a compiler: 19.1.7",
+            "clang version 20.0.0 (compatible with 19.1.7)",
+            "clang version 18.0.0; clang version 19.1.7",
+            "clang version 19.1.7\0",
+            "clang version 19.1.7\n",
+        ] {
+            assert!(!is_pinned_clang_version(version), "{version}");
+            let mut profile = byte_profile();
+            profile.frontend_version = version.into();
+            assert!(
+                profile.validate_byte_representation_guarantee().is_err(),
+                "{version}"
+            );
+        }
+        assert!(!is_pinned_clang_version(&format!(
+            "clang version 19.1.7 ({})",
+            "x".repeat(1024)
+        )));
+    }
+
+    #[test]
+    fn declared_uint32_byte_guarantee_requires_its_marker_and_exact_target_profile() {
+        let profile = byte_profile();
+        profile.validate_byte_representation_guarantee().unwrap();
+        let mut missing = serde_json::to_value(&profile).unwrap();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("byte_representation_guarantee");
+        assert!(serde_json::from_value::<CppProfile>(missing).is_err());
+        for field in [
+            "byte_order",
+            "byte_width",
+            "pointer_width",
+            "long_width",
+            "uint32_width",
+        ] {
+            let mut missing = serde_json::to_value(&profile).unwrap();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                serde_json::from_value::<CppProfile>(missing).is_err(),
+                "missing {field}"
+            );
+        }
+        for change in 0..10 {
+            let mut wrong = profile.clone();
+            match change {
+                0 => {
+                    wrong.byte_representation_guarantee =
+                        "clang19_1_7_lp64_le_all_objects_v1".into()
+                }
+                1 => wrong.byte_representation_guarantee.clear(),
+                2 => wrong.byte_order = "big".into(),
+                3 => wrong.byte_width = 16,
+                4 => wrong.pointer_width = 32,
+                5 => wrong.long_width = 32,
+                6 => wrong.uint32_width = 64,
+                7 => wrong.frontend_version = "clang version 20.0.0".into(),
+                8 => wrong.target = "aarch64-unknown-linux-gnu".into(),
+                _ => wrong.standard = "c++23".into(),
+            }
+            assert!(
+                wrong.validate_byte_representation_guarantee().is_err(),
+                "change {change}"
+            );
+        }
+        let assumption = profile.byte_representation_assumption();
+        assert!(assumption.contains(DECLARED_UINT32_BYTE_GUARANTEE));
+        assert!(assumption.contains("live declared uint32"));
+        assert!(assumption.contains("not a C++20 guarantee"));
+    }
+
     #[test]
     fn schema_refuses_unknown_fields() {
         let input = br#"{"schema":1,"surprise":1}"#;
@@ -7983,6 +8478,7 @@ mod tests {
             ..cleanup_span()
         };
         let function = |name: String, source: String, body| CppFunction {
+            template_record_arguments: vec![],
             axiom: None,
             declaration_id: name.clone(),
             name,

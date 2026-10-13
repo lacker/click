@@ -1713,6 +1713,9 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
         "click import failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    let reported = String::from_utf8(output.stdout).unwrap();
+    assert!(reported.contains(click::languages::cpp::DECLARED_UINT32_BYTE_GUARANTEE));
+    assert!(reported.contains("not a C++20 guarantee"));
     let first_artifact = fs::read(project.artifact()).unwrap();
     let first_lock = fs::read(project.lock()).unwrap();
     refresh_import(&project.config()).expect("repeat the same semantic export");
@@ -1721,7 +1724,7 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
 
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
     let prepared = load_import(&project.config()).expect("locked loading must not execute Clang");
-    assert_eq!(prepared.export().schema, 59);
+    assert_eq!(prepared.export().schema, 60);
     assert!(prepared.export().reachable_functions.is_empty());
     assert_eq!(prepared.logical_source(), "increment.cpp");
     assert_eq!(prepared.identity().len(), 64);
@@ -1771,6 +1774,97 @@ fn clang_export_is_deterministic_typed_and_loads_without_clang() {
             ..
         }
     ));
+}
+
+#[test]
+fn pinned_uint32_byte_profile_is_reported_and_rejects_rehashed_metadata_offline() {
+    use click::languages::cpp::DECLARED_UINT32_BYTE_GUARANTEE;
+    use sha2::{Digest, Sha256};
+
+    let project = Project::new();
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    assert_eq!(
+        import.export().profile.byte_representation_guarantee,
+        DECLARED_UINT32_BYTE_GUARANTEE
+    );
+    let source = "verifying \"increment.cpp\"; int32 increment(int32& value) { owns value; requires value < 2147483647; ensures result == old(value) + 1; ensures value == old(value) + 1; } by { execute(); simp(); }";
+    let sidecar = project.directory.join("profile.click");
+    fs::write(&sidecar, source).unwrap();
+    let verified =
+        verify_program_prepared_project(&read_click_project(&sidecar, source).unwrap(), &import)
+            .unwrap();
+    let selection = verified[0]
+        .selection
+        .as_ref()
+        .expect("checked source selection");
+    assert!(selection.runtime_assumptions.iter().any(|assumption| {
+        assumption.contains(DECLARED_UINT32_BYTE_GUARANTEE)
+            && assumption.contains("not a C++20 guarantee")
+    }));
+
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.artifact()).unwrap()).unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(project.lock()).unwrap()).unwrap();
+    for change in 0..13 {
+        let mut forged = artifact.clone();
+        match change {
+            0 => {
+                forged["profile"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("byte_representation_guarantee");
+            }
+            1 => {
+                forged["profile"]["byte_representation_guarantee"] =
+                    "arbitrary_object_bytes_v1".into()
+            }
+            2 => forged["profile"]["byte_order"] = "big".into(),
+            3 => forged["profile"]["pointer_width"] = 32.into(),
+            4 => forged["profile"]["long_width"] = 32.into(),
+            5 => forged["profile"]["uint32_width"] = 64.into(),
+            6 => forged["profile"]["byte_width"] = 16.into(),
+            7 => forged["schema"] = 59.into(),
+            9 => forged["profile"]["frontend_version"] = "Debian clang version 19.1.70".into(),
+            10 => forged["profile"]["frontend_version"] = "unrelated 19.1.7".into(),
+            11 => forged["profile"]["frontend_version"] = "clang version 19.1.7git".into(),
+            12 => {
+                forged["profile"]["frontend_version"] =
+                    "clang version 20.0.0 (compatible with 19.1.7)".into()
+            }
+            _ => {
+                forged["profile"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("byte_order");
+            }
+        }
+        let bytes = serde_json::to_vec_pretty(&forged).unwrap();
+        let mut forged_lock = lock.clone();
+        forged_lock["artifact_sha256"] = format!("{:x}", Sha256::digest(&bytes)).into();
+        forged_lock["artifact_bytes"] = bytes.len().into();
+        forged_lock["profile"] = forged["profile"].clone();
+        fs::write(project.artifact(), bytes).unwrap();
+        fs::write(
+            project.lock(),
+            serde_json::to_vec_pretty(&forged_lock).unwrap(),
+        )
+        .unwrap();
+        let error = load_import(&project.config())
+            .expect_err(&format!("rehashed unsupported byte profile {change}"));
+        let expected_reason = match change {
+            0 => "missing field `byte_representation_guarantee`",
+            7 => "unsupported C++ exporter schema",
+            8 => "missing field `byte_order`",
+            _ => "C++ byte representation guarantee must be",
+        };
+        assert!(
+            error.contains(expected_reason),
+            "profile mutation {change} must fail its profile check before lock identity: {error}"
+        );
+    }
 }
 
 #[test]
@@ -2965,7 +3059,7 @@ fn signed_int64_predicate_retains_alias_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the predicate artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     assert!(import.export().profile.exceptions);
     assert!(!import.export().function.declared_noexcept);
     assert!(matches!(
@@ -3082,7 +3176,7 @@ fn constexpr_coin_retains_alias_chain_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constexpr artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     assert_eq!(import.export().dependencies, ["cstdint"]);
     let CppType::LvalueReference { pointee } = &import.export().function.parameters[0].value_type
     else {
@@ -3193,7 +3287,7 @@ fn constexpr_max_money_retains_checked_dependency_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the dependent artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [coin, max_money] = import.export().constants.as_slice() else {
         panic!("COIN and MAX_MONEY were not captured as one ordered dependency")
     };
@@ -3254,7 +3348,7 @@ fn signed_int64_less_equal_verifies_max_money_upper_bound_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the upper-bound artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [coin, max_money] = import.export().constants.as_slice() else {
         panic!("the upper-bound artifact lost the MAX_MONEY dependency graph")
     };
@@ -3300,7 +3394,7 @@ fn built_in_cpp_logical_and_verifies_inclusive_money_range_offline() {
     fs::remove_file(&project.exporter).expect("make the exporter unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the range artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [coin, max_money] = import.export().constants.as_slice() else {
         panic!("the range artifact lost the ordered MAX_MONEY dependency graph")
     };
@@ -3955,7 +4049,7 @@ fn direct_cpp_call_exports_reachable_definition_and_verifies_modularly_offline()
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the call graph artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     assert_eq!(import.export().function.name, "call_set_seven");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -4033,7 +4127,7 @@ fn scalar_local_captures_a_direct_call_result_and_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the scalar-local artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     assert_eq!(import.export().function.name, "relay_value");
     assert_eq!(import.export().reachable_functions.len(), 1);
     let reachable = &import.export().reachable_functions[0];
@@ -4151,7 +4245,7 @@ fn mutable_pointer_dereference_and_reference_address_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the pointer artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let caller = &import.export().function;
     assert_eq!(caller.name, "bump_reference");
     assert!(matches!(
@@ -4289,7 +4383,7 @@ fn record_reference_member_loads_and_stores_verify_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the record artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [record] = import.export().records.as_slice() else {
         panic!("the referenced record layout was not captured")
     };
@@ -4391,7 +4485,7 @@ fn brace_initialized_local_aggregate_verifies_offline() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the aggregate artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [record] = import.export().records.as_slice() else {
         panic!("the local aggregate record layout was not captured")
     };
@@ -4491,7 +4585,7 @@ fn explicit_constructor_local_verifies_as_a_modular_call() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the constructor artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [record] = import.export().records.as_slice() else {
         panic!("the constructed record layout was not captured")
     };
@@ -4638,7 +4732,7 @@ fn terminal_return_captures_value_before_checked_destructor_cleanup() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [record] = import.export().records.as_slice() else {
         panic!("the destructible record layout was not captured")
     };
@@ -4789,7 +4883,7 @@ fn every_return_after_construction_runs_the_checked_destructor() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the cleanup artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let destructor = import
         .export()
         .reachable_functions
@@ -4977,7 +5071,7 @@ fn two_constructed_objects_are_destroyed_in_reverse_order_on_every_return() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the ordered cleanup artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let [
         CppStatement::Declare { local: first, .. },
         CppStatement::Declare { local: second, .. },
@@ -5081,7 +5175,7 @@ fn nested_scope_destroys_its_object_on_return_and_fallthrough() {
     fs::remove_file(&project.exporter).expect("make the frontend unavailable after refresh");
 
     let import = load_import(&project.config()).expect("load the nested-scope artifact offline");
-    assert_eq!(import.export().schema, 59);
+    assert_eq!(import.export().schema, 60);
     let destructor = import
         .export()
         .reachable_functions
@@ -11106,7 +11200,7 @@ fn wide_division_symbolic_contracts_verify_expand_and_audit_offline() {
         refresh_import(&project.config()).unwrap();
         fs::remove_file(&project.exporter).unwrap();
         let import = load_import(&project.config()).unwrap();
-        assert_eq!(import.export().schema, 59);
+        assert_eq!(import.export().schema, 60);
         let source = format!(
             "verifying \"wide.cpp\"; {ty} {name}({ty} a, {ty} b) {{ {domain} ensures to_integer(result) == {helper}(to_integer(a), to_integer(b)); }} by {{ execute(); simp(); }}"
         );
@@ -11290,7 +11384,7 @@ fn wide_comparisons_symbolic_results_verify_expand_and_audit_offline() {
             refresh_import(&project.config()).unwrap();
             fs::remove_file(&project.exporter).unwrap();
             let import = load_import(&project.config()).unwrap();
-            assert_eq!(import.export().schema, 59);
+            assert_eq!(import.export().schema, 60);
             let relation = format!("to_integer(a) {op} to_integer(b)");
             let proof = format!(
                 "verifying \"wide.cpp\"; bool {name}({ty} a, {ty} b) {{ ensures result == 1 implies ({relation}); ensures result == 0 implies not ({relation}); }} by {{ execute(); simp(); }}"
@@ -13869,10 +13963,25 @@ fn nested_pointer_fields_keep_const_object_and_pointee_authority_separate() {
         let project = Project::with_fixture("pointer_nested.cpp", selected, source);
         refresh_import(&project.config()).unwrap();
         let import = load_import(&project.config()).unwrap();
-        check_return_call_sidecar(&project, &import, sidecar);
+        // An address equation permits a one-past pointer to `pair.first` to
+        // equal `&pair.second`; permission for the latter does not make the
+        // former dereferenceable. Retain the original contract as a negative.
+        let old_path = project.directory.join("address-only.click");
+        fs::write(&old_path, sidecar).unwrap();
+        let old = read_click_project(&old_path, sidecar).unwrap();
+        assert!(verify_program_prepared_project(&old, &import).is_err());
+        // Put the existing pointee authority on the actual loaded carrier.
+        // The address equation still supports the unchanged scalar claims.
+        let sidecar = sidecar
+            .replace("views value[0..1];", "views state.child.pointer[0..1];")
+            .replace("owns value[0..1];", "owns state.child.pointer[0..1];");
+        check_return_call_sidecar(&project, &import, &sidecar);
         let hostile = sidecar
-            .replace("views value[0..1];", "")
-            .replace("owns value[0..1];", "views value[0..1];");
+            .replace("views state.child.pointer[0..1];", "")
+            .replace(
+                "owns state.child.pointer[0..1];",
+                "views state.child.pointer[0..1];",
+            );
         let path = project.directory.join("hostile.click");
         fs::write(&path, &hostile).unwrap();
         let parsed = read_click_project(&path, &hostile).unwrap();
@@ -17731,5 +17840,250 @@ fn cpp_native_pointer_local_from_reference_verifies_offline() {
         &project,
         &import,
         "verifying \"bump_reference.cpp\"; int32 bump_reference(int32& value) { views value; ensures result == value; ensures value == old(value); } by { execute(); simp(); }",
+    );
+}
+
+#[test]
+fn trivial_record_prvalue_arguments_import_with_full_expression_storage() {
+    for (file, source) in [
+        (
+            "direct_record_argument.cpp",
+            "struct View { int* pointer; int count; View(int* p, int n) noexcept : pointer(p), count(n) {} }; int consume(View view) noexcept { return view.count; } int probe() noexcept { int value = 7; return consume(View(&value, 1)); }",
+        ),
+        (
+            "nested_record_argument.cpp",
+            "struct View { int* pointer; int count; View(int* p, int n) noexcept : pointer(p), count(n) {} }; View make(int* p, int n) noexcept { return View(p, n); } struct Reader { int state; int read(View view) noexcept { return view.count; } }; int probe() noexcept { int value = 7; Reader reader{0}; return reader.read(make(&value, 1)); }",
+        ),
+    ] {
+        let project = Project::with_fixture(file, "probe", source);
+        refresh_import(&project.config())
+            .expect("complete copy-equivalent record argument must import");
+        let import = load_import(&project.config()).unwrap();
+        assert!(!import.export().function.body.is_empty());
+        fs::remove_file(&project.exporter).unwrap();
+        let mut proof = format!(
+            "verifying \"{file}\";\nvoid View_constructor(struct View* this, int32* p, int32 n) {{ owns this->pointer; owns this->count; ensures this->pointer == p; ensures this->count == n; }} by {{ execute(); simp(); }}\n"
+        );
+        if file == "direct_record_argument.cpp" {
+            proof.push_str("int32 consume(struct View view) { ensures result == view.count; } by { execute(); simp(); }\n");
+        } else {
+            proof.push_str("struct View make(int32* p, int32 n) { ensures result.pointer == p; ensures result.count == n; } by { execute(); simp(); }\nint32 Reader_read(struct Reader* this, struct View view) { ensures result == view.count; } by { execute(); simp(); }\n");
+        }
+        proof.push_str("int32 probe() { ensures result == 1; } by { execute(); simp(); }\n");
+        check_arithmetic_sidecar(&project, &import, &proof);
+        let parsed =
+            read_click_project(&project.directory.join("arithmetic.click"), &proof).unwrap();
+        let expanded = expand_project_claim_source_by_label(
+            &parsed,
+            &ProgramInputs::program(&import),
+            "probe.contract",
+        )
+        .unwrap();
+        let rewritten = parsed.with_entry_source(expanded.clone());
+        verify_program_prepared_project(&rewritten, &import).unwrap();
+        let (session, _) =
+            C0VerificationSession::new_program_prepared_project(&parsed, &import).unwrap();
+        let position = project_tactic_source_position(
+            &rewritten,
+            &ProgramInputs::program(&import),
+            "probe.contract",
+            0,
+        )
+        .unwrap();
+        session
+            .verify_at_project(&expanded, position.line, position.column)
+            .unwrap();
+    }
+}
+
+#[test]
+fn record_prvalue_argument_rejects_storage_sensitive_construction_and_unordered_calls() {
+    for (source, expected) in [
+        (
+            "struct Node { int* self; int value; Node(int n) noexcept : self(&value), value(n) {} }; int consume(Node node) noexcept { return node.value; } int probe() noexcept { return consume(Node(7)); }",
+            "copy-equivalent",
+        ),
+        (
+            "struct View { int value; View(int n) noexcept : value(n) {} }; View make(int n) noexcept { return View(n); } int consume(View left, View right) noexcept { return left.value + right.value; } int probe() noexcept { return consume(make(1), make(2)); }",
+            "one call",
+        ),
+    ] {
+        let project = Project::with_fixture("record_argument_refusal.cpp", "probe", source);
+        let error = refresh_import(&project.config())
+            .expect_err("argument source semantics must not be weakened");
+        assert!(error.contains(expected), "unexpected refusal: {error}");
+    }
+}
+
+#[test]
+fn imported_pointer_field_setter_keeps_checked_carrier_during_selected_expansion() {
+    let project = Project::with_fixture(
+        "setter.cpp",
+        "probe",
+        r#"
+struct Holder {
+    int* saved;
+    explicit Holder(int* initial) noexcept : saved(initial) {}
+    void set(int* input) noexcept { saved = input; }
+};
+int probe(int input) noexcept {
+    int value = input;
+    int initial = 0;
+    Holder holder(&initial);
+    holder.set(&value);
+    return *holder.saved;
+}
+"#,
+    );
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    let proof = r#"verifying "setter.cpp";
+void Holder_constructor(struct Holder* this, int32* initial) {
+    owns this->saved;
+    ensures this->saved == initial;
+} by { execute(); simp(); }
+void Holder_set(struct Holder* this, int32* input) {
+    owns this->saved;
+    ensures this->saved == input;
+} by { execute(); simp(); }
+int32 probe(int32 input) {
+    ensures result == input;
+} by { execute(); simp(); }
+"#;
+    check_arithmetic_sidecar(&project, &import, proof);
+    let parsed = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
+    let expanded = expand_project_claim_source_by_label(
+        &parsed,
+        &ProgramInputs::program(&import),
+        "probe.contract",
+    )
+    .unwrap();
+    verify_program_prepared_project(&parsed.with_entry_source(expanded), &import).unwrap();
+}
+
+#[test]
+fn imported_cpp_valid_place_checks_scalar_and_record_guarantees_offline() {
+    let project = Project::with_fixture(
+        "setter.cpp",
+        "probe",
+        r#"
+struct Holder {
+    int* saved;
+    explicit Holder(int* initial) noexcept : saved(initial) {}
+    void set(int* input) noexcept { saved = input; }
+};
+int probe(int input) noexcept {
+    int value = input;
+    int initial = 0;
+    Holder holder(&initial);
+    holder.set(&value);
+    return *holder.saved;
+}
+"#,
+    );
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    let proof = r#"verifying "setter.cpp";
+void Holder_constructor(struct Holder* this, int32* initial) {
+    owns this->saved;
+    ensures this->saved == initial;
+} by { execute(); simp(); }
+void Holder_set(struct Holder* this, int32* input) {
+    owns this->saved;
+    requires valid_place(this);
+    requires valid_place(input);
+    ensures valid_place(this);
+    ensures this->saved == input;
+} by { execute(); simp(); }
+int32 probe(int32 input) {
+    ensures result == input;
+} by { execute(); simp(); }
+"#;
+    check_arithmetic_sidecar(&project, &import, proof);
+    let parsed = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
+    let expanded = expand_project_claim_source_by_label(
+        &parsed,
+        &ProgramInputs::program(&import),
+        "probe.contract",
+    )
+    .unwrap();
+    verify_program_prepared_project(&parsed.with_entry_source(expanded), &import).unwrap();
+    let expanded = expand_project_claim_source_by_label(
+        &parsed,
+        &ProgramInputs::program(&import),
+        "Holder_set.contract",
+    )
+    .unwrap();
+    verify_program_prepared_project(&parsed.with_entry_source(expanded), &import).unwrap();
+}
+
+#[test]
+fn imported_pointer_field_setter_wrapper_keeps_checked_carrier_during_selected_expansion() {
+    let project = Project::with_fixture(
+        "setter.cpp",
+        "probe",
+        r#"
+struct Holder {
+    int* saved;
+    explicit Holder(int* initial) noexcept : saved(initial) {}
+    void set(int* input) noexcept { saved = input; }
+};
+void relay(Holder& holder, int* input) noexcept { holder.set(input); }
+int probe(int input) noexcept {
+    int value = input;
+    int initial = 0;
+    Holder holder(&initial);
+    relay(holder, &value);
+    return *holder.saved;
+}
+"#,
+    );
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    let proof = r#"verifying "setter.cpp";
+void Holder_constructor(struct Holder* this, int32* initial) {
+    owns this->saved;
+    ensures this->saved == initial;
+} by { execute(); simp(); }
+void Holder_set(struct Holder* this, int32* input) {
+    owns this->saved;
+    ensures this->saved == input;
+} by { execute(); simp(); }
+void relay(struct Holder& holder, int32* input) {
+    owns holder.saved;
+    ensures holder.saved == input;
+} by { execute(); simp(); }
+int32 probe(int32 input) {
+    ensures result == input;
+} by { execute(); simp(); }
+"#;
+    check_arithmetic_sidecar(&project, &import, proof);
+    let parsed = read_click_project(&project.directory.join("arithmetic.click"), proof).unwrap();
+    let expanded = expand_project_claim_source_by_label(
+        &parsed,
+        &ProgramInputs::program(&import),
+        "probe.contract",
+    )
+    .unwrap();
+    verify_program_prepared_project(&parsed.with_entry_source(expanded), &import).unwrap();
+}
+
+#[test]
+fn unsigned_word_pointer_and_embedded_extent_copy_by_value_offline() {
+    let project = Project::with_fixture(
+        "word-view.cpp",
+        "probe",
+        "struct Extent { unsigned long count; }; struct View { unsigned int* pointer; Extent extent; }; unsigned long probe(View value) noexcept { return value.extent.count; }",
+    );
+    refresh_import(&project.config()).unwrap();
+    fs::remove_file(&project.exporter).unwrap();
+    let import = load_import(&project.config()).unwrap();
+    check_arithmetic_sidecar(
+        &project,
+        &import,
+        "verifying \"word-view.cpp\"; uint64 probe(struct View value) { ensures result == value.extent.count; } by { execute(); simp(); }",
     );
 }

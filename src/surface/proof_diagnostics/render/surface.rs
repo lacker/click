@@ -410,7 +410,9 @@ impl Printer<'_> {
             .map(|(name, value)| (name.clone(), value.clone()))
             .unzip();
         let cell = crate::surface::diagnostics::diagnostic_source_load_cell(
-            pointer, kind, &names, &values,
+            pointer,
+            kind,
+            ParameterBinding::new(&names, &values),
         )?;
         Some(if point == "current" {
             cell
@@ -647,7 +649,7 @@ mod tests {
             "size",
             CValue::UInt64(Bitvector32Term::Variable(Variable(94))),
         );
-        let labels = SnapshotLabels::with_state(&[], &[], &state);
+        let labels = SnapshotLabels::with_state(ParameterBinding::default(), &state);
         let value =
             Bitvector32Term::UInt32From64(Box::new(Bitvector32Term::Variable(Variable(94))));
         let fact = Proposition::ConditionIs(
@@ -676,7 +678,7 @@ mod tests {
         let after = before
             .clone()
             .with_memory(CMemory::new().with_block("global:cells", 8));
-        let mut labels = SnapshotLabels::with_state(&[], &[], &after);
+        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &after);
         labels.source_state(&before, "pre".into());
         let load = |memory: &CMemory, kind| {
             equality(Bitvector32Term::MemoryLoad(
@@ -709,7 +711,7 @@ mod tests {
             .clone()
             .with_local("i", CValue::Int32(Bitvector32Term::Variable(Variable(8))));
         let (names, values) = crate::surface::diagnostics::local_naming_tables(&entry);
-        let labels = SnapshotLabels::with_state(&names, &values, &current);
+        let labels = SnapshotLabels::with_state(ParameterBinding::new(&names, &values), &current);
         assert_eq!(
             render(&equality(Bitvector32Term::Variable(Variable(7))), &labels),
             Some("at(function.entry, i) == 0".into())

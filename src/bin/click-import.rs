@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use click::languages::refresh_compiler_import;
+use click::languages::{
+    PreparedCompilerImport, PreparedProgram, load_compiler_import, refresh_compiler_import,
+};
 
 const USAGE: &str = "usage: click import lock <sidecar.click>\n\nRefreshes the checked compiler import artifact and its input lock.";
 
@@ -11,7 +13,17 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let path = parse_arguments(arguments)?;
-    refresh_compiler_import(&path)
+    refresh_compiler_import(&path)?;
+    if let PreparedCompilerImport::Program(PreparedProgram::Cpp(import)) =
+        load_compiler_import(&path)?
+    {
+        for assumption in std::iter::once(import.byte_representation_assumption())
+            .chain(import.library_model_equivalence_assumptions())
+        {
+            println!("runtime assumption: {assumption}");
+        }
+    }
+    Ok(())
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<PathBuf, String> {

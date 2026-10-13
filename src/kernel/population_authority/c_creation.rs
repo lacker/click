@@ -1401,7 +1401,6 @@ impl CreationEvents {
         holders
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn transfer_opaque(
         &self,
         from: &Self,

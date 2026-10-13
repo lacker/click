@@ -81,6 +81,28 @@ Resource facts are carried separately from pure facts.
 [Resources and memory permissions](resources.md) covers transfer through
 function calls and the distinction between viewability and authority.
 
+Typed location validity can be required separately from permission:
+
+<!-- verified-example: mdtests/simp_composes_a_pointer_field_chain_across_a_call.md -->
+```click
+requires valid_place(first->arena);
+requires valid_place(second->arena);
+```
+
+`valid_place(p)` says that the complete pointer value designates a live location
+suitable for access as its pointee type. It checks the supported language's
+object identity, type, lifetime and location rules. It grants neither ownership
+nor initialization. An uninitialized output object can therefore be a valid
+place. Typed `owns` and `views` clauses retain their existing validity guarantees;
+this predicate expresses validity alone, including for an alias of owned memory.
+Address equality alone cannot establish it.
+
+The initial implementation supports ordinary record locations and the scalar
+locations already admitted by typed-prefix contracts (`int32`, `uint32`, `int64`
+and bytes). Direct requirements and conjunctions authenticate entry locations;
+callers check the actual full carriers. A requirement under a disjunction,
+implication or quantifier does not unconditionally authenticate a location.
+
 Requirements are written without fact labels:
 
 <!-- verified-example: mdtests/contract_let_bindings.md -->

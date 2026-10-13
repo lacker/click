@@ -250,6 +250,17 @@ expressions are not separately interned for support tracking: that would allow
 cross-arena snapshot comparisons to traverse unrelated memory. This is an
 additive consumer migration.
 
+Constant endpoints of checked signed int32 order facts annotate their value
+class with an interval. A class union intersects these intervals, so overflow
+checking can use bounds supplied on an equal variable or a same-snapshot read.
+The annotations are persistent across forks and are rebuilt from surviving
+facts after withdrawal. Strict and complemented comparisons retain their signed
+meaning; unsigned and 64-bit comparisons do not contribute. This ranges the
+wrapped value only: bounds on an expression's result do not establish that its
+own C operation is defined. Lookup follows the class representative rather than
+enumerating aliases or deriving pairwise order facts. Multi-size regressions
+cover incremental aliases beside unrelated bounds without a fallback fact scan.
+
 True offset premises also feed the shared graph through the existing checked
 int32 element-index interpretation: four-byte scaling, aligned constants, and
 supported additions. Equal byte offsets then imply equal int32 index residues.

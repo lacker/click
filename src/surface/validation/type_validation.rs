@@ -134,6 +134,16 @@ fn validate_proposition_expression_types_one(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_expression_types(segment, variables, click_functions, context)
         }
+        ClickProposition::ValidPlace { expression, .. } => {
+            let actual =
+                infer_contract_expression_type(expression, variables, click_functions, context)?;
+            if !actual.is_some_and(C0Type::is_object_pointer) {
+                return Err(ClickError::new(
+                    "valid_place expects a typed object pointer",
+                ));
+            }
+            Ok(())
+        }
         ClickProposition::Defined { expression } => {
             let _ =
                 infer_contract_expression_type(expression, variables, click_functions, context)?;
@@ -2799,6 +2809,22 @@ pub(super) fn infer_contract_expression_type(
 /// Struct casts recover the modeled object from an opaque `void *`.
 /// Native byte-view casts retag scalar object pointers without changing
 /// allocation identity, permissions, or initialized storage.
+pub(in crate::surface) fn validate_void_pointer_cast_source(
+    operand: &CExpression,
+    variables: &BTreeMap<String, C0Type>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let actual = infer_c_expression_type(operand, variables);
+    if actual.is_some_and(|ty| !ty.is_object_pointer())
+        || matches!(operand, CExpression::FunctionAddress(_))
+    {
+        return Err(ClickError::new(format!(
+            "contract void-pointer cast in {context} expects an object pointer operand, got {actual:?}"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_pointer_cast_operands(
     expression: &CExpression,
     variables: &BTreeMap<String, C0Type>,
@@ -2812,6 +2838,10 @@ fn validate_pointer_cast_operands(
             ..
         } => {
             if target_type.is_pointer() {
+                if *target_type == CType::VoidPointer {
+                    validate_void_pointer_cast_source(operand, variables, context)?;
+                    return validate_pointer_cast_operands(operand, variables, context);
+                }
                 if *target_type == CType::UInt8Pointer && pointee_struct.is_none() {
                     let actual = infer_c_expression_type(operand, variables);
                     if actual.is_some()
@@ -3520,7 +3550,8 @@ fn validate_predicate_calls_in_proposition_one(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
-        ClickProposition::Defined { expression } => {
+        ClickProposition::Defined { expression }
+        | ClickProposition::ValidPlace { expression, .. } => {
             validate_contract_expression_calls(expression, click_functions, context)
         }
         ClickProposition::And(left, right)
@@ -3835,7 +3866,8 @@ fn validate_if_condition_proposition(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
-        ClickProposition::Defined { expression } => {
+        ClickProposition::Defined { expression }
+        | ClickProposition::ValidPlace { expression, .. } => {
             validate_contract_expression_calls(expression, click_functions, context)
         }
         ClickProposition::And(left, right)

@@ -1,31 +1,8 @@
-verifying "rb_erase_augmented.c";
+verifying "rb_erase.c";
+import "rbtree_erase_callbacks.click";
 
 import "../rbtree-model/rbtree_resources.click";
 import "../rbtree-model/rbtree_erase_splice.click";
-
-contract void AugmentRotate(struct rb_node* old, struct rb_node* new) {
-    requires new != 0;
-    ensures 1 == 1;
-}
-
-contract void ErasePropagate(struct rb_node* node, struct rb_node* stop) {
-    ensures 1 == 1;
-}
-
-contract void EraseCopy(struct rb_node* node, struct rb_node* successor) {
-    requires node != 0;
-    requires successor != 0;
-    ensures 1 == 1;
-}
-
-resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
-    owns augment->propagate;
-    owns augment->copy;
-    owns augment->rotate;
-    fact ErasePropagate(augment->propagate);
-    fact EraseCopy(augment->copy);
-    fact AugmentRotate(augment->rotate);
-}
 
 # Immediate black-leaf successor below the root: preserve the deficit for fixup.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
@@ -42,7 +19,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     requires is_rb(tree.model) == 1;
     requires ctx_rb(up.model, black_height(tree.model), rb_color(tree.model)) == 1;
     requires ctx_consistent(up.model, tree.model, 0) == 1;
-    owns erase_callbacks(augment);
+    views erase_callbacks(augment);
     produces node->__rb_parent_color;
     produces node->rb_left;
     produces node->rb_right;
@@ -55,6 +32,8 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     ensures plug(deficit.model, hole.model) == plug(old(up.model), rb_erase_immediate_leaf_model(old(tree.model)));
     ensures result == old(node->rb_right);
     ensures result != 0;
+    ensures deficit.model != Context::Top;
+    ensures ctx_node_is(deficit.model, result) == 1;
 } by {
     match tree.model {
         RbTree::Empty => { contradiction(tree.model == RbTree::Empty); },
@@ -171,9 +150,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                         rewrite(Context::Left(pid, gp, pc, sibling_model, above_model) == up.model); assumption();
                                     }
                                     let { sibling: sibling, up: above } = unfold(up);
-                                    unfold(erase_callbacks(augment));
-                                    execute();
-                                    fold(erase_callbacks(augment));
+                                    open(erase_callbacks(augment)) { execute(); }
                                     let moved_left = fold(rb_at(lid), { model: RbTree::Node(lid, sid, lc, ll, lr) }, { left: lleft, right: lright });
                                     let hole = fold(rb_at(0), { model: RbTree::Empty });
                                     let outer = fold(ctx_at(sid, root), { model: Context::Left(pid, gp, pc, sibling_model, above_model) }, { sibling: sibling, up: above });
@@ -188,6 +165,11 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                         unfold(rb_parent_is(RbTree::Node(lid, old(node->rb_right), lc, ll, lr), old(node->rb_right))); normalize();
                                     }
                                     let deficit = fold(ctx_at(0, root), { model: Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Left(pid, gp, pc, sibling_model, above_model)) }, { sibling: moved_left, up: outer });
+                                    have result == sid;
+                                    have ctx_node_is(deficit.model, result) == 1 by {
+                                        rewrite(deficit.model == Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Left(pid, gp, pc, sibling_model, above_model))); rewrite(result == sid);
+                                        unfold(ctx_node_is(Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Left(pid, gp, pc, sibling_model, above_model)), sid)); normalize();
+                                    }
                                     have deficit.model == rb_erase_immediate_black_context(old(tree.model), old(up.model)) by {
                                         rewrite(old(tree.model) == RbTree::Node(identity, parent, color, left_model, right_model));
                                         rewrite(right_model == RbTree::Node(sid, sp, sc, sl, sr));
@@ -234,9 +216,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     match sibling.model {
                                         RbTree::Empty => {
                                             unfold(sibling);
-                                            unfold(erase_callbacks(augment));
-                                            execute();
-                                            fold(erase_callbacks(augment));
+                                            open(erase_callbacks(augment)) { execute(); }
                                             let sibling = fold(rb_at(0), { model: RbTree::Empty });
                                             let moved_left = fold(rb_at(lid), { model: RbTree::Node(lid, sid, lc, ll, lr) }, { left: lleft, right: lright });
                                             let hole = fold(rb_at(0), { model: RbTree::Empty });
@@ -252,6 +232,11 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                                 unfold(rb_parent_is(RbTree::Node(lid, old(node->rb_right), lc, ll, lr), old(node->rb_right))); normalize();
                                             }
                                             let deficit = fold(ctx_at(0, root), { model: Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model)) }, { sibling: moved_left, up: outer });
+                                            have result == sid;
+                                            have ctx_node_is(deficit.model, result) == 1 by {
+                                                rewrite(deficit.model == Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model))); rewrite(result == sid);
+                                                unfold(ctx_node_is(Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model)), sid)); normalize();
+                                            }
                                             have deficit.model == rb_erase_immediate_black_context(old(tree.model), old(up.model)) by {
                                                 rewrite(old(tree.model) == RbTree::Node(identity, parent, color, left_model, right_model));
                                                 rewrite(right_model == RbTree::Node(sid, sp, sc, sl, sr));
@@ -275,9 +260,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                         },
                                         RbTree::Node(sbid, sbp, sbc, sbl, sbr) => {
                                             let { left: sb_left, right: sb_right } = unfold(sibling);
-                                            unfold(erase_callbacks(augment));
-                                            execute();
-                                            fold(erase_callbacks(augment));
+                                            open(erase_callbacks(augment)) { execute(); }
                                             let sibling = fold(rb_at(sbid), { model: RbTree::Node(sbid, sbp, sbc, sbl, sbr) }, { left: sb_left, right: sb_right });
                                             let moved_left = fold(rb_at(lid), { model: RbTree::Node(lid, sid, lc, ll, lr) }, { left: lleft, right: lright });
                                             let hole = fold(rb_at(0), { model: RbTree::Empty });
@@ -293,6 +276,11 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                                 unfold(rb_parent_is(RbTree::Node(lid, old(node->rb_right), lc, ll, lr), old(node->rb_right))); normalize();
                                             }
                                             let deficit = fold(ctx_at(0, root), { model: Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model)) }, { sibling: moved_left, up: outer });
+                                            have result == sid;
+                                            have ctx_node_is(deficit.model, result) == 1 by {
+                                                rewrite(deficit.model == Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model))); rewrite(result == sid);
+                                                unfold(ctx_node_is(Context::Right(sid, parent, color, RbTree::Node(lid, sid, lc, ll, lr), Context::Right(pid, gp, pc, sibling_model, above_model)), sid)); normalize();
+                                            }
                                             have deficit.model == rb_erase_immediate_black_context(old(tree.model), old(up.model)) by {
                                                 rewrite(old(tree.model) == RbTree::Node(identity, parent, color, left_model, right_model));
                                                 rewrite(right_model == RbTree::Node(sid, sp, sc, sl, sr));

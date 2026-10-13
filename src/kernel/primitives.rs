@@ -2038,6 +2038,25 @@ pub enum CExpression {
     },
 }
 
+/// A frozen output selected by an explicit initialization postcondition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CInitializationOutput {
+    pub(crate) parameter: usize,
+    pub(crate) field: Option<Arc<CAggregateMemberSelection>>,
+    pub(crate) bytes: u32,
+}
+impl CInitializationOutput {
+    pub(crate) fn parameter_index(&self) -> usize {
+        self.parameter
+    }
+    pub(crate) fn field(&self) -> Option<&CAggregateMemberSelection> {
+        self.field.as_deref()
+    }
+    pub(crate) fn bytes(&self) -> u32 {
+        self.bytes
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CAggregateMemberSelection {
     pub(crate) layout: Arc<CAggregateLayout>,
@@ -3227,6 +3246,14 @@ pub enum SpecPredicateArgument {
     },
 }
 
+/// The source-selected type of a location, independent of byte permission
+/// and initialization. Record types retain the checked complete layout.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CPlaceType {
+    Scalar(CType),
+    Record(Arc<CAggregateLayout>),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecProposition {
     IntegerComparison {
@@ -3345,6 +3372,12 @@ pub enum SpecProposition {
         memory: SpecMemory,
         base: SpecExpression,
         bytes: u32,
+    },
+    ValidPlace {
+        memory: SpecMemory,
+        pointer: SpecExpression,
+        place_type: CPlaceType,
+        access_policy: CTypedAccessPolicy,
     },
     Defined(SpecExpression),
 }
@@ -4456,9 +4489,7 @@ impl CAggregateLayout {
         count: u32,
         fields: Vec<CAggregateField>,
     ) -> Option<Self> {
-        if element_type.pointer_to().is_none() {
-            return None;
-        }
+        element_type.pointer_to()?;
         let size = element_type.byte_width().checked_mul(count)?;
         Self::new(size, element_type.abi_alignment(), fields).with_scalar_array(element_type, count)
     }
@@ -4885,6 +4916,8 @@ pub struct CFunctionContractInterface {
     pub(crate) construction_parameter: Option<(usize, CAggregateLayout)>,
     pub(crate) scalar_object_inputs: Vec<CScalarObjectInput>,
     pub(crate) native_span_inputs: Vec<CNativeSpanInput>,
+    /// Typed geometry prerequisites, independent of byte authority and initialization.
+    pub(crate) native_span_expression_inputs: Arc<[CNativeSpanRequirement]>,
     pub(crate) aggregate_object_inputs: Vec<CAggregateObjectInput>,
     pub(crate) exceptional_signature: CExceptionalSignature,
     pub(crate) parameters: Vec<CParameter>,
@@ -5353,6 +5386,15 @@ pub struct CVerifiedFunctionRule {
 /// This is deliberately separate from address-only source postconditions.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) enum CPointerResultEffect {
+    /// Exact initialized pointer-valued field read from the input snapshot.
+    ExactFromPointerField { source: CPointerFieldSource },
+    /// Every checked return preserves both the selected address and designation.
+    ExactFromParameter {
+        parameter: usize,
+        child_path: std::sync::Arc<[String]>,
+    },
+    /// Only the selected domain is preserved; the returned address can move
+    /// within it and remains independently constrained by the source contract.
     FromParameter {
         parameter: usize,
         child_path: std::sync::Arc<[String]>,
@@ -5369,6 +5411,19 @@ pub(super) enum CPointerEffectRoot {
     ConstructionDestination,
 }
 
+/// A pointer value stored in a member, distinct from its member address.
+/// The retained nominal layout and declared full-width pointer type are part
+/// of the selector; numeric address equality never authenticates this source.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CPointerFieldSource {
+    pub(super) parameter: usize,
+    pub(super) layout: Arc<CAggregateLayout>,
+    pub(super) path: Arc<[String]>,
+    pub(super) value_type: CType,
+    pub(super) pointee_constant: bool,
+    pub(super) pointee_volatile: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) struct CPointerStoreEffect {
     pub(super) destination: CPointerEffectRoot,
@@ -5376,6 +5431,7 @@ pub(super) struct CPointerStoreEffect {
     pub(super) value_type: CType,
     pub(super) source: CPointerEffectRoot,
     pub(super) source_path: std::sync::Arc<[String]>,
+    pub(super) source_field: Option<CPointerFieldSource>,
 }
 
 impl CVerifiedFunctionRule {
@@ -7638,9 +7694,16 @@ pub(super) fn start_fresh_c_memory_arena() {
     });
 }
 
-/// Bumped every time a derivation slot is filled. Memo tables over DAG walks
-/// key on this so an edge recorded later invalidates earlier "no path"
-/// answers instead of leaving them stale.
+/// Bumped every time a derivation slot is filled on a snapshot that was
+/// interned before the edge was recorded. Memo tables over DAG walks key on
+/// this so an edge recorded later invalidates earlier "no path" answers
+/// instead of leaving them stale.
+///
+/// A recording that interns the snapshot it derives does not bump it: no
+/// earlier question could name that snapshot, and an existing snapshot's
+/// history never changes, so no earlier answer can. Bumping on those too
+/// emptied every negative memo at every program step, and a call step re-ran
+/// each failed alias question its walks had already answered.
 pub(super) fn c_memory_derivation_generation() -> u64 {
     C_MEMORY_DERIVATION_GENERATION.with(std::cell::Cell::get)
 }
@@ -7705,7 +7768,11 @@ pub(crate) fn record_c_memory_derivation(result: &mut CMemory, derivation: CMemo
         }
         _ => None,
     };
+    // A snapshot this call interns is one no query has seen yet, so filling
+    // its derivation cannot change an earlier answer.
+    let next_id = C_MEMORY_ARENA.with(|arena| arena.borrow().1.identities.len());
     let derived = intern_c_memory_ref_with_read_identity(result, read_identity);
+    let interned_here = derived.id as usize >= next_id;
     if !result.same_storage_roots(derived.memory()) {
         *result = derived.memory().clone();
     }
@@ -7743,7 +7810,9 @@ pub(crate) fn record_c_memory_derivation(result: &mut CMemory, derivation: CMemo
             .entry((base_id, derived.content_hash))
             .or_default()
             .push(derived.id);
-        C_MEMORY_DERIVATION_GENERATION.with(|generation| generation.set(generation.get() + 1));
+        if !interned_here {
+            C_MEMORY_DERIVATION_GENERATION.with(|generation| generation.set(generation.get() + 1));
+        }
     });
 }
 
@@ -9326,7 +9395,7 @@ pub(crate) struct CNativeRecordPlaceRequirement {
 /// Which language access rules may discharge a typed-place obligation.
 /// This policy grants neither permission nor initialization.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(crate) enum CTypedAccessPolicy {
+pub enum CTypedAccessPolicy {
     NativeObjectOnly,
     #[default]
     CAllocatedAccessAllowed,
@@ -9344,6 +9413,8 @@ pub(crate) struct CNativeSpanRequirement {
 
 #[derive(Clone, Debug)]
 pub struct CResourceSpec {
+    /// Declared leaf observation type, separate from resource coordinate units.
+    declared_storage_observation: Option<(CType, u32)>,
     native_record_places: Arc<[CNativeRecordPlaceRequirement]>,
     native_span_requirements: Arc<[CNativeSpanRequirement]>,
     /// Actual resource-reference binders, separate from C-valued arguments.
@@ -9497,6 +9568,22 @@ impl CResourceTerm {
 }
 
 impl CResourceSpec {
+    pub(crate) fn with_declared_storage_observation(
+        mut self,
+        observation: Option<(CType, u32)>,
+    ) -> Self {
+        self.declared_storage_observation = observation;
+        self
+    }
+    pub(crate) fn declared_storage_observation(&self) -> Option<(CType, u32)> {
+        self.declared_storage_observation
+    }
+    pub(crate) fn declared_storage_type(&self) -> Option<CType> {
+        self.declared_storage_observation.map(|(ty, _)| ty)
+    }
+    pub(crate) fn declared_storage_count(&self) -> Option<u32> {
+        self.declared_storage_observation.map(|(_, count)| count)
+    }
     pub(crate) fn with_native_record_places(
         mut self,
         places: Vec<CNativeRecordPlaceRequirement>,
@@ -9529,6 +9616,7 @@ impl CResourceSpec {
         snapshot: CResourceSnapshot,
     ) -> Result<Self, CResourceSpecError> {
         let spec = Self {
+            declared_storage_observation: None,
             native_record_places: Arc::from([]),
             native_span_requirements: Arc::from([]),
             term,
@@ -9898,6 +9986,7 @@ impl CResourceSpec {
             )
             .expect("validated instance terms have valid owned unit bodies")
             .with_resource_arguments(self.resource_arguments().to_vec())
+            .with_declared_storage_observation(self.declared_storage_observation())
             .with_native_record_places(self.native_record_places().to_vec())
             .with_native_span_requirements(self.native_span_requirements().to_vec()),
         )
@@ -9997,6 +10086,7 @@ impl CResourceSpec {
 impl PartialEq for CResourceSpec {
     fn eq(&self, other: &Self) -> bool {
         self.term == other.term
+            && self.declared_storage_observation == other.declared_storage_observation
             && self.native_record_places == other.native_record_places
             && self.native_span_requirements == other.native_span_requirements
             && self.resource_arguments == other.resource_arguments
@@ -10014,6 +10104,7 @@ impl Eq for CResourceSpec {}
 
 impl Hash for CResourceSpec {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.declared_storage_observation.hash(state);
         self.native_record_places.hash(state);
         self.term.hash(state);
         self.resource_arguments.hash(state);
@@ -10037,6 +10128,7 @@ impl Ord for CResourceSpec {
             &self.term,
             &self.native_record_places,
             &self.native_span_requirements,
+            &self.declared_storage_observation,
             &self.resource_arguments,
             &self.mutex_authority_binding,
             self.access,
@@ -10050,6 +10142,7 @@ impl Ord for CResourceSpec {
                 &other.term,
                 &other.native_record_places,
                 &other.native_span_requirements,
+                &other.declared_storage_observation,
                 &other.resource_arguments,
                 &other.mutex_authority_binding,
                 other.access,
@@ -10377,6 +10470,14 @@ pub enum Proposition {
         memory: CMemory,
         base: Pointer,
         bytes: u32,
+    },
+    /// A complete carrier designates a live location of the selected type.
+    /// This grants neither byte permission nor initialization.
+    CValidPlace {
+        memory: CMemory,
+        pointer: CPointerValue,
+        place_type: CPlaceType,
+        access_policy: CTypedAccessPolicy,
     },
     /// A typed read is valid in this snapshot, including initialization.
     /// This is a pure fact; it grants no resource access permission.
@@ -10752,6 +10853,17 @@ fn clone_atomic_proposition(proposition: &Proposition) -> Proposition {
             bytes: bytes.clone(),
             wide: *wide,
         },
+        Proposition::CValidPlace {
+            memory,
+            pointer,
+            place_type,
+            access_policy,
+        } => Proposition::CValidPlace {
+            memory: memory.clone(),
+            pointer: pointer.clone(),
+            place_type: place_type.clone(),
+            access_policy: *access_policy,
+        },
         Proposition::CMemoryInitialized {
             memory,
             base,
@@ -10990,6 +11102,21 @@ pub(super) enum PointerOffsetCongruenceEvidence {
         first: Box<PointerOffsetCongruenceEvidence>,
         second: Box<PointerOffsetCongruenceEvidence>,
         swapped: bool,
+    },
+    /// Equal full-pointer observations, projected to the same numeric stride.
+    /// This is offset equality only and never transports a designation.
+    PointerReadSnapshot {
+        byte_width: i64,
+        equality: Box<crate::kernel::memory_provenance::CheckedLoadEquality>,
+    },
+    /// A numeric full-pointer read is unchanged between two checked
+    /// snapshots, followed by an exact offset premise at its newer spelling.
+    PointerReadSnapshotAlias {
+        byte_width: i64,
+        intermediate: Box<PointerOffsetTerm>,
+        equality: Box<crate::kernel::memory_provenance::CheckedLoadEquality>,
+        premise: Box<Proposition>,
+        reversed: bool,
     },
     Int32Scaled {
         byte_width: i64,
@@ -11679,6 +11806,10 @@ pub struct PureFactContext {
     /// known for that pointer, never to project-wide declarations.
     pub(super) function_contract_facts:
         std::sync::Arc<BTreeMap<Pointer, BTreeMap<String, Proposition>>>,
+    /// Derived candidates for checked function-read transport, selected by
+    /// the immutable complete read's exact cell address.
+    pub(super) function_contract_read_cells:
+        crate::persistent::PersistentMap<Pointer, crate::persistent::PersistentMap<Pointer, ()>>,
     /// Exact equalities between two applications of one algebraic
     /// constructor, indexed by each field equality they entail. Both levels
     /// are persistent so adding one proof fact changes logarithmically many
@@ -11997,6 +12128,9 @@ pub struct SymbolicCExecution {
 /// entry they name, so a claim that holds on every one of them holds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CContractPathSet {
+    /// Parallel to `paths`: provenance minted by the exhaustive kernel
+    /// resource-case checker, never supplied by a source proof.
+    pub(super) checked_resource_guard_cases: Vec<Arc<super::api::CCheckedResourceGuardCase>>,
     pub(super) paths: Vec<SymbolicCExecutionPath>,
     /// Exact resource claims checked for each path.  The vector is parallel
     /// to `paths`; an entry names only claims whose surface proof crossed the

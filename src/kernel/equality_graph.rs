@@ -505,6 +505,15 @@ enum OffsetPart {
     Term(u64, OffsetAtom, i128),
 }
 
+type PointerReadKey = ((u32, u32), Pointer);
+type PointerReadPair = (PointerReadKey, PointerReadKey);
+
+#[derive(Clone, Debug)]
+pub(in crate::kernel) struct SupportedPointerReadEquality {
+    pub(in crate::kernel) proof: std::sync::Arc<super::memory_provenance::CheckedLoadEquality>,
+    pub(in crate::kernel) supports: std::sync::Arc<[Proposition]>,
+}
+
 #[derive(Clone, Default)]
 struct EqualityGraphState {
     terms: terms::TermClasses,
@@ -516,6 +525,13 @@ struct EqualityGraphState {
     logical_offset_dependencies: crate::persistent::PersistentMap<PointerOffsetTerm, u64>,
     typed_reads: crate::persistent::PersistentSet<PointerBlock>,
     checked_read_generation: u64,
+    // These checked pairs never enter union-find. A consumer must check
+    // their selected authority against its current context before use.
+    supported_read_equalities:
+        crate::persistent::PersistentMap<PointerReadPair, SupportedPointerReadEquality>,
+    // One selected older read per produced read, for contextual supplier
+    // lookup. This index conveys no unconditional equality or authority.
+    supported_read_sources: crate::persistent::PersistentMap<PointerReadKey, Bitvector32Term>,
     /// The exact class-merge delta stream. A consumer with a persistent
     /// class-keyed index can update only entries in the moved class. Clones
     /// share the prefix; a rebuilt (restricted) graph has a new origin.
@@ -609,6 +625,140 @@ impl EqualityGraph {
             .with_inserted(value.clone(), (application, address.clone()));
         reads.generation =
             NEXT_LOGICAL_READ_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The exact definition retained by a typed pointer-read producer.
+    /// A displaced read application is not the value of its original cell.
+    pub(in crate::kernel) fn pointer_read_term(&self, value: &Pointer) -> Option<Bitvector32Term> {
+        let application = if value.as_loaded_value().is_some() {
+            value.clone()
+        } else {
+            self.logical_reads
+                .lock()
+                .expect("logical pointer reads")
+                .definitions
+                .get(value)?
+                .0
+                .clone()
+        };
+        let load = application.as_loaded_value()?;
+        if load.displacement != PointerOffsetTerm::Constant(0) {
+            return None;
+        }
+        Some(Bitvector32Term::MemoryLoad(
+            load.defining_memory,
+            Box::new(load.defining_address),
+            LoadKind::Pointer,
+        ))
+    }
+
+    fn pointer_read_pair(
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<PointerReadPair> {
+        let endpoint = |term: &Bitvector32Term| match term {
+            Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer) => {
+                Some((memory.arena_id(), address.as_ref().clone()))
+            }
+            _ => None,
+        };
+        let left = endpoint(left)?;
+        let right = endpoint(right)?;
+        Some(if left <= right {
+            (left, right)
+        } else {
+            (right, left)
+        })
+    }
+
+    pub(in crate::kernel) fn add_supported_pointer_read_equality(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        proof: super::memory_provenance::CheckedLoadEquality,
+        supports: Vec<Proposition>,
+    ) {
+        let Some(pair) = Self::pointer_read_pair(left, right) else {
+            return;
+        };
+        let mut state = self.state.lock().expect("equality graph");
+        if state.supported_read_equalities.contains_key(&pair) {
+            return;
+        }
+        state.supported_read_equalities.insert(
+            pair.clone(),
+            SupportedPointerReadEquality {
+                proof: std::sync::Arc::new(proof),
+                supports: supports.into(),
+            },
+        );
+        if pair.0.0 < pair.1.0 && pair.0.1 == pair.1.1 {
+            let older = match (left, right) {
+                (Bitvector32Term::MemoryLoad(memory, _, _), _) if memory.arena_id() == pair.0.0 => {
+                    left
+                }
+                _ => right,
+            };
+            if state
+                .supported_read_sources
+                .get(&pair.1)
+                .is_none_or(|held| {
+                    matches!(held, Bitvector32Term::MemoryLoad(memory, _, _)
+                    if pair.0.0 < memory.arena_id())
+                })
+            {
+                state.supported_read_sources.insert(pair.1, older.clone());
+            }
+        }
+        state.checked_read_generation =
+            NEXT_LOGICAL_READ_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Select only the producer-retained older read of this exact cell.
+    /// Consumers must check its supported pair in the live fact context.
+    pub(in crate::kernel) fn supported_pointer_read_source(
+        &self,
+        pointer: &Pointer,
+    ) -> Option<Pointer> {
+        let Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer) =
+            self.pointer_read_term(pointer)?
+        else {
+            return None;
+        };
+        let state = self.state.lock().expect("equality graph");
+        let Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer) = state
+            .supported_read_sources
+            .get(&(memory.arena_id(), *address))?
+        else {
+            return None;
+        };
+        Some(Pointer::loaded_value(memory, address))
+    }
+
+    pub(in crate::kernel) fn supported_pointer_read_equality(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> Option<SupportedPointerReadEquality> {
+        let pair = Self::pointer_read_pair(
+            &self.pointer_read_term(left)?,
+            &self.pointer_read_term(right)?,
+        )?;
+        crate::instrumentation::record_deterministic_work(1);
+        self.state
+            .lock()
+            .expect("equality graph")
+            .supported_read_equalities
+            .get(&pair)
+            .cloned()
+    }
+
+    /// Whether this graph reads the thread's current logical-read table: a
+    /// session restore or clear installs a fresh table, which a graph built
+    /// before it does not see.
+    pub(in crate::kernel) fn reads_current_logical_reads(&self) -> bool {
+        LOGICAL_POINTER_READS
+            .with(|reads| std::sync::Arc::ptr_eq(&reads.borrow(), &self.logical_reads))
     }
 
     pub(in crate::kernel) fn logical_read_generation(&self) -> u64 {
@@ -1339,6 +1489,18 @@ impl EqualityGraph {
             state.remember_input(inputs::Input::UInt64(left.clone(), right.clone()));
         }
         changed
+    }
+
+    /// Bounds retained on any checked equivalent int32 value. Registration
+    /// visits only this term's dependencies; lookup never enumerates a class.
+    pub(in crate::kernel) fn signed_int32_interval(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<(i64, i64)> {
+        let mut state = self.state.lock().expect("equality graph");
+        let node = state.terms.int32_class(term);
+        state.close(Vec::new());
+        state.terms.signed_int32_interval(node)
     }
 
     /// Admit an already established int32 equality in this proof context.

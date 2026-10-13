@@ -117,7 +117,10 @@ fn struct_pointer_field_scalar_read_expansion_keeps_its_width() {
     let sources = [("read.c", c)];
     let expanded = expand_c0_claim_source(source, &sources, "caller", CProofClaim::Grouped)
         .expect("the scalar read should expand through a byte address");
-    assert!(expanded.contains("load_int32("), "{expanded}");
+    // A certified full-carrier store may let this close directly from the
+    // callee's result fact. If a read is printed, it must not acquire the
+    // record stride merely because the source pointer points at a record.
+    assert!(!expanded.contains("p->kid[1]"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
         .expect("the printed read must retain its four-byte offset");
 }
@@ -987,6 +990,16 @@ fn scope_equality_chain_and_loaded_pointer_rewrite_expand_and_reverify() {
             .iter()
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
+        if relative == "mdtests/simp_composes_a_pointer_field_chain_across_a_call.md" {
+            let insufficient = click_source
+                .replace("    requires valid_place(first->arena);\n", "")
+                .replace("    requires valid_place(second->arena);\n", "")
+                .replace("    requires valid_place(region->arena);\n", "");
+            assert!(
+                verify_c0_sources(&insufficient, &c_sources).is_err(),
+                "the original address-only contract must not grant typed validity"
+            );
+        }
         let expanded =
             expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
                 .unwrap_or_else(|error| panic!("`{relative}` should expand: {}", error.message()));
@@ -1268,6 +1281,56 @@ fn flattened_aggregate_claims_resolve_to_their_written_clause() {
     )
     .unwrap_or_else(|error| panic!("{}", error.message()));
     assert_eq!(position.line, written.line);
+}
+
+/// A `produces` clause written in a contract `if` block is a claim of its
+/// own, numbered among the written clauses in its place. The source locator
+/// used to count only top-level clauses, so every later clause resolved to
+/// the clause after it, the last to none, and selecting any line of the
+/// file by `--claim FILE:LINE` stopped with `could not locate source
+/// ensure 2`.
+#[test]
+fn a_conditional_produces_clause_is_located_in_its_place() {
+    let (click, sources) = mdtest_sources("mdtests/population_initialized_cleanup.md");
+    let sources = sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let start = click.find("    if old(obj->refs) > 1 {").unwrap();
+    let end = click.find("int32 cleanup(int32 payload) {").unwrap();
+    let inputs = ProgramInputs::Bundle(sources.clone());
+    for produces_proof in ["", " by auto"] {
+        let click = format!(
+            "{}    if old(obj->refs) > 1 {{
+        produces child_control(obj){produces_proof};
+    }}
+    ensures count(child_ref(obj)) == old(count(child_ref(obj))) - 1 by auto;
+    ensures obj->refs >= 0 by auto;
+}}
+
+{}",
+            &click[..start],
+            &click[end..]
+        );
+        for (text, label) in [
+            ("produces child_control(obj)", "child_release.produces_0"),
+            ("ensures count(child_ref(obj))", "child_release.ensures_0"),
+            ("ensures obj->refs >= 0", "child_release.ensures_1"),
+        ] {
+            for scope in [ClaimLocationScope::Innermost, ClaimLocationScope::ProofUnit] {
+                let selected = claim_at(
+                    None,
+                    &click,
+                    &inputs,
+                    line_containing(&click, text),
+                    None,
+                    scope,
+                )
+                .unwrap_or_else(|error| panic!("{text}: {error:?}"));
+                assert_eq!(selected.label, label, "{text} ({produces_proof:?})");
+            }
+        }
+    }
 }
 
 /// A `simp()` closing an `initialize` script that several invariants share
@@ -2965,7 +3028,7 @@ fn branch_interface_address_alias_does_not_authenticate_the_loaded_child() {
     assert!(
         error
             .message()
-            .contains("native record place has no authenticated input or declaration"),
+            .contains("could not bind arguments for set_word"),
         "{error:?}"
     );
 }
@@ -14964,26 +15027,48 @@ struct node* unpack(struct node* node) {
 }
 "#;
 
+// Numeric resource witnesses do not supply the checked origin required by
+// native integer-to-pointer conversion. Keep the original source and claim as
+// the rejection case; the separate native-pointer fixture exercises naming.
+#[test]
+fn numeric_resource_witness_does_not_authorize_pointer_reconstruction() {
+    verify_c0_sources(WITNESS_RESOURCE_CLICK, &[("unpack.c", WITNESS_RESOURCE_C)])
+        .expect_err("a numeric address equation cannot authenticate a pointer origin");
+}
+
 #[test]
 fn expansion_names_a_resource_witness_through_the_checked_return_pointer() {
-    let sources = [("unpack.c", WITNESS_RESOURCE_C)];
-    verify_c0_sources(WITNESS_RESOURCE_CLICK, &sources)
-        .expect("the witness fold/unfold proof should verify");
-
-    let closer = WITNESS_RESOURCE_CLICK
-        .rfind("simp();")
-        .expect("proof should contain the closer");
-    let position = expansion::position_at_offset(WITNESS_RESOURCE_CLICK, closer);
-    let expanded = expand_c0_tactic_source_at(
-        WITNESS_RESOURCE_CLICK,
-        &sources,
-        position.line,
-        position.column,
-    )
-    .expect("the checked return pointer should name the witness");
+    let source = r#"
+struct node { struct node* next; };
+struct node* next(struct node* node) { return node->next; }
+"#;
+    let sidecar = r#"
+resource linked(node: struct node*) {
+    owns *node;
+    let next: struct node* where node->next == next and aligned(next, 16);
+}
+verifying "next.c";
+struct node* next(struct node* node) {
+    requires node != 0;
+    owns linked(node);
+    ensures aligned(result, 16);
+} by {
+    unfold(linked(node));
+    execute();
+    fold(linked(node));
+    simp();
+}
+"#;
+    let sources = [("next.c", source)];
+    verify_c0_sources(sidecar, &sources)
+        .expect("the native-pointer witness fold/unfold proof should verify");
+    let closer = sidecar.rfind("simp();").unwrap();
+    let position = expansion::position_at_offset(sidecar, closer);
+    let expanded = expand_c0_tactic_source_at(sidecar, &sources, position.line, position.column)
+        .expect("the checked return pointer should name the witness");
     assert!(!expanded.contains('…'), "{expanded}");
     verify_c0_sources(&expanded, &sources).expect("the named expansion must independently verify");
-    let changed_pointer = expanded.replace("((uint64)result)", "((uint64)node)");
+    let changed_pointer = expanded.replace("aligned(result, 16)", "aligned(node, 16)");
     assert_ne!(changed_pointer, expanded);
     verify_c0_sources(&changed_pointer, &sources)
         .expect_err("a different pointer cannot establish the witness premises");
@@ -17433,4 +17518,32 @@ fn an_omitted_loop_phase_expands_to_an_explicit_phase_proof() {
         "{}",
         error.message()
     );
+}
+
+/// A loop phase is expanded by its label over compiler-prepared C exactly as
+/// over a source bundle, through the prepared entry point and through the
+/// input-generic one `click expand --claim` uses, and the rewrite checks
+/// over the same prepared import.
+#[test]
+fn a_loop_phase_expands_by_label_over_a_prepared_c_import() {
+    use crate::languages::c::compiler_import::PreparedCImport;
+
+    let sources = [("omitted.c", OMITTED_PHASE_C)];
+    let imports = [PreparedCImport::for_test("omitted.c", OMITTED_PHASE_C)];
+    let inputs = ProgramInputs::Prepared(&imports);
+    for phase in ["initialize", "preserve"] {
+        let label = format!("f.loop(0).{phase}");
+        let bundled = expand_c0_claim_source_by_label(OMITTED_PHASE_CLICK, &sources, &label)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+        let prepared =
+            expand_c0_prepared_claim_source_by_label(OMITTED_PHASE_CLICK, &imports, &label)
+                .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+        assert_eq!(prepared, bundled, "{label}");
+        let generic = expand_claim_by_label(None, OMITTED_PHASE_CLICK, &inputs, &label, None)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+        assert_eq!(generic.source, bundled, "{label}");
+        assert_eq!(generic.proof_unit, "f.contract", "{label}");
+        verify_c0_prepared_sources(&prepared, &imports)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
+    }
 }

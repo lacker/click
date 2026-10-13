@@ -102,11 +102,15 @@ pub(super) fn is_standard_byte(value: &CppType) -> bool {
         is_fixed: true, .. } if declaration_id == "c:@N@std@E@byte" && name == "std::byte")
 }
 
-/// Reinterpretation changes only the access type and byte stride. It cannot
-/// grant authority, initialize storage or create a typed object from bytes.
+/// Direct reinterpretation is bounded to the approved declared uint32 profile
+/// and genuine byte storage. Signed-int traversal needs a separate guarantee;
+/// explicitly cataloged span<int> conversion is a distinct library assumption.
+/// No conversion grants authority, initializes storage or creates an object.
 pub(super) fn byte_pointer_cast(source: &CppType, target: &CppType) -> bool {
     matches!((source, target), (CppType::Pointer { pointee: source }, CppType::Pointer { pointee: target })
-        if Scalar::pointer_element(source, false).is_some() && is_standard_byte(target)
+        if Scalar::pointer_element(source, false).is_some_and(|scalar|
+            matches!(scalar.kind, ScalarKind::UInt32 | ScalarKind::UInt8))
+            && is_standard_byte(target)
             && Scalar::pointer_element(target, false).is_some())
 }
 

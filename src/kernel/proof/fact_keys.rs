@@ -3724,7 +3724,8 @@ fn checked_proposition_contains_memory_loadability(proposition: &Proposition) ->
         return Err(());
     }
     match proposition {
-        Proposition::CMemoryLoadable { .. }
+        Proposition::CValidPlace { .. }
+        | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryReadDefined { .. }
         | Proposition::CMemoryInitialized { .. } => Ok(true),
         Proposition::And(left, right)

@@ -1246,6 +1246,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                 bytes: 12,
                 element_width: 4,
                 element_type: Some(CType::Int32),
+                observation_count: None,
                 struct_layout: None,
             },
         )]),

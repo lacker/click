@@ -1892,8 +1892,7 @@ fn source_have_error(
                     goal,
                     &premises,
                     "the available fact was stated",
-                    &[],
-                    &[],
+                    ParameterBinding::default(),
                 )
             })
             .map(|mismatch| format!("\n  {mismatch}"))
@@ -1915,7 +1914,8 @@ pub(super) fn solve_nested_have<'a>(
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     let source_proof = have.checking_proof();
     let selected = match source_proof.as_ref() {
-        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+        SourceProof::Tactic(SmartTactic::Auto) => nested.try_auto_fact_closure()?,
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Simp) => {
             nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
@@ -3146,7 +3146,6 @@ fn record_source_successor_smart_expansions(
 /// already consumed by the operation that created the focused Proof arms.
 /// The untouched continuation is borrowed directly, so this cursor retains
 /// no semantic state and does not clone the proof tree.
-#[allow(clippy::too_many_arguments)]
 fn advance_focused_execution_region_after_leading_tactic<'a>(
     proof: Proof<'a>,
     enclosing_record: Option<&ExecutionSplit<'a>>,
@@ -4777,7 +4776,6 @@ fn advance_checked_open_scope<'a>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn introduce_proof_case_assumption(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
@@ -4807,12 +4805,13 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
         if let Ok(proposition) = lower_fixed_state_proposition(
             lowering_condition,
             pure_facts,
-            parameters,
-            arguments,
-            proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
-            &execution.core.state,
-            None,
-            &execution.presentation.recorded_snapshots,
+            ParameterBinding::new(parameters, arguments),
+            FixedStateFrame::new(
+                proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
+                &execution.core.state,
+                None,
+                &execution.presentation.recorded_snapshots,
+            ),
             SpecDefinitions::new(predicate_environment, click_function_environment),
         ) {
             let surface_fact = if value {
@@ -4874,12 +4873,13 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
     let proposition = lower_fixed_state_proposition(
         lowering_condition,
         pure_facts,
-        parameters,
-        arguments,
-        proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
-        &execution.core.state,
-        None,
-        &execution.presentation.recorded_snapshots,
+        ParameterBinding::new(parameters, arguments),
+        FixedStateFrame::new(
+            proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
+            &execution.core.state,
+            None,
+            &execution.presentation.recorded_snapshots,
+        ),
         SpecDefinitions::new(predicate_environment, click_function_environment),
     )
     .map_err(|message| {
@@ -4956,6 +4956,7 @@ fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) 
             ClickProposition::Not(body) => stable(body, expression_is_stable),
             ClickProposition::Separate { .. }
             | ClickProposition::Contains { .. }
+            | ClickProposition::ValidPlace { .. }
             | ClickProposition::Initialized { .. }
             | ClickProposition::Loadable { .. }
             | ClickProposition::ForAll { .. }

@@ -832,6 +832,7 @@ fn materialized_load_is_unchanged(
 }
 
 struct CertifiedFunctionClaimPath {
+    checked_resource_guard_case: Option<Arc<CCheckedResourceGuardCase>>,
     independent_entry: std::cell::OnceCell<bool>,
     entry_assumptions: PureFactContext,
     caller_state: CState,
@@ -839,6 +840,7 @@ struct CertifiedFunctionClaimPath {
     outcome: CFunctionOutcome,
     exit_state: Option<CState>,
     entry_state: CState,
+    body_entry_state: CState,
     required_resources: ResourceContext,
     checked_required_resources: Vec<crate::kernel::functions::CCheckedResourceFact>,
     entry_resources: ResourceContext,
@@ -918,6 +920,7 @@ fn prepare_function_claim_path(
     checked_returned_resources: crate::kernel::ResourceContext,
     capture_failure: bool,
     checked_transfer: Option<&crate::kernel::functions::CheckedBoundaryResourceTransfer>,
+    checked_resource_guard_case: Option<Arc<CCheckedResourceGuardCase>>,
 ) -> Result<CertifiedFunctionClaimPath, ContractPathPreparationFailure> {
     // The boundary transfer is captured from the proof's entry function,
     // before loop annotations are attached. It depends only on the
@@ -949,6 +952,9 @@ fn prepare_function_claim_path(
             .to_string()
             .into());
     };
+    // Contract observations use the incoming value image. Semantic effects
+    // select the callee's actual private by-value object and its authority.
+    let body_entry_state = entry_state.clone();
     let mut entry_state = contract_view_of_entry(entry_state, function, arguments);
     let mut budget = ExecutionBudget::beside_live_state();
     let (required_resources, checked_required_resources) =
@@ -1158,6 +1164,7 @@ fn prepare_function_claim_path(
             });
         }
         return Ok(CertifiedFunctionClaimPath {
+            checked_resource_guard_case,
             independent_entry,
             entry_assumptions,
             caller_state: caller_state.clone(),
@@ -1165,6 +1172,7 @@ fn prepare_function_claim_path(
             outcome: outcome.clone(),
             exit_state: None,
             entry_state,
+            body_entry_state,
             required_resources,
             checked_required_resources,
             entry_resources,
@@ -1341,6 +1349,7 @@ fn prepare_function_claim_path(
         .synchronize_memory_equalities(&assumptions);
 
     Ok(CertifiedFunctionClaimPath {
+        checked_resource_guard_case,
         independent_entry,
         entry_assumptions,
         caller_state: caller_state.clone(),
@@ -1348,6 +1357,7 @@ fn prepare_function_claim_path(
         outcome: outcome.clone(),
         exit_state: Some(*claim_exit_state),
         entry_state,
+        body_entry_state,
         required_resources,
         checked_required_resources,
         entry_resources,
@@ -1410,8 +1420,10 @@ fn function_claim_holds_on_prepared_path(
     completion_origin_state: Option<&CState>,
 ) -> bool {
     let CertifiedFunctionClaimPath {
+        checked_resource_guard_case: _,
         independent_entry: _,
         entry_assumptions: _,
+        body_entry_state: _,
         caller_state,
         arguments,
         outcome,
@@ -2576,7 +2588,30 @@ fn pointer_store_arguments(
         .contract_interface()
         .parameters()
         .iter()
-        .map(|parameter| path.entry_state.locals().get(parameter.name()).cloned())
+        .map(|parameter| {
+            if let Some(layout) = parameter.aggregate_layout() {
+                let Some(CLocalBinding::AggregateObject {
+                    layout: bound,
+                    slot,
+                    ..
+                }) = path.body_entry_state.locals().binding(parameter.name())
+                else {
+                    return None;
+                };
+                if bound != layout {
+                    return None;
+                }
+                path.body_entry_state
+                    .memory()
+                    .declared_aggregate_pointer(slot, bound)
+                    .map(|pointer| CValue::Pointer(pointer.with_type(parameter.c_type())))
+            } else {
+                path.body_entry_state
+                    .locals()
+                    .get(parameter.name())
+                    .cloned()
+            }
+        })
         .collect()
 }
 
@@ -2598,7 +2633,7 @@ fn pointer_store_effect_holds(
         return false;
     };
     let Some(destination) = crate::kernel::functions::pointer_store_effects::selected(
-        &path.entry_state,
+        &path.body_entry_state,
         function.contract_interface(),
         &arguments,
         &effect.destination,
@@ -2607,7 +2642,7 @@ fn pointer_store_effect_holds(
         return false;
     };
     let Some(element_type) = crate::kernel::functions::pointer_store_effects::selected_element_type(
-        &path.entry_state,
+        &path.body_entry_state,
         &destination,
         &path.assumptions,
     ) else {
@@ -2642,18 +2677,30 @@ fn pointer_store_effect_holds(
     {
         return false;
     }
-    let Some(source) = crate::kernel::functions::pointer_store_effects::selected(
-        &path.entry_state,
-        function.contract_interface(),
-        &arguments,
-        &effect.source,
-        &effect.source_path,
-    ) else {
-        return false;
+    let source = if let Some(field) = &effect.source_field {
+        crate::kernel::functions::pointer_store_effects::field_source(
+            &path.body_entry_state,
+            function.contract_interface(),
+            &arguments,
+            field,
+            effect.value_type,
+            &path.assumptions,
+        )
+    } else {
+        crate::kernel::functions::pointer_store_effects::selected(
+            &path.body_entry_state,
+            function.contract_interface(),
+            &arguments,
+            &effect.source,
+            &effect.source_path,
+        )
+        .map(|source| source.with_type(effect.value_type))
     };
-    source.designation().is_some()
-        && post_state.memory().known_value(destination.pointer())
-            == Some(CValue::Pointer(source.with_type(effect.value_type)))
+    source.is_some_and(|source| {
+        source.designation().is_some()
+            && post_state.memory().known_value(destination.pointer())
+                == Some(CValue::Pointer(source))
+    })
 }
 
 fn infer_pointer_store_effects(
@@ -2664,15 +2711,16 @@ fn infer_pointer_store_effects(
     {
         return Vec::new();
     }
+
     let mut candidates = BTreeSet::new();
     for view in cases.iter().flatten() {
         let Ok(paths) = view.prepared(function) else {
             continue;
         };
         for path in paths {
-            if !pointer_effect_entry_has_independent_binders(function, path)
-                || !matches!(path.outcome, CFunctionOutcome::Return { .. })
-            {
+            let independent = pointer_effect_entry_has_independent_binders(function, path);
+
+            if !independent || !matches!(path.outcome, CFunctionOutcome::Return { .. }) {
                 continue;
             }
             let Some(post_state) = path.post_state.as_ref() else {
@@ -2695,22 +2743,30 @@ fn infer_pointer_store_effects(
                 roots.push(CPointerEffectRoot::ConstructionDestination);
             }
             for destination_root in &roots {
+                // A by-value parameter is private callee storage. Its member
+                // stores cannot become writes to the caller's argument image.
+                if matches!(destination_root, CPointerEffectRoot::Parameter(index)
+                    if function.parameters()[*index].aggregate_layout().is_some())
+                {
+                    continue;
+                }
                 let Some(destination) = crate::kernel::functions::pointer_store_effects::root(
-                    &path.entry_state,
+                    &path.body_entry_state,
                     function.contract_interface(),
                     &arguments,
                     destination_root,
                 ) else {
                     continue;
                 };
-                for (destination_path, value_type) in
-                    crate::kernel::functions::pointer_store_effects::pointer_fields(
-                        &path.entry_state,
-                        &destination,
-                    )
-                {
+
+                let fields = crate::kernel::functions::pointer_store_effects::pointer_fields(
+                    &path.body_entry_state,
+                    &destination,
+                );
+
+                for (destination_path, value_type) in fields {
                     let Some(cell) = crate::kernel::functions::pointer_store_effects::selected(
-                        &path.entry_state,
+                        &path.body_entry_state,
                         function.contract_interface(),
                         &arguments,
                         destination_root,
@@ -2718,14 +2774,35 @@ fn infer_pointer_store_effects(
                     ) else {
                         continue;
                     };
+
                     let Some(CValue::Pointer(stored)) =
                         post_state.memory().known_value(cell.pointer())
                     else {
                         continue;
                     };
+                    for field in crate::kernel::functions::pointer_store_effects::field_sources(
+                        &path.body_entry_state,
+                        function.contract_interface(),
+                        &arguments,
+                        &path.assumptions,
+                    ) {
+                        let effect = CPointerStoreEffect {
+                            destination: destination_root.clone(),
+                            destination_path: destination_path.clone().into(),
+                            value_type,
+                            source: CPointerEffectRoot::Parameter(field.parameter),
+                            source_path: Default::default(),
+                            source_field: Some(field),
+                        };
+                        let holds = pointer_store_effect_holds(function, &effect, path);
+
+                        if holds {
+                            candidates.insert(effect);
+                        }
+                    }
                     for source_root in &roots {
                         let Some(source) = crate::kernel::functions::pointer_store_effects::root(
-                            &path.entry_state,
+                            &path.body_entry_state,
                             function.contract_interface(),
                             &arguments,
                             source_root,
@@ -2745,19 +2822,17 @@ fn infer_pointer_store_effects(
                                 ..
                             }),
                         ) = (stored.designation(), source.designation())
+                            && root == source_root
+                            && stored_path.starts_with(source_path)
+                            && let Some(path) = stored_path[source_path.len()..]
+                                .iter()
+                                .map(|selection| match selection {
+                                    PointerDomainSelection::Member(name) => Some(name.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Option<Vec<_>>>()
                         {
-                            if root == source_root && stored_path.starts_with(source_path) {
-                                if let Some(path) = stored_path[source_path.len()..]
-                                    .iter()
-                                    .map(|selection| match selection {
-                                        PointerDomainSelection::Member(name) => Some(name.clone()),
-                                        _ => None,
-                                    })
-                                    .collect::<Option<Vec<_>>>()
-                                {
-                                    source_paths.push(path);
-                                }
-                            }
+                            source_paths.push(path);
                         }
                         if let (
                             Some(PointerDesignation::InputSelected {
@@ -2773,22 +2848,18 @@ fn infer_pointer_store_effects(
                                 ..
                             }),
                         ) = (stored.designation(), source.designation())
+                            && input == source_input
+                            && origin == source_origin
+                            && stored_path.starts_with(source_path)
+                            && let Some(path) = stored_path[source_path.len()..]
+                                .iter()
+                                .map(|selection| match selection {
+                                    PointerDomainSelection::Member(name) => Some(name.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Option<Vec<_>>>()
                         {
-                            if input == source_input
-                                && origin == source_origin
-                                && stored_path.starts_with(source_path)
-                            {
-                                if let Some(path) = stored_path[source_path.len()..]
-                                    .iter()
-                                    .map(|selection| match selection {
-                                        PointerDomainSelection::Member(name) => Some(name.clone()),
-                                        _ => None,
-                                    })
-                                    .collect::<Option<Vec<_>>>()
-                                {
-                                    source_paths.push(path);
-                                }
-                            }
+                            source_paths.push(path);
                         }
                         for source_path in source_paths {
                             let effect = CPointerStoreEffect {
@@ -2797,6 +2868,7 @@ fn infer_pointer_store_effects(
                                 value_type,
                                 source: source_root.clone(),
                                 source_path: source_path.into(),
+                                source_field: None,
                             };
                             let holds = pointer_store_effect_holds(function, &effect, path);
                             if holds {
@@ -2823,7 +2895,7 @@ fn infer_pointer_store_effects(
                 })
             })
         })
-        .collect()
+        .collect::<Vec<_>>()
 }
 
 fn infer_pointer_result_effects(
@@ -2859,6 +2931,19 @@ fn infer_pointer_result_effects(
             candidates.insert(CPointerResultEffect::Opaque);
             if !pointer_effect_entry_has_independent_binders(function, path) {
                 continue;
+            }
+            if let Some(arguments) = pointer_store_arguments(function, path) {
+                for source in crate::kernel::functions::pointer_store_effects::field_sources(
+                    &path.entry_state,
+                    function.contract_interface(),
+                    &arguments,
+                    &path.assumptions,
+                ) {
+                    let effect = CPointerResultEffect::ExactFromPointerField { source };
+                    if pointer_result_effect_holds(function, &effect, path) {
+                        candidates.insert(effect);
+                    }
+                }
             }
             for (parameter, formal) in function
                 .contract_interface()
@@ -2937,12 +3022,20 @@ fn infer_pointer_result_effects(
                 } else {
                     continue;
                 };
-                let effect = CPointerResultEffect::FromParameter {
-                    parameter,
-                    child_path: child_path.into(),
-                };
-                if pointer_result_effect_holds(function, &effect, path) {
-                    candidates.insert(effect);
+                let child_path: Arc<[String]> = child_path.into();
+                for effect in [
+                    CPointerResultEffect::FromParameter {
+                        parameter,
+                        child_path: child_path.clone(),
+                    },
+                    CPointerResultEffect::ExactFromParameter {
+                        parameter,
+                        child_path,
+                    },
+                ] {
+                    if pointer_result_effect_holds(function, &effect, path) {
+                        candidates.insert(effect);
+                    }
                 }
             }
         }
@@ -2963,133 +3056,26 @@ fn infer_pointer_result_effects(
                 })
             })
         })
-        .collect()
+        .collect::<Vec<_>>()
 }
 
 fn pointer_effect_entry_has_independent_binders(
     function: &CFunction,
     path: &CertifiedFunctionClaimPath,
 ) -> bool {
-    if !*path.independent_entry.get_or_init(|| {
+    // The declaration-only reconstruction checks fresh, distinct scalar and
+    // aggregate input binders, their qualifiers and their exact permitted
+    // metadata. A second scalar-local check would reject private by-value
+    // parameter objects despite their independently checked entry recipe.
+    *path.independent_entry.get_or_init(|| {
         crate::kernel::functions::independent_entry::matches(
             function,
             &path.arguments,
             &path.caller_state,
             &path.entry_assumptions,
+            path.checked_resource_guard_case.as_deref(),
         )
-    }) {
-        return false;
-    }
-    let mut binders = BTreeSet::new();
-    if path.arguments.len() != function.parameters().len() {
-        return false;
-    }
-    for (argument, parameter) in path.arguments.iter().zip(function.parameters()) {
-        let CExpression::Value(value) = argument else {
-            return false;
-        };
-        let variable = match value {
-            CValue::Bool(Bitvector32Term::If {
-                condition,
-                then_term,
-                else_term,
-            }) => {
-                // The source entry producer normalizes a symbolic bool to
-                // `v == 0 ? 0 : 1`. This remains one independent binder;
-                // arbitrary scalar expressions and constants stay excluded.
-                let ConditionTerm::Bitvector32Equal(left, right) = condition.as_ref() else {
-                    return false;
-                };
-                let Bitvector32Term::Variable(variable) = left.as_ref() else {
-                    return false;
-                };
-                if **right != Bitvector32Term::Constant(0)
-                    || **then_term != Bitvector32Term::Constant(0)
-                    || **else_term != Bitvector32Term::Constant(1)
-                {
-                    return false;
-                }
-                *variable
-            }
-            CValue::Bool(Bitvector32Term::Variable(variable))
-            | CValue::Int8(Bitvector32Term::Variable(variable))
-            | CValue::UInt8(Bitvector32Term::Variable(variable))
-            | CValue::Int16(Bitvector32Term::Variable(variable))
-            | CValue::UInt16(Bitvector32Term::Variable(variable))
-            | CValue::Int32(Bitvector32Term::Variable(variable))
-            | CValue::UInt32(Bitvector32Term::Variable(variable))
-            | CValue::Int64(Bitvector32Term::Variable(variable))
-            | CValue::UInt64(Bitvector32Term::Variable(variable))
-            | CValue::Int128(Bitvector32Term::Variable(variable))
-            | CValue::UInt128(Bitvector32Term::Variable(variable))
-            | CValue::Float32(Bitvector32Term::Variable(variable))
-            | CValue::Float64(Bitvector32Term::Variable(variable)) => *variable,
-            CValue::Pointer(pointer) => {
-                let variable = match (&pointer.pointer().block, &pointer.pointer().offset) {
-                    (PointerBlock::Symbolic(variable), PointerOffsetTerm::Constant(0)) => *variable,
-                    (
-                        PointerBlock::ExternalArgument,
-                        PointerOffsetTerm::Int32Scaled { value, byte_width },
-                    ) if *byte_width
-                        == i64::from(
-                            parameter
-                                .c_type()
-                                .pointee_type()
-                                .map_or(1, CType::byte_width),
-                        ) =>
-                    {
-                        let Bitvector32Term::Variable(variable) = value.as_ref() else {
-                            return false;
-                        };
-                        *variable
-                    }
-                    _ => return false,
-                };
-                // Entry binders may have a checked native root descriptor,
-                // but never a caller-selected sibling or a shared domain.
-                let Some(CValue::Pointer(entry)) = path.entry_state.locals().get(parameter.name())
-                else {
-                    return false;
-                };
-                match entry.designation() {
-                    None => {}
-                    Some(PointerDesignation::Unresolved(domain)) if *domain == variable => {}
-                    Some(PointerDesignation::Object {
-                        root,
-                        path: selections,
-                        base,
-                        ..
-                    }) if root == pointer.pointer() && *base == *root && selections.is_empty() => {}
-                    Some(PointerDesignation::InputSelected {
-                        input: CNativeInputIdentity::Unresolved(origin_variable),
-                        origin,
-                        path: selections,
-                        base,
-                        ..
-                    }) if *origin_variable == variable
-                        && origin == pointer.pointer()
-                        && base == origin
-                        && selections.is_empty()
-                        && path
-                            .entry_state
-                            .memory()
-                            .authenticated_input_selection(entry, &path.entry_assumptions)
-                            .is_some_and(|guards| {
-                                guards
-                                    .iter()
-                                    .all(|guard| path.entry_assumptions.decide(guard) == Some(true))
-                            }) => {}
-                    _ => return false,
-                }
-                variable
-            }
-            _ => return false,
-        };
-        if !binders.insert(variable) {
-            return false;
-        }
-    }
-    true
+    })
 }
 
 fn pointer_result_effect_holds(
@@ -3106,14 +3092,32 @@ fn pointer_result_effect_holds(
     let CValue::Pointer(result) = value else {
         return false;
     };
-    let CPointerResultEffect::FromParameter {
-        parameter,
-        child_path,
-    } = effect
-    else {
-        // This marker only prevents erasure. Unlike a transported domain it
-        // promises no object or access, including on another unknown return.
-        return true;
+    if let CPointerResultEffect::ExactFromPointerField { source } = effect {
+        let Some(arguments) = pointer_store_arguments(function, path) else {
+            return false;
+        };
+        return crate::kernel::functions::pointer_store_effects::field_source(
+            &path.entry_state,
+            function.contract_interface(),
+            &arguments,
+            source,
+            result.c_type(),
+            &path.assumptions,
+        )
+        .is_some_and(|input| input == *result);
+    }
+    let (parameter, child_path, exact) = match effect {
+        CPointerResultEffect::FromParameter {
+            parameter,
+            child_path,
+        } => (parameter, child_path, false),
+        CPointerResultEffect::ExactFromParameter {
+            parameter,
+            child_path,
+        } => (parameter, child_path, true),
+        // This marker only prevents erasure and promises no object or access.
+        CPointerResultEffect::Opaque => return true,
+        CPointerResultEffect::ExactFromPointerField { .. } => return false,
     };
     let Some(CValue::Pointer(input)) = path
         .entry_state
@@ -3134,7 +3138,9 @@ fn pointer_result_effect_holds(
         };
         selected
     };
-    selected.designation().is_some() && selected.same_designation(result)
+    selected.designation().is_some()
+        && selected.same_designation(result)
+        && (!exact || selected.pointer() == result.pointer())
 }
 
 /// One complete path set, prepared once and reused across claim checks.
@@ -3199,6 +3205,7 @@ impl ContractPathSetView<'_> {
                                     .boundary_transfers
                                     .get(index)
                                     .and_then(Option::as_deref),
+                                self.set.checked_resource_guard_cases.get(index).cloned(),
                             )
                             .map_err(|mut failure| {
                                 failure.reason = format!(
@@ -3454,7 +3461,7 @@ pub fn c_external_function_rule(function: CFunction) -> Option<CExternalFunction
         && function.opaque_contract_supported()
         && function
             .contract_interface()
-            .initialization_outputs()
+            .initialization_output_selectors()
             .is_some_and(|outputs| outputs.is_empty())
         && !function.contract_claims().is_empty()
         && function_contract_claims_are_complete(&function))

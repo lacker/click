@@ -540,3 +540,52 @@ fn checked_object_address_rejects_storage_after_its_local_lifetime_ends() {
         CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory)
     ));
 }
+
+#[test]
+fn wide_pointer_subtraction_preserves_unsigned_magnitude_and_bounds() {
+    let state = CState::new().with_memory(CMemory::new().with_block("offsets", 16));
+    let at = |offset| Pointer {
+        block: "offsets".into(),
+        offset: PointerOffsetTerm::Constant(offset),
+    };
+    for ty in [CType::VoidPointer, CType::UInt8Pointer, CType::Int32Pointer] {
+        let stride = if ty == CType::Int32Pointer { 4 } else { 1 };
+        for offset in [c_uint32_literal(1), c_uint64_literal(1), c_int64_literal(1)] {
+            let result = value(
+                &state,
+                c_subtract(c_cast(c_typed_pointer_value(at(8), ty), ty), offset),
+            );
+            assert_eq!(result, CValue::typed_pointer(at(8 - stride), ty));
+        }
+        let result = value(
+            &state,
+            c_subtract(
+                c_cast(c_typed_pointer_value(at(8), ty), ty),
+                c_int64_literal(-1),
+            ),
+        );
+        assert_eq!(result, CValue::typed_pointer(at(8 + stride), ty));
+        for offset in [
+            c_uint64_literal(17),
+            c_uint64_literal(u64::MAX),
+            c_int64_literal(i64::MIN),
+        ] {
+            assert!(matches!(
+                outcome(
+                    &state,
+                    c_subtract(c_cast(c_typed_pointer_value(at(8), ty), ty), offset)
+                ),
+                CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic)
+            ));
+        }
+        for offset in [c_uint32_literal(0), c_uint64_literal(0), c_int64_literal(0)] {
+            assert_eq!(
+                value(
+                    &state,
+                    c_subtract(c_cast(c_typed_pointer_value(at(0), ty), ty), offset)
+                ),
+                CValue::typed_pointer(at(0), ty)
+            );
+        }
+    }
+}

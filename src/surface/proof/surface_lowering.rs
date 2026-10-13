@@ -281,14 +281,10 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
-                    context.parameters,
-                    context.arguments,
-                    context.pre_state,
-                    context.state,
-                    context.result,
+                    context.parameter_binding,
+                    context.fixed_state,
                     &algebraic_values,
                     self.local_integer_values(),
-                    context.recorded_snapshots,
                     context.spec_definitions,
                 )
                 .map_err(|message| {
@@ -336,14 +332,10 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
-                    view.parameters,
-                    view.arguments,
-                    view.pre_state,
-                    view.state,
-                    view.result,
+                    view.parameter_binding,
+                    view.fixed_state,
                     &algebraic_values,
                     self.local_integer_values(),
-                    view.recorded_snapshots,
                     view.spec_definitions,
                 )
                 .map_err(|message| {
@@ -365,14 +357,15 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    pre_state,
-                    &execution.core.state,
-                    None,
+                    context.parameter_binding(),
+                    FixedStateFrame::new(
+                        pre_state,
+                        &execution.core.state,
+                        None,
+                        &execution.presentation.recorded_snapshots,
+                    ),
                     &algebraic_values,
                     self.local_integer_values(),
-                    &execution.presentation.recorded_snapshots,
                     context.spec_definitions,
                 )
                 .map_err(|message| {
@@ -457,14 +450,10 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
-                    context.parameters,
-                    context.arguments,
-                    context.pre_state,
-                    context.state,
-                    context.result,
+                    context.parameter_binding,
+                    context.fixed_state,
                     &algebraic_values,
                     self.local_integer_values(),
-                    context.recorded_snapshots,
                     context.spec_definitions,
                 )
                 .map_err(|message| {
@@ -484,14 +473,10 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
-                    view.parameters,
-                    view.arguments,
-                    view.pre_state,
-                    view.state,
-                    view.result,
+                    view.parameter_binding,
+                    view.fixed_state,
                     &algebraic_values,
                     self.local_integer_values(),
-                    view.recorded_snapshots,
                     view.spec_definitions,
                 )
                 .map_err(|message| {
@@ -513,14 +498,15 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_algebraic_values(
                     &surface,
                     self.facts().assumptions(),
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    pre_state,
-                    &execution.core.state,
-                    None,
+                    context.parameter_binding(),
+                    FixedStateFrame::new(
+                        pre_state,
+                        &execution.core.state,
+                        None,
+                        &execution.presentation.recorded_snapshots,
+                    ),
                     &algebraic_values,
                     self.local_integer_values(),
-                    &execution.presentation.recorded_snapshots,
                     context.spec_definitions,
                 )
                 .map_err(|message| {
@@ -635,12 +621,8 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_assumptions_recording_introductions(
                     &surface,
                     self.facts().assumptions(),
-                    context.parameters,
-                    context.arguments,
-                    context.pre_state,
-                    context.state,
-                    context.result,
-                    context.recorded_snapshots,
+                    context.parameter_binding,
+                    context.fixed_state,
                     context.spec_definitions,
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
@@ -660,12 +642,8 @@ impl<'a> Proof<'a> {
                 lower_fixed_state_proposition_with_assumptions_recording_introductions(
                     &surface,
                     self.facts().assumptions(),
-                    view.parameters,
-                    view.arguments,
-                    view.pre_state,
-                    view.state,
-                    view.result,
-                    view.recorded_snapshots,
+                    view.parameter_binding,
+                    view.fixed_state,
                     view.spec_definitions,
                 )
                 .map(|(proposition, introductions)| (proposition, Some(introductions)))
@@ -930,7 +908,7 @@ impl<'a> Proof<'a> {
             }
             Ok(())
         }
-        resolve(&mut resource, view.state).map_err(|message| {
+        resolve(&mut resource, view.fixed_state.state).map_err(|message| {
             self.step_error(format!(
                 "could not resolve current resource arguments: {message}"
             ))

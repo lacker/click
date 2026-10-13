@@ -126,7 +126,7 @@ int32 signed_short_remainder(short value) {
 }
 
 int32 unsigned_short_bitwise(uint16_t value) {
-    ensures bitwise: result == (value & 255) | (value ^ 1023) by auto;
+    ensures bitwise: result == ((value & 255) | (value ^ 1023)) by auto;
 }
 
 int32 unsigned_short_shift(uint16_t value) {

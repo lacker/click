@@ -1,4 +1,4 @@
-verifying "rb_erase_augmented.c";
+verifying "rb_erase.c";
 
 import "../rbtree-model/rbtree_resources.click";
 import "../rbtree-model/rbtree_erase_splice.click";
@@ -19,9 +19,9 @@ contract void EraseCopy(struct rb_node* node, struct rb_node* successor) {
 }
 
 resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
-    owns augment->propagate;
-    owns augment->copy;
-    owns augment->rotate;
+    views augment->propagate;
+    views augment->copy;
+    views augment->rotate;
     fact ErasePropagate(augment->propagate);
     fact EraseCopy(augment->copy);
     fact AugmentRotate(augment->rotate);
@@ -44,10 +44,6 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     requires is_rb(tree.model) == 1;
     requires rb_parent_consistent(tree.model, 0) == 1;
     views erase_callbacks(augment);
-    requires separate(memory(*augment), memory(*root));
-    requires separate(memory(*augment), memory(node->rb_left->__rb_parent_color));
-    requires separate(memory(*augment), memory(node->rb_right->__rb_parent_color));
-    requires separate(memory(*augment), memory(node->rb_right->rb_left));
     produces node->__rb_parent_color;
     produces node->rb_left;
     produces node->rb_right;
@@ -205,4 +201,64 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
             }
         },
     }
+}
+
+void dummy_propagate(struct rb_node* node, struct rb_node* stop) {
+    ensures 1 == 1;
+} by { execute(); normalize(); }
+void dummy_copy(struct rb_node* old, struct rb_node* new) {
+    requires old != 0;
+    requires new != 0;
+    ensures 1 == 1;
+} by { execute(); normalize(); }
+void dummy_rotate(struct rb_node* old, struct rb_node* new) {
+    requires new != 0;
+    ensures 1 == 1;
+} by { execute(); normalize(); }
+
+theorem dummy_propagate_contract() {
+    ensures ErasePropagate(&dummy_propagate) by { unfold(ErasePropagate); simp(); }
+}
+theorem dummy_copy_contract() {
+    ensures EraseCopy(&dummy_copy) by { unfold(EraseCopy); simp(); }
+}
+theorem dummy_rotate_contract() {
+    ensures AugmentRotate(&dummy_rotate) by { unfold(AugmentRotate); simp(); }
+}
+
+void rb_erase(struct rb_node* node, struct rb_root* root) {
+    consumes tree: rb_at(node);
+    consumes up: ctx_at(node, root);
+    requires up.model == Context::Top;
+    requires tree.model != RbTree::Empty;
+    requires rb_parent_is(tree.model, 0) == 1;
+    requires rb_color(tree.model) == Color::Black;
+    requires rb_left(tree.model) != RbTree::Empty;
+    requires rb_right(tree.model) != RbTree::Empty;
+    requires rb_left(rb_right(tree.model)) == RbTree::Empty;
+    requires rb_right(rb_right(tree.model)) == RbTree::Empty;
+    requires rb_color(rb_right(tree.model)) == Color::Red;
+    requires is_rb(tree.model) == 1;
+    requires rb_parent_consistent(tree.model, 0) == 1;
+    views dummy_callbacks.propagate;
+    views dummy_callbacks.copy;
+    views dummy_callbacks.rotate;
+    produces node->__rb_parent_color;
+    produces node->rb_left;
+    produces node->rb_right;
+    produces whole: rb_root_at(root);
+    ensures whole.model == rb_successor_splice(old(node->rb_right), 0, Color::Black,
+        rb_left(old(tree.model)), rb_right(old(tree.model)));
+    ensures is_rb_root(whole.model) == 1;
+    ensures rb_parent_consistent(whole.model, 0) == 1;
+    ensures rb_inorder(whole.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))));
+} by {
+    apply(dummy_propagate_contract());
+    apply(dummy_copy_contract());
+    apply(dummy_rotate_contract());
+    fold(erase_callbacks(&dummy_callbacks));
+    step();
+    let { remaining: whole } = step(__rb_erase_augmented(node, root, &dummy_callbacks), { tree: tree, up: up });
+    have rebalance == 0;
+    execute(); simp();
 }

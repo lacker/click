@@ -254,6 +254,12 @@ fn collect_proposition_bitvector_variables_one(
             collect_pointer_bitvector_variables(pointer, variables);
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
+        Proposition::CValidPlace {
+            memory, pointer, ..
+        } => {
+            collect_memory_bitvector_variables(memory, variables);
+            collect_c_value_bitvector_variables(&CValue::Pointer(pointer.clone()), variables);
+        }
         Proposition::CMemoryInitialized {
             memory,
             base: pointer,
@@ -801,7 +807,12 @@ pub(in crate::kernel) fn collect_spec_proposition_bitvector_variables(
             collect_spec_resource_bitvector_variables(left, variables);
             collect_spec_resource_bitvector_variables(right, variables);
         }
-        SpecProposition::MemoryInitialized { memory, base, .. } => {
+        SpecProposition::ValidPlace {
+            memory,
+            pointer: base,
+            ..
+        }
+        | SpecProposition::MemoryInitialized { memory, base, .. } => {
             collect_spec_memory_bitvector_variables(memory, variables);
             collect_spec_expression_bitvector_variables(base, variables);
         }
@@ -1496,7 +1507,12 @@ fn collect_spec_proposition_bound_identities(
             collect_spec_resource_bound_identities(left, variables, integer_seen);
             collect_spec_resource_bound_identities(right, variables, integer_seen);
         }
-        SpecProposition::MemoryInitialized { memory, base, .. } => {
+        SpecProposition::ValidPlace {
+            memory,
+            pointer: base,
+            ..
+        }
+        | SpecProposition::MemoryInitialized { memory, base, .. } => {
             collect_spec_memory_bound_identities(memory, variables, integer_seen);
             collect_spec_integer_bound_expression(base, variables, integer_seen);
         }
@@ -1789,6 +1805,10 @@ pub(in crate::kernel) fn collect_c_function_contract_interface_bitvector_variabl
     interface: &CFunctionContractInterface,
     variables: &mut BTreeSet<Variable>,
 ) {
+    for span in interface.native_span_expression_inputs() {
+        collect_c_expression_bitvector_variables(&span.carrier, variables);
+        collect_c_expression_bitvector_variables(&span.count, variables);
+    }
     for resource in interface
         .proof_parameters()
         .iter()
@@ -5058,18 +5078,18 @@ fn run_representative_variables(
 ) -> Option<BTreeSet<Variable>> {
     match run.value_mode() {
         crate::kernel::primitives::RunValueMode::SymbolicStorage => {
-            return Some(symbolic_storage_run_shared_variables(run));
+            Some(symbolic_storage_run_shared_variables(run))
         }
         crate::kernel::primitives::RunValueMode::Constant(value) => {
-            return Some(constant_run_variables(run, value));
+            Some(constant_run_variables(run, value))
         }
         crate::kernel::primitives::RunValueMode::Copy { source_base } => {
             let mut shared = symbolic_storage_run_shared_variables(run);
             collect_pointer_bitvector_variables(source_base, &mut shared);
-            return Some(shared);
+            Some(shared)
         }
         crate::kernel::primitives::RunValueMode::Load => {
-            return Some(symbolic_storage_run_shared_variables(run));
+            Some(symbolic_storage_run_shared_variables(run))
         }
     }
 }

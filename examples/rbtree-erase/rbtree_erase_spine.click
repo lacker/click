@@ -1,6 +1,7 @@
-verifying "rb_erase_augmented.c";
+verifying "rb_erase.c";
 
 import "../rbtree-model/rbtree_spine_resources.click";
+import "../rbtree-model/rbtree_context_depth.click";
 
 void __rb_change_child(struct rb_node* old, struct rb_node* new,
                        struct rb_node* parent, struct rb_root* root) {
@@ -102,39 +103,6 @@ function erase_child_deep_model(tree: RbTree) -> RbTree {
     match tree {
         RbTree::Empty => RbTree::Empty,
         RbTree::Node(node, parent, color, left, right) => rb_successor_child_splice(erase_minimum_identity(rb_minimum(right)), parent, color, left, right),
-    }
-}
-
-function ctx_depth(ctx: Context) -> Integer
-    decreases ctx
-{
-    match ctx {
-        Context::Top => 0,
-        Context::Left(identity, grandparent, color, sibling_model, up_model) =>
-            ctx_depth(up_model) + 1,
-        Context::Right(identity, grandparent, color, sibling_model, up_model) =>
-            ctx_depth(up_model) + 1,
-    }
-}
-
-theorem ctx_depth_is_nonnegative(ctx: Context) {
-    ensures 0 <= ctx_depth(ctx) by {
-        induct(ctx) as ih {
-            Context::Top => {
-                unfold(ctx_depth(Context::Top));
-                normalize();
-            }
-            Context::Left(identity, grandparent, color, sibling_model, up_model) => {
-                apply(ih(up_model));
-                unfold(ctx_depth(Context::Left(identity, grandparent, color, sibling_model, up_model)));
-                arithmetic() using { 0 <= ctx_depth(up_model); }
-            }
-            Context::Right(identity, grandparent, color, sibling_model, up_model) => {
-                apply(ih(up_model));
-                unfold(ctx_depth(Context::Right(identity, grandparent, color, sibling_model, up_model)));
-                arithmetic() using { 0 <= ctx_depth(up_model); }
-            }
-        }
     }
 }
 
@@ -436,9 +404,9 @@ contract void EraseCopy(struct rb_node* node, struct rb_node* successor) {
 }
 
 resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
-    owns augment->propagate;
-    owns augment->copy;
-    owns augment->rotate;
+    views augment->propagate;
+    views augment->copy;
+    views augment->rotate;
     fact ErasePropagate(augment->propagate);
     fact EraseCopy(augment->copy);
     fact AugmentRotate(augment->rotate);
@@ -457,7 +425,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     requires ctx_consistent(up.model, tree.model, 0) == 1;
     requires ctx_rb(up.model, black_height(tree.model), rb_color(tree.model)) == 1;
     requires is_rb(tree.model) == 1;
-    owns erase_callbacks(augment);
+    views erase_callbacks(augment);
     produces node->__rb_parent_color;
     produces node->rb_left;
     produces node->rb_right;
@@ -666,7 +634,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                                     }
                                                     have (child->__rb_parent_color & 1) == color_bit(rc);
                                                     have node->rb_left == lid;
-                                                    unfold(erase_callbacks(augment));
+                                                    observe(erase_callbacks(augment));
                                                     execute_until(statement(54));
                                                     have separate(memory(child->rb_right), memory(mid->__rb_parent_color));
                                                     have separate(memory(child->rb_right), memory(mid->rb_right));
@@ -692,7 +660,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                                     have (child->__rb_parent_color & 1) == color_bit(rc);
                                                     have child == rid;
                                                     have separate(memory(child->__rb_parent_color), memory(mid->__rb_parent_color));
-                                                    fold(erase_callbacks(augment));
+
                                                     have parent->rb_left == child2;
                                                     mark transplant;
                                                     let { after: context } = step(__rb_change_child(node, successor, tmp, root), { before: up });
@@ -732,7 +700,13 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                                             }
                                                             unfold(min_right);
                                                             have color_bit(mc) == 0 by { rewrite(mc == Color::Red); unfold(color_bit(Color::Red)); normalize(); }
-                                                            have (successor->__rb_parent_color & 1) == 0;
+                                                            have (successor->__rb_parent_color & 1) == 0 by {
+                                                                rewrite(successor == mid);
+                                                                rewrite(mid->__rb_parent_color == at(transplant, mid->__rb_parent_color));
+                                                                rewrite((at(transplant, mid->__rb_parent_color) & 1) == color_bit(mc));
+                                                                rewrite(color_bit(mc) == 0);
+                                                                normalize();
+                                                            }
                                                             have child2 == 0;
                                                             have parent->rb_left == 0;
                                                             execute_until(statement(62));
@@ -940,8 +914,8 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                                                 RbTree::Node(rid, mid, rc, rb_remove_min_blackened(rl), rr)))); assumption();
                                                     }
                                                     have rb_inorder(erase_child_deep_model(old(tree.model))) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))));
-                                                    unfold(erase_callbacks(augment));
-                                                    execute(); fold(erase_callbacks(augment)); simp();
+                                                    observe(erase_callbacks(augment));
+                                                    execute(); simp();
                                                 },
                                             }
                                         },
@@ -954,4 +928,61 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
             }
         },
     }
+}
+
+void dummy_propagate(struct rb_node* node, struct rb_node* stop) {
+    ensures 1 == 1;
+} by { execute(); normalize(); }
+void dummy_copy(struct rb_node* old, struct rb_node* new) {
+    requires old != 0;
+    requires new != 0;
+    ensures 1 == 1;
+} by { execute(); normalize(); }
+void dummy_rotate(struct rb_node* old, struct rb_node* new) {
+    requires new != 0;
+    ensures 1 == 1;
+} by { execute(); normalize(); }
+
+theorem dummy_propagate_contract() {
+    ensures ErasePropagate(&dummy_propagate) by { unfold(ErasePropagate); simp(); }
+}
+theorem dummy_copy_contract() {
+    ensures EraseCopy(&dummy_copy) by { unfold(EraseCopy); simp(); }
+}
+theorem dummy_rotate_contract() {
+    ensures AugmentRotate(&dummy_rotate) by { unfold(AugmentRotate); simp(); }
+}
+
+void rb_erase(struct rb_node* node, struct rb_root* root) {
+    consumes tree: rb_at(node);
+    consumes up: ctx_at(node, root);
+    requires tree.model != RbTree::Empty;
+    requires rb_left(tree.model) != RbTree::Empty;
+    requires rb_right(tree.model) != RbTree::Empty;
+    requires rb_left(rb_right(tree.model)) != RbTree::Empty;
+    requires not(erase_minimum_child(rb_minimum(rb_right(tree.model))) == RbTree::Empty)
+        or erase_minimum_color(rb_minimum(rb_right(tree.model))) == Color::Red;
+    requires ctx_consistent(up.model, tree.model, 0) == 1;
+    requires ctx_rb(up.model, black_height(tree.model), rb_color(tree.model)) == 1;
+    requires is_rb(tree.model) == 1;
+    views dummy_callbacks.propagate;
+    views dummy_callbacks.copy;
+    views dummy_callbacks.rotate;
+    produces node->__rb_parent_color;
+    produces node->rb_left;
+    produces node->rb_right;
+    produces whole: rb_root_at(root);
+    ensures whole.model == plug(old(up.model), erase_child_deep_model(old(tree.model)));
+    ensures is_rb_root(whole.model) == 1;
+    ensures rb_parent_consistent(whole.model, 0) == 1;
+    ensures rb_inorder(erase_child_deep_model(old(tree.model))) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))));
+} by {
+    apply(dummy_propagate_contract());
+    apply(dummy_copy_contract());
+    apply(dummy_rotate_contract());
+    fold(erase_callbacks(&dummy_callbacks));
+    step();
+    let { remaining: whole } = step(__rb_erase_augmented(node, root, &dummy_callbacks), { tree: tree, up: up });
+    have rebalance == 0;
+    execute(); simp();
 }

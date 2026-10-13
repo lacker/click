@@ -160,20 +160,29 @@ pub(crate) fn check_native_record_specs(
                 }
                 continue;
             }
-            let pointer = requirement_pointer(state, requirement, assumptions, false)?;
-            let checked = state
-                .memory()
-                .checked_native_record_pointer(&pointer)
-                .ok_or("native record place has no authenticated input or declaration")?;
-            if !state
-                .memory()
-                .has_aggregate_object_domain(&checked, &requirement.layout)
-            {
-                return Err("native record place disagrees with its retained declaration".into());
-            }
+            check_record_place(state, requirement, assumptions)?;
         }
     }
     super::native_span_inputs::check_native_span_specs(state, specs, assumptions)
+}
+
+pub(super) fn check_record_place(
+    state: &CState,
+    requirement: &CNativeRecordPlaceRequirement,
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    let pointer = requirement_pointer(state, requirement, assumptions, false)?;
+    let checked = state
+        .memory()
+        .checked_native_record_pointer(&pointer)
+        .ok_or("native record place has no authenticated input or declaration")?;
+    if !state
+        .memory()
+        .has_aggregate_object_domain(&checked, &requirement.layout)
+    {
+        return Err("native record place disagrees with its retained declaration".into());
+    }
+    Ok(())
 }
 
 /// Only symbolic entry or an authenticated opening of this exact body may
@@ -236,7 +245,7 @@ fn assume_native_record_specs_in(
             );
         }
     }
-    super::native_span_inputs::assume_native_span_specs(&next, specs, assumptions)
+    super::native_span_inputs::assume_native_span_specs_in(&next, specs, assumptions, source_entry)
 }
 
 /// Assumes only the direct declared bodies of occurrences actually held here.
@@ -596,6 +605,23 @@ fn assume_selected_held_native_record_places(
         {
             evaluation = evaluation.with_resource_context(expanded);
         }
+        if instance.is_some() {
+            // The selected held instance carries only this immediate body.
+            // Keep the projection in scratch state so field carriers can be
+            // read without publishing any body ownership to native execution.
+            let body = evaluate_function_resource_context_with_normalization(
+                &evaluation,
+                specs,
+                &[],
+                assumptions,
+                &mut budget,
+                false,
+            )
+            .map_err(|_| "held instance native carrier evaluation exceeded its budget".to_string())?
+            .map_err(|_| "could not evaluate held instance native carrier body".to_string())?
+            .0;
+            evaluation = evaluation.with_resource_context(body);
+        }
         let assumed = assume_native_record_specs(&evaluation, specs, assumptions)?;
         next.set_memory(assumed.memory().clone());
     }
@@ -629,7 +655,16 @@ pub(crate) fn c_state_with_assumed_native_record_inputs(
                 })
         })
     });
-    if !specs_have_native_places(function.resource_requires()) && !held_has_places {
+    if function
+        .contract_interface()
+        .native_span_expression_inputs()
+        .is_empty()
+        && !specs_have_native_places(function.resource_requires())
+        && !super::valid_places::has_entry_requirements(
+            function.contract_interface().contract_requires(),
+        )
+        && !held_has_places
+    {
         return Ok(state.clone());
     }
     if function.parameters().len() != arguments.len() {
@@ -668,6 +703,19 @@ pub(crate) fn c_state_with_assumed_native_record_inputs(
     let entry =
         assume_native_record_specs_in(&entry, function.resource_requires(), assumptions, true)?;
     let entry = assume_held_native_record_places(&entry, definitions, assumptions)?;
+    let entry = super::valid_places::assume_entry_requirements(
+        &entry,
+        function.contract_interface().contract_requires(),
+        assumptions,
+    )?;
+    let entry = super::native_span_inputs::assume_native_span_requirements_in(
+        &entry,
+        function
+            .contract_interface()
+            .native_span_expression_inputs(),
+        assumptions,
+        true,
+    )?;
     Ok(state.clone().with_memory(entry.memory().clone()))
 }
 

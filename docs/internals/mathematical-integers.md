@@ -171,6 +171,20 @@ fail locally. Expansion prints ordinary proof steps, and ordinary verification
 rechecks those steps without rerunning the planner. Profiling and audit use the
 same checked boundary.
 
+Two rules make the mathematical `Integer` family complete for refutations
+over the integers, the form a simplex-based planner produces (see
+`design/smt-auto-stage1.md` in the repository). `negated_goal`
+assumes the integer negation of a bound goal: for the goal `t <= 0` it is
+`-t + 1 <= 0`, and an equality goal is refused. A conclusion node may then be a
+contradiction, a constant claim such as `1 <= 0`. This is sound with or
+without the negated goal: if the premises and the negation are inconsistent,
+the goal holds, and if the premises alone are inconsistent, every goal holds.
+`divide` divides a non-strict bound `g*t + k <= 0` by a positive `g` that
+divides every coefficient, giving `t + ceil(k / g) <= 0`. Over the integers
+this is equivalent to its source, which is the Chvatal-Gomory rounding step
+(`mdtests/integer_certificate_refutation_and_rounding.md`). Both are local
+node checks charged by bit size, like `scale`.
+
 A bounded nonlinear rule is available explicitly: the `integer_product_bounds`
 node in the `rules` arithmetic family consumes four named constant-endpoint
 inequalities for the two operands. Multiplication is monotone in each operand

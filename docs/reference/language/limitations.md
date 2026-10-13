@@ -218,7 +218,8 @@ bitwise operators, and typed shifts; division by zero and invalid shift counts
 remain undefined behavior. It does not support `void` objects or
 parameters. Scalar casts are supported, with checked narrowing into `int16`,
 `uint8`, or `uint16`; a contract may cast a `void *` parameter to a struct
-pointer, while other pointer casts and aggregate casts remain unsupported. This is
+pointer or convert a current object pointer explicitly through `void*` to a
+struct pointer. Other pointer casts and aggregate casts remain unsupported. This is
 not a full C integer model: pointer/array forms of `size_t` and the 64-bit
 types, plus the complete usual arithmetic-conversion lattice, remain outside
 the slice.

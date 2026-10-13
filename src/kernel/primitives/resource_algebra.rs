@@ -9600,13 +9600,28 @@ fn memory_ranges_proven_overlapping_with_separation(
             .chain(assumptions.exact_pointer_offset_aliases(range.base()))
             .collect::<Vec<_>>()
     };
+    //
+    // Besides the ranges' own spellings, a pair of aliases is asked only when
+    // the bases sit a constant number of bytes apart. Every alias of a base
+    // is the same address, so another pair restates the same question with a
+    // symbolic displacement between two spellings of equal pointers, which
+    // the endpoint decisions below can settle only by rediscovering that
+    // equality. Asking every pair cost the product of the two alias classes,
+    // and the classes grow along a path as it learns equalities, so a
+    // composition of the same footprint grew slower at every call.
     let left_aliases = aliases(left);
     let right_aliases = aliases(right);
     for (left_index, left_base) in left_aliases.iter().cloned().enumerate() {
-        let left_alias = left.with_base(left_base);
+        let left_alias = left.with_base(left_base.clone());
         for (right_index, right_base) in right_aliases.iter().cloned().enumerate() {
             if left_index != 0 || right_index != 0 {
                 crate::instrumentation::record_deterministic_work(1);
+                if !right_base
+                    .element_index_from_base_with_width(&left_base, 1)
+                    .is_some_and(|displacement| displacement.as_const().is_some())
+                {
+                    continue;
+                }
             }
             let right_alias = right.with_base(right_base);
             if memory_ranges_proven_overlapping_without_aliases(

@@ -222,8 +222,10 @@ impl<'a> Proof<'a> {
                         self.facts(),
                         resource,
                         claim.clause().borrowed(),
-                        context.parsed_function.parameters(),
-                        context.arguments,
+                        ParameterBinding::new(
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                        ),
                         execution
                             .core
                             .frontier
@@ -302,8 +304,7 @@ impl<'a> Proof<'a> {
             self.facts(),
             resource,
             claim.clause().borrowed(),
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             execution
                 .core
                 .frontier
@@ -398,8 +399,7 @@ impl<'a> Proof<'a> {
             .execution_start_state(&execution.core.state);
         let facts = project_outcome_resource_facts(
             context.resource_environment,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             pre_state,
             &self.focused_outcome_snapshot()?,
             self.facts().clone(),
@@ -441,8 +441,7 @@ impl<'a> Proof<'a> {
                 fact.clone()
             } else {
                 let condition = lower_outcome_proposition_with_recorded_snapshots(
-                    context.parsed_function.parameters(),
-                    context.arguments,
+                    context.parameter_binding(),
                     execution
                         .core
                         .frontier
@@ -753,8 +752,10 @@ impl<'a> Proof<'a> {
                         "path {path_index}: {}{}",
                         describe_function_outcome(
                             path.outcome(),
-                            context.parsed_function.parameters(),
-                            context.arguments
+                            ParameterBinding::new(
+                                context.parsed_function.parameters(),
+                                context.arguments
+                            )
                         ),
                         describe_last_statement_site(
                             &context.constants.source_layout,
@@ -905,7 +906,8 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "outcomes",
-            )?;
+            self.facts().assumptions(),
+)?;
         let mut statement_index = execution.core.frontier.next_statement_index;
         let mut descended_through_try = false;
         loop {

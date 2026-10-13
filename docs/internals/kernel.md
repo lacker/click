@@ -348,11 +348,12 @@ parameter>` still ranks those shapes.
 
 A loop is verified as its own judgment and then applied as a summary, so a
 self-call inside one is a call no step of the function's own proof takes. The
-loop's body is certified under the same anchor instead:
-`verify_loop_execution_proofs` asks the kernel for it from the function in
-hand, before any loop is planned, so every loop of that function — nested,
-inside an `if`, or inside a `switch` — is stepped with it and a self-call in
-the body raises the same two members against the same function-entry M0. M0
+loop's body is certified under the same anchor instead: a claim's proof asks
+the kernel for it from the function in hand before its first step, and the
+`loop` tactic plans its loop in that proof's environment, so every loop of
+that function — nested, inside an `if`, or inside a `switch` — is stepped
+with it and a self-call in the body raises the same two members against the
+same function-entry M0. M0
 survives the loop's havoc because it is a closed term over entry symbols and
 `collect_execution_environment_variables_uncached` reserves every variable it
 names, so no fresh iteration value is handed out on top of one; a measure that

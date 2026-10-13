@@ -41,8 +41,7 @@ impl<'a> Proof<'a> {
         claim_label: &'a str,
         goal: Proposition,
         surface_goal: ClickProposition,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
+        parameter_binding: ParameterBinding<'a>,
         entry: &'a CState,
         post: &'a CState,
         snapshots: &'a RecordedSnapshots,
@@ -55,13 +54,14 @@ impl<'a> Proof<'a> {
             0,
             &[],
             |state| OpenBranch::surface_proposition_in(state, goal, surface_goal),
-            parameters,
-            arguments,
-            entry,
-            post,
-            post.locals().get(crate::kernel::C_CONTRACT_RESULT_NAME),
+            parameter_binding,
+            FixedStateFrame::new(
+                entry,
+                post,
+                post.locals().get(crate::kernel::C_CONTRACT_RESULT_NAME),
+                snapshots,
+            ),
             None,
-            snapshots,
             surfaces,
             spec_definitions,
             theorems,
@@ -165,7 +165,6 @@ impl<'a> Proof<'a> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[cfg(test)]
     pub(in crate::surface::proof) fn for_pure_goal(
         claim_label: &'a str,
@@ -186,7 +185,6 @@ impl<'a> Proof<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::surface::proof) fn for_pure_surface_goal(
         claim_label: &'a str,
         requires: &[Proposition],
@@ -255,7 +253,6 @@ impl<'a> Proof<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn for_pure_goal_with_surface(
         claim_label: &'a str,
         requires: &[Proposition],
@@ -347,8 +344,7 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         available: &'a [Proposition],
         goal: Proposition,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
+        parameter_binding: ParameterBinding<'a>,
         pre_state: &'a CState,
         state: &'a CState,
         recorded_snapshots: &'a RecordedSnapshots,
@@ -363,13 +359,9 @@ impl<'a> Proof<'a> {
             tactic_index,
             available,
             |context| OpenBranch::proposition_in(context, goal),
-            parameters,
-            arguments,
-            pre_state,
-            state,
+            parameter_binding,
+            FixedStateFrame::new(pre_state, state, None, recorded_snapshots),
             None,
-            None,
-            recorded_snapshots,
             surface_propositions,
             spec_definitions,
             theorem_environment,
@@ -387,8 +379,7 @@ impl<'a> Proof<'a> {
         available: &'a [Proposition],
         goal: Proposition,
         surface_goal: ClickProposition,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
+        parameter_binding: ParameterBinding<'a>,
         pre_state: &'a CState,
         state: &'a CState,
         recorded_snapshots: &'a RecordedSnapshots,
@@ -403,13 +394,9 @@ impl<'a> Proof<'a> {
             tactic_index,
             available,
             |context| OpenBranch::surface_proposition_in(context, goal, surface_goal),
-            parameters,
-            arguments,
-            pre_state,
-            state,
+            parameter_binding,
+            FixedStateFrame::new(pre_state, state, None, recorded_snapshots),
             None,
-            None,
-            recorded_snapshots,
             surface_propositions,
             spec_definitions,
             theorem_environment,
@@ -426,13 +413,9 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         available: &'a [Proposition],
         goal: Proposition,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
-        pre_state: &'a CState,
-        state: &'a CState,
-        result: Option<&'a CValue>,
+        parameter_binding: ParameterBinding<'a>,
+        fixed_state: FixedStateFrame<'a>,
         premise_anchor: Option<&ProgramPointRef>,
-        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         spec_definitions: SpecDefinitions<'a>,
         theorem_environment: &'a TheoremEnvironment,
@@ -445,13 +428,9 @@ impl<'a> Proof<'a> {
             tactic_index,
             available,
             |context| OpenBranch::proposition_in(context, goal),
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
+            parameter_binding,
+            fixed_state,
             premise_anchor,
-            recorded_snapshots,
             surface_propositions,
             spec_definitions,
             theorem_environment,
@@ -461,20 +440,15 @@ impl<'a> Proof<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[cfg(test)]
     pub(super) fn for_fixed_state_goal_with_requirements_inner(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
         goal: impl FnOnce(BranchState) -> OpenBranch,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
-        pre_state: &'a CState,
-        state: &'a CState,
-        result: Option<&'a CValue>,
+        parameter_binding: ParameterBinding<'a>,
+        fixed_state: FixedStateFrame<'a>,
         premise_anchor: Option<&ProgramPointRef>,
-        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         spec_definitions: SpecDefinitions<'a>,
         theorem_environment: &'a TheoremEnvironment,
@@ -487,13 +461,9 @@ impl<'a> Proof<'a> {
             tactic_index,
             available,
             goal,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
+            parameter_binding,
+            fixed_state,
             premise_anchor.cloned(),
-            recorded_snapshots,
             surface_propositions,
             spec_definitions,
             theorem_environment,
@@ -508,12 +478,8 @@ impl<'a> Proof<'a> {
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
-        pre_state: &'a CState,
-        state: &'a CState,
-        result: Option<&'a CValue>,
-        recorded_snapshots: &'a RecordedSnapshots,
+        parameter_binding: ParameterBinding<'a>,
+        fixed_state: FixedStateFrame<'a>,
         surface_propositions: &'a SurfacePropositionMap,
         spec_definitions: SpecDefinitions<'a>,
         theorem_environment: &'a TheoremEnvironment,
@@ -525,13 +491,9 @@ impl<'a> Proof<'a> {
             tactic_index,
             available,
             OpenBranch::frontier,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
+            parameter_binding,
+            fixed_state,
             None,
-            recorded_snapshots,
             surface_propositions,
             spec_definitions,
             theorem_environment,
@@ -541,19 +503,14 @@ impl<'a> Proof<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn for_fixed_state(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
         goal: impl FnOnce(BranchState) -> OpenBranch,
-        parameters: &'a [syntax::C0Parameter],
-        arguments: &'a [CExpression],
-        pre_state: &'a CState,
-        state: &'a CState,
-        result: Option<&'a CValue>,
+        parameter_binding: ParameterBinding<'a>,
+        fixed_state: FixedStateFrame<'a>,
         premise_anchor: Option<ProgramPointRef>,
-        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         spec_definitions: SpecDefinitions<'a>,
         theorem_environment: &'a TheoremEnvironment,
@@ -562,8 +519,11 @@ impl<'a> Proof<'a> {
         original_requirements: &'a [Requirement],
     ) -> Self {
         let facts = ProofFacts::from_ordered(available);
-        let lowering_context =
-            resource_context_observable_facts_for_proof(state.resources(), facts.clone()).to_vec();
+        let lowering_context = resource_context_observable_facts_for_proof(
+            fixed_state.state.resources(),
+            facts.clone(),
+        )
+        .to_vec();
         let goal = goal(BranchState {
             facts,
             unfolded_predicates: PersistentOrderedSet::default(),
@@ -585,13 +545,9 @@ impl<'a> Proof<'a> {
             context: Arc::new(ProofContext::FixedState(FixedStateProofContext {
                 claim_label,
                 tactic_index,
-                parameters,
-                arguments,
-                pre_state,
-                state,
-                result,
+                parameter_binding,
+                fixed_state,
                 premise_anchor,
-                recorded_snapshots,
                 surface_propositions,
                 spec_definitions,
                 theorem_environment,

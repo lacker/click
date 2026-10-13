@@ -15,6 +15,41 @@ use crate::instrumentation::ArtifactReuseRejection;
 use crate::kernel::ResourceDescription;
 use std::sync::Arc;
 
+/// Entry provenance for one path in an exhaustive, kernel-enumerated resource
+/// guard case. Only contract certification can construct this witness. Derived
+/// proof consequences remain separate from the universal contract entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::kernel) struct CCheckedResourceGuardCase {
+    function_name: Arc<str>,
+    interface: Arc<CFunctionContractInterface>,
+    arguments: Arc<[CExpression]>,
+    guards: Arc<[Proposition]>,
+    caller_state: CState,
+    entry_assumptions: PureFactContext,
+    certification_assumptions: PureFactContext,
+}
+
+impl CCheckedResourceGuardCase {
+    pub(in crate::kernel) fn entry_assumptions(
+        &self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        caller_state: &CState,
+        certification_assumptions: &PureFactContext,
+    ) -> Option<&PureFactContext> {
+        (self.function_name.as_ref() == function.name()
+            && self.interface.as_ref() == function.contract_interface()
+            && self.arguments.as_ref() == arguments
+            && &self.caller_state == caller_state
+            && &self.certification_assumptions == certification_assumptions)
+            .then_some(&self.entry_assumptions)
+    }
+
+    pub(in crate::kernel) fn guards(&self) -> &[Proposition] {
+        &self.guards
+    }
+}
+
 mod uint32_representation;
 pub use uint32_representation::prove_declared_uint32_from_bytes;
 
@@ -5177,7 +5212,6 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
 
 /// Executes one whole-function judgment and retains its exact authority inputs
 /// together with the resulting frontier for later contract certification.
-#[allow(clippy::too_many_arguments)]
 pub fn prove_checked_c_function_execution_with_environment(
     state: CState,
     function: CFunction,
@@ -6494,7 +6528,6 @@ pub(crate) fn population_observations_equal(left: &CState, right: &CState) -> bo
 /// intend to package reusable function rules must supply an entry representing
 /// the declared input domain, as Surface's `initial_call_state` does. See
 /// `docs/internals/kernel.md`, "Source obligations and checked evidence".
-#[allow(clippy::too_many_arguments)]
 pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
     state: CState,
     function: CFunction,
@@ -6601,10 +6634,18 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     let mut reuse_unauthorized_premise = None;
     let mut reuse_entry_resources = Vec::new();
     let mut reuse_context_facts = Vec::new();
+    // Shared immutable binding avoids rebuilding the interface for every case
+    // and path. The guards below come only from the exhaustive enumerator.
+    let guard_function_name: Arc<str> = function.name().into();
+    let guard_interface = Arc::new(function.contract_interface().clone());
+    let guard_arguments: Arc<[CExpression]> = arguments.clone().into();
     for case_facts in resource_condition_cases {
+        let checked_guards: Arc<[Proposition]> = case_facts.clone().into();
         // A resource-guard case assumes its guards beside the contract entry.
         let assumptions = assumptions_with_propositions(&base_assumptions, &case_facts);
-        let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments) else {
+        let Some(mut entry_state) =
+            c_function_entry_state_with_assumptions(&state, &function, &arguments, &assumptions)
+        else {
             return CFunctionContractExecution::failed(
                 "could not build the contract entry state from the call arguments".to_string(),
             );
@@ -6810,6 +6851,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     .iter()
                     .filter(|checked| checked.state == state && authorized(checked))
                     .map(|checked| CContractPathSet {
+                        checked_resource_guard_cases: Vec::new(),
                         boundary_transfers: vec![
                             checked.boundary_transfer().cloned();
                             checked.execution.paths.len()
@@ -6850,6 +6892,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                             },
                         )
                         .map(|execution| CContractPathSet {
+                            checked_resource_guard_cases: Vec::new(),
                             boundary_transfers: vec![
                                 checked.boundary_transfer().cloned();
                                 execution.paths.len()
@@ -6947,6 +6990,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     let mut checked_returned_resources = left_checked_returned_resources;
                     checked_returned_resources.extend(right_checked_returned_resources);
                     return Some(CContractPathSet {
+                        checked_resource_guard_cases: Vec::new(),
                         paths,
                         checked_resource_claims,
                         checked_resource_transitions,
@@ -7067,6 +7111,25 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 }
                 path.assumptions = certification_assumptions;
             }
+            // Authorization above independently checked every reused premise;
+            // obligations added afterward are checked consequences. Preserve
+            // the resource-case entry separately so semantic-effect inference
+            // cannot mistake those consequences for specialized input facts.
+            set.checked_resource_guard_cases = set
+                .paths
+                .iter()
+                .map(|path| {
+                    Arc::new(CCheckedResourceGuardCase {
+                        function_name: guard_function_name.clone(),
+                        interface: guard_interface.clone(),
+                        arguments: guard_arguments.clone(),
+                        guards: checked_guards.clone(),
+                        caller_state: state.clone(),
+                        entry_assumptions: assumptions.clone(),
+                        certification_assumptions: path.assumptions.clone(),
+                    })
+                })
+                .collect();
         }
         cases.push(alternatives);
     }

@@ -101,6 +101,13 @@ pub(in crate::surface) fn unfold_selected_predicates_in_proposition(
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: expression.clone(),
         }),
+        ClickProposition::ValidPlace {
+            expression,
+            pointee_struct,
+        } => Ok(ClickProposition::ValidPlace {
+            pointee_struct: pointee_struct.clone(),
+            expression: expression.clone(),
+        }),
         ClickProposition::At {
             selector,
             proposition,
@@ -378,6 +385,13 @@ fn substitute_click_proposition_nonlogical(
             segment: substitute_contract_segment(segment, substitutions)?,
         }),
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
+            expression: substitute_contract_expression_in(expression, substitutions)?,
+        }),
+        ClickProposition::ValidPlace {
+            expression,
+            pointee_struct,
+        } => Ok(ClickProposition::ValidPlace {
+            pointee_struct: pointee_struct.clone(),
             expression: substitute_contract_expression_in(expression, substitutions)?,
         }),
         ClickProposition::ForAll {
@@ -763,7 +777,8 @@ fn collect_click_proposition_binding_names(
         ClickProposition::Loadable { segment } => {
             collect_contract_segment_binding_names(segment, names);
         }
-        ClickProposition::Defined { expression } => {
+        ClickProposition::Defined { expression }
+        | ClickProposition::ValidPlace { expression, .. } => {
             collect_contract_expression_binding_names(expression, names);
         }
         ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
@@ -1153,6 +1168,19 @@ fn rewrite_click_proposition_expression(
         ClickProposition::Defined { expression: value } => {
             let (value, changed) = expression(value);
             (ClickProposition::Defined { expression: value }, changed)
+        }
+        ClickProposition::ValidPlace {
+            expression: value,
+            pointee_struct,
+        } => {
+            let (value, changed) = expression(value);
+            (
+                ClickProposition::ValidPlace {
+                    pointee_struct: pointee_struct.clone(),
+                    expression: value,
+                },
+                changed,
+            )
         }
         ClickProposition::At {
             selector,
@@ -2092,6 +2120,13 @@ fn apply_contract_let_expressions_inner(
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: apply_contract_lets_to_expression(expression, bindings)?,
         }),
+        ClickProposition::ValidPlace {
+            expression,
+            pointee_struct,
+        } => Ok(ClickProposition::ValidPlace {
+            pointee_struct: pointee_struct.clone(),
+            expression: apply_contract_lets_to_expression(expression, bindings)?,
+        }),
         ClickProposition::At {
             selector,
             proposition,
@@ -2626,7 +2661,8 @@ fn collect_click_proposition_referenced_names_one(
         ClickProposition::Loadable { segment } => {
             names.extend(contract_segment_referenced_names(segment));
         }
-        ClickProposition::Defined { expression } => {
+        ClickProposition::Defined { expression }
+        | ClickProposition::ValidPlace { expression, .. } => {
             collect_contract_expression_referenced_names(expression, names);
         }
         ClickProposition::At { proposition, .. } => {

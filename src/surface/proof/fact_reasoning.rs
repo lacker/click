@@ -54,7 +54,8 @@ pub(super) fn facts_for_direct_surface_lowering(propositions: &[Proposition]) ->
 pub(super) fn is_direct_surface_lowering_fact(proposition: &Proposition) -> bool {
     matches!(
         proposition,
-        Proposition::CMemoryReadDefined { .. }
+        Proposition::CValidPlace { .. }
+            | Proposition::CMemoryReadDefined { .. }
             | Proposition::CMemoryInitialized { .. }
             | Proposition::CMemoryLoadable { .. }
             | Proposition::CMemoryCanStore { .. }
@@ -177,7 +178,7 @@ pub(super) fn minimal_proposition_derivation(
 fn condition_search_budget_error(proposition: &Proposition, candidate_count: usize) -> ClickError {
     ClickError::new(format!(
         "condition-certificate premise search exceeded the active verification budget\n  target: {}\n  ambient condition facts: {candidate_count}\n  context: {}\nprovide the exact premises with simple tactics to continue",
-        describe_pure_fact(proposition, &[], &[]),
+        describe_pure_fact(proposition, ParameterBinding::default()),
         crate::instrumentation::deadline_context(),
     ))
 }
@@ -185,8 +186,7 @@ fn condition_search_budget_error(proposition: &Proposition, candidate_count: usi
 pub(in crate::surface) fn describe_condition_search_miss(
     proposition: &Proposition,
     available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let candidates = available
         .iter()
@@ -197,12 +197,11 @@ pub(in crate::surface) fn describe_condition_search_miss(
     // through the same names, so the reader can see what was compared.
     format!(
         "condition-certificate premise search did not derive `{}` from {} ambient condition facts: {}; smart search tries individual facts and pairs and is heuristic, so split the execution into smaller steps or provide the exact premises with simple tactics",
-        crate::surface::diagnostics::describe_stated_fact(proposition, parameters, arguments),
+        crate::surface::diagnostics::describe_stated_fact(proposition, parameter_binding),
         candidates.len(),
         crate::surface::diagnostics::describe_pure_facts_for_diagnostic(
             &candidates,
-            parameters,
-            arguments
+            parameter_binding
         ),
     )
 }
@@ -230,11 +229,14 @@ pub(super) fn describe_derivation_failure(
             return crate::surface::diagnostics::describe_refuted_condition(
                 proposition,
                 available,
-                &parameters,
-                &arguments,
+                ParameterBinding::new(&parameters, &arguments),
             );
         }
-        describe_condition_search_miss(proposition, available, &parameters, &arguments)
+        describe_condition_search_miss(
+            proposition,
+            available,
+            ParameterBinding::new(&parameters, &arguments),
+        )
     } else if matches!(
         proposition,
         Proposition::Predicate { name, .. }
@@ -245,8 +247,7 @@ pub(super) fn describe_derivation_failure(
         // replaces it rather than only the refusal.
         describe_pure_fact_with_environment(
             proposition,
-            &parameters,
-            &arguments,
+            ParameterBinding::new(&parameters, &arguments),
             environment,
             predicate_environment,
         )
@@ -254,7 +255,7 @@ pub(super) fn describe_derivation_failure(
         // Every other shape goes through the same bounded sentence the rest
         // of the proof diagnostics use. `Debug` here dumped the kernel
         // proposition, schemas and snapshots included.
-        describe_pure_fact(proposition, &parameters, &arguments)
+        describe_pure_fact(proposition, ParameterBinding::new(&parameters, &arguments))
     }
 }
 
@@ -325,15 +326,13 @@ fn describe_access_bound_prerequisite(
     let (parameters, arguments) = crate::surface::diagnostics::local_naming_tables(state);
     let object = crate::surface::diagnostics::describe_memory_block(
         &pointer.block,
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
     )?;
     let bound = crate::kernel::memory_access_element_bound(memory, pointer, byte_width)?;
     let spell = |term: &Bitvector32Term| {
         let spelled = crate::surface::diagnostics::describe_bitvector_with_context(
             term,
-            &parameters,
-            &arguments,
+            ParameterBinding::new(&parameters, &arguments),
         );
         match spelled
             .strip_prefix('(')

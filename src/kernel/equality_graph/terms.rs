@@ -207,6 +207,9 @@ pub(super) struct TermClasses {
     // Truth is an annotation of a condition class, not a union between all
     // true facts. Unrelated order facts must not create value equivalences.
     condition_truth: PersistentMap<u64, u8>,
+    // Constant signed int32 bounds belong to a value class, not a spelling.
+    // A class union intersects two intervals in constant local work.
+    signed_int32_intervals: PersistentMap<u64, (i64, i64)>,
     origin: Arc<()>,
     // Completeness metadata for affine interval consumers, not equality facts.
     // Propagates once per affected class/application through indexed uses.
@@ -845,6 +848,38 @@ impl TermClasses {
         self.intern_machine(&term, false)
     }
 
+    pub(super) fn int32_class(&mut self, term: &crate::kernel::Bitvector32Term) -> u64 {
+        let node = self.intern_int32(term);
+        self.register_pending_loads();
+        self.root(node)
+    }
+
+    pub(super) fn signed_int32_interval(&self, node: u64) -> Option<(i64, i64)> {
+        self.signed_int32_intervals
+            .get(&self.root(node))
+            .copied()
+            .filter(|(lower, upper)| lower <= upper)
+    }
+
+    fn retain_signed_int32_interval(
+        &mut self,
+        term: &crate::kernel::Bitvector32Term,
+        lower: i64,
+        upper: i64,
+    ) {
+        let node = self.intern_int32(term);
+        self.register_pending_loads();
+        let root = self.root(node);
+        let previous = self
+            .signed_int32_intervals
+            .get(&root)
+            .copied()
+            .unwrap_or((i64::from(i32::MIN), i64::from(i32::MAX)));
+        self.signed_int32_intervals
+            .insert(root, (previous.0.max(lower), previous.1.min(upper)));
+        crate::instrumentation::record_deterministic_work(1);
+    }
+
     pub(super) fn are_int32_equal(
         &mut self,
         left: &crate::kernel::Bitvector32Term,
@@ -1106,6 +1141,17 @@ impl TermClasses {
             self.merge_storage_addresses(moved, kept);
             self.merge_additive_addresses(moved, kept);
             self.merge_alignment_witnesses(moved, kept);
+            if let Some((lower, upper)) = self.signed_int32_intervals.get(&moved).copied() {
+                crate::instrumentation::record_deterministic_work(1);
+                let (kept_lower, kept_upper) = self
+                    .signed_int32_intervals
+                    .get(&kept)
+                    .copied()
+                    .unwrap_or((i64::from(i32::MIN), i64::from(i32::MAX)));
+                self.signed_int32_intervals.remove(&moved);
+                self.signed_int32_intervals
+                    .insert(kept, (lower.max(kept_lower), upper.min(kept_upper)));
+            }
             if let Some(truth) = self.condition_truth.get(&moved).copied() {
                 let kept_truth = self.condition_truth.get(&kept).copied().unwrap_or(0);
                 self.condition_truth.remove(&moved);

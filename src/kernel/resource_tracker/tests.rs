@@ -1321,3 +1321,15 @@ fn branch_join_nested_naming_work_tracks_new_branches() {
         "each new branch should pay only for its own two arms: {samples:?}"
     );
 }
+
+/// Naming walks share one empty context for the session, but a context built
+/// against a replaced logical-read table would miss every read registered
+/// after the replacement, so it is rebuilt then.
+#[test]
+fn naming_walks_share_one_context_until_the_read_table_is_replaced() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let first = naming_context();
+    assert!(std::rc::Rc::ptr_eq(&first, &naming_context()));
+    crate::kernel::equality_graph::clear_logical_pointer_reads();
+    assert!(!std::rc::Rc::ptr_eq(&first, &naming_context()));
+}

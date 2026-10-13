@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <unordered_map>
@@ -57,6 +58,28 @@ constexpr unsigned kMaxCleanupScopes = 256;
 constexpr std::size_t kMaxScalarConversions = 256;
 
 constexpr const char *kClangVersion = "19.1.7";
+
+// Same bounded exact-token policy as the independent Rust profile validator.
+// Vendor prefixes and build metadata may vary; the release token may not.
+bool is_pinned_clang_version(const std::string &version) {
+  if (version.size() > 1024 ||
+      std::any_of(version.begin(), version.end(), [](unsigned char byte) {
+        return byte < 0x20 || byte == 0x7f || byte >= 0x80;
+      }))
+    return false;
+  std::istringstream words(version);
+  std::string word;
+  while (words >> word) {
+    if (word != "clang") continue;
+    return (words >> word) && word == "version" &&
+           (words >> word) && word == kClangVersion;
+  }
+  return false;
+}
+
+// This is an explicit pinned-implementation contract, not a C++20 theorem.
+constexpr const char *kDeclaredUint32ByteGuarantee =
+    "clang19_1_7_lp64_le_declared_uint32_bytes_v1";
 constexpr std::size_t kMaxPreprocessorFiles = 4096;
 
 struct Options {
@@ -254,7 +277,22 @@ public:
       records.push_back(std::move(*lowered));
     }
 
+    const auto byte_width = context_.getTypeSize(context_.UnsignedCharTy);
+    const auto pointer_width = context_.getTypeSize(context_.getPointerType(context_.VoidTy));
+    const auto long_width = context_.getTypeSize(context_.UnsignedLongTy);
+    const auto uint32_width = context_.getTypeSize(context_.UnsignedIntTy);
+    if (context_.getTargetInfo().isBigEndian() || byte_width != 8 ||
+        pointer_width != 64 || long_width != 64 || uint32_width != 32) {
+      fail({}, "the declared uint32 byte guarantee requires LP64 little-endian storage with 8-bit bytes and 32-bit unsigned int");
+      return;
+    }
     llvm::json::Object profile;
+    profile["byte_representation_guarantee"] = kDeclaredUint32ByteGuarantee;
+    profile["byte_order"] = "little";
+    profile["byte_width"] = static_cast<std::int64_t>(byte_width);
+    profile["pointer_width"] = static_cast<std::int64_t>(pointer_width);
+    profile["long_width"] = static_cast<std::int64_t>(long_width);
+    profile["uint32_width"] = static_cast<std::int64_t>(uint32_width);
     profile["frontend"] = "clang";
     profile["frontend_version"] = clang::getClangFullVersion();
     profile["standard"] = clang::LangStandard::getLangStandardForKind(
@@ -273,7 +311,7 @@ public:
     profile["compilation_command"] = std::move(compilation_command);
 
     llvm::json::Object artifact;
-    artifact["schema"] = 59;
+    artifact["schema"] = 60;
     artifact["language"] = "c++";
     artifact["profile"] = std::move(profile);
     artifact["exception_behavior"] = exception_behavior_;
@@ -549,6 +587,7 @@ private:
     result["function_kind"] = std::move(function_kind);
     result["return_type"] = std::move(*return_type);
     result["parameters"] = std::move(parameters);
+    result["template_record_arguments"] = function_template_records(declaration);
     result["declared_noexcept"] = prototype->isNothrow();
     result["span"] = span(declaration->getSourceRange());
     result["body"] = std::move(statements);
@@ -686,6 +725,7 @@ private:
         !source->getPointeeType().hasQualifiers() &&
         !target->getPointeeType().hasQualifiers() &&
         supported_pointer_element(source->getPointeeType()) &&
+        !context_.hasSameType(source->getPointeeType().getUnqualifiedType(), context_.IntTy) &&
         supported_byte_enum(target->getPointeeType()) &&
         target->getPointeeType()->getAs<clang::EnumType>()->getDecl()->getQualifiedNameAsString() == "std::byte";
   }
@@ -2289,6 +2329,48 @@ private:
     return Json(std::move(condition));
   }
 
+  const clang::Expr *call_argument_source(const clang::Expr *expression) {
+    expression = expression->IgnoreParens();
+    while (true) {
+      if (const auto *cast = llvm::dyn_cast<clang::ImplicitCastExpr>(expression)) {
+        expression = cast->getSubExpr()->IgnoreParens();
+      } else if (const auto *cleanups = llvm::dyn_cast<clang::ExprWithCleanups>(expression)) {
+        if (cleanups->cleanupsHaveSideEffects()) {
+          fail(expression->getExprLoc(), "C++ record argument temporaries require trivial cleanup");
+          return nullptr;
+        }
+        expression = cleanups->getSubExpr()->IgnoreParens();
+      } else if (const auto *temporary = llvm::dyn_cast<clang::MaterializeTemporaryExpr>(expression)) {
+        if (temporary->getStorageDuration() != clang::SD_FullExpression) {
+          fail(expression->getExprLoc(), "C++ record argument temporary requires full-expression lifetime");
+          return nullptr;
+        }
+        expression = temporary->getSubExpr()->IgnoreParens();
+      } else if (const auto *binding = llvm::dyn_cast<clang::CXXBindTemporaryExpr>(expression)) {
+        if (!binding->getTemporary()->getDestructor()->isTrivial()) {
+          fail(expression->getExprLoc(), "C++ record argument temporaries require trivial destruction");
+          return nullptr;
+        }
+        expression = binding->getSubExpr()->IgnoreParens();
+      } else if (const auto *cast = llvm::dyn_cast<clang::CXXFunctionalCastExpr>(expression);
+                 cast != nullptr && cast->getCastKind() == clang::CK_ConstructorConversion) {
+        expression = cast->getSubExpr()->IgnoreParens();
+      } else {
+        return expression;
+      }
+    }
+  }
+
+  bool effectful_argument(const clang::Expr *expression) {
+    const auto *source = call_argument_source(expression);
+    if (source == nullptr) return false;
+    if (const auto *call = llvm::dyn_cast<clang::CallExpr>(source))
+      return !is_numeric_limits_max_call(call);
+    if (const auto *construction = llvm::dyn_cast<clang::CXXConstructExpr>(source))
+      return construction->isPRValue() && !construction->getConstructor()->isCopyOrMoveConstructor();
+    return false;
+  }
+
   std::optional<LoweredCall>
   lower_call_operation(const clang::CallExpr *call,
                        const clang::FunctionDecl *caller,
@@ -2359,12 +2441,9 @@ private:
       unsigned nested_calls = 0;
       for (unsigned index = argument_offset; index < call->getNumArgs();
            ++index) {
-        const auto *nested = llvm::dyn_cast<clang::CallExpr>(
-            call->getArg(index)->IgnoreParens());
-        if (nested != nullptr && !is_numeric_limits_max_call(nested))
-          ++nested_calls;
+        if (effectful_argument(call->getArg(index))) ++nested_calls;
       }
-      if (nested_calls > 1 || (nested_calls != 0 && has_receiver)) {
+      if (nested_calls > 1) {
         fail(call->getExprLoc(),
              "nested C++ call arguments require one call and order-independent scalar "
              "siblings to preserve evaluation order");
@@ -2373,17 +2452,14 @@ private:
       if (nested_calls == 1) {
         bool isolated = false;
         for (unsigned index = argument_offset; index < call->getNumArgs(); ++index) {
-          const auto *nested = llvm::dyn_cast<clang::CallExpr>(call->getArg(index)->IgnoreParens());
+          const auto *nested = llvm::dyn_cast_or_null<clang::CallExpr>(call_argument_source(call->getArg(index)));
           if (nested != nullptr && !is_numeric_limits_max_call(nested))
             isolated = scalar_only_call(nested);
         }
         for (unsigned index = argument_offset; index < call->getNumArgs();
              ++index) {
           const auto *argument = call->getArg(index);
-          const auto *nested =
-              llvm::dyn_cast<clang::CallExpr>(argument->IgnoreParens());
-          if (nested != nullptr && !is_numeric_limits_max_call(nested))
-            continue;
+          if (effectful_argument(argument)) continue;
           if (!stable_scalar_argument(argument, caller) &&
               !(isolated && field_scalar_argument(argument))) {
             fail(argument->getExprLoc(),
@@ -2408,12 +2484,11 @@ private:
     for (unsigned index = 0; index < definition->getNumParams(); ++index) {
       const auto *source_argument = call->getArg(index + argument_offset);
       const auto *nested =
-          llvm::dyn_cast<clang::CallExpr>(source_argument->IgnoreParens());
+          llvm::dyn_cast_or_null<clang::CallExpr>(call_argument_source(source_argument));
       std::optional<Json> argument;
       if (allow_nested && nested != nullptr &&
           !is_numeric_limits_max_call(nested)) {
-        if (has_receiver ||
-            definition->getParamDecl(index)->getType()->isReferenceType() ||
+        if (definition->getParamDecl(index)->getType()->isReferenceType() ||
             !context_.hasSameType(source_argument->getType(),
                                   definition->getParamDecl(index)->getType())) {
           fail(source_argument->getExprLoc(),
@@ -2515,7 +2590,45 @@ private:
                       const clang::FunctionDecl *caller) {
     llvm::json::Object result;
     if (parameter->getType()->getAsCXXRecordDecl() != nullptr) {
-      const auto *construction = llvm::dyn_cast<clang::CXXConstructExpr>(argument->IgnoreParenImpCasts());
+      const auto *source = call_argument_source(argument);
+      if (source == nullptr) return std::nullopt;
+      const auto *construction = llvm::dyn_cast<clang::CXXConstructExpr>(source);
+      if (construction != nullptr && construction->isPRValue() &&
+          !construction->getConstructor()->isCopyOrMoveConstructor()) {
+        const auto *record = parameter->getType()->getAsCXXRecordDecl();
+        const auto *definition = llvm::dyn_cast_or_null<clang::CXXConstructorDecl>(construction->getConstructor()->getDefinition());
+        if (definition == nullptr || construction->getConstructor()->isDeleted() ||
+            construction->getConstructionKind() != clang::CXXConstructionKind::Complete ||
+            !record->isTriviallyCopyable() || !record->hasTrivialDestructor() ||
+            !record->hasTrivialCopyConstructor() ||
+            !context_.hasSameUnqualifiedType(construction->getType(), parameter->getType()) ||
+            construction->getNumArgs() != definition->getNumParams()) {
+          fail(argument->getExprLoc(), "C++ record prvalue arguments require complete resolved construction and trivial copying/destruction");
+          return std::nullopt;
+        }
+        llvm::json::Array arguments;
+        for (unsigned index = 0; index < construction->getNumArgs(); ++index) {
+          if (effectful_argument(construction->getArg(index))) {
+            fail(argument->getExprLoc(), "C++ record prvalue constructor arguments require stable values");
+            return std::nullopt;
+          }
+          auto value = lower_call_argument(construction->getArg(index), definition->getParamDecl(index), caller);
+          if (!value) return std::nullopt;
+          arguments.push_back(std::move(*value));
+        }
+        auto value_type = lower_type(parameter->getType(), parameter->getLocation());
+        if (!value_type || !remember_function(definition)) return std::nullopt;
+        llvm::json::Object reference;
+        reference["declaration_id"] = declaration_id(definition);
+        reference["name"] = constructor_name(definition);
+        reference["span"] = span(source->getSourceRange());
+        result["kind"] = "record_construct";
+        result["callee"] = std::move(reference);
+        result["arguments"] = std::move(arguments);
+        result["value_type"] = std::move(*value_type);
+        result["span"] = span(argument->getSourceRange());
+        return Json(std::move(result));
+      }
       const auto *constructor = construction == nullptr ? nullptr : construction->getConstructor();
       const auto *record = parameter->getType()->getAsCXXRecordDecl();
       if (constructor == nullptr || !constructor->isCopyConstructor() ||
@@ -3839,15 +3952,57 @@ private:
     return nullptr;
   }
 
+  static std::string function_template_record_token(unsigned index,
+                                                     const std::string &id) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string token = "__record_type_arg_" + std::to_string(index) + "_";
+    for (unsigned char byte : id) {
+      token += digits[byte >> 4];
+      token += digits[byte & 15];
+    }
+    return token;
+  }
+
+  llvm::json::Array function_template_records(const clang::FunctionDecl *function) {
+    llvm::json::Array result;
+    // Constructor names identify their declared object; they do not use the
+    // function-template suffix policy (iterator constructor templates remain separate).
+    if (llvm::isa<clang::CXXConstructorDecl>(function) ||
+        llvm::isa<clang::CXXDestructorDecl>(function))
+      return result;
+    const auto *arguments = function->getTemplateSpecializationArgs();
+    if (arguments == nullptr)
+      return result;
+    for (unsigned index = 0; index < arguments->size(); ++index) {
+      const auto &argument = arguments->get(index);
+      if (argument.getKind() != clang::TemplateArgument::Type)
+        continue;
+      const auto type = context_.getCanonicalType(argument.getAsType());
+      if (!type.getTypePtr()->isRecordType())
+        continue;
+      const auto *record = complete_record_type(type, function->getLocation());
+      if (record == nullptr)
+        return {};
+      llvm::json::Object entry;
+      entry["index"] = index;
+      entry["declaration_id"] = declaration_id(record);
+      entry["name"] = record_name(record);
+      result.push_back(std::move(entry));
+    }
+    return result;
+  }
+
   std::string template_argument_suffix(
       llvm::ArrayRef<clang::TemplateArgument> arguments,
       clang::SourceLocation location, bool allow_tags) {
-    if (allow_tags && arguments.size() > 32) {
-      fail(location, "C++ class template instances support at most 32 arguments");
+    if (arguments.size() > 32) {
+      fail(location, "C++ concrete template instances support at most 32 arguments");
       return {};
     }
     std::string suffix;
+    unsigned argument_index = 0;
     for (const auto &argument : arguments) {
+      const unsigned index = argument_index++;
       if (argument.getKind() == clang::TemplateArgument::Integral &&
           argument.getIntegralType()->isBooleanType()) {
         suffix +=
@@ -3874,6 +4029,19 @@ private:
           return {};
         }
         const char *name = builtin_template_type_name(type);
+        if (name == nullptr && !allow_tags && type.getTypePtr()->isRecordType()) {
+          const auto *record = complete_record_type(type, location);
+          if (record == nullptr ||
+              !(is_in_logical_source(record->getLocation()) ||
+                dependency_source(record->getLocation())) ||
+              !remember_record(record)) {
+            if (state_.error.empty())
+              fail(location, "function template record arguments require supported complete records within the import root");
+            return {};
+          }
+          suffix += function_template_record_token(index, declaration_id(record));
+          continue;
+        }
         if (name == nullptr && allow_tags && supported_byte_enum(type)) {
           const auto *enumeration = type->getAs<clang::EnumType>()->getDecl();
           if (declaration_id(enumeration) == "c:@N@std@E@byte" &&
@@ -4101,6 +4269,10 @@ private:
     axiom["qualified_name"] = declaration->getQualifiedNameAsString();
     axiom["signature"] =
         declaration->getType().getCanonicalType().getAsString();
+    if (const auto header = dependency_source(declaration->getLocation())) {
+      axiom["declaration_header"] = *header;
+      dependency_sources_.insert(*header);
+    }
     llvm::json::Object result;
     result["declaration_id"] = declaration_id(declaration);
     result["name"] = ordinary_method ? method_name(method)
@@ -4111,6 +4283,7 @@ private:
     result["function_kind"] = std::move(function_kind);
     result["return_type"] = std::move(*return_type);
     result["parameters"] = std::move(parameters);
+    result["template_record_arguments"] = function_template_records(declaration);
     result["declared_noexcept"] = true;
     result["span"] = span(declaration->getSourceRange());
     result["body"] = llvm::json::Array();
@@ -4404,7 +4577,7 @@ int main(int argc, const char **argv) {
     return 2;
   }
   const std::string clang_version = clang::getClangFullVersion();
-  if (clang_version.find(kClangVersion) == std::string::npos) {
+  if (!is_pinned_clang_version(clang_version)) {
     llvm::errs() << "error: click-cpp-exporter requires Clang " << kClangVersion
                  << "; linked frontend is " << clang_version << "\n";
     return 2;

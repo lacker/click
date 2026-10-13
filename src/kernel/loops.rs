@@ -583,10 +583,7 @@ mod pointee_const_return_tests {
         let value = CValue::typed_pointer(pointer.clone(), qualified);
         let assumptions = PureFactContext::new().assume_proposition(Proposition::Predicate {
             name: contract.predicate_name(),
-            arguments: vec![
-                Term::CState(Box::new(CState::new().with_population_creation_tracking())),
-                Term::CValue(value),
-            ],
+            arguments: vec![Term::CState(Box::new(CState::new())), Term::CValue(value)],
         });
         let environment = CExecutionEnvironment::new().with_function_contract(contract);
         for (signature, mutable_destination) in
@@ -2239,7 +2236,7 @@ fn execute_c_indirect_call_paths(
                         let target_assumptions =
                             assumptions_with_path_context(assumptions, &facts, &obligations);
                         let contracts = target_assumptions
-                            .function_contract_facts_for(pointer.pointer())
+                            .function_contract_facts_for_value(&pointer)
                             .filter_map(|(name, _)| environment.get_function_contract(name))
                             .filter(|contract| contract.function_pointer_type() == function_type)
                             .collect::<Vec<_>>();
@@ -4000,7 +3997,6 @@ mod loop_invariant_correspondence_tests {
 /// Cost is the loop's own binders, the locals the exits disagree on, and the
 /// cells they disagree on; no unrelated project-wide or path-wide state is
 /// scanned, and a component every exit agrees on is compared once and kept.
-#[allow(clippy::too_many_arguments)]
 fn abstract_loop_exit_states(
     head: &CLoopHead,
     binders: &[CLoopBinder],

@@ -14396,3 +14396,157 @@ fn repeated_standalone_c_blocks_preserve_outer_objects_and_local_shadows() {
     } if value == &crate::kernel::int32(10))
     );
 }
+
+#[test]
+fn c0_builtin_types_compatible_preserves_c_identity() {
+    for (left, right, expected) in [
+        ("int", "signed int", 1),
+        ("int", "unsigned int", 0),
+        ("char", "signed char", 0),
+        ("char*", "unsigned char*", 0),
+        ("long", "long long", 0),
+        ("unsigned long", "unsigned long long", 0),
+        ("long*", "long long*", 0),
+        ("wide_t", "long long", 1),
+        ("wide_t", "long", 0),
+        ("const volatile int", "int", 1),
+        ("int* const", "int*", 1),
+        ("volatile int*", "int*", 0),
+        ("const int*", "int*", 0),
+        ("const int* const", "const int*", 1),
+        ("struct A", "alias_t", 1),
+        ("struct A", "struct B", 0),
+        ("struct A*", "struct B*", 0),
+        ("union U", "union V", 0),
+        ("void", "void", 1),
+        ("typeof(*p)", "struct A", 1),
+        ("typeof(*p)", "void", 0),
+        ("typeof(((struct Wrapper*)0)->value)", "struct A", 1),
+        ("typeof(long long)", "wide_t", 1),
+    ] {
+        let source = format!(
+            "struct A {{ int field; }}; struct B {{ int field; }}; \
+            struct Wrapper {{ struct A value; }}; \
+            union U {{ int field; }}; union V {{ int field; }}; \
+            typedef struct A alias_t; typedef long long wide_t; \
+            int test(struct A* p) {{ return __builtin_types_compatible_p({left}, {right}); }}"
+        );
+        let functions = syntax::parse_functions(&source)
+            .unwrap_or_else(|e| panic!("{left}, {right}: {}", e.message()));
+        assert!(
+            matches!(functions[0].body(), syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(value), _) if *value == expected),
+            "{left}, {right}: {:?}",
+            functions[0].body()
+        );
+    }
+}
+
+#[test]
+fn c0_builtin_types_compatible_refuses_erased_or_unsupported_identity() {
+    for operands in [
+        "typeof(*(int*)(void*)p), struct A", // Layout provenance is not the cast type.
+        "typeof(n), int", // May be an enum, whose identity the expression type erased.
+        "typeof(p), struct A*", // Nested qualifiers are not all retained by typeof.
+        "typeof(*p)*, struct A*", // A new pointer must not erase source qualifiers.
+        "typeof(cells), int*", // Array decay is not type compatibility.
+        "uint64, unsigned long",
+        "enum E, int",
+        "int[3], int[4]",
+        "int(), int()",
+        "int",
+        "int, int, int",
+        "n, int",
+    ] {
+        let source = format!(
+            "struct A {{ int field; }}; enum E {{ Zero }}; \
+            int test(struct A* p, int n) {{ int cells[3]; return __builtin_types_compatible_p({operands}); }}"
+        );
+        assert!(
+            syntax::parse_functions(&source).is_err(),
+            "must refuse {operands}"
+        );
+    }
+}
+
+#[test]
+fn c0_builtin_types_compatible_rejects_erased_typedef_metadata() {
+    for declaration in [
+        "typedef const int* T;", // Adding another pointer cannot collapse qualifier levels.
+        "typedef int T __attribute__((mode(word)));",
+        "typedef int T[3];",
+        "typedef int (*T)(int);",
+        "typedef typeof(*(const volatile struct A*)0) T;",
+    ] {
+        let source = format!(
+            "struct A {{ int field; }}; {declaration} \
+            int run() {{ return __builtin_types_compatible_p(T*, T*); }}"
+        );
+        assert!(syntax::parse_functions(&source).is_err(), "{declaration}");
+    }
+    syntax::parse_functions("void run() { __builtin_types_compatible_p(int, int); }")
+        .expect("a discarded compile-time result has no runtime effect");
+}
+
+#[test]
+fn c0_static_assert_checks_all_declaration_scopes() {
+    syntax::parse_functions(
+        r#"
+        _Static_assert(sizeof(long) == 8, "target");
+        struct A { _Static_assert(1, "struct"); char c; long x; };
+        union U { _Static_assert(1, "union"); int x; };
+        typedef struct A alias_t;
+        _Static_assert(__builtin_offsetof(alias_t, x) == 8, "padding");
+        int run() {
+            _Static_assert(__builtin_types_compatible_p(int, int), "same" " type");
+            return 0;
+        }
+    "#,
+    )
+    .expect("constant assertions are checked without runtime calls");
+    for body in [
+        r#"_Static_assert(0, "false");"#,
+        r#"_Static_assert(n, "nonconstant");"#,
+        r#"_Static_assert(1 / 0, "undefined");"#,
+        r#"_Static_assert(2147483647 + 1, "overflow");"#,
+        r#"_Static_assert(1, n);"#,
+    ] {
+        assert!(
+            syntax::parse_functions(&format!("int run(int n) {{ {body} return 0; }}")).is_err(),
+            "{body}"
+        );
+    }
+    let error =
+        syntax::parse_functions(r#"_Static_assert(0, "must hold"); int run() { return 0; }"#)
+            .unwrap_err();
+    assert!(
+        error
+            .message()
+            .contains("static assertion failed: must hold")
+    );
+}
+
+#[test]
+fn c0_builtin_offsetof_uses_layout_and_refuses_unsupported_designators() {
+    for (member, expected) in [("c", 0), ("x", 8), ("tail", 16)] {
+        let source = format!(
+            "struct A {{ char c; long x; int tail[3]; }}; unsigned long run() {{ return __builtin_offsetof(struct A, {member}); }}"
+        );
+        let functions = syntax::parse_functions(&source).unwrap();
+        assert!(
+            matches!(functions[0].body(), syntax::C0Statement::Return(syntax::C0Expression::UInt64Literal(value), _) if *value == expected)
+        );
+    }
+    for operands in [
+        "struct A, missing",
+        "struct A, tail[1]",
+        "struct A, x.member",
+        "struct A*, x",
+        "int, x",
+        "struct Incomplete, x",
+    ] {
+        let source = format!(
+            "struct A {{ char c; long x; int tail[3]; }}; unsigned long run() {{ return __builtin_offsetof({operands}); }}"
+        );
+        assert!(syntax::parse_functions(&source).is_err(), "{operands}");
+    }
+}

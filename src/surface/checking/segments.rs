@@ -12,15 +12,14 @@ pub(in crate::surface) fn prove_empty_write_footprint(
     path_index: usize,
     execution_pure_facts: &(impl crate::kernel::ExecutionFactSource + ?Sized),
     available_pure_facts: &PureFactList,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return { .. } = outcome else {
         return Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: {}",
-            describe_function_outcome(outcome, parameters, arguments)
+            describe_function_outcome(outcome, parameter_binding)
         )));
     };
     let mut effect_facts = execution_pure_facts.persistent_facts();
@@ -48,7 +47,7 @@ pub(in crate::surface) fn prove_empty_write_footprint(
     if let Some(pointer) = writes.first() {
         return Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  execution pure facts: {}",
-            describe_pointer(pointer, parameters, arguments),
+            describe_pointer(pointer, parameter_binding),
             describe_execution_pure_facts(execution_pure_facts)
         )));
     }
@@ -80,7 +79,7 @@ pub(in crate::surface) fn prove_empty_write_footprint(
     if let Some(range) = summary_range {
         return Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: write range `{}` is outside the mutable footprint\n  execution pure facts: {}",
-            describe_memory_range(range, parameters, arguments),
+            describe_memory_range(range, parameter_binding),
             describe_execution_pure_facts(execution_pure_facts)
         )));
     }
@@ -143,8 +142,7 @@ pub(in crate::surface) struct EvaluatedContractSegment {
 }
 
 pub(in crate::surface) fn evaluate_requirement_segment(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     entry_state: &CState,
     segment: &ContractSegment,
 ) -> Result<EvaluatedContractSegment, String> {
@@ -154,16 +152,19 @@ pub(in crate::surface) fn evaluate_requirement_segment(
                 .to_string(),
         );
     }
-    let parameter_values =
-        parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let array_refs = array_refs_for_parameters(parameters, &parameter_values, entry_state.memory());
+    let parameter_values = parameter_values(parameter_binding).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(
+        parameter_binding.parameters,
+        &parameter_values,
+        entry_state.memory(),
+    );
     evaluate_segment_bounds(
         segment,
         &PureFactContext::new(),
         &parameter_values,
         &array_refs,
         entry_state,
-        contract_segment_element_width(parameters, segment),
+        contract_segment_element_width(parameter_binding.parameters, segment),
     )
 }
 

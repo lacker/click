@@ -88,6 +88,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "branch",
+                self.facts().assumptions(),
             )
         else {
             return Ok(false);
@@ -151,6 +152,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "branch",
+                self.facts().assumptions(),
             )?;
         let CStatement::If {
             condition,
@@ -261,8 +263,7 @@ impl<'a> Proof<'a> {
                         },
                         crate::surface::diagnostics::describe_pure_facts_for_diagnostic(
                             &selecting,
-                            parameters,
-                            context.arguments,
+                            ParameterBinding::new(parameters, context.arguments),
                         )
                     )
                 })
@@ -314,8 +315,10 @@ impl<'a> Proof<'a> {
                         "`branch` recorded condition evidence the proof object rejected: {}",
                         crate::surface::proof::cursor_execution::describe_evidence_refusal(
                             &refusal,
-                            context.parsed_function.parameters(),
-                            context.arguments,
+                            ParameterBinding::new(
+                                context.parsed_function.parameters(),
+                                context.arguments
+                            ),
                         )
                     ))
                 })?;
@@ -358,7 +361,7 @@ impl<'a> Proof<'a> {
                     remaining: Arc::new(selected_branch.clone()),
                 };
             }
-            record_current_statement_entry(
+            record_current_statement_entry_with_assumptions(
                 &arm_execution.core.frontier,
                 &mut arm_execution.presentation.recorded_snapshots,
                 &arm_execution.core.state,
@@ -368,6 +371,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "branch",
+                self.facts().assumptions(),
             )?;
             let surface_path_fact = if take_then {
                 surface_condition.clone()
@@ -379,12 +383,13 @@ impl<'a> Proof<'a> {
             let kernel_path_fact = lower_fixed_state_proposition_with_assumptions(
                 &surface_path_fact,
                 transition.pure_facts.assumptions(),
-                context.parsed_function.parameters(),
-                context.arguments,
-                pre_state,
-                &arm_execution.core.state,
-                None,
-                &arm_execution.presentation.recorded_snapshots,
+                context.parameter_binding(),
+                FixedStateFrame::new(
+                    pre_state,
+                    &arm_execution.core.state,
+                    None,
+                    &arm_execution.presentation.recorded_snapshots,
+                ),
                 context.spec_definitions,
             )
             .map_err(|message| {
@@ -504,7 +509,6 @@ impl<'a> Proof<'a> {
     /// two-arm ownership normalization has not migrated. Produces the arm's
     /// post-interface context and the structured `Branch { ensuring, .. }`
     /// with an empty impossible arm.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn merge_decided_interface_execution_path(
         &self,
         parent_unfolds: &PersistentOrderedSet<String>,
@@ -641,6 +645,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "decided branch",
+            self.facts().assumptions(),
         )?;
         let CStatement::If {
             condition,
@@ -701,8 +706,7 @@ impl<'a> Proof<'a> {
             };
             let then_expected = lower_interface_resource_clause(
                 resource,
-                context.parsed_function.parameters(),
-                context.arguments,
+                context.parameter_binding(),
                 &arms[0].execution.core.state,
                 arms[0].facts.assumptions(),
             )?;
@@ -711,8 +715,7 @@ impl<'a> Proof<'a> {
             }
             let else_expected = lower_interface_resource_clause(
                 resource,
-                context.parsed_function.parameters(),
-                context.arguments,
+                context.parameter_binding(),
                 &arms[1].execution.core.state,
                 arms[1].facts.assumptions(),
             )?;
@@ -1143,7 +1146,7 @@ impl<'a> Proof<'a> {
                 abstract_state,
             );
         }
-        record_current_statement_entry(
+        record_current_statement_entry_with_assumptions(
             &execution.core.frontier,
             &mut execution.presentation.recorded_snapshots,
             &execution.core.state,
@@ -1153,6 +1156,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "branch ensuring",
+            self.facts().assumptions(),
         )?;
 
         for fact in retained_facts {
@@ -1251,8 +1255,7 @@ impl<'a> Proof<'a> {
                     };
                     let goal = crate::surface::diagnostics::describe_required_pure_fact(
                         &missing.goal,
-                        context.parsed_function.parameters(),
-                        context.arguments,
+                        context.parameter_binding(),
                     );
                     if missing.side_condition {
                         format!(
@@ -1570,6 +1573,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "terminal branch join",
+                self.facts().assumptions(),
             )?;
             let CStatement::If {
                 condition,
@@ -2324,7 +2328,7 @@ impl<'a> Proof<'a> {
             ProgramPointKind::Exit,
             (**then_state).clone(),
         );
-        record_current_statement_entry(
+        record_current_statement_entry_with_assumptions(
             &execution.core.frontier,
             &mut execution.presentation.recorded_snapshots,
             &execution.core.state,
@@ -2334,6 +2338,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "branch",
+            self.facts().assumptions(),
         )?;
 
         let mut facts = parent_facts.clone();
@@ -2845,6 +2850,7 @@ impl<'a> Proof<'a> {
                         context.claim_label,
                         context.tactic_index,
                         "branch join",
+                        self.facts().assumptions(),
                     )?;
                 let CStatement::If { condition, .. } = statement else {
                     return Err(self.step_error("checked C branch split no longer names a C `if`"));
@@ -3417,7 +3423,7 @@ impl<'a> Proof<'a> {
         let frontier = execution.core.frontier.clone();
         let state = execution.core.state.clone();
         let (recorded, result) = proof.clone().edit_execution_presentation(|presentation| {
-            record_current_statement_entry(
+            record_current_statement_entry_with_assumptions(
                 &frontier,
                 &mut presentation.recorded_snapshots,
                 &state,
@@ -3427,6 +3433,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "execute cases",
+                self.facts().assumptions(),
             )
         })?;
         result?;
@@ -3500,6 +3507,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "expanded execution branch",
+            self.facts().assumptions(),
         )?;
         let CStatement::If {
             condition,
@@ -3760,6 +3768,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 context.tactic_index,
                 "planned case split",
+                self.facts().assumptions(),
             )
         else {
             return Ok(false);
@@ -3867,7 +3876,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
-        record_current_statement_entry(
+        record_current_statement_entry_with_assumptions(
             &execution.core.frontier,
             &mut execution.presentation.recorded_snapshots,
             &execution.core.state,
@@ -3877,6 +3886,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "branch",
+            self.facts().assumptions(),
         )?;
         Ok(())
     }

@@ -518,6 +518,27 @@ projected pairs), and a whole-frame check is linear
 `validity_of_parameter_objects_is_linear`); the relating facts are pinned
 by `parameter_validity_still_refuses_related_overlaps`.
 
+The same reasoning bounds the rebasing itself. Beyond the two ranges' own
+spellings, an alias pair is asked only when its bases are a constant number
+of bytes apart: aliases of one base are one address, so a pair at a symbolic
+distance restates the question and the endpoint decision could settle it only
+by rediscovering that equality. Asking every pair cost the product of the two
+alias classes in endpoint decisions, each searching the path's order facts,
+and the classes grow along a path as it learns equalities, so each call in
+`examples/arena` composed its footprint more slowly than the last (6 to 294
+pairs, 1,406 to 43,542 units for one six-range footprint). A footprint now
+costs one structural comparison per further alias pair and no decision
+(`footprint_composition_does_not_decide_every_alias_pair`).
+
+Negative memos over memory-DAG walks key on the derivation generation, which
+advances only when a snapshot interned earlier receives its edge: a
+recording that interns its own snapshot cannot change an earlier answer
+(`recording_a_fresh_snapshot_keeps_the_derivation_generation`). A failed
+kept-range base equality that no in-progress cell lookup cut is kept without
+the lookups in its key, since a lookup in progress changes an answer only by
+refusing itself, which can only take an answer away
+(`a_failed_kept_base_equality_is_reused_across_cell_lookups`).
+
 The pairs' accidental effectiveness came from restating each fact in every
 term form that ever existed, so lookup never proved cross-snapshot equality.
 The replacement gives terms one canonical identity and makes state changes

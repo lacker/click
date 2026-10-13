@@ -6,8 +6,7 @@
 //! forks share roots, and deletions repair summaries on the copied search path.
 use super::super::ResourceEntryId;
 use super::AddressCoordinate;
-use crate::persistent::record_persistent_work;
-use std::cmp::Ordering;
+use crate::persistent::{AvlNode, insert_node, node_height, record_persistent_work, remove_node};
 use std::sync::Arc;
 
 type Key = (AddressCoordinate, ResourceEntryId);
@@ -28,6 +27,29 @@ struct Node {
     left: Root,
     right: Root,
     height: u16,
+}
+
+impl AvlNode for Node {
+    type Key = Key;
+    type Value = Value;
+    fn key(&self) -> &Arc<Key> {
+        &self.key
+    }
+    fn value(&self) -> &Arc<Value> {
+        &self.value
+    }
+    fn left(&self) -> &Root {
+        &self.left
+    }
+    fn right(&self) -> &Root {
+        &self.right
+    }
+    fn height(&self) -> u16 {
+        self.height
+    }
+    fn make(key: Arc<Key>, value: Arc<Value>, left: Root, right: Root) -> Arc<Self> {
+        make_node(key, value, left, right)
+    }
 }
 
 impl ReadIntervals {
@@ -116,10 +138,6 @@ impl Iterator for CoveringIntervals {
     }
 }
 
-fn node_height(node: Option<&Arc<Node>>) -> u16 {
-    node.map_or(0, |node| node.height)
-}
-
 fn make_node(
     key: Arc<Key>,
     value: Arc<Value>,
@@ -141,185 +159,6 @@ fn make_node(
         left,
         right,
     })
-}
-
-fn balance_node(
-    key: Arc<Key>,
-    value: Arc<Value>,
-    left: Option<Arc<Node>>,
-    right: Option<Arc<Node>>,
-) -> Arc<Node> {
-    let left_height = node_height(left.as_ref());
-    let right_height = node_height(right.as_ref());
-    if left_height > right_height + 1 {
-        let left_node = left.as_ref().expect("left-heavy node has a left child");
-        if node_height(left_node.left.as_ref()) >= node_height(left_node.right.as_ref()) {
-            let new_right = make_node(key, value, left_node.right.clone(), right);
-            return make_node(
-                left_node.key.clone(),
-                left_node.value.clone(),
-                left_node.left.clone(),
-                Some(new_right),
-            );
-        }
-        let middle = left_node
-            .right
-            .as_ref()
-            .expect("left-right-heavy node has a middle child");
-        let new_left = make_node(
-            left_node.key.clone(),
-            left_node.value.clone(),
-            left_node.left.clone(),
-            middle.left.clone(),
-        );
-        let new_right = make_node(key, value, middle.right.clone(), right);
-        return make_node(
-            middle.key.clone(),
-            middle.value.clone(),
-            Some(new_left),
-            Some(new_right),
-        );
-    }
-    if right_height > left_height + 1 {
-        let right_node = right.as_ref().expect("right-heavy node has a right child");
-        if node_height(right_node.right.as_ref()) >= node_height(right_node.left.as_ref()) {
-            let new_left = make_node(key, value, left, right_node.left.clone());
-            return make_node(
-                right_node.key.clone(),
-                right_node.value.clone(),
-                Some(new_left),
-                right_node.right.clone(),
-            );
-        }
-        let middle = right_node
-            .left
-            .as_ref()
-            .expect("right-left-heavy node has a middle child");
-        let new_left = make_node(key, value, left, middle.left.clone());
-        let new_right = make_node(
-            right_node.key.clone(),
-            right_node.value.clone(),
-            middle.right.clone(),
-            right_node.right.clone(),
-        );
-        return make_node(
-            middle.key.clone(),
-            middle.value.clone(),
-            Some(new_left),
-            Some(new_right),
-        );
-    }
-    make_node(key, value, left, right)
-}
-
-fn insert_node(node: Option<&Arc<Node>>, key: Arc<Key>, value: Arc<Value>) -> (Arc<Node>, bool) {
-    record_persistent_work(1);
-    let Some(node) = node else {
-        return (make_node(key, value, None, None), true);
-    };
-    match key.as_ref().cmp(node.key.as_ref()) {
-        Ordering::Less => {
-            let (left, inserted) = insert_node(node.left.as_ref(), key, value);
-            (
-                balance_node(
-                    node.key.clone(),
-                    node.value.clone(),
-                    Some(left),
-                    node.right.clone(),
-                ),
-                inserted,
-            )
-        }
-        Ordering::Equal => (
-            make_node(key, value, node.left.clone(), node.right.clone()),
-            false,
-        ),
-        Ordering::Greater => {
-            let (right, inserted) = insert_node(node.right.as_ref(), key, value);
-            (
-                balance_node(
-                    node.key.clone(),
-                    node.value.clone(),
-                    node.left.clone(),
-                    Some(right),
-                ),
-                inserted,
-            )
-        }
-    }
-}
-
-fn remove_leftmost(node: &Arc<Node>) -> (Option<Arc<Node>>, Arc<Key>, Arc<Value>) {
-    record_persistent_work(1);
-    let Some(left) = node.left.as_ref() else {
-        return (node.right.clone(), node.key.clone(), node.value.clone());
-    };
-    let (new_left, key, value) = remove_leftmost(left);
-    (
-        Some(balance_node(
-            node.key.clone(),
-            node.value.clone(),
-            new_left,
-            node.right.clone(),
-        )),
-        key,
-        value,
-    )
-}
-
-fn remove_node(node: Option<&Arc<Node>>, key: &Key) -> (Option<Arc<Node>>, bool) {
-    record_persistent_work(1);
-    let Some(node) = node else {
-        return (None, false);
-    };
-    match key.cmp(node.key.as_ref()) {
-        Ordering::Less => {
-            let (left, removed) = remove_node(node.left.as_ref(), key);
-            if !removed {
-                return (Some(node.clone()), false);
-            }
-            (
-                Some(balance_node(
-                    node.key.clone(),
-                    node.value.clone(),
-                    left,
-                    node.right.clone(),
-                )),
-                true,
-            )
-        }
-        Ordering::Greater => {
-            let (right, removed) = remove_node(node.right.as_ref(), key);
-            if !removed {
-                return (Some(node.clone()), false);
-            }
-            (
-                Some(balance_node(
-                    node.key.clone(),
-                    node.value.clone(),
-                    node.left.clone(),
-                    right,
-                )),
-                true,
-            )
-        }
-        Ordering::Equal => match (&node.left, &node.right) {
-            (None, _) => (node.right.clone(), true),
-            (_, None) => (node.left.clone(), true),
-            (Some(_), Some(right)) => {
-                let (new_right, successor_key, successor_value) = remove_leftmost(right);
-                (
-                    Some(balance_node(
-                        successor_key,
-                        successor_value,
-                        node.left.clone(),
-                        new_right,
-                    )),
-                    true,
-                )
-            }
-        },
-    }
 }
 
 #[cfg(test)]

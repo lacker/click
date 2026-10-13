@@ -317,7 +317,11 @@ fn an_unnamed_store_index_is_spelled_through_its_own_base() {
         ),
     };
     assert_eq!(
-        super::diagnostics::source_cell_text_for_tests(&store, &parameters, &arguments).as_deref(),
+        super::diagnostics::source_cell_text_for_tests(
+            &store,
+            ParameterBinding::new(&parameters, &arguments)
+        )
+        .as_deref(),
         Some("visited[…]")
     );
 }
@@ -520,8 +524,7 @@ fn a_condition_search_miss_spells_its_goal_and_premises() {
     let message = super::proof::describe_condition_search_miss(
         &goal,
         &[at_most(&x, 10), at_most(&y, 10)],
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
     );
     assert!(
         message
@@ -939,8 +942,7 @@ fn loan_refusal_diagnostic_renders_only_its_selected_subject() {
     );
     let rendered = super::diagnostics::describe_runtime_error(
         &crate::kernel::CRuntimeError::LoanRefusal(Box::new(diagnostic)),
-        &[],
-        &[],
+        ParameterBinding::default(),
     );
 
     assert!(rendered.contains("selected resource"), "{rendered}");
@@ -968,8 +970,7 @@ fn loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state() {
     );
     let rendered = super::diagnostics::describe_runtime_error(
         &crate::kernel::CRuntimeError::LoanRefusal(Box::new(diagnostic)),
-        &[],
-        &[],
+        ParameterBinding::default(),
     );
 
     assert!(rendered.contains("selected range"), "{rendered}");
@@ -1144,8 +1145,7 @@ fn empty_footprint_rejects_a_fact_aliased_write_and_effect_range() {
             0,
             std::slice::from_ref(fact),
             &PureFactList::default(),
-            &[],
-            &[],
+            ParameterBinding::default(),
             &pre_state,
             &outcome,
         )
@@ -1155,8 +1155,7 @@ fn empty_footprint_rejects_a_fact_aliased_write_and_effect_range() {
             0,
             std::slice::from_ref(fact),
             &PureFactList::from(vec![aliases_global.clone()]),
-            &[],
-            &[],
+            ParameterBinding::default(),
             &pre_state,
             &outcome,
         )
@@ -1195,13 +1194,11 @@ fn missing_mutex_use_names_the_required_resource_without_loan_internals() {
         &crate::kernel::CRuntimeError::MissingMutexUse {
             mutex: mutex.clone(),
         },
-        &[],
-        &[],
+        ParameterBinding::default(),
     );
     let owner = super::diagnostics::describe_runtime_error(
         &crate::kernel::CRuntimeError::MissingMutexLive { mutex },
-        &[],
-        &[],
+        ParameterBinding::default(),
     );
     assert_eq!(rendered, owner.replace("mutex_live", "mutex_use"));
     assert!(
@@ -1615,7 +1612,10 @@ fn source_unknown_local_pointer_diagnostics_identify_byte_units() {
         Bitvector32Term::Constant(2),
     );
     assert_eq!(
-        super::diagnostics::describe_memory_range(&range, &parameters, &arguments),
+        super::diagnostics::describe_memory_range(
+            &range,
+            ParameterBinding::new(&parameters, &arguments)
+        ),
         "((char *)cursor)[4..8]"
     );
 }
@@ -1634,11 +1634,8 @@ int32 last(int32* data, uint64 length) {
     // Exact wide-index constants now resolve without a manual rewrite.
     verify_c0_sources(sidecar, &[("last.c", source)]).unwrap();
     let ambiguous = sidecar
-        .replace(
-            "owns data[0..1];",
-            "owns data[0]; views data[length - 1u64];",
-        )
-        .replace("requires length == 1u64;", "");
+        .replace("owns data[0..1];", "owns data[0..2];")
+        .replace("requires length == 1u64;", "requires length == 2u64;");
     let error = match verify_c0_sources(&ambiguous, &[("last.c", source)]) {
         Err(error) => error,
         Ok(_) => panic!("distinct readable addresses do not establish equal values"),
@@ -2433,9 +2430,13 @@ fn memory_history_diagnostic_names_the_store_and_limits_its_claim() {
         ConditionTerm::Bitvector64Equal(Box::new(load(&after)), Box::new(load(&before))),
         true,
     );
-    let summary =
-        super::diagnostics::describe_proposition_version_mismatch(&goal, &[], "earlier", &[], &[])
-            .expect("different snapshots explain the failure");
+    let summary = super::diagnostics::describe_proposition_version_mismatch(
+        &goal,
+        &[],
+        "earlier",
+        ParameterBinding::default(),
+    )
+    .expect("different snapshots explain the failure");
     assert!(
         summary.contains("without using the proof context's equality and ownership facts"),
         "{summary}"
@@ -2446,8 +2447,12 @@ fn memory_history_diagnostic_names_the_store_and_limits_its_claim() {
     );
     assert!(!summary.contains("nothing tells"), "{summary}");
     assert!(!summary.contains("later step"), "{summary}");
-    let (explanation, _) =
-        super::diagnostics::proposition_version_explanation(&goal, &[], &[], &[]).unwrap();
+    let (explanation, _) = super::diagnostics::proposition_version_explanation(
+        &goal,
+        &[],
+        ParameterBinding::default(),
+    )
+    .unwrap();
     let history = crate::surface::proof_diagnostics::MemoryHistoryDiagnostic::capture(explanation);
     // Clear the live arena before printing, as the terminal renderer may run
     // after the verification session has ended. The retained result must stand.
@@ -2606,7 +2611,7 @@ fn call_resource_diagnostic_read_shows_snapshot_and_access() {
         required: Box::new(required),
         memory: Some(Box::new(crate::kernel::CMemory::new())),
     };
-    let rendered = super::diagnostics::describe_runtime_error(&error, &[], &[]);
+    let rendered = super::diagnostics::describe_runtime_error(&error, ParameterBinding::default());
     assert!(
         rendered.contains("argument read snapshot: snapshot#1"),
         "{rendered}"

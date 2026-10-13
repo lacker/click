@@ -17,8 +17,13 @@ mod construction_return;
 mod constructor_input;
 pub(crate) mod independent_entry;
 pub(crate) use independent_entry::c_independent_function_input_state;
+mod initialization_outputs;
 mod native_record_inputs;
 mod native_span_inputs;
+pub(crate) mod valid_places;
+pub(crate) use initialization_outputs::{
+    mark_initialization_output_fields, resolve_initialization_output,
+};
 pub(crate) use native_span_inputs::project_interface_native_spans;
 pub(crate) mod pointer_store_effects;
 pub(crate) use native_record_inputs::c_state_with_assumed_native_record_inputs;
@@ -37,7 +42,9 @@ mod scalar_object_tests;
 #[cfg(test)]
 mod typed_access_policy_tests;
 
-pub(crate) use constructor_input::assume_scalar_object_inputs;
+pub(crate) use constructor_input::{
+    assume_scalar_object_inputs, materialize_symbolic_declaration_parameters,
+};
 
 fn execute_c_function_body_paths(
     state: &CState,
@@ -5912,14 +5919,54 @@ fn execute_verified_function_applications_with_suspension(
             };
             result
         } else {
-            instantiate_pointer_result_effect(
-                symbolic_contract_result(interface, result_identity),
-                application.pointer_result_effects,
-                &argument_values,
-                entry_state.memory(),
-            )
+            let field_result = application
+                .pointer_result_effects
+                .iter()
+                .find_map(|effect| {
+                    let CPointerResultEffect::ExactFromPointerField { source } = effect else {
+                        return None;
+                    };
+                    pointer_store_effects::field_source(
+                        &entry_state,
+                        interface,
+                        &argument_values,
+                        source,
+                        interface.return_type(),
+                        &effective_assumptions,
+                    )
+                    .map(CValue::Pointer)
+                });
+            field_result.unwrap_or_else(|| {
+                instantiate_pointer_result_effect(
+                    symbolic_contract_result(interface, result_identity),
+                    application.pointer_result_effects,
+                    &argument_values,
+                    entry_state.memory(),
+                )
+            })
         };
         let mut post_state = entry_state.clone().with_memory(memory);
+        if interface.aggregate_return_mode() == CAggregateReturnMode::Copy
+            && let Some(layout) = interface.return_aggregate_layout()
+            && let CValue::Pointer(pointer) = &result
+            && pointer.pointer() == &Pointer::verifier_temporary(result_identity)
+        {
+            // This automatic identity was freshly allocated for the actual
+            // by-value summary result. Declare its record here, without
+            // changing an input or a retained body-source declaration.
+            post_state.set_memory(
+                post_state
+                    .memory()
+                    .clone()
+                    .with_declared_aggregate_block(pointer.pointer().block.clone(), layout),
+            );
+            if let Some(declared) = post_state
+                .memory()
+                .declared_aggregate_pointer(pointer.pointer(), layout)
+            {
+                result = CValue::Pointer(pointer.clone().with_designation_of(&declared));
+            }
+        }
         if interface.aggregate_return_mode() == CAggregateReturnMode::Construction
             || interface.construction_parameter().is_some()
         {
@@ -5927,26 +5974,34 @@ fn execute_verified_function_applications_with_suspension(
         }
         // Verified bodies (or tracked local proof dependencies) justify
         // this effect. Body-less external assumptions reject it.
-        for (index, bytes) in interface
-            .initialization_outputs()
+        let Some(initialization_outputs) = interface
+            .initialization_output_selectors()
             .expect("checked output profile")
-        {
-            if bytes == 0 {
-                continue;
+            .into_iter()
+            .map(|output| {
+                resolve_initialization_output(&entry_contract_state, interface, &output)
+                    .map(|pointer| (pointer, output.bytes()))
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            paths.push(CFunctionPath::new(
+                CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    "initialization output requires its defined frozen entry pointer".into(),
+                )),
+                facts,
+                obligations,
+            ));
+            continue;
+        };
+        for (pointer, bytes) in initialization_outputs {
+            if bytes != 0 {
+                post_state.set_memory(
+                    post_state
+                        .memory
+                        .clone()
+                        .with_initialized_object(pointer.pointer(), bytes),
+                );
             }
-            let CValue::Pointer(pointer) = entry_contract_state
-                .locals()
-                .get(interface.parameters()[index].name())
-                .expect("bound output parameter")
-            else {
-                unreachable!("checked byte parameter");
-            };
-            post_state.set_memory(
-                post_state
-                    .memory
-                    .clone()
-                    .with_initialized_object(pointer.pointer(), bytes),
-            );
         }
         // Construction initialization is part of this checked call effect,
         // so its endpoint must include the initialized value fields.
@@ -7367,6 +7422,7 @@ fn execute_verified_function_applications_with_suspension(
                 assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
             match pointer_store_effects::apply(
                 &return_state,
+                caller_state,
                 interface,
                 &argument_values,
                 application.pointer_store_effects,
@@ -9332,6 +9388,7 @@ pub(in crate::kernel) fn typed_access_policy_refinement_compatible(
             })
             && interface.scalar_object_inputs().is_empty()
             && interface.native_span_inputs().is_empty()
+            && interface.native_span_expression_inputs().is_empty()
             && interface.aggregate_object_inputs().is_empty()
             && interface.proof_parameters().is_empty()
             && interface.resource_requires().is_empty()
@@ -12422,7 +12479,6 @@ fn compatible_resource_and_effect_interfaces(
 /// implementation requirement and its entry/recovery evidence was checked.
 /// `Some(false)` is an explicit view-to-own refusal.  `None` means the two
 /// interfaces have no access-mode variance that this adapter handles.
-#[allow(clippy::too_many_arguments)]
 fn checked_access_mode_refinement_adapter(
     contract: &CFunctionContractInterface,
     function: &CFunctionContractInterface,
@@ -13581,6 +13637,7 @@ fn spec_proposition_supports_stateful_memory_refinement(proposition: &SpecPropos
         | SpecProposition::Predicate { .. }
         | SpecProposition::ResourceSeparate { .. }
         | SpecProposition::ResourceContains { .. }
+        | SpecProposition::ValidPlace { .. }
         | SpecProposition::MemoryInitialized { .. }
         | SpecProposition::MemoryLoadable { .. } => false,
     }
@@ -14162,7 +14219,8 @@ fn spec_proposition_reads_current_parameter(
             spec_resource_reads_current_parameter(left, parameter_name)
                 || spec_resource_reads_current_parameter(right, parameter_name)
         }
-        SpecProposition::MemoryInitialized { base, .. } => {
+        SpecProposition::ValidPlace { pointer: base, .. }
+        | SpecProposition::MemoryInitialized { base, .. } => {
             spec_expression_reads_current_parameter(base, parameter_name)
         }
         SpecProposition::MemoryLoadable {
@@ -14874,7 +14932,8 @@ fn spec_proposition_current_parameter_accesses(
             spec_resource_current_parameter_accesses(left, parameter_name, reads, unknown_read);
             spec_resource_current_parameter_accesses(right, parameter_name, reads, unknown_read);
         }
-        SpecProposition::MemoryInitialized { base, .. } => {
+        SpecProposition::ValidPlace { pointer: base, .. }
+        | SpecProposition::MemoryInitialized { base, .. } => {
             spec_expression_current_parameter_accesses(base, parameter_name, reads, unknown_read);
         }
         SpecProposition::MemoryLoadable {
@@ -16155,12 +16214,18 @@ fn with_contract_interface_argument_views(
         .with_typed_access_policy(interface.typed_access_policy());
     state.resources = state.resources.unpublished_contract_view();
     for (parameter, value) in interface.parameters().iter().zip(values) {
-        if parameter.aggregate_layout().is_some() {
-            // Aggregate parameters are already represented by the copied
-            // address-backed object installed by argument binding. Keeping
-            // that binding lets contract field accesses inspect the copy
-            // rather than accidentally replacing it with the caller's source
-            // pointer.
+        if let Some(layout) = parameter.aggregate_layout() {
+            let CValue::Pointer(image) = value else {
+                unreachable!("aggregate arguments were checked before contract observation");
+            };
+            // A contract observes the already-evaluated aggregate value image,
+            // as contract certification does. The private callee copy belongs
+            // to execution and may have retired before output checks run.
+            state.locals.set_aggregate_object_at(
+                parameter.name().to_string(),
+                layout.clone(),
+                image.pointer().clone(),
+            );
             continue;
         }
         // Keep the contract view identical to the typed parameter binding.
@@ -16213,25 +16278,8 @@ fn set_contract_result(state: &mut CState, interface: &CFunctionContractInterfac
     if let Some(layout) = interface.return_aggregate_layout()
         && let CValue::Pointer(pointer) = &value
     {
-        if interface.aggregate_return_mode() == CAggregateReturnMode::Copy {
-            state.set_memory(
-                // A returned-by-value temporary is fresh caller storage. Its
-                // declaration must remain in the memory history so copying
-                // its fields does not disconnect unrelated input snapshots.
-                // A symbolic pointer still supplies only a synthetic layout.
-                if matches!(pointer.block, PointerBlock::Symbolic(_)) {
-                    state
-                        .memory
-                        .clone()
-                        .with_block_without_derivation(pointer.block.clone(), layout.size_bytes())
-                } else {
-                    state
-                        .memory
-                        .clone()
-                        .with_declared_aggregate_block(pointer.block.clone(), layout)
-                },
-            );
-        }
+        // Binding a result may name a retained body source or an already
+        // completed copy. Only their actual storage producers declare them.
         state.locals.set_aggregate_object_at(
             C_CONTRACT_RESULT_NAME.to_string(),
             layout.clone(),
@@ -16277,8 +16325,8 @@ fn complete_aggregate_return(
     if pointer.is_null() {
         return Err(AggregateReturnRefusal::InvalidValue);
     }
-    let (pointer, guards) = aggregate_copy_carrier(state, &pointer, layout, assumptions)
-        .ok_or(AggregateReturnRefusal::InvalidValue)?;
+    let carrier = aggregate_copy_carrier(state, &pointer, layout, assumptions);
+    let (pointer, guards) = carrier.ok_or(AggregateReturnRefusal::InvalidValue)?;
     if !guards
         .iter()
         .all(|guard| assumptions.decide(guard) == Some(true))
@@ -16475,13 +16523,28 @@ fn instantiate_pointer_result_effect(
     let CValue::Pointer(result_pointer) = &result else {
         return result;
     };
-    for effect in effects {
-        let CPointerResultEffect::FromParameter {
-            parameter,
-            child_path,
-        } = effect
-        else {
-            continue;
+    // A legacy domain effect must not mask a certified exact carrier effect.
+    let ordered = effects
+        .iter()
+        .filter(|effect| matches!(effect, CPointerResultEffect::ExactFromParameter { .. }))
+        .chain(
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, CPointerResultEffect::FromParameter { .. })),
+        );
+    for effect in ordered {
+        let (parameter, child_path, exact) = match effect {
+            CPointerResultEffect::ExactFromParameter {
+                parameter,
+                child_path,
+            } => (parameter, child_path, true),
+            CPointerResultEffect::FromParameter {
+                parameter,
+                child_path,
+            } => (parameter, child_path, false),
+            CPointerResultEffect::ExactFromPointerField { .. } | CPointerResultEffect::Opaque => {
+                continue;
+            }
         };
         let Some(CValue::Pointer(input)) = arguments.get(*parameter) else {
             continue;
@@ -16495,19 +16558,29 @@ fn instantiate_pointer_result_effect(
             selected
         };
         if let Some(designation) = selected.designation() {
-            // The summary's address and qualifiers remain independently
-            // bound. Only checked semantic designation is transported here.
-            return CValue::Pointer(result_pointer.clone().with_designation(designation.clone()));
+            // This certified effect returns the selected parameter carrier,
+            // including its address. Keeping a fresh symbolic address here
+            // loses the caller's local-storage access despite retaining its
+            // object domain. The result declaration still supplies its type
+            // and qualifiers; an address equality alone never takes this path.
+            let result_pointer = if exact {
+                result_pointer
+                    .clone()
+                    .with_pointer(selected.pointer().clone())
+            } else {
+                result_pointer.clone()
+            };
+            return CValue::Pointer(result_pointer.with_designation(designation.clone()));
         }
     }
     // A checked-domain argument must not escape through a legacy summary
     // that drops its semantic carrier. An uncertified result has a fresh
     // unresolved domain; address postconditions cannot resolve that domain.
     if (effects.contains(&CPointerResultEffect::Opaque)
-        || arguments.iter().any(|argument| {
-            matches!(argument,
-                CValue::Pointer(pointer) if pointer.designation().is_some()
-            )
+        || arguments.iter().any(|argument| match argument {
+            CValue::Pointer(pointer) => pointer.designation().is_some(),
+            CValue::PointerInteger(value) => value.origin().designation().is_some(),
+            _ => false,
         }))
         && let PointerBlock::Symbolic(variable) = result_pointer.pointer().block
     {
@@ -23350,6 +23423,9 @@ fn resource_body_fact_is_established(
     if required_obligation_is_exactly_discharged(established, proposition) {
         return true;
     }
+    if established.function_contract_fact_is_established(proposition) {
+        return true;
+    }
     // A copied wide word can have a fresh read name that recurs inside its
     // packed-word equation. Query only exact 64-bit neighbors of the stated
     // endpoints and captured variables, using checked equality substitution. A
@@ -24052,10 +24128,26 @@ fn rewrite_resource_instance_selecting_children_unspelled(
     }
     let assumptions = &opening_assumptions;
     if unfold {
-        evaluation = assume_native_record_specs(&evaluation, &body_specs, assumptions)
+        // The exact held instance authenticates its immediate selected body.
+        // Expose it only while reading native carriers; a pointer field's full
+        // cell must be readable before the dependent span can be admitted.
+        let scratch_body = evaluate_function_resource_context_with_normalization(
+            &evaluation,
+            body_specs,
+            &[],
+            assumptions,
+            &mut budget,
+            false,
+        )
+        .map_err(|_| "instance native carrier body evaluation exceeded its budget")?
+        .map_err(|_| "could not evaluate the held instance native carrier body")?
+        .0;
+        let scratch = evaluation.clone().with_resource_context(scratch_body);
+        let admitted = assume_native_record_specs(&scratch, body_specs, assumptions)
             .map_err(ResourceRewriteRefusal::OwnedMessage)?;
+        evaluation.set_memory(admitted.memory().clone());
     } else {
-        check_native_record_specs(&evaluation, &body_specs, assumptions)
+        check_native_record_specs(&evaluation, body_specs, assumptions)
             .map_err(ResourceRewriteRefusal::OwnedMessage)?;
     }
     // A contained authority is exclusive custody, not a readable footprint.
@@ -31798,7 +31890,6 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn function_outcome_from_body_changing_quantities(
     caller_state: &CState,
     function: &CFunction,

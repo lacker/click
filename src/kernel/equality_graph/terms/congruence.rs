@@ -313,6 +313,36 @@ impl TermClasses {
             value,
         ));
         self.register_pending_loads();
+        // Only signed 32-bit order facts contribute to this interval. Wide
+        // and unsigned comparisons retain their separate semantic orders.
+        let order = match (condition, value) {
+            (C::Bitvector32SignedLessThan(a, b), true)
+            | (C::Bitvector32SignedLessEqual(a, b), false) => Some((a, b, true, value)),
+            (C::Bitvector32SignedLessEqual(a, b), true)
+            | (C::Bitvector32SignedLessThan(a, b), false) => Some((a, b, false, value)),
+            (C::Bitvector32SignedGreaterThan(a, b), true)
+            | (C::Bitvector32SignedGreaterEqual(a, b), false) => Some((b, a, true, value)),
+            (C::Bitvector32SignedGreaterEqual(a, b), true)
+            | (C::Bitvector32SignedGreaterThan(a, b), false) => Some((b, a, false, value)),
+            _ => None,
+        };
+        if let Some((a, b, strict, forward)) = order {
+            let (a, b) = if forward { (a, b) } else { (b, a) };
+            if let Some(bound) = crate::kernel::canonical_term(b).as_const() {
+                self.retain_signed_int32_interval(
+                    a,
+                    i64::from(i32::MIN),
+                    i64::from(bound as i32) - i64::from(strict),
+                );
+            }
+            if let Some(bound) = crate::kernel::canonical_term(a).as_const() {
+                self.retain_signed_int32_interval(
+                    b,
+                    i64::from(bound as i32) + i64::from(strict),
+                    i64::from(i32::MAX),
+                );
+            }
+        }
         let root = self.root(node);
         let truth = self.condition_truth.get(&root).copied().unwrap_or(0);
         self.condition_truth

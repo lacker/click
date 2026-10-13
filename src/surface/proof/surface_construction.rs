@@ -1,13 +1,11 @@
 use super::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 
-#[allow(clippy::too_many_arguments)]
 fn checked_surface_fact_in_state_with_assumptions(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     assumptions: &PureFactContext,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
@@ -15,12 +13,13 @@ fn checked_surface_fact_in_state_with_assumptions(
         lower_fixed_state_proposition_with_assumptions(
             surface,
             assumptions,
-            parameters,
-            arguments,
-            view.old_reference_state(state),
-            state,
-            None,
-            view.recorded_snapshots,
+            parameter_binding,
+            FixedStateFrame::new(
+                view.old_reference_state(state),
+                state,
+                None,
+                view.recorded_snapshots,
+            ),
             spec_definitions,
         )
         .map_err(ClickError::new)
@@ -129,12 +128,9 @@ fn checked_surface_fact_in_state_with_assumptions(
         let (exact_snapshots, compatible_snapshots) =
             snapshot_indexed_selectors(&resolved_kernel, view.recorded_snapshots);
         for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
-            let Some(candidate) = synthesize_surface_proposition(
-                &resolved_kernel,
-                parameters,
-                arguments,
-                snapshot_state,
-            ) else {
+            let Some(candidate) =
+                synthesize_surface_proposition(&resolved_kernel, parameter_binding, snapshot_state)
+            else {
                 continue;
             };
             let Ok(anchored) = surface_at_snapshot(&candidate, *selector) else {
@@ -145,7 +141,7 @@ fn checked_surface_fact_in_state_with_assumptions(
             }
         }
     }
-    let candidate = synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
+    let candidate = synthesize_surface_proposition(&resolved_kernel, parameter_binding, state)
         .ok_or_else(|| {
             ClickError::new(surface_synthesis_failure(
                 "kernel fact has no recorded or structurally synthesized surface form",
@@ -272,14 +268,12 @@ pub(super) enum SurfaceFactMatch {
     AvailabilityEquivalent,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn checked_surface_comparison_fact_in_state(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
@@ -292,8 +286,7 @@ pub(super) fn checked_surface_comparison_fact_in_state(
         &assumptions,
         None,
         false,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         spec_definitions,
     )
@@ -306,8 +299,7 @@ pub(super) fn checked_surface_comparison_fact_in_state_with_indexed_facts(
     match_kind: SurfaceFactMatch,
     available: &ProofFacts,
     assumptions: &PureFactContext,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
@@ -319,8 +311,7 @@ pub(super) fn checked_surface_comparison_fact_in_state_with_indexed_facts(
         assumptions,
         Some(available),
         false,
-        parameters,
-        arguments,
+        parameter_binding,
         state,
         spec_definitions,
     )
@@ -335,8 +326,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     assumptions: &PureFactContext,
     indexed_available: Option<&ProofFacts>,
     allow_snapshot_blind_candidates: bool,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<ClickProposition, ClickError> {
@@ -381,12 +371,13 @@ fn checked_surface_comparison_fact_in_state_with_availability(
         lower_fixed_state_proposition_with_assumptions(
             surface,
             assumptions,
-            parameters,
-            arguments,
-            view.old_reference_state(state),
-            state,
-            None,
-            view.recorded_snapshots,
+            parameter_binding,
+            FixedStateFrame::new(
+                view.old_reference_state(state),
+                state,
+                None,
+                view.recorded_snapshots,
+            ),
             spec_definitions,
         )
         .as_ref()
@@ -425,12 +416,13 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 lower_fixed_state_proposition_with_assumptions(
                     &resolved,
                     assumptions,
-                    parameters,
-                    arguments,
-                    view.old_reference_state(state),
-                    state,
-                    None,
-                    view.recorded_snapshots,
+                    parameter_binding,
+                    FixedStateFrame::new(
+                        view.old_reference_state(state),
+                        state,
+                        None,
+                        view.recorded_snapshots,
+                    ),
                     spec_definitions,
                 )
                 .is_ok_and(|lowered| lowered == *kernel && fact_is_available(&lowered))
@@ -445,7 +437,10 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 return Ok(surface.clone());
             }
             if let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
-                kernel, parameters, arguments, state, &names,
+                kernel,
+                parameter_binding,
+                state,
+                &names,
             ) && exact_scoped_candidate(&surface)
             {
                 return Ok(surface);
@@ -459,7 +454,10 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 .recent(super::smart_closures::MAX_TRANSPORT_SOURCE_POINTS)
             {
                 if let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
-                    kernel, parameters, arguments, snapshot, &names,
+                    kernel,
+                    parameter_binding,
+                    snapshot,
+                    &names,
                 ) && let Ok(anchored) = surface_at_snapshot(&surface, selector)
                     && exact_scoped_candidate(&anchored)
                 {
@@ -487,7 +485,8 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             }
         }
     }
-    let parameter_names = parameters
+    let parameter_names = parameter_binding
+        .parameters
         .iter()
         .map(syntax::C0Parameter::name)
         .collect::<BTreeSet<_>>();
@@ -523,8 +522,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 view,
                 surface,
                 assumptions,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 spec_definitions,
             )
@@ -544,8 +542,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             view,
             kernel,
             assumptions,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             spec_definitions,
         )
@@ -572,14 +569,14 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     let (exact_snapshots, compatible_snapshots) =
         snapshot_indexed_selectors(&resolved_kernel, view.recorded_snapshots);
     if let Some(surface) =
-        synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
+        synthesize_surface_proposition(&resolved_kernel, parameter_binding, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
     }
     for (_, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         if let Some(surface) =
-            synthesize_surface_proposition(&resolved_kernel, parameters, arguments, snapshot_state)
+            synthesize_surface_proposition(&resolved_kernel, parameter_binding, snapshot_state)
             && !bases.contains(&surface)
         {
             bases.push(surface);
@@ -593,8 +590,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     view,
                     base,
                     assumptions,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     spec_definitions,
                 )
@@ -620,8 +616,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     view,
                     &candidate,
                     assumptions,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     spec_definitions,
                 )
@@ -664,8 +659,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     view,
                     &candidate,
                     assumptions,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     spec_definitions,
                 );
@@ -692,8 +686,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     view,
                     &candidate,
                     assumptions,
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     state,
                     spec_definitions,
                 )
@@ -710,8 +703,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             view,
             kernel,
             assumptions,
-            parameters,
-            arguments,
+            parameter_binding,
             state,
             spec_definitions,
         ) && strictly_available(&surface)

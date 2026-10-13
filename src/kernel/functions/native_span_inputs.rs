@@ -40,14 +40,64 @@ pub(crate) fn project_interface_native_spans(
     assume_native_span_specs(successor, &successor_specs, assumptions)
 }
 
+fn is_declared_private_member_read(state: &CState, expression: &CExpression) -> bool {
+    let CExpression::TypedLoad {
+        pointer,
+        value_type,
+        ..
+    } = expression
+    else {
+        return false;
+    };
+    let CExpression::MemberAddress { object, selection } = pointer.as_ref() else {
+        return false;
+    };
+    let CExpression::Variable(name) = object.as_ref() else {
+        return false;
+    };
+    let Some(CLocalBinding::AggregateObject { layout, .. }) = state.locals().binding(name) else {
+        return false;
+    };
+    layout == selection.layout.as_ref()
+        && *value_type == selection.value_type
+        && LoadKind::of_type(*value_type).is_some()
+        && layout
+            .member_at_path(&selection.path)
+            .is_some_and(|(_, declared)| declared == *value_type)
+}
+
 fn component(
     state: &CState,
     expression: &CExpression,
     assumptions: &PureFactContext,
+    source_entry: bool,
 ) -> Result<(CValue, PureFactContext), String> {
-    // A carrier expression may read a pointer field. Such a read still needs
-    // its existing byte permission and loadability, including its full pair.
-    let executable = assumptions.clone().require_owned_expression_loads();
+    // Symbolic source entry observes the exact contract carrier through the
+    // same selected-snapshot mode as record-place admission. Other observations
+    // use checked local/global access or require the full byte owner.
+    let _entry_observation = source_entry.then(crate::kernel::eval::SpecificationReadScope::enter);
+    let executable = if source_entry {
+        assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .observe_pointer_addresses()
+    } else if is_declared_private_member_read(state, expression) {
+        // Private by-value storage uses ordinary executable local access. The
+        // evaluator still checks the layout, lifetime and complete initialized
+        // read; this does not enable symbolic or address-only observation.
+        assumptions.clone().without_pointer_address_observation()
+    } else if matches!(expression, CExpression::Variable(name) if matches!(
+        state.locals().binding(name),
+        Some(CLocalBinding::GlobalObject { .. })
+    )) {
+        // A direct declared global slot has the same storage-read authority
+        // here as in executable C. Its initialized complete pointer value is
+        // still loaded normally; this does not authorize its referent or any
+        // read through a pointer field or an address-equal alias.
+        assumptions.clone().without_pointer_address_observation()
+    } else {
+        assumptions.clone().require_owned_expression_loads()
+    };
     let mut budget = ExecutionBudget::beside_live_state();
     let paths = evaluate_c_expression_paths(state, expression, &executable, &mut budget)
         .map_err(|_| "native span evaluation exceeded its budget".to_string())?;
@@ -72,8 +122,9 @@ fn requirement_values(
     state: &CState,
     requirement: &CNativeSpanRequirement,
     assumptions: &PureFactContext,
+    source_entry: bool,
 ) -> Result<(CPointerValue, SharedIntegerTerm, PureFactContext), String> {
-    let (carrier, context) = component(state, &requirement.carrier, assumptions)?;
+    let (carrier, context) = component(state, &requirement.carrier, assumptions, source_entry)?;
     let CValue::Pointer(pointer) = carrier else {
         return Err("native span carrier is not a pointer".into());
     };
@@ -85,7 +136,7 @@ fn requirement_values(
     {
         return Err("native span disagrees with its declared scalar pointer type".into());
     }
-    let (count, context) = component(state, &requirement.count, &context)?;
+    let (count, context) = component(state, &requirement.count, &context, source_entry)?;
     let ty = MachineIntegerType::from_c_type(count.c_type())
         .filter(|ty| {
             matches!(
@@ -106,7 +157,7 @@ fn requirement_values(
     Ok((pointer, count.into(), context))
 }
 
-fn span_holds(
+pub(super) fn span_holds(
     state: &CState,
     pointer: &CPointerValue,
     element_type: CType,
@@ -157,6 +208,15 @@ fn span_geometry(
     crate::kernel::eval::pointer_domains::PointerDomainCheck,
     crate::kernel::eval::pointer_domains::PointerDomainRefusal,
 > {
+    if access_policy == CTypedAccessPolicy::NativeObjectOnly && element_type == CType::UInt8 {
+        return crate::kernel::eval::pointer_domains::checked_native_byte_pointer_span(
+            state,
+            pointer,
+            IntegerTerm::constant_i64(0),
+            count.as_ref().clone(),
+            assumptions,
+        );
+    }
     let check_span = match access_policy {
         CTypedAccessPolicy::NativeObjectOnly => {
             crate::kernel::eval::pointer_domains::checked_typed_pointer_span
@@ -175,6 +235,28 @@ fn span_geometry(
     )
 }
 
+pub(super) fn check_native_span_requirements(
+    state: &CState,
+    requirements: &[CNativeSpanRequirement],
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    for requirement in requirements {
+        let values = requirement_values(state, requirement, assumptions, false);
+        let (pointer, count, context) = values?;
+        if !span_holds(
+            state,
+            &pointer,
+            requirement.element_type,
+            &count,
+            requirement.access_policy,
+            &context,
+        ) {
+            return Err("native scalar prefix has no checked full-carrier witness".into());
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn check_native_span_specs(
     state: &CState,
     specs: &[CResourceSpec],
@@ -191,19 +273,7 @@ pub(super) fn check_native_span_specs(
         if !active {
             continue;
         }
-        for requirement in spec.native_span_requirements() {
-            let (pointer, count, context) = requirement_values(state, requirement, assumptions)?;
-            if !span_holds(
-                state,
-                &pointer,
-                requirement.element_type,
-                &count,
-                requirement.access_policy,
-                &context,
-            ) {
-                return Err("native scalar prefix has no checked full-carrier witness".into());
-            }
-        }
+        check_native_span_requirements(state, spec.native_span_requirements(), assumptions)?;
     }
     Ok(())
 }
@@ -212,6 +282,86 @@ pub(super) fn assume_native_span_specs(
     state: &CState,
     specs: &[CResourceSpec],
     assumptions: &PureFactContext,
+) -> Result<CState, String> {
+    assume_native_span_specs_in(state, specs, assumptions, false)
+}
+
+pub(super) fn assume_native_span_requirements_in(
+    state: &CState,
+    requirements: &[CNativeSpanRequirement],
+    assumptions: &PureFactContext,
+    source_entry: bool,
+) -> Result<CState, String> {
+    if requirements.is_empty() {
+        return Ok(state.clone());
+    }
+    let mut next = state.clone();
+    for requirement in requirements {
+        let (pointer, count, context) =
+            requirement_values(&next, requirement, assumptions, source_entry)?;
+        if span_holds(
+            &next,
+            &pointer,
+            requirement.element_type,
+            &count,
+            requirement.access_policy,
+            &context,
+        ) {
+            continue;
+        }
+        if next.memory().native_input_is_slice(&pointer) {
+            // Slice signatures already authenticate this exact carrier's
+            // geometry. Entry setup precedes pure preconditions, so retain
+            // that witness when the requested prefix bounds are undecided.
+            // Calls still check this requirement under their actual facts.
+            match span_geometry(
+                &next,
+                &pointer,
+                requirement.element_type,
+                &count,
+                requirement.access_policy,
+                &context,
+            ) {
+                Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(guards))
+                    if guards
+                        .iter()
+                        .all(|guard| context.decide(guard) != Some(false)) =>
+                {
+                    continue;
+                }
+                _ => return Err("native prefix contradicts its retained slice carrier".into()),
+            }
+        }
+        // Definite declared/carried geometry remains decisive. An input
+        // assumption cannot widen an existing complete object domain.
+        if matches!(
+            pointer.designation(),
+            Some(PointerDesignation::Object { .. })
+        ) || crate::kernel::memory_provenance::resolve_loaded_pointer_carrier(&pointer, &context)
+            .is_some_and(|resolved| {
+                matches!(
+                    resolved.designation(),
+                    Some(PointerDesignation::Object { .. })
+                )
+            })
+        {
+            return Err("native prefix contradicts its retained complete carrier".into());
+        }
+        next.set_memory(next.memory().clone().with_typed_input_span(
+            pointer,
+            requirement.element_type,
+            count,
+            requirement.access_policy,
+        )?);
+    }
+    Ok(next)
+}
+
+pub(super) fn assume_native_span_specs_in(
+    state: &CState,
+    specs: &[CResourceSpec],
+    assumptions: &PureFactContext,
+    source_entry: bool,
 ) -> Result<CState, String> {
     let mut next = state.clone();
     let mut budget = ExecutionBudget::beside_live_state();
@@ -228,65 +378,12 @@ pub(super) fn assume_native_span_specs(
         if !active {
             continue;
         }
-        for requirement in spec.native_span_requirements() {
-            let (pointer, count, context) = requirement_values(&next, requirement, assumptions)?;
-            if span_holds(
-                &next,
-                &pointer,
-                requirement.element_type,
-                &count,
-                requirement.access_policy,
-                &context,
-            ) {
-                continue;
-            }
-            if next.memory().native_input_is_slice(&pointer) {
-                // Slice signatures already authenticate this exact carrier's
-                // geometry. Entry setup precedes pure preconditions, so retain
-                // that witness when the requested prefix bounds are undecided.
-                // Calls still check this requirement under their actual facts.
-                match span_geometry(
-                    &next,
-                    &pointer,
-                    requirement.element_type,
-                    &count,
-                    requirement.access_policy,
-                    &context,
-                ) {
-                    Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Checked(
-                        guards,
-                    )) if guards
-                        .iter()
-                        .all(|guard| context.decide(guard) != Some(false)) =>
-                    {
-                        continue;
-                    }
-                    _ => return Err("native prefix contradicts its retained slice carrier".into()),
-                }
-            }
-            // Definite declared/carried geometry remains decisive. An input
-            // assumption cannot widen an existing complete object domain.
-            if matches!(
-                pointer.designation(),
-                Some(PointerDesignation::Object { .. })
-            ) || crate::kernel::memory_provenance::resolve_loaded_pointer_carrier(
-                &pointer, &context,
-            )
-            .is_some_and(|resolved| {
-                matches!(
-                    resolved.designation(),
-                    Some(PointerDesignation::Object { .. })
-                )
-            }) {
-                return Err("native prefix contradicts its retained complete carrier".into());
-            }
-            next.set_memory(next.memory().clone().with_typed_input_span(
-                pointer,
-                requirement.element_type,
-                count,
-                requirement.access_policy,
-            )?);
-        }
+        next = assume_native_span_requirements_in(
+            &next,
+            spec.native_span_requirements(),
+            assumptions,
+            source_entry,
+        )?;
     }
     Ok(next)
 }
@@ -294,6 +391,206 @@ pub(super) fn assume_native_span_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_descriptor_observation_keeps_executable_read_checks() {
+        let _session = crate::kernel::VerificationSession::enter();
+        for value in [
+            CValue::typed_pointer(Pointer::null(), CType::UInt8Pointer),
+            CValue::UInt64(Bitvector32Term::UInt64Constant(1)),
+        ] {
+            let value_type = value.c_type();
+            let layout =
+                CAggregateLayout::new(8, 8, vec![CAggregateField::new("data", 0, value_type)]);
+            let slot = CMemory::local_pointer("private-span-descriptor");
+            let memory = CMemory::new()
+                .with_declared_aggregate_block(slot.block.clone(), &layout)
+                .store(slot.clone(), value);
+            let mut state = CState::new().with_memory(memory.clone());
+            state
+                .locals
+                .set_aggregate_object_at("out", layout.clone(), slot.clone());
+            let expression = c_typed_load(
+                CExpression::MemberAddress {
+                    object: Box::new(c_variable("out")),
+                    selection: Arc::new(CAggregateMemberSelection {
+                        layout: Arc::new(layout),
+                        path: vec!["data".into()].into(),
+                        value_type,
+                    }),
+                },
+                value_type,
+            );
+            let assumptions = PureFactContext::new();
+            assert!(component(&state, &expression, &assumptions, false).is_ok());
+            let undefined = state.clone().with_memory(
+                CMemory::new()
+                    .with_declared_aggregate_block(
+                        slot.block.clone(),
+                        match state.locals().binding("out") {
+                            Some(CLocalBinding::AggregateObject { layout, .. }) => layout,
+                            _ => unreachable!(),
+                        },
+                    )
+                    .with_uninitialized_object(slot.clone(), 8),
+            );
+            assert!(component(&undefined, &expression, &assumptions, false).is_err());
+            let expired = state
+                .clone()
+                .with_memory(memory.without_local_block(&slot.block));
+            assert!(component(&expired, &expression, &assumptions, false).is_err());
+            // Pointer/reference bindings do not own the descriptor's private slot.
+            let external =
+                state.with_local("out", CValue::typed_pointer(slot, CType::Int32Pointer));
+            assert!(!is_declared_private_member_read(&external, &expression));
+            assert!(component(&external, &expression, &assumptions, false).is_err());
+        }
+    }
+
+    #[test]
+    fn standalone_span_prerequisite_checks_geometry_without_byte_authority() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = CMemory::local_pointer("standalone-uninitialized-word");
+        let memory = CMemory::new()
+            .with_declared_scalar_block(address.block.clone(), 4, CType::UInt32)
+            .with_uninitialized_object(address.clone(), 4);
+        let pointer = memory
+            .declared_scalar_pointer(&address, CType::UInt32)
+            .unwrap();
+        let state = CState::new().with_memory(memory);
+        let requirement = CNativeSpanRequirement {
+            carrier: CExpression::Value(CValue::Pointer(pointer.clone())),
+            count: c_int32_literal(1),
+            element_type: CType::UInt32,
+            access_policy: CTypedAccessPolicy::NativeObjectOnly,
+        };
+        let assumptions = PureFactContext::new();
+        assert!(
+            check_native_span_requirements(
+                &state,
+                std::slice::from_ref(&requirement),
+                &assumptions
+            )
+            .is_ok()
+        );
+        assert!(state.resources().facts().is_empty());
+        assert!(
+            !state
+                .memory()
+                .has_initialized_bytes_under(&address, 4, &assumptions)
+        );
+        let mut too_long = requirement.clone();
+        too_long.count = c_int32_literal(2);
+        assert!(check_native_span_requirements(&state, &[too_long], &assumptions).is_err());
+        let mut raw = requirement;
+        raw.carrier = CExpression::Value(CValue::Pointer(CPointerValue::new(
+            pointer.pointer().clone(),
+            pointer.c_type(),
+        )));
+        assert!(check_native_span_requirements(&state, &[raw], &assumptions).is_err());
+    }
+
+    #[test]
+    fn actual_call_cannot_use_symbolic_span_assumption_staging() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let input = Variable(991_341);
+        let pointer = CPointerValue::new(Pointer::symbolic(input), CType::UInt32Pointer)
+            .with_designation(PointerDesignation::Unresolved(input));
+        let function = c_function(
+            CType::Void,
+            "needs-span",
+            vec![c_parameter("p", CType::UInt32Pointer)],
+            c_skip(),
+        )
+        .with_native_span_expression_inputs(vec![CNativeSpanRequirement {
+            carrier: c_variable("p"),
+            count: c_int32_literal(1),
+            element_type: CType::UInt32,
+            access_policy: CTypedAccessPolicy::NativeObjectOnly,
+        }]);
+        let state = CState::new().with_local("p", CValue::Pointer(pointer));
+        let assumptions = PureFactContext::new();
+        assert!(
+            super::super::constructor_input::bind(
+                &state,
+                function.contract_interface(),
+                &state,
+                &assumptions
+            )
+            .is_none()
+        );
+        let assumed = assume_native_span_requirements_in(
+            &state,
+            function
+                .contract_interface()
+                .native_span_expression_inputs(),
+            &assumptions,
+            true,
+        )
+        .unwrap();
+        assert!(
+            super::super::constructor_input::bind(
+                &assumed,
+                function.contract_interface(),
+                &assumed,
+                &assumptions
+            )
+            .is_some()
+        );
+        assert!(assumed.resources().facts().is_empty());
+    }
+
+    #[test]
+    fn native_byte_prefix_preserves_the_declared_word_and_its_uninitialized_bytes() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = CMemory::local_pointer("byte-prefix-word");
+        let memory = CMemory::new()
+            .with_declared_scalar_block(address.block.clone(), 4, CType::UInt32)
+            .with_uninitialized_object(address.clone(), 4);
+        let word = memory
+            .declared_scalar_pointer(&address, CType::UInt32)
+            .unwrap();
+        let bytes = word.clone().with_type(CType::UInt8Pointer);
+        let state = CState::new()
+            .with_memory(memory)
+            .with_local("p", CValue::Pointer(bytes.clone()));
+        let assumptions = PureFactContext::new();
+        let requirement = |count| {
+            CResourceSpec::owned_memory(
+                CMemorySegment::new(c_variable("p"), c_int32_literal(0), c_int32_literal(count))
+                    .with_element_width(1),
+            )
+            .with_native_span_requirements(vec![CNativeSpanRequirement {
+                carrier: c_variable("p"),
+                element_type: CType::UInt8,
+                count: c_int32_literal(count),
+                access_policy: CTypedAccessPolicy::NativeObjectOnly,
+            }])
+        };
+        assert!(check_native_span_specs(&state, &[requirement(4)], &assumptions).is_ok());
+        assert!(check_native_span_specs(&state, &[requirement(5)], &assumptions).is_err());
+        assert_eq!(
+            assume_native_span_specs(&state, &[requirement(4)], &assumptions).unwrap(),
+            state
+        );
+        assert_eq!(bytes.designation(), word.designation());
+        assert!(state.resources().facts().is_empty());
+        assert!(
+            !state
+                .memory()
+                .has_initialized_bytes_under(&address, 4, &assumptions)
+        );
+        assert!(
+            state
+                .memory()
+                .declared_scalar_pointer(&address, CType::UInt8)
+                .is_none()
+        );
+        let dead = state
+            .clone()
+            .with_memory(state.memory().clone().without_local_block(&address.block));
+        assert!(check_native_span_specs(&dead, &[requirement(4)], &assumptions).is_err());
+    }
 
     #[test]
     fn native_slice_entry_defers_only_undecided_prefix_bounds_without_replacing_geometry() {
@@ -316,24 +613,25 @@ mod tests {
             .with_local("p", CValue::Pointer(pointer.clone()));
         let empty = PureFactContext::new();
         let spec = span(c_variable("p"), 1);
-        let assumed = assume_native_span_specs(&state, &[spec.clone()], &empty).unwrap();
+        let assumed =
+            assume_native_span_specs(&state, std::slice::from_ref(&spec), &empty).unwrap();
         assert_eq!(
             assumed, state,
             "entry preserves the exact slice row and its length"
         );
         assert!(assumed.memory().native_input_is_slice(&pointer));
-        assert!(check_native_span_specs(&assumed, &[spec.clone()], &empty).is_err());
+        assert!(check_native_span_specs(&assumed, std::slice::from_ref(&spec), &empty).is_err());
         let bounded = empty.clone().assume_condition(
             ConditionTerm::uint64_equal(length.clone(), Bitvector32Term::UInt64Constant(1)),
             true,
         );
-        assert!(check_native_span_specs(&assumed, &[spec.clone()], &bounded).is_ok());
+        assert!(check_native_span_specs(&assumed, std::slice::from_ref(&spec), &bounded).is_ok());
         let too_short = empty.clone().assume_condition(
             ConditionTerm::uint64_equal(length, Bitvector32Term::UInt64Constant(0)),
             true,
         );
-        assert!(assume_native_span_specs(&state, &[spec.clone()], &too_short).is_err());
-        assert!(check_native_span_specs(&state, &[spec.clone()], &too_short).is_err());
+        assert!(assume_native_span_specs(&state, std::slice::from_ref(&spec), &too_short).is_err());
+        assert!(check_native_span_specs(&state, std::slice::from_ref(&spec), &too_short).is_err());
         let fixed_empty = CState::new()
             .with_memory(
                 CMemory::new()
@@ -345,7 +643,9 @@ mod tests {
                     .unwrap(),
             )
             .with_local("p", CValue::Pointer(pointer.clone()));
-        assert!(assume_native_span_specs(&fixed_empty, &[spec.clone()], &empty).is_err());
+        assert!(
+            assume_native_span_specs(&fixed_empty, std::slice::from_ref(&spec), &empty).is_err()
+        );
         let incompatible = state.with_local(
             "p",
             CValue::Pointer(pointer.with_type(CType::UInt32Pointer)),
@@ -464,8 +764,12 @@ mod tests {
             .with_designation(PointerDesignation::Unresolved(identity));
         let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
         let spec = span(c_variable("p"), 2);
-        let assumed =
-            assume_native_record_specs(&state, &[spec.clone()], &PureFactContext::new()).unwrap();
+        let assumed = assume_native_record_specs(
+            &state,
+            std::slice::from_ref(&spec),
+            &PureFactContext::new(),
+        )
+        .unwrap();
         assert_eq!(assumed.locals.get("p"), state.locals.get("p"));
         assert!(assumed.resources().facts().is_empty());
         assert_eq!(assumed.memory().cells.representation_len(), 0);
@@ -541,7 +845,12 @@ mod tests {
         );
         let spec = span(c_variable("p"), 2);
         assert!(
-            check_native_record_specs(&legacy, &[spec.clone()], &PureFactContext::new()).is_err()
+            check_native_record_specs(
+                &legacy,
+                std::slice::from_ref(&spec),
+                &PureFactContext::new()
+            )
+            .is_err()
         );
         assert!(assume_native_record_specs(&legacy, &[spec], &PureFactContext::new()).is_err());
         let empty = span(c_variable("p"), 0);
@@ -592,7 +901,7 @@ mod tests {
                 );
             }
             assert_eq!(
-                check_native_span_specs(&state, &[spec.clone()], &context).is_ok(),
+                check_native_span_specs(&state, std::slice::from_ref(&spec), &context).is_ok(),
                 element_type == CType::Int32
             );
             let variable = Bitvector32Term::Variable(Variable(989_621));
@@ -654,14 +963,19 @@ mod tests {
         );
         let spec = span(c_variable("p"), 3);
         assert!(
-            check_native_record_specs(&state, &[spec.clone()], &PureFactContext::new()).is_ok()
+            check_native_record_specs(&state, std::slice::from_ref(&spec), &PureFactContext::new())
+                .is_ok()
         );
         let assumed = assume_native_record_specs(&state, &[spec], &PureFactContext::new()).unwrap();
         assert_eq!(assumed, state);
         let too_long = span(c_variable("p"), 4);
         assert!(
-            check_native_record_specs(&state, &[too_long.clone()], &PureFactContext::new())
-                .is_err()
+            check_native_record_specs(
+                &state,
+                std::slice::from_ref(&too_long),
+                &PureFactContext::new()
+            )
+            .is_err()
         );
         assert!(assume_native_record_specs(&state, &[too_long], &PureFactContext::new()).is_err());
         let mut wrong_type = span(c_variable("p"), 1);
@@ -690,10 +1004,17 @@ mod tests {
                 access_policy: CTypedAccessPolicy::CAllocatedAccessAllowed,
             }]);
         let context = PureFactContext::new();
-        let assumed = assume_native_span_specs(&state, &[c_place.clone()], &context).unwrap();
-        assert!(check_native_span_specs(&assumed, &[c_place.clone()], &context).is_ok());
-        assert!(check_native_span_specs(&assumed, &[native.clone()], &context).is_err());
-        assert!(assume_native_span_specs(&assumed, &[native.clone()], &context).is_err());
+        let assumed =
+            assume_native_span_specs(&state, std::slice::from_ref(&c_place), &context).unwrap();
+        assert!(
+            check_native_span_specs(&assumed, std::slice::from_ref(&c_place), &context).is_ok()
+        );
+        assert!(
+            check_native_span_specs(&assumed, std::slice::from_ref(&native), &context).is_err()
+        );
+        assert!(
+            assume_native_span_specs(&assumed, std::slice::from_ref(&native), &context).is_err()
+        );
         assert_eq!(assumed.resources(), state.resources());
         let native_entry = assume_native_span_specs(&state, &[native], &context).unwrap();
         assert!(check_native_span_specs(&native_entry, &[c_place], &context).is_ok());
@@ -722,21 +1043,30 @@ mod tests {
             .with_memory(memory.clone().with_uninitialized_object(slot.clone(), 8))
             .with_resource_context(resources(8));
         assert!(
-            assume_native_record_specs(&raw, &[spec.clone()], &PureFactContext::new()).is_err()
+            assume_native_record_specs(&raw, std::slice::from_ref(&spec), &PureFactContext::new())
+                .is_err()
         );
         let initialized = memory.with_initialized_object(&slot, 8);
         let short = CState::new()
             .with_memory(initialized.clone())
             .with_resource_context(resources(4));
         assert!(
-            assume_native_record_specs(&short, &[spec.clone()], &PureFactContext::new()).is_err()
+            assume_native_record_specs(
+                &short,
+                std::slice::from_ref(&spec),
+                &PureFactContext::new()
+            )
+            .is_err()
         );
         let readable = CState::new()
             .with_memory(initialized)
             .with_resource_context(resources(8));
-        let assumed =
-            assume_native_record_specs(&readable, &[spec.clone()], &PureFactContext::new())
-                .unwrap();
+        let assumed = assume_native_record_specs(
+            &readable,
+            std::slice::from_ref(&spec),
+            &PureFactContext::new(),
+        )
+        .unwrap();
         assert_eq!(assumed.resources(), readable.resources());
         assert_eq!(
             assumed.memory().cells.representation_len(),

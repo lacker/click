@@ -99,10 +99,47 @@ fn name_direct_input(
     let CValue::Pointer(base) = expression_value(state, &segment.base, assumptions)? else {
         return None;
     };
-    let element = base.c_type().pointee_type()?;
+    // Member evaluation above authenticates the retained declaration/path.
+    // Its leaf type is storage type; the resource's coordinate stride can be
+    // four-byte aggregate coordinates even for one eight-byte pointer field.
+    let selected_element = spec
+        .declared_storage_type()
+        .or_else(|| match &segment.base {
+            CExpression::MemberAddress { selection, .. } => Some(selection.value_type()),
+            _ => None,
+        });
+    let element = selected_element.or_else(|| base.c_type().pointee_type())?;
     let mut memory = state.memory().clone();
     let source = crate::kernel::intern_c_memory(memory.clone());
-    if element.byte_width() == range.element_width() {
+    if selected_element.is_some() && LoadKind::of_type(element).is_some() {
+        let width = element.byte_width();
+        let first_byte = start.checked_mul(range.element_width())?;
+        let end_byte = end.checked_mul(range.element_width())?;
+        if !first_byte.is_multiple_of(width) {
+            return None;
+        }
+        let first = first_byte / width;
+        let end = if let Some(count) = spec.declared_storage_count() {
+            if first_byte.checked_add(count.checked_mul(width)?)? > end_byte {
+                return None;
+            }
+            first.checked_add(count)?
+        } else {
+            if !end_byte.is_multiple_of(width) {
+                return None;
+            }
+            end_byte / width
+        };
+        memory = memory.with_proof_entry_cells_under(
+            range.base().clone(),
+            width,
+            element,
+            first,
+            end,
+            source,
+            assumptions,
+        );
+    } else if element.byte_width() == range.element_width() {
         memory = memory.with_proof_entry_cells_under(
             range.base().clone(),
             range.element_width(),
@@ -186,6 +223,17 @@ fn declaration_scope(
         if value.c_type() != parameter.c_type() {
             return None;
         }
+        if let Some(layout) = parameter.aggregate_layout() {
+            let CValue::Pointer(pointer) = value else {
+                return None;
+            };
+            scope.locals.set_aggregate_object_at(
+                parameter.name().to_string(),
+                layout.clone(),
+                pointer.pointer().clone(),
+            );
+            continue;
+        }
         scope.locals.set_typed_with_all_qualifiers(
             parameter.name().to_string(),
             value
@@ -211,12 +259,7 @@ pub(crate) fn construct(
     track_creation: bool,
 ) -> Option<IndependentEntry> {
     let interface = function.contract_interface();
-    if arguments.len() != interface.parameters().len()
-        || interface
-            .parameters()
-            .iter()
-            .any(|parameter| parameter.aggregate_layout().is_some())
-    {
+    if arguments.len() != interface.parameters().len() {
         return None;
     }
     // The same declaration-only query as source entry selects opaque
@@ -240,13 +283,26 @@ pub(crate) fn construct(
         if value.c_type() != parameter.c_type() {
             return None;
         }
-        let variable = binder(value, parameter.c_type())?;
+        let input = if parameter.aggregate_layout().is_some() {
+            let CValue::Pointer(pointer) = value else {
+                return None;
+            };
+            let source = registered_aggregate_argument_source(&pointer.pointer().block)?;
+            let input = CValue::typed_pointer(source, parameter.c_type());
+            *argument = CExpression::Value(input.clone());
+            input
+        } else {
+            value.clone()
+        };
+        let variable = binder(&input, parameter.c_type())?;
         if !ids.insert(variable)
             || crate::kernel::eval::registered_load_term_for_variable(&variable).is_some()
         {
             return None;
         }
-        if let CValue::Pointer(pointer) = value {
+        if parameter.aggregate_layout().is_none()
+            && let CValue::Pointer(pointer) = value
+        {
             let construction_layout = interface
                 .construction_parameter()
                 .filter(|(parameter_index, _)| *parameter_index == index)
@@ -278,18 +334,21 @@ pub(crate) fn construct(
         &initial.with_typed_access_policy(interface.typed_access_policy()),
         function,
     );
-    for (index, bytes) in interface.initialization_outputs()? {
-        let CExpression::Value(CValue::Pointer(pointer)) = canonical.get(index)? else {
+    for output in interface.initialization_output_selectors()? {
+        if output.field().is_some() || output.bytes() == 0 {
+            continue;
+        }
+        let CExpression::Value(CValue::Pointer(pointer)) =
+            canonical.get(output.parameter_index())?
+        else {
             return None;
         };
-        if bytes != 0 {
-            state.set_memory(
-                state
-                    .memory()
-                    .clone()
-                    .with_uninitialized_object(pointer.pointer().clone(), bytes),
-            );
-        }
+        state.set_memory(
+            state
+                .memory()
+                .clone()
+                .with_uninitialized_object(pointer.pointer().clone(), output.bytes()),
+        );
     }
     let mut implicit_result_requirement = None;
     if interface.aggregate_return_mode() == CAggregateReturnMode::Construction {
@@ -359,6 +418,34 @@ pub(crate) fn construct(
         constructor_input::assume_scalar_object_inputs(state, interface, &mut canonical).ok()?;
     state = crate::kernel::c_state_with_construction_contract_input(state, function, &canonical)
         .ok()?;
+    if interface
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.aggregate_layout().is_some())
+    {
+        // Start from declarations and arbitrary source reads only. Never copy
+        // the actual caller's aggregate cells into a reusable effect proof.
+        let caller_resources = state.resources().clone();
+        state = constructor_input::materialize_symbolic_declaration_parameters(
+            &state, function, &canonical,
+        )?
+        .with_resource_context(caller_resources);
+        // The staging image supplies arbitrary argument fields, not an extra
+        // caller resource. The real entry owns its own by-value copy. Source
+        // entry likewise replaces staging authority with declared inputs.
+        for (parameter, argument) in interface.parameters().iter().zip(&mut canonical) {
+            if parameter.aggregate_layout().is_some() {
+                *argument = CExpression::Value(CValue::typed_pointer(
+                    state
+                        .locals()
+                        .aggregate_object_pointer(parameter.name())?
+                        .clone(),
+                    parameter.c_type(),
+                ));
+            }
+        }
+    }
+    state = initialization_outputs::mark_initialization_output_fields(state, interface)?;
     // Only native promise producers may add designations to independent binders.
     let empty = PureFactContext::new();
     let mut entry = declaration_scope(&state, function, &canonical)?;
@@ -450,7 +537,17 @@ pub(crate) fn construct(
         &empty,
     )
     .ok()?;
-    crate::kernel::c_function_entry_state_with_assumptions(&state, function, &canonical, &empty)?;
+    // Match the checked section producer used at source entry. Rebuild only
+    // the independently declared inputs, including any private argument
+    // storage, so adjacent memory clauses have one canonical representation.
+    let resources = ResourceContext::new_with_equalities(&empty)
+        .try_compose_with_facts(state.resources().facts().iter().cloned(), &empty)
+        .ok()?;
+    state = state.with_resource_context(resources);
+    // Geometry can depend on the function's own declared preconditions (for
+    // example a span's count is one). Derive those premises through the same
+    // checked entry builder used for certification before validating geometry.
+    crate::kernel::c_function_contract_entry(&state, function, &canonical).ok()?;
     Some(IndependentEntry {
         caller: state,
         arguments: canonical,
@@ -464,7 +561,9 @@ pub(crate) fn matches(
     arguments: &[CExpression],
     actual: &CState,
     actual_premises: &PureFactContext,
+    checked_case: Option<&crate::kernel::api::CCheckedResourceGuardCase>,
 ) -> bool {
+    let refusal = |_reason: &str| false;
     let destination = actual
         .aggregate_destination
         .as_deref()
@@ -475,25 +574,38 @@ pub(crate) fn matches(
         destination,
         actual.population_effects.creation.is_some(),
     ) else {
-        return false;
+        return refusal("construct");
     };
     if expected.arguments != arguments {
-        return false;
+        return refusal("arguments");
     }
     let Ok(contract) =
         crate::kernel::c_function_contract_entry(&expected.caller, function, &expected.arguments)
     else {
-        return false;
+        return refusal("contract");
     };
-    let premises = contract.into_assumptions();
-    if &premises != actual_premises {
-        return false;
+    let mut premises = contract.into_assumptions();
+    let expected_actual_premises = if let Some(case) = checked_case {
+        let Some(entry_assumptions) =
+            case.entry_assumptions(function, arguments, actual, actual_premises)
+        else {
+            return refusal("case provenance");
+        };
+        for guard in case.guards() {
+            premises = premises.assume_proposition(guard.clone());
+        }
+        entry_assumptions
+    } else {
+        actual_premises
+    };
+    if &premises != expected_actual_premises {
+        return refusal("premises");
     }
     // Supported producers share canonical names. Refuse alternate-cell
     // recipes instead of invoking the general source-by-target cell search.
     // Exact equality includes all physical and native authority metadata.
     if expected.caller.memory() != actual.memory() {
-        return false;
+        return refusal("memory");
     }
     // Require exact declared resource content and support/expansion graph.
     // Preserve occurrence identity only after this check, and independently
@@ -501,12 +613,12 @@ pub(crate) fn matches(
     let mut named_resources = actual.resources().clone();
     named_resources.loan_dependencies = expected.caller.resources().loan_dependencies.clone();
     if &named_resources != expected.caller.resources() {
-        return false;
+        return refusal("resources");
     }
     expected.caller = expected.caller.with_resource_context(named_resources);
     if let Some(events) = actual.population_effects.creation.as_ref() {
         if !events.records_nothing() {
-            return false;
+            return refusal("creation");
         }
         Arc::make_mut(&mut expected.caller.population_effects).creation = Some(events.clone());
     }
@@ -517,11 +629,11 @@ pub(crate) fn matches(
             arguments,
             &premises,
         ) else {
-            return false;
+            return refusal("loans");
         };
         expected.caller = rooted;
     }
-    expected.caller.equal_up_to_unused_creation_ledgers(actual)
+    expected.caller.equal_up_to_unused_creation_ledgers(actual) || refusal("state")
 }
 
 /// Only interface-selected roots can yield the bounded member-store summary.
@@ -567,6 +679,9 @@ fn relevant_interface(interface: &CFunctionContractInterface) -> bool {
     (interface.return_type().is_pointer() && interface.return_aggregate_layout().is_none())
         || has_store_roots(interface)
         || native_output_entry_is_relevant(interface)
+        || interface
+            .initialization_output_selectors()
+            .is_some_and(|outputs| !outputs.is_empty())
 }
 
 /// Shared source producer. The actual state supplies only destination identity
@@ -647,7 +762,13 @@ mod tests {
             crate::kernel::c_function_contract_entry(&entry.caller, &function, &entry.arguments)
                 .expect("declared contract entry")
                 .into_assumptions();
-        assert!(matches(&function, &arguments, &entry.caller, &premises));
+        assert!(matches(
+            &function,
+            &arguments,
+            &entry.caller,
+            &premises,
+            None
+        ));
 
         let specialized = entry.caller.clone().with_memory(
             entry
@@ -657,7 +778,7 @@ mod tests {
                 .store(pointer.clone(), int32(7)),
         );
         assert!(
-            !matches(&function, &arguments, &specialized, &premises),
+            !matches(&function, &arguments, &specialized, &premises, None),
             "a caller-specific child cell is not part of the opaque input recipe"
         );
         let different_carrier = CResourceFact::own(CResource::Composite {
@@ -673,7 +794,7 @@ mod tests {
             .clone()
             .with_resource_context(ResourceContext::new().unchecked_with_fact(different_carrier));
         assert!(
-            !matches(&function, &arguments, &specialized, &premises),
+            !matches(&function, &arguments, &specialized, &premises, None),
             "numeric equality does not replace the declared head's complete carrier"
         );
         let extra_premise = premises.assume_proposition(Proposition::ConditionIs(
@@ -684,7 +805,8 @@ mod tests {
             &function,
             &arguments,
             &entry.caller,
-            &extra_premise
+            &extra_premise,
+            None
         ));
     }
 
@@ -755,7 +877,13 @@ mod eligibility_tests {
             crate::kernel::c_function_contract_entry(&entry.caller, &function, &arguments)
                 .expect("constructor contract entry")
                 .into_assumptions();
-        assert!(matches(&function, &arguments, &entry.caller, &assumptions));
+        assert!(matches(
+            &function,
+            &arguments,
+            &entry.caller,
+            &assumptions,
+            None
+        ));
     }
 
     #[test]
@@ -823,4 +951,116 @@ mod eligibility_tests {
             "{samples:?}"
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn independent_member_input_names_one_full_pointer_in_word_coordinates() {
+    let layout = CAggregateLayout::new(
+        8,
+        8,
+        vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+    );
+    let address = Pointer::symbolic(Variable(991_100));
+    let origin = CPointerValue::new(address.clone(), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Unresolved(Variable(991_100)));
+    let memory = CMemory::new()
+        .with_native_record_input(origin.clone(), Arc::new(layout.clone()))
+        .unwrap();
+    let state = CState::new()
+        .with_memory(memory)
+        .with_local("owner", CValue::Pointer(origin));
+    let base = CExpression::MemberAddress {
+        object: Box::new(c_variable("owner")),
+        selection: Arc::new(CAggregateMemberSelection {
+            layout: Arc::new(layout),
+            path: vec!["data".into()].into(),
+            value_type: CType::Int32Pointer,
+        }),
+    };
+    let spec = CResourceSpec::owned_memory(
+        CMemorySegment::new(base, c_int32_literal(0), c_int32_literal(2)).with_element_width(4),
+    );
+    let fact = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        address.clone(),
+        0u32.into(),
+        2u32.into(),
+        4,
+    ));
+    let erased = CResourceSpec::owned_memory(
+        CMemorySegment::new(c_variable("owner"), c_int32_literal(0), c_int32_literal(2))
+            .with_element_width(4),
+    )
+    .with_declared_storage_observation(Some((CType::Int32Pointer, 1)));
+    let reconstructed = name_direct_input(&state, &erased, &fact, &PureFactContext::new()).unwrap();
+    assert_eq!(
+        reconstructed
+            .memory()
+            .known_value(&address)
+            .unwrap()
+            .c_type(),
+        CType::Int32Pointer
+    );
+    assert!(
+        reconstructed
+            .memory()
+            .known_value(&address.offset_by_bytes(4))
+            .is_none()
+    );
+    assert_ne!(
+        erased,
+        erased
+            .clone()
+            .with_declared_storage_observation(Some((CType::Int32, 1)))
+    );
+    let named = name_direct_input(&state, &spec, &fact, &PureFactContext::new()).unwrap();
+    assert_eq!(
+        named.memory().known_value(&address).unwrap().c_type(),
+        CType::Int32Pointer
+    );
+    assert!(
+        named
+            .memory()
+            .known_value(&address.offset_by_bytes(4))
+            .is_none()
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn independent_by_value_argument_image_does_not_add_caller_ownership() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let layout = CAggregateLayout::new(4, 4, vec![CAggregateField::new("value", 0, CType::Int32)]);
+    let function = c_function(
+        CType::Void,
+        "private_value",
+        vec![c_parameter_with_aggregate_layout(
+            "copy",
+            CType::VoidPointer,
+            layout,
+        )],
+        c_return(c_void_value()),
+    );
+    let arguments = vec![CExpression::Value(CValue::typed_pointer(
+        Pointer::symbolic(Variable(995_100)),
+        CType::VoidPointer,
+    ))];
+    let staging = constructor_input::materialize_symbolic_declaration_parameters(
+        &CState::new(),
+        &function,
+        &arguments,
+    )
+    .expect("declared argument image");
+    let image = staging.locals().aggregate_object_pointer("copy").unwrap();
+    let image_arguments = vec![CExpression::Value(CValue::typed_pointer(
+        image.clone(),
+        CType::VoidPointer,
+    ))];
+    let entry =
+        construct(&function, &image_arguments, None, false).expect("independent by-value input");
+    assert!(entry.caller.resources().facts().is_empty());
+    assert!(entry.caller.memory().blocks.contains_key(&image.block));
+    let body_entry =
+        crate::kernel::c_function_entry_state(&entry.caller, &function, &entry.arguments).unwrap();
+    assert_eq!(body_entry.resources().facts().len(), 1);
 }

@@ -1,3 +1,4 @@
+use super::c_frontend::parse_c_source_unit;
 use super::*;
 use crate::kernel::*;
 

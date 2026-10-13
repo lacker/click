@@ -653,6 +653,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "source proof `if`",
+            self.facts().assumptions(),
         )?;
         let CStatement::If {
             condition: c_condition,
@@ -1236,7 +1237,8 @@ impl<'a> Proof<'a> {
             body_facts =
                 body_facts.with_selected_defined_reads(&body_kernel, &execution.core.state);
         } else if let ProofContext::FixedState(context) = self.context.as_ref() {
-            body_facts = body_facts.with_selected_defined_reads(&body_kernel, context.state);
+            body_facts =
+                body_facts.with_selected_defined_reads(&body_kernel, context.fixed_state.state);
         }
         // A `have` at the frontier may also consume a fact available across
         // the frontier's certified effects, exactly as a statement step's
@@ -1425,8 +1427,7 @@ impl<'a> Proof<'a> {
             context.function.composite_resource_definitions(),
             context.resource_environment,
             &resource,
-            context.parsed_function.parameters(),
-            context.arguments,
+            context.parameter_binding(),
             (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,

@@ -179,11 +179,12 @@ pub(crate) fn clear_memory_resolution_memos() {
 
 /// One kept-range base-equality question: the unsalted content id of the
 /// fact set, the cell lookups in progress, the memory-DAG generation, the DAG
-/// scope modes, and the two bases.
+/// scope modes, and the two bases. `lookups` is `None` for a negative answer
+/// that no in-progress lookup cut, which holds under any lookups.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct KeptRangeBaseEqualityKey {
     assumptions: u64,
-    lookups: u64,
+    lookups: Option<u64>,
     generation: u64,
     bridging: bool,
     explicit: bool,
@@ -216,20 +217,39 @@ pub(in crate::kernel) fn kept_range_bases_proven_equal(
 ) -> bool {
     let key = KeptRangeBaseEqualityKey {
         assumptions: crate::kernel::assumptions::unsalted_assumptions_memo_id(assumptions),
-        lookups: crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookups_fingerprint(
-        ),
+        lookups: None,
         generation: crate::kernel::primitives::c_memory_derivation_generation(),
         bridging: crate::kernel::api::extended_dag_bridging_active(),
         explicit: crate::kernel::api::explicit_dag_check_active(),
         access_base: access_base.clone(),
         range_base: range_base.clone(),
     };
+    // A lookup in progress changes an answer only by refusing a nested
+    // lookup of itself, and a refusal can only take an answer away. So a
+    // negative answer computed with no refusal is the answer under any
+    // lookups in progress, and is kept under the key without them: each walk
+    // runs inside lookups of its own, and keying every answer by them asked
+    // the same failing question afresh at every walk.
+    let mut key = key;
+    if KEPT_RANGE_BASE_EQUALITIES.with(|memo| memo.borrow().get(&key).copied()) == Some(false) {
+        return false;
+    }
+    key.lookups =
+        Some(crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookups_fingerprint());
     if let Some(known) = KEPT_RANGE_BASE_EQUALITIES.with(|memo| memo.borrow().get(&key).copied()) {
         return known;
     }
     let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
+    let refusals_before =
+        crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookup_refusals();
     let equal = pointers_proven_equal_for_memory_resolution(access_base, range_base, assumptions);
     if equal || crate::kernel::assumptions::incomplete_reasoning_epoch() == epoch_before {
+        if !equal
+            && crate::kernel::resource_tracker::cell_source::memory_dag_cell_lookup_refusals()
+                == refusals_before
+        {
+            key.lookups = None;
+        }
         KEPT_RANGE_BASE_EQUALITIES.with(|memo| {
             let mut memo = memo.borrow_mut();
             if memo.len() >= RESOLUTION_QUERY_MEMO_LIMIT {
@@ -1466,6 +1486,21 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
         && pointer_offsets_proven_equal_for_memory_resolution(left_a, right_a, assumptions)
         && pointer_offsets_proven_equal_for_memory_resolution(left_b, right_b, assumptions)
     {
+        return Some(true);
+    }
+    // The retained congruence checker can connect producer-recorded full
+    // pointer reads with a stated numeric alias. Spend that same checked
+    // offset evidence during memory resolution; this transfers no designation.
+    let is_pointer_read_offset = |offset: &PointerOffsetTerm| {
+        matches!(offset, PointerOffsetTerm::Int32Scaled { value, .. }
+            if matches!(crate::kernel::eval::viewed_as_memory_load(value),
+                Some(Bitvector32Term::MemoryLoad(_, _, LoadKind::Pointer))))
+    };
+    if (is_pointer_read_offset(left) || is_pointer_read_offset(right))
+        && let Some(evidence) = assumptions.pointer_offset_congruence_evidence(left, right)
+        && evidence.checks(left, right, assumptions)
+    {
+        evidence.record_provenance(assumptions);
         return Some(true);
     }
     match (left.as_const(), right.as_const()) {
@@ -3577,6 +3612,11 @@ fn canonical_memory_for_pointer_load_uncached(memory: &CMemory, pointer: &Pointe
     let jumped = common_materialization_source.is_some();
     let mut canonical = common_materialization_source.unwrap_or_else(|| memory.clone());
     if jumped {
+        // Materialized cell names justify only the numeric contents of the
+        // selected read. They cannot roll back later validity, initialization,
+        // allocation or retirement metadata. Keep the exact semantic heap;
+        // cloning its persistent owner does not walk unrelated input rows.
+        canonical.heap = memory.heap.clone();
         // The jump rebases the load onto the cells' common source, which
         // witnesses only that the surviving cells are unchanged since that
         // source. The original memory's havoc markers must survive the
@@ -5245,4 +5285,39 @@ fn mixed_index_offsets_work_ignores_unrelated_facts() {
     assert_eq!(counts[0], counts[1]);
     assert_eq!(counts[1], counts[2]);
     assert!(counts[0] > 0);
+}
+
+#[cfg(test)]
+#[test]
+fn numeric_materialization_preserves_later_native_span_metadata() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let cell = Pointer::symbolic(Variable(989_920));
+    let origin = CPointerValue::new(Pointer::symbolic(Variable(989_921)), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Unresolved(Variable(989_922)));
+    let source = CMemory::new();
+    let name = crate::kernel::canonical_form_of_load(
+        super::intern_c_memory_ref(&source),
+        cell.clone(),
+        LoadKind::Bits32,
+    );
+    let materialized = source
+        .clone()
+        .materialize_named_cell(cell.clone(), CValue::Int32(name));
+    let admitted = materialized
+        .with_native_input_span(
+            origin.clone(),
+            CType::Int32,
+            IntegerTerm::constant_i64(3).into(),
+        )
+        .unwrap();
+    let projected = canonical_memory_for_pointer_load(&admitted, &cell);
+    assert_eq!(projected.heap, admitted.heap);
+    assert_eq!(
+        projected.native_input_span(&origin),
+        admitted.native_input_span(&origin)
+    );
+    assert!(projected.native_input_span(&origin).is_some());
+    assert!(source.native_input_span(&origin).is_none());
+    // The newer semantic state must not become its bare naming source.
+    assert_ne!(projected, canonical_memory_for_pointer_load(&source, &cell));
 }

@@ -333,12 +333,11 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         final_exit_candidates.extend(result.final_exit_candidates);
                         break_exits.extend(result.break_exits);
                         return_exits.extend(result.return_exits);
-                        if let Some(certificates) = environment.frontier_loop_certificates {
-                            certificates
-                                .borrow_mut()
-                                .returns
-                                .extend(result.return_proofs);
-                        }
+                        environment
+                            .frontier_loop_certificates
+                            .borrow_mut()
+                            .returns
+                            .extend(result.return_proofs);
                         preservation_path_certificates.push(PathCertificate {
                             case_path: context.case_path.clone(),
                             case_offsets: None,
@@ -363,101 +362,52 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 break_exits_by_context.push(break_exits);
                 return_exits_by_context.push(return_exits);
             }
+            let source = environment.frontier_loop_source;
             if initialization_proof.is_some() {
-                let legacy_site = ProofSite::LoopPhase {
-                    function_name: environment.function_block.signature().name().to_string(),
-                    loop_index,
-                    phase: "initialize",
-                };
-                let (claim_label, site, selected_source_index) = environment
-                    .frontier_loop_source
-                    .map(|source| {
-                        (
-                            source.claim_label.clone(),
-                            source
-                                .proof_site
-                                .clone()
-                                .unwrap_or_else(|| legacy_site.clone()),
-                            source.initialize_source_index,
-                        )
-                    })
-                    .unwrap_or_else(|| (legacy_site.description(), legacy_site.clone(), Some(0)));
                 let initialization_certificate = merge_path_aligned_certificates(
-                    &claim_label,
+                    &source.claim_label,
                     initialization_path_certificates,
                 )?;
-                if let Some(certificates) = environment.frontier_loop_certificates {
-                    certificates.borrow_mut().initialize = Some(initialization_certificate.clone());
-                }
-                let can_capture_closer = if environment.frontier_loop_source.is_some() {
-                    selected_source_index.is_some()
-                } else {
-                    matches!(initialization_proof, Some((_, SourceProof::Script(tactics))) if !tactics.iter().any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. })))
+                environment
+                    .frontier_loop_certificates
+                    .borrow_mut()
+                    .initialize = Some(initialization_certificate.clone());
+                let selected = match (&source.proof_site, source.initialize_source_index) {
+                    (Some(site), Some(_)) => {
+                        selected_tactic_indices_for_site(expansion_capture.as_deref(), site)
+                    }
+                    _ => Vec::new(),
                 };
-                let selected = if can_capture_closer {
-                    selected_tactic_indices_for_site(expansion_capture.as_deref(), &site)
-                } else {
-                    Vec::new()
-                };
-                if let Some(initialization) = checked_initializations.first() {
+                if let Some(initialization) = checked_initializations.first()
+                    && let Some(site) = source.proof_site.as_ref()
+                {
                     for index in selected {
                         if let Some(expansion) = initialization
                             .phase_closer_expansion(index, &initialization_certificate)
                         {
                             record_proof_site_tactic_expansion(
                                 expansion_capture.as_deref_mut(),
-                                &site,
+                                site,
                                 index,
                                 &expansion,
                             );
                         }
                     }
                 }
-                if environment.frontier_loop_source.is_none() {
-                    finish_proof_site_expansion_capture(
-                        expansion_capture.as_deref_mut(),
-                        &site,
-                        &initialization_certificate,
-                    );
-                }
             }
             if !preservation_path_certificates.is_empty() {
-                let claim_label = environment.frontier_loop_source.map_or_else(
-                    || {
-                        crate::surface::claim_labels::loop_phase_claim_label(
-                            environment.function_block.signature().name(),
-                            loop_index,
-                            "preserve",
-                        )
-                    },
-                    |source| source.claim_label.clone(),
-                );
-                let preservation_certificate =
-                    merge_path_aligned_certificates(&claim_label, preservation_path_certificates)?;
-                if let Some(certificates) = environment.frontier_loop_certificates {
-                    certificates.borrow_mut().preserve = Some(preservation_certificate.clone());
-                }
-                if environment.frontier_loop_source.is_none() {
-                    finish_proof_site_expansion_capture(
-                        expansion_capture,
-                        &ProofSite::LoopPhase {
-                            function_name: environment
-                                .function_block
-                                .signature()
-                                .name()
-                                .to_string(),
-                            loop_index,
-                            phase: "preserve",
-                        },
-                        &preservation_certificate,
-                    );
+                let preservation_certificate = merge_path_aligned_certificates(
+                    &source.claim_label,
+                    preservation_path_certificates,
+                )?;
+                environment.frontier_loop_certificates.borrow_mut().preserve =
+                    Some(preservation_certificate.clone());
                 // `preserve by simp;` is one smart tactic standing for the
                 // whole phase, exactly as `initialize by simp;` is: the
                 // planned preservation certificate is its expansion. The
                 // driver's own tactics are all generated here, so no
                 // source-indexed step claims the occurrence.
-                } else if let Some(source) = environment.frontier_loop_source
-                    && let Some(preserve_source_index) = source.preserve_source_index
+                if let Some(preserve_source_index) = source.preserve_source_index
                     && matches!(
                         loop_clause.and_then(StructuralClause::preserve_proof),
                         Some(SourceProof::Tactic(SmartTactic::Simp))
@@ -861,12 +811,8 @@ fn advance_execution_proof_statement(
                         let lowered_exit_condition = lower_fixed_state_proposition(
                             &exit_condition,
                             &transition.pure_facts,
-                            environment.parsed_function.parameters(),
-                            environment.arguments,
-                            environment.initial_state,
-                            exit_state,
-                            None,
-                            &recorded_snapshots,
+                            ParameterBinding::new(environment.parsed_function.parameters(), environment.arguments),
+                            FixedStateFrame::new(environment.initial_state, exit_state, None, &recorded_snapshots),
                             environment.spec_definitions,
                         )
                         .map_err(|message| {
@@ -925,7 +871,7 @@ fn advance_execution_proof_statement(
                     return Err(ClickError::new(format!(
                         "execution proof traversal for {} statement({statement_index}) could not verify C operation: {}{}\nresource facts in context: {}",
                         environment.function_block.signature().name(),
-                        describe_runtime_error(&error, &[], &[]),
+                        describe_runtime_error(&error, ParameterBinding::default()),
                         crate::surface::diagnostics::describe_c_statement_site(),
                         context.state.resources().facts().len()
                     ))
@@ -938,14 +884,13 @@ fn advance_execution_proof_statement(
 }
 
 /// A refusal from a loop phase proof, restated at the `loop` tactic that owns
-/// it when the loop was written as a frontier-local tactic.
+/// it.
 fn locate_loop_phase_error(
     environment: &ExecutionProofEnvironment<'_>,
     error: ClickError,
     phase: LoopPhasePlace,
 ) -> ClickError {
-    match environment.frontier_loop_source {
-        Some(source) => source.locate_phase_error(error, phase),
-        None => error,
-    }
+    environment
+        .frontier_loop_source
+        .locate_phase_error(error, phase)
 }

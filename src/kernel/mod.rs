@@ -11,7 +11,7 @@ pub(crate) mod api;
 /// artifacts.  This is deliberately separate from source and compiler
 /// identities: changing the authority interpretation must invalidate an old
 /// certificate even when its inputs are byte-identical.
-pub const RESOURCE_SEMANTICS_VERSION: u32 = 74;
+pub const RESOURCE_SEMANTICS_VERSION: u32 = 75;
 
 pub(crate) mod assumptions;
 mod equality_graph;
@@ -32,6 +32,8 @@ pub(crate) use functions::ResourceBodyClauseRecord;
 pub(crate) use functions::TacticApplicationRefusal;
 pub(crate) use functions::assume_scalar_object_inputs;
 pub(crate) use functions::interface_join_instance_fields;
+pub(crate) use functions::mark_initialization_output_fields;
+pub(crate) use functions::materialize_symbolic_declaration_parameters;
 pub(crate) use functions::project_interface_native_spans;
 #[cfg(test)]
 pub(crate) use functions::rewrite_resource_instance;

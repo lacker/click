@@ -24,6 +24,8 @@ impl<'a> Proof<'a> {
         spec_definitions: SpecDefinitions<'a>,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
+        let spec_definitions =
+            spec_definitions.with_struct_layouts(resource_environment.struct_layouts());
         // The proof root is the entry's own fact lineage when the execution
         // has not left its checked entry, so later facts descend from it.
         let facts = execution

@@ -85,6 +85,15 @@ struct CatalogEntry {
     contract: &'static str,
 }
 
+// These catalog contracts are explicit library assumptions. Byte-view conversion
+// states address/extent; it grants no backing authority or initialized values.
+const AS_WRITABLE_BYTES_32_CONTRACT: &str =
+    "extern struct {result_record} {name}(struct {argument_record} {p0}) {
+    ensures std_span_data(result) == old((uint8*)std_span_data({p0}));
+    ensures std_span_size(result) == old(std_span_size({p0})) * 4u64;
+}
+";
+
 // `std::span<int>`: a view of `[data, data + size)`. The element accessors
 // require an index inside the view, which the standard makes a
 // precondition; they form an address and read nothing.
@@ -92,9 +101,19 @@ const CATALOG: &[CatalogEntry] = &[
     CatalogEntry {
         qualified_name: "std::as_writable_bytes",
         signature: "class std::span<enum std::byte> (class std::span<int>) noexcept",
-        contract: "extern struct {result_record} {name}(struct {argument_record} {p0}) {
-    ensures std_span_data(result) == old((uint8*)std_span_data({p0}));
-    ensures std_span_size(result) == old(std_span_size({p0})) * 4u64;
+        contract: AS_WRITABLE_BYTES_32_CONTRACT,
+    },
+    CatalogEntry {
+        qualified_name: "std::as_writable_bytes",
+        signature: "class std::span<enum std::byte> (class std::span<unsigned int>) noexcept",
+        contract: AS_WRITABLE_BYTES_32_CONTRACT,
+    },
+    CatalogEntry {
+        qualified_name: "std::span<std::byte>::data",
+        signature: "enum std::byte *(void) const noexcept",
+        contract: "extern uint8* {name}(const struct {record}* this) {
+    views std_span_data(this);
+    ensures result == std_span_data(this);
 }",
     },
     CatalogEntry {
@@ -160,14 +179,23 @@ const CATALOG: &[CatalogEntry] = &[
 /// declarations. An axiom without a catalog entry gets none, so a caller
 /// is refused unless the sidecar states one itself.
 pub(super) fn contracts(
-    export: &super::CppExport,
+    import: &super::PreparedCppImport,
     names: &super::names::ResolvedNames,
 ) -> Result<String, String> {
     let mut source = String::new();
-    for function in &export.reachable_functions {
+    for function in &import.export().reachable_functions {
         let Some(axiom) = &function.axiom else {
             continue;
         };
+        if let Some(contract) = super::library_models::contract(
+            import,
+            function,
+            names.require(&function.declaration_id)?,
+        ) {
+            source.push_str(&contract);
+            source.push('\n');
+            continue;
+        }
         let Some(entry) = CATALOG.iter().find(|entry| {
             entry.qualified_name == axiom.qualified_name && entry.signature == axiom.signature
         }) else {

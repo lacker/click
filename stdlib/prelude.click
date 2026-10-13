@@ -1122,6 +1122,27 @@ theorem uint32_to_integer_bounds(value: uint32) {
     }
 }
 
+# Unsigned zero is the lower endpoint; excluding it gives a strict native order.
+# This proof uses the existing remainder and transitivity laws, not a new axiom.
+theorem uint32_nonzero_implies_positive(value: uint32) {
+    requires value != 0u32;
+    ensures 0u32 < value by {
+        have 0u32 % value < value by {
+            apply(uint32_remainder_less_than_divisor(0u32, value)) using { value != 0u32; }
+        }
+        have 0u32 <= 0u32 % value by {
+            apply(uint32_to_integer_bounds(0u32 % value));
+            apply(uint32_to_integer_less_equal_implies_less_equal(0u32, 0u32 % value)) using {
+                0 <= to_integer(0u32 % value);
+            }
+        }
+        apply(uint32_less_equal_less_than_transitive(0u32, 0u32 % value, value)) using {
+            0u32 <= 0u32 % value;
+            0u32 % value < value;
+        }
+    }
+}
+
 # Checked source proof of the mathematical domain from native nonzero.
 theorem uint32_nonzero_to_integer(value: uint32) {
  requires value != 0u32;

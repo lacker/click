@@ -58,5 +58,5 @@ void put(struct Node *p, struct Node *q, int32 x, uint64 stamp) {
 ```
 
 ```expect
-fail: native record place has no authenticated input or declaration
+fail: could not bind arguments for set_word
 ```

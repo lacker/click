@@ -15,15 +15,19 @@ use crate::kernel::proof::{
 };
 use crate::kernel::{CFloatClassification, CFloatCondition};
 use crate::surface::checking::plan_signed_arithmetic_certificate;
+use crate::surface::checking::{IntegerRefutation, plan_integer_refutation};
 use crate::surface::planning::proposition_search::PropositionSearch;
 use num_bigint::BigInt;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 const MAX_DIRECT_CALLER_BINDING_NAMES: usize = 4096;
 
 /// Goal-changing rewrites kept per link of an equality chain: the first
 /// continues the chain, the others get a one-link closing probe.
+/// How many times the solver behind `auto` plans again without the
+/// premises it could not spell.
+pub(in crate::surface::proof) const SOLVER_SPELLING_ROUNDS: usize = 4;
 const MAX_EQUALITY_REWRITE_BRANCHES: usize = 4;
 
 fn collect_signed_surface_terms<'a>(
@@ -181,7 +185,8 @@ fn collect_signed_surface_proposition_terms<'a>(
                 collect_signed_surface_terms(left, terms);
                 collect_signed_surface_terms(right, terms);
             }
-            ClickProposition::Defined { expression }
+            ClickProposition::ValidPlace { expression, .. }
+            | ClickProposition::Defined { expression }
             | ClickProposition::FloatClassification { expression, .. } => {
                 collect_signed_surface_terms(expression, terms)
             }
@@ -326,7 +331,7 @@ fn signed_surface_terms_equal(
     true
 }
 
-pub(super) fn integer_plan_to_surface_certificate(
+pub(in crate::surface::proof) fn integer_plan_to_surface_certificate(
     plan: &IntegerArithmeticCertificate,
     premise_pairs: &[(Proposition, ClickProposition)],
     surface_goal: &ClickProposition,
@@ -358,7 +363,7 @@ pub(super) fn integer_plan_to_surface_certificate(
                 ..
             } => {
                 let source_surface = node_surfaces.get(*source)?;
-                let surface = integer_surface_scale(source_surface, coefficient)?;
+                let surface = integer_certificate_surface_scale(source_surface, coefficient)?;
                 let certificate = IntegerCertificateNode::Scale {
                     source: *source,
                     coefficient: surface_signed_integer_literal(coefficient),
@@ -369,7 +374,7 @@ pub(super) fn integer_plan_to_surface_certificate(
             IntegerArithmeticNode::Add { left, right, .. } => {
                 let left_surface = node_surfaces.get(*left)?;
                 let right_surface = node_surfaces.get(*right)?;
-                let surface = integer_surface_add(left_surface, right_surface)?;
+                let surface = integer_certificate_surface_add(left_surface, right_surface)?;
                 let certificate = IntegerCertificateNode::Add {
                     left: *left,
                     right: *right,
@@ -419,6 +424,17 @@ pub(super) fn integer_plan_to_surface_certificate(
                 };
                 (surface, certificate)
             }
+            IntegerArithmeticNode::NegatedGoal { .. } => {
+                let surface = integer_surface_negated_goal(surface_goal)?;
+                let certificate = IntegerCertificateNode::NegatedGoal {
+                    result: surface.clone(),
+                };
+                (surface, certificate)
+            }
+            // A divided bound has no general source spelling derived from
+            // its source's spelling; planners that divide spell the result
+            // from their own atom table.
+            IntegerArithmeticNode::Divide { .. } => return None,
         };
         node_surfaces.push(surface);
         nodes.push(certificate_node);
@@ -460,6 +476,79 @@ fn integer_surface_ordered_parts(
     }
 }
 
+/// Over the integers `l < r` is `l + 1 <= r`, and the kernel's affine claim
+/// for a strict bound already carries that `+ 1`. Spelling a scaled or
+/// summed strict bound in that non-strict form keeps the written result
+/// equal to the claim the kernel derives: `c * (l + 1) <= c * r`, not the
+/// weaker `c * l < c * r`.
+fn integer_surface_non_strict_parts(
+    proposition: &ClickProposition,
+) -> Option<(ContractExpression, ComparisonOperator, ContractExpression)> {
+    let (left, operator, right) = integer_surface_ordered_parts(proposition)?;
+    Some(if operator == ComparisonOperator::LessThan {
+        (
+            ContractExpression::Add(
+                Box::new(left),
+                Box::new(ContractExpression::IntegerLiteral("1".into())),
+            ),
+            ComparisonOperator::LessEqual,
+            right,
+        )
+    } else {
+        (left, operator, right)
+    })
+}
+
+/// The `Integer` certificate's spelling of a scaled bound. `c * l < c * r`
+/// is the kernel's scaled claim only for `c == 1`; otherwise the strict
+/// bound is scaled in its non-strict form. The `signed_int32` family keeps
+/// [`integer_surface_scale`], whose checker reads the `c * l < c * r` shape.
+fn integer_certificate_surface_scale(
+    proposition: &ClickProposition,
+    coefficient: &BigInt,
+) -> Option<ClickProposition> {
+    if coefficient.is_one() {
+        return integer_surface_scale(proposition, coefficient);
+    }
+    let (left, operator, right) = integer_surface_non_strict_parts(proposition)?;
+    integer_surface_scale(
+        &ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        },
+        coefficient,
+    )
+}
+
+/// The `Integer` certificate's spelling of a sum. One strict addend carries
+/// the claim's `+ 1`, so `l1 + l2 < r1 + r2` spells the sum; two strict
+/// addends carry `+ 2`, which a single `<` cannot, so both are added in
+/// their non-strict form.
+fn integer_certificate_surface_add(
+    left: &ClickProposition,
+    right: &ClickProposition,
+) -> Option<ClickProposition> {
+    let strict = |proposition| {
+        matches!(
+            integer_surface_ordered_parts(proposition),
+            Some((_, ComparisonOperator::LessThan, _))
+        )
+    };
+    if !(strict(left) && strict(right)) {
+        return integer_surface_add(left, right);
+    }
+    let non_strict = |proposition| {
+        let (left, operator, right) = integer_surface_non_strict_parts(proposition)?;
+        Some(ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        })
+    };
+    integer_surface_add(&non_strict(left)?, &non_strict(right)?)
+}
+
 fn integer_surface_scale(
     proposition: &ClickProposition,
     coefficient: &BigInt,
@@ -497,6 +586,9 @@ fn integer_surface_add(
     left: &ClickProposition,
     right: &ClickProposition,
 ) -> Option<ClickProposition> {
+    // One strict addend carries the claim's `+ 1`, so `l1 + l2 < r1 + r2`
+    // spells the sum. Two strict addends carry `+ 2`, which a single `<`
+    // cannot spell; write both in their non-strict form instead.
     let (left_left, operator, left_right) = integer_surface_ordered_parts(left)?;
     let (right_left, right_operator, right_right) = integer_surface_ordered_parts(right)?;
     let operator = match (operator, right_operator) {
@@ -593,6 +685,22 @@ fn surface_expression_is_constant(expression: &ContractExpression) -> bool {
         }
         _ => false,
     }
+}
+
+/// The integer negation of a goal `l <= r` is `r < l`, and of `l < r` is
+/// `r <= l`. An equality goal has no single-bound negation.
+fn integer_surface_negated_goal(goal: &ClickProposition) -> Option<ClickProposition> {
+    let (left, operator, right) = integer_surface_ordered_parts(goal)?;
+    let operator = match operator {
+        ComparisonOperator::LessEqual => ComparisonOperator::LessThan,
+        ComparisonOperator::LessThan => ComparisonOperator::LessEqual,
+        _ => return None,
+    };
+    Some(ClickProposition::Comparison {
+        left: right,
+        operator,
+        right: left,
+    })
 }
 
 fn integer_surface_equality_to_less_equal(
@@ -1741,6 +1849,70 @@ impl<'a> Proof<'a> {
         crate::kernel::with_closure_failure_memo(|| self.try_simp_closure_strategies())
     }
 
+    /// Close a mathematical `Integer` bound goal with the solver behind
+    /// `auto`: refute the goal's negation from the facts connected to it and
+    /// apply the resulting certificate as one ordinary checked step. Any
+    /// miss leaves the proof unchanged.
+    pub(in crate::surface::proof) fn try_solver_closure(&self) -> Result<Option<Self>, ClickError> {
+        let (Some(goal), Some(surface_goal)) = (self.goal(), self.surface_goal()) else {
+            return Ok(None);
+        };
+        if crate::kernel::proof::integer_arithmetic::integer_affine_claim(goal).is_none() {
+            return Ok(None);
+        }
+        let Some(mut candidates) =
+            crate::surface::planning::proposition_search::solver_connected_premises(
+                self.facts().assumptions(),
+                goal,
+            )
+        else {
+            return Ok(None);
+        };
+        // A certificate cites its premises by their source spelling. A fact
+        // with none (a conjunct of a written invariant, for one) cannot be
+        // cited, so the solver runs again without it, a bounded number of
+        // times.
+        for _ in 0..SOLVER_SPELLING_ROUNDS {
+            check_verification_deadline()?;
+            let IntegerRefutation::Proved {
+                certificate,
+                premises,
+            } = crate::instrumentation::measure_operation(
+                "surface",
+                "auto solver",
+                "auto solver: integer refutation",
+                || plan_integer_refutation(goal, &candidates),
+            )
+            else {
+                return Ok(None);
+            };
+            let mut pairs = Vec::with_capacity(premises.len());
+            let mut unspelled = Vec::new();
+            for premise in &premises {
+                match self
+                    .resolve_simp_premises(std::slice::from_ref(premise), &[])
+                    .and_then(|mut spelled| spelled.pop())
+                {
+                    Some(pair) => pairs.push(pair),
+                    None => unspelled.push(premise.clone()),
+                }
+            }
+            if !unspelled.is_empty() {
+                candidates.retain(|candidate| !unspelled.contains(candidate));
+                continue;
+            }
+            let Some(surface) =
+                integer_plan_to_surface_certificate(&certificate, &pairs, surface_goal)
+            else {
+                return Ok(None);
+            };
+            return attempt::candidate_outcome(self.apply_step(ProofStep::ArithmeticCertificate(
+                ArithmeticCertificate::integer(surface),
+            )));
+        }
+        Ok(None)
+    }
+
     fn try_flat_simp_conjunction(
         &self,
         introduced_surfaces: &[ClickProposition],
@@ -2756,7 +2928,8 @@ impl<'a> Proof<'a> {
                         self.premise_fixed_state_view()
                             .into_iter()
                             .flat_map(|view| {
-                                view.recorded_snapshots
+                                view.fixed_state
+                                    .recorded_snapshots
                                     .recent(MAX_TRANSPORT_SOURCE_POINTS)
                                     .into_iter()
                                     .filter_map(|(selector, _)| {
@@ -2775,7 +2948,8 @@ impl<'a> Proof<'a> {
                 ];
                 if let Some(view) = self.premise_fixed_state_view() {
                     surface_candidates.extend(
-                        view.recorded_snapshots
+                        view.fixed_state
+                            .recorded_snapshots
                             .recent(MAX_TRANSPORT_SOURCE_POINTS)
                             .into_iter()
                             .filter_map(|(selector, _)| {
@@ -3171,7 +3345,8 @@ impl<'a> Proof<'a> {
         // early-return paths. An older point is still reachable by an
         // explicit `transport`.
         let selectors = std::iter::once(SnapshotSelector::ProgramPoint(entry)).chain(
-            view.recorded_snapshots
+            view.fixed_state
+                .recorded_snapshots
                 .recent(MAX_TRANSPORT_SOURCE_POINTS)
                 .into_iter()
                 .map(|(selector, _)| selector.clone()),
@@ -3747,7 +3922,7 @@ impl<'a> Proof<'a> {
 
     /// Spells each of `premises` in this context's recorded source forms,
     /// leaving out one that has none.
-    fn resolve_simp_premises(
+    pub(in crate::surface::proof) fn resolve_simp_premises(
         &self,
         premises: &[Proposition],
         introduced_surfaces: &[ClickProposition],
@@ -3883,7 +4058,7 @@ impl<'a> Proof<'a> {
             .or_else(|| self.execution_proposition_fixed_state_view())
             .or_else(|| match self.context.as_ref() {
                 ProofContext::FixedState(context)
-                    if !std::ptr::eq(context.pre_state, context.state) =>
+                    if !std::ptr::eq(context.fixed_state.pre_state, context.fixed_state.state) =>
                 {
                     Some(FixedStateOperationView::from_fixed_state(context))
                 }
@@ -3901,7 +4076,7 @@ impl<'a> Proof<'a> {
         let Some(view) = self.premise_fixed_state_view() else {
             return Some(surface);
         };
-        let Some(result @ CValue::Pointer(_)) = view.result else {
+        let Some(result @ CValue::Pointer(_)) = view.fixed_state.result else {
             return Some(surface);
         };
         // Resource witnesses may have no written name but coincide with the
@@ -3986,9 +4161,9 @@ impl<'a> Proof<'a> {
                         &mut current_names,
                     );
                     current_names.iter().any(|name| {
-                        !(name == "result" && view.result.is_some())
-                            && !view.state.locals().contains_name(name)
-                            && !view.pre_state.locals().contains_name(name)
+                        !(name == "result" && view.fixed_state.result.is_some())
+                            && !view.fixed_state.state.locals().contains_name(name)
+                            && !view.fixed_state.pre_state.locals().contains_name(name)
                             && self.local_binding(name).is_none()
                             && self.local_integer_values().get(name).is_none()
                             && self.local_algebraic_values().get(name).is_none()
@@ -4077,9 +4252,8 @@ impl<'a> Proof<'a> {
             if let Some(view) = self.premise_fixed_state_view()
                 && let Some(surface) = synthesize_surface_proposition(
                     kernel,
-                    view.parameters,
-                    view.arguments,
-                    view.pre_state,
+                    view.parameter_binding,
+                    view.fixed_state.pre_state,
                 )
                 && let Ok(anchored) = surface_at_snapshot(&surface, &function_entry)
                 && matches_kernel(&anchored).is_some()
@@ -4102,13 +4276,17 @@ impl<'a> Proof<'a> {
             && let Some((parameters, arguments, recorded_snapshots)) = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
                 ProofContext::FixedState(context) => Some((
-                    context.parameters,
-                    context.arguments,
-                    context.recorded_snapshots,
+                    context.parameter_binding.parameters,
+                    context.parameter_binding.arguments,
+                    context.fixed_state.recorded_snapshots,
                 )),
-                ProofContext::Execution(_) => self
-                    .premise_fixed_state_view()
-                    .map(|view| (view.parameters, view.arguments, view.recorded_snapshots)),
+                ProofContext::Execution(_) => self.premise_fixed_state_view().map(|view| {
+                    (
+                        view.parameter_binding.parameters,
+                        view.parameter_binding.arguments,
+                        view.fixed_state.recorded_snapshots,
+                    )
+                }),
             }
             && let Some(anchored) = crate::instrumentation::measure_operation(
                 "surface",
@@ -4117,8 +4295,7 @@ impl<'a> Proof<'a> {
                 || {
                     synthesize_surface_at_recorded_snapshots(
                         kernel,
-                        parameters,
-                        arguments,
+                        ParameterBinding::new(parameters, arguments),
                         recorded_snapshots,
                         anchor,
                     )
@@ -4140,18 +4317,25 @@ impl<'a> Proof<'a> {
             let synthesis_context = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
                 ProofContext::FixedState(context) => Some((
-                    context.parameters,
-                    context.arguments,
-                    context.recorded_snapshots,
+                    context.parameter_binding.parameters,
+                    context.parameter_binding.arguments,
+                    context.fixed_state.recorded_snapshots,
                 )),
-                ProofContext::Execution(_) => self
-                    .premise_fixed_state_view()
-                    .map(|view| (view.parameters, view.arguments, view.recorded_snapshots)),
+                ProofContext::Execution(_) => self.premise_fixed_state_view().map(|view| {
+                    (
+                        view.parameter_binding.parameters,
+                        view.parameter_binding.arguments,
+                        view.fixed_state.recorded_snapshots,
+                    )
+                }),
             };
             if let Some((parameters, arguments, recorded_snapshots)) = synthesis_context
                 && let Some(state) = recorded_snapshots.get(anchor)
-                && let Some(surface) =
-                    synthesize_surface_proposition(kernel, parameters, arguments, state)
+                && let Some(surface) = synthesize_surface_proposition(
+                    kernel,
+                    ParameterBinding::new(parameters, arguments),
+                    state,
+                )
                 && let Ok(anchored) = surface_at_snapshot(&surface, anchor)
                 && matches_kernel(&anchored).is_some()
             {
@@ -4259,6 +4443,7 @@ impl<'a> Proof<'a> {
                             }
                             if let Some(view) = self.premise_fixed_state_view()
                                 && let Some(anchored) = view
+                                    .fixed_state
                                     .recorded_snapshots
                                     .keys()
                                     .rev()
@@ -4308,8 +4493,7 @@ impl<'a> Proof<'a> {
             let state = CState::new().with_memory(context.theorem_context.memory.clone());
             if let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
                 kernel,
-                &[],
-                &[],
+                ParameterBinding::default(),
                 &state,
                 &bindings,
             ) && matches_kernel(&surface).is_some()
@@ -4326,17 +4510,17 @@ impl<'a> Proof<'a> {
         let synthesis_context = match self.context.as_ref() {
             ProofContext::Pure(_) => None,
             ProofContext::FixedState(context) => Some((
-                context.parameters,
-                context.arguments,
-                context.state,
-                context.recorded_snapshots,
+                context.parameter_binding.parameters,
+                context.parameter_binding.arguments,
+                context.fixed_state.state,
+                context.fixed_state.recorded_snapshots,
             )),
             ProofContext::Execution(_) => self.premise_fixed_state_view().map(|view| {
                 (
-                    view.parameters,
-                    view.arguments,
-                    view.state,
-                    view.recorded_snapshots,
+                    view.parameter_binding.parameters,
+                    view.parameter_binding.arguments,
+                    view.fixed_state.state,
+                    view.fixed_state.recorded_snapshots,
                 )
             }),
         };
@@ -4354,8 +4538,7 @@ impl<'a> Proof<'a> {
             .collect::<BTreeMap<_, _>>();
         if let Some(surface) = synthesize_surface_proposition_with_bound_variable_names(
             kernel,
-            parameters,
-            arguments,
+            ParameterBinding::new(parameters, arguments),
             state,
             &bound_variable_names,
         ) && matches_kernel(&surface).is_some()
@@ -4376,8 +4559,7 @@ impl<'a> Proof<'a> {
             || {
                 synthesize_surface_at_recorded_snapshots(
                     kernel,
-                    parameters,
-                    arguments,
+                    ParameterBinding::new(parameters, arguments),
                     recorded_snapshots,
                     premise_anchor,
                 )
@@ -5540,9 +5722,8 @@ impl<'a> Proof<'a> {
                 ProofContext::FixedState(context) => {
                     synthesize_surface_proposition_with_bound_variable_names(
                         fact,
-                        context.parameters,
-                        context.arguments,
-                        context.state,
+                        context.parameter_binding,
+                        context.fixed_state.state,
                         &bound_variable_names,
                     )
                 }
@@ -5550,9 +5731,8 @@ impl<'a> Proof<'a> {
                     let view = execution_view.as_ref()?;
                     synthesize_surface_proposition_with_bound_variable_names(
                         fact,
-                        view.parameters,
-                        view.arguments,
-                        view.state,
+                        view.parameter_binding,
+                        view.fixed_state.state,
                         &bound_variable_names,
                     )
                 }
@@ -5635,17 +5815,15 @@ impl<'a> Proof<'a> {
                 ProofContext::Pure(_) => None,
                 ProofContext::FixedState(context) => synthesize_surface_proposition(
                     &quantified,
-                    context.parameters,
-                    context.arguments,
-                    context.state,
+                    context.parameter_binding,
+                    context.fixed_state.state,
                 ),
                 ProofContext::Execution(_) => {
                     let view = execution_view?;
                     synthesize_surface_proposition(
                         &quantified,
-                        view.parameters,
-                        view.arguments,
-                        view.state,
+                        view.parameter_binding,
+                        view.fixed_state.state,
                     )
                 }
             };
@@ -6037,15 +6215,12 @@ impl<'a> Proof<'a> {
         let data = proof.focused_outcome_data()?;
         let anchor = data.premise_anchor.as_ref()?;
         let view = proof.outcome_fixed_state_view()?;
-        let anchor_state = view.recorded_snapshots.get(anchor)?;
+        let anchor_state = view.fixed_state.recorded_snapshots.get(anchor)?;
         let mut anchored_candidates = Vec::new();
         for (kernel, _) in premise_pairs.iter().chain(&source_pairs) {
-            let Some(surface) = synthesize_surface_proposition(
-                kernel,
-                view.parameters,
-                view.arguments,
-                anchor_state,
-            ) else {
+            let Some(surface) =
+                synthesize_surface_proposition(kernel, view.parameter_binding, anchor_state)
+            else {
                 continue;
             };
             let Ok(surface) = surface_at_snapshot(&surface, anchor) else {
@@ -6492,11 +6667,10 @@ impl<'a> Proof<'a> {
                 .or_else(|| self.execution().and_then(frontier_premise_anchor)),
             ProofContext::Pure(_) => None,
         }?;
-        let state = view.recorded_snapshots.get(&anchor)?;
+        let state = view.fixed_state.recorded_snapshots.get(&anchor)?;
         let candidates = super::uint32_representation::byte_premises_at_snapshot(
             derivation,
-            view.parameters,
-            view.arguments,
+            view.parameter_binding,
             state,
             &anchor,
         )?;
@@ -7003,7 +7177,10 @@ impl<'a> Proof<'a> {
                         "the negation of an internal {} goal with no Click spelling",
                         condition_kind(condition)
                     ),
-                    _ => format!("the goal {}", describe_pure_fact(goal, &[], &[])),
+                    _ => format!(
+                        "the goal {}",
+                        describe_pure_fact(goal, ParameterBinding::default())
+                    ),
                 })
             })
             .unwrap_or_else(|| "a goal that is not a proposition".into());
@@ -7044,7 +7221,12 @@ impl<'a> Proof<'a> {
             .or_else(|| self.execution_fixed_state_view());
         let (parameters, arguments) = names
             .as_ref()
-            .map(|view| (view.parameters, view.arguments))
+            .map(|view| {
+                (
+                    view.parameter_binding.parameters,
+                    view.parameter_binding.arguments,
+                )
+            })
             .unwrap_or((&[], &[]));
         if !crate::kernel::resource_tracker::reads_any_resource(goal) {
             return None;
@@ -7054,8 +7236,7 @@ impl<'a> Proof<'a> {
             goal,
             &premises,
             "the available fact was stated",
-            parameters,
-            arguments,
+            ParameterBinding::new(parameters, arguments),
         )
     }
 
@@ -7367,8 +7548,8 @@ impl<'a> Proof<'a> {
                     let scope = proof.begin_have(have.proposition.clone())?;
                     let source_proof = have.checking_proof();
                     let selected = match source_proof.as_ref() {
-                        SourceProof::Default
-                        | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+                        SourceProof::Tactic(SmartTactic::Auto) => scope.try_auto_fact_closure()?,
+                        SourceProof::Default | SourceProof::Tactic(SmartTactic::Simp) => {
                             scope.try_simp_closure()?
                         }
                         SourceProof::Script(body) => scope.try_authoritative_linear_script(body)?,
@@ -7686,8 +7867,10 @@ impl<'a> Proof<'a> {
                     let synthesize_candidate = || {
                         synthesize_surface_proposition(
                             &requirement.proposition,
-                            context.parsed_function.parameters(),
-                            context.arguments,
+                            ParameterBinding::new(
+                                context.parsed_function.parameters(),
+                                context.arguments,
+                            ),
                             &execution.core.state,
                         )
                     };
@@ -7697,6 +7880,7 @@ impl<'a> Proof<'a> {
                             &step,
                             execution,
                             context,
+                            proof.facts().assumptions(),
                         )
                     });
                     let surface = if requirement.call_site.is_some() {
@@ -7710,6 +7894,7 @@ impl<'a> Proof<'a> {
                             &step,
                             execution,
                             context,
+                            proof.facts().assumptions(),
                         ) else {
                             return Err(error);
                         };
@@ -8104,6 +8289,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             "smart step selection",
+            self.facts().assumptions(),
         )?;
         if matches!(statement, CStatement::If { .. } | CStatement::Switch { .. }) {
             // A C `if` the context decides is one step into that arm; one it
@@ -8467,6 +8653,7 @@ fn source_backed_call_requirement_surface(
     step: &ProofStep,
     execution: &ExecutionProofState,
     context: &ExecutionProofContext<'_>,
+    assumptions: &PureFactContext,
 ) -> Option<SourceBackedCallSurface> {
     let source = requirement.call_site.as_ref()?;
     let source_ordinal = source.source_requirement_ordinal?;
@@ -8490,6 +8677,7 @@ fn source_backed_call_requirement_surface(
         context.claim_label,
         context.tactic_index,
         "smart retained-have call source",
+        assumptions,
     )
     .ok()?;
     let (callee, arguments) = match statement {
@@ -8632,6 +8820,7 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
     step: &ProofStep,
     execution: &ExecutionProofState,
     context: &ExecutionProofContext<'_>,
+    assumptions: &PureFactContext,
 ) -> Option<(String, CallerRequirementSelection)> {
     let source = requirement.call_site.as_ref()?;
     if !matches!(step, ProofStep::Step | ProofStep::StepCall(_))
@@ -8639,7 +8828,8 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
     {
         return None;
     }
-    let resolved = source_backed_call_requirement_surface(requirement, step, execution, context)?;
+    let resolved =
+        source_backed_call_requirement_surface(requirement, step, execution, context, assumptions)?;
     let ClickProposition::PredicateCall { arguments, .. } = &resolved.source_proposition else {
         return None;
     };
@@ -8790,8 +8980,7 @@ fn requirement_uses_planning_compatibility(
 /// The cross-snapshot equality fallback sees only the already visited points.
 pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
     kernel: &'a Proposition,
-    parameters: &'a [syntax::C0Parameter],
-    arguments: &'a [CExpression],
+    parameter_binding: ParameterBinding<'a>,
     recorded_snapshots: &'a RecordedSnapshots,
     anchor: &ProgramPointRef,
 ) -> impl Iterator<Item = ClickProposition> + 'a {
@@ -8820,8 +9009,7 @@ pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
                 return None;
             }
             points.push((point.clone(), state));
-            if let Some(surface) =
-                synthesize_surface_proposition(kernel, parameters, arguments, state)
+            if let Some(surface) = synthesize_surface_proposition(kernel, parameter_binding, state)
                 && let Ok(surface) = surface_at_snapshot(&surface, point)
             {
                 return Some(surface);
@@ -8831,7 +9019,7 @@ pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
         if crate::instrumentation::deadline_exceeded() {
             return None;
         }
-        synthesize_surface_equality_across_points(kernel, parameters, arguments, &points)
+        synthesize_surface_equality_across_points(kernel, parameter_binding, &points)
     })
 }
 
@@ -8899,8 +9087,7 @@ mod synthesized_literal_tests {
                 ),
                 true,
             ),
-            function.parameters(),
-            &[],
+            ParameterBinding::new(function.parameters(), &[]),
             &state,
             &state,
             &snapshots,

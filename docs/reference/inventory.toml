@@ -342,6 +342,10 @@ id = "c0.expression.statement-expression"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.expression.builtin-types-compatible"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.expression.builtin-expect"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
@@ -492,6 +496,14 @@ path = "reference/language/grammar.md#word-index"
 
 [[item]]
 id = "language.word.less_equal_from_equal"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.negated_goal"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
+id = "language.word.divide"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
@@ -980,7 +992,7 @@ path = "reference/language/index.md#file-shape"
 
 [[item]]
 id = "language.import"
-path = "reference/language/index.md#file-shape"
+path = "concepts/sidecars.md#local-specification-imports"
 
 [[item]]
 id = "language.algebraic-declaration"
@@ -3503,3 +3515,11 @@ path = "reference/library/index.md#uint64_pack_uint16_to_integer"
 [[item]]
 id = "stdlib.theorem.uint64_less_than_implies_not_greater_equal"
 path = "reference/library/index.md#uint64_less_than_implies_not_greater_equal"
+
+[[item]]
+id = "c0.expression.builtin-offsetof"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.declaration.static-assert"
+path = "reference/language/c0.md#supported-expressions-and-statements"

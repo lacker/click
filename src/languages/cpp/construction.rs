@@ -74,6 +74,23 @@ pub(super) fn validate_returns<'a>(
         checked: BTreeMap::new(),
     };
     for function in functions.values() {
+        for (callee, constructing) in super::schema::prvalue_argument_calls(function) {
+            if constructing {
+                if !eligibility.function(callee)? {
+                    return Err(format!(
+                        "C++ record prvalue argument constructor `{}` is not copy-equivalent: storage addresses, memory reads or external effects remain outside the profile",
+                        callee.name
+                    ));
+                }
+            } else {
+                let target = functions
+                    .get(&callee.declaration_id)
+                    .ok_or("C++ aggregate prvalue argument has no reachable definition")?;
+                if !modes[callee.declaration_id.as_str()] || !target.declared_noexcept {
+                    return Err("C++ aggregate prvalue arguments require admitted nonthrowing construction-return callees".into());
+                }
+            }
+        }
         let mut construction = false;
         let mut copying = false;
         for statement in statements(&function.body) {
@@ -139,7 +156,16 @@ impl Eligibility<'_, '_> {
         // Graph validation already rejects recursion and bounds depth. Also
         // refuse a recursive eligibility dependency if called independently.
         self.checked.insert(reference.declaration_id.clone(), false);
-        let result = self.body(function)?;
+        // This is admission of the explicit copy-equivalent model recipe,
+        // never of the exported axiom's empty body. Actual model selection
+        // additionally binds the locked header/profile/layout before execution.
+        let result = if super::library_models::candidate(function)
+            == Some(super::library_models::Model::WordConstructor)
+        {
+            true
+        } else {
+            self.body(function)?
+        };
         self.checked
             .insert(reference.declaration_id.clone(), result);
         Ok(result)
@@ -231,7 +257,9 @@ impl Eligibility<'_, '_> {
                 CppCallArgument::Call {
                     callee, arguments, ..
                 } => self.arguments(arguments, values)? && self.function(callee)?,
-                CppCallArgument::Reference { .. } | CppCallArgument::RecordCopy { .. } => false,
+                CppCallArgument::Reference { .. }
+                | CppCallArgument::RecordCopy { .. }
+                | CppCallArgument::RecordConstruct { .. } => false,
             };
             if !valid {
                 return Ok(false);

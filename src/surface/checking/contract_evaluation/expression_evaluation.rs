@@ -17,10 +17,7 @@ pub(in crate::surface) fn evaluate_contract_expression_with_environment(
         assumptions,
         parameter_values,
         array_refs,
-        pre_state,
-        post_state,
-        result,
-        recorded_snapshots,
+        FixedStateFrame::new(pre_state, post_state, result, recorded_snapshots),
         spec_definitions,
         opaque_click_functions,
     )

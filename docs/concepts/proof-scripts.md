@@ -16,7 +16,11 @@ An omitted proof means `simp` at the point where the statement holds:
 - `ensures P;` on a C function holds at function exit, so Click executes to
   it first. That is `by auto;`, the script `execute(); simp();`.
 - `have P;` holds where it is written. It is `have P by simp;` and never
-  executes C. `auto` is refused inside a `have` for the same reason.
+  executes C.
+- `have P by auto;` also proves `P` where it is written. With no C to run
+  toward the fact, `auto` first tries the solver, which refutes the integer
+  negation of a linear `Integer` bound from the facts connected to it, and
+  then `simp` (`mdtests/have_by_auto_refutes_a_linear_bound.md`).
 
 A proof of one step needs no braces: `by T(args);` is `by { T(args); }` for
 any tactic written as a call, as in `have 0 <= x by assumption();`. `click

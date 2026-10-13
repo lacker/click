@@ -778,6 +778,7 @@ impl CFunctionContractInterface {
             construction_parameter: None,
             scalar_object_inputs: Vec::new(),
             native_span_inputs: Vec::new(),
+            native_span_expression_inputs: Default::default(),
             aggregate_object_inputs: Vec::new(),
             exceptional_signature: CExceptionalSignature::None,
             parameters,
@@ -827,6 +828,10 @@ impl CFunctionContractInterface {
 
     pub fn scalar_object_inputs(&self) -> &[CScalarObjectInput] {
         &self.scalar_object_inputs
+    }
+
+    pub(crate) fn native_span_expression_inputs(&self) -> &[CNativeSpanRequirement] {
+        &self.native_span_expression_inputs
     }
 
     pub fn native_span_inputs(&self) -> &[CNativeSpanInput] {
@@ -893,6 +898,18 @@ impl CFunctionContractInterface {
     /// Fixed, entry-bound byte output ranges. Unsupported initialization
     /// shapes refuse modular application instead of silently losing an effect.
     pub fn initialization_outputs(&self) -> Option<Vec<(usize, u32)>> {
+        self.initialization_output_selectors()?
+            .into_iter()
+            .map(|output| {
+                output
+                    .field
+                    .is_none()
+                    .then_some((output.parameter, output.bytes))
+            })
+            .collect()
+    }
+
+    pub fn initialization_output_selectors(&self) -> Option<Vec<CInitializationOutput>> {
         fn contains(proposition: &SpecProposition) -> bool {
             match proposition {
                 SpecProposition::MemoryInitialized { .. } => true,
@@ -937,18 +954,165 @@ impl CFunctionContractInterface {
             let SpecExpression::LoopEntrySnapshot(base) = base else {
                 return None;
             };
-            let SpecExpression::CExpression(CExpression::Variable(name)) = base.as_ref() else {
-                return None;
+            let (name, field) = 'selector: {
+                if let SpecExpression::MemoryLoad {
+                    memory: SpecMemory::Current,
+                    pointer,
+                    value_type: CType::UInt8Pointer,
+                } = base.as_ref()
+                    && let SpecExpression::Let {
+                        name: binder,
+                        value,
+                        body,
+                    } = pointer.as_ref()
+                {
+                    let SpecExpression::CExpression(CExpression::Variable(parameter)) =
+                        value.as_ref()
+                    else {
+                        return None;
+                    };
+                    let SpecExpression::CExpression(CExpression::MemberAddress {
+                        object,
+                        selection,
+                    }) = body.as_ref()
+                    else {
+                        return None;
+                    };
+                    let CExpression::Variable(bound) = object.as_ref() else {
+                        return None;
+                    };
+                    if bound != binder
+                        || selection.path().len() != 1
+                        || selection.value_type() != CType::UInt8Pointer
+                    {
+                        return None;
+                    }
+                    break 'selector (parameter, Some(selection.clone()));
+                }
+                match base.as_ref() {
+                    SpecExpression::MemoryLoad {
+                        memory: SpecMemory::Current,
+                        pointer,
+                        value_type: CType::UInt8Pointer,
+                    }
+                    | SpecExpression::AggregateFieldValue {
+                        pointer,
+                        value_type: CType::UInt8Pointer,
+                        ..
+                    } => {
+                        let (name, offset) = match pointer.as_ref() {
+                            SpecExpression::CExpression(CExpression::Variable(name)) => (name, 0),
+                            SpecExpression::CExpression(CExpression::AddressOf(operand)) => {
+                                let CExpression::Variable(name) = operand.as_ref() else {
+                                    return None;
+                                };
+                                (name, 0)
+                            }
+                            SpecExpression::PointerOffset {
+                                pointer,
+                                elements,
+                                byte_width: 1,
+                            } => {
+                                let name = match pointer.as_ref() {
+                                    SpecExpression::CExpression(CExpression::Variable(name)) => {
+                                        name
+                                    }
+                                    SpecExpression::CExpression(CExpression::AddressOf(
+                                        operand,
+                                    )) => {
+                                        let CExpression::Variable(name) = operand.as_ref() else {
+                                            return None;
+                                        };
+                                        name
+                                    }
+                                    _ => return None,
+                                };
+                                let SpecExpression::Value(CValue::Int32(
+                                    Bitvector32Term::Constant(offset),
+                                )) = elements.as_ref()
+                                else {
+                                    return None;
+                                };
+                                (name, *offset)
+                            }
+                            _ => return None,
+                        };
+                        if let SpecExpression::AggregateFieldValue { parameter, .. } = base.as_ref()
+                            && parameter != name
+                        {
+                            return None;
+                        }
+                        let parameter = self
+                            .parameters
+                            .iter()
+                            .find(|parameter| parameter.name() == name)?;
+                        let layout = parameter.aggregate_layout()?;
+                        let mut matches = layout.fields().iter().filter(|field| {
+                            field.offset_bytes() == offset && field.c_type() == CType::UInt8Pointer
+                        });
+                        let selected = matches.next()?;
+                        if matches.next().is_some() {
+                            return None;
+                        }
+                        (
+                            name,
+                            Some(Arc::new(CAggregateMemberSelection {
+                                layout: Arc::new(layout.clone()),
+                                path: vec![selected.name().to_string()].into(),
+                                value_type: CType::UInt8Pointer,
+                            })),
+                        )
+                    }
+                    SpecExpression::CExpression(expression) => match expression {
+                        CExpression::Variable(name) => (name, None),
+                        CExpression::TypedLoad {
+                            pointer,
+                            value_type: CType::UInt8Pointer,
+                            pointee_constant: false,
+                            volatile: false,
+                            ..
+                        } => {
+                            let CExpression::MemberAddress { object, selection } = pointer.as_ref()
+                            else {
+                                return None;
+                            };
+                            let CExpression::Variable(name) = object.as_ref() else {
+                                return None;
+                            };
+                            if selection.path().len() != 1
+                                || selection.value_type() != CType::UInt8Pointer
+                            {
+                                return None;
+                            }
+                            (name, Some(selection.clone()))
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
             };
             let index = self
                 .parameters
                 .iter()
                 .position(|parameter| parameter.name() == name)?;
             let parameter = &self.parameters[index];
-            if parameter.c_type() != CType::UInt8Pointer || parameter.pointee_constant {
+            if let Some(selection) = &field {
+                let layout = parameter.aggregate_layout()?;
+                if !layout.selects_layout_path(&[], selection.layout())
+                    || !layout.fields().iter().any(|field| {
+                        field.name() == selection.path()[0] && field.c_type() == CType::UInt8Pointer
+                    })
+                {
+                    return None;
+                }
+            } else if parameter.c_type() != CType::UInt8Pointer || parameter.pointee_constant {
                 return None;
             }
-            outputs.push((index, *bytes));
+            outputs.push(CInitializationOutput {
+                parameter: index,
+                field,
+                bytes: *bytes,
+            });
         }
         if !outputs.is_empty() && !self.exceptional_signature.is_empty() {
             return None;
@@ -983,7 +1147,7 @@ impl CFunctionContractInterface {
     pub fn opaque_contract_supported(&self) -> bool {
         self.opaque_contract_supported
             && self.exceptional_signature.is_empty()
-            && self.initialization_outputs().is_some()
+            && self.initialization_output_selectors().is_some()
     }
 
     /// Whether this interface is representable by a body-certified direct
@@ -1061,6 +1225,7 @@ impl CFunctionContractInterface {
             && self.construction_parameter == other.construction_parameter
             && self.scalar_object_inputs == other.scalar_object_inputs
             && self.native_span_inputs == other.native_span_inputs
+            && self.native_span_expression_inputs == other.native_span_expression_inputs
             && self.aggregate_object_inputs == other.aggregate_object_inputs
             && self.exceptional_signature == other.exceptional_signature
             && self.parameters == other.parameters
@@ -1099,6 +1264,7 @@ impl CFunctionContractInterface {
             && self.construction_parameter == other.construction_parameter
             && self.scalar_object_inputs == other.scalar_object_inputs
             && self.native_span_inputs == other.native_span_inputs
+            && self.native_span_expression_inputs == other.native_span_expression_inputs
             && self.aggregate_object_inputs == other.aggregate_object_inputs
             && self.exceptional_signature == other.exceptional_signature
             && self.parameters.len() == other.parameters.len()
@@ -1463,6 +1629,14 @@ impl CFunction {
     /// explicit typed clauses, never from a raw pointer parameter alone.
     pub(crate) fn with_scalar_object_inputs(mut self, inputs: Vec<CScalarObjectInput>) -> Self {
         self.contract_interface.scalar_object_inputs = inputs;
+        self
+    }
+
+    pub(crate) fn with_native_span_expression_inputs(
+        mut self,
+        inputs: Vec<CNativeSpanRequirement>,
+    ) -> Self {
+        self.contract_interface.native_span_expression_inputs = inputs.into();
         self
     }
 
@@ -3010,7 +3184,7 @@ impl CFunctionContract {
             && interface.aggregate_return_mode() == CAggregateReturnMode::Copy
             && interface.construction_parameter().is_none()
             && interface
-                .initialization_outputs()
+                .initialization_output_selectors()
                 .is_some_and(|outputs| outputs.is_empty())
             && interface.resource_constructors().is_empty()
             && !name.is_empty())

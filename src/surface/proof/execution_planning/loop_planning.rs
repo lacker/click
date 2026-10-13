@@ -56,7 +56,6 @@ fn fresh_loop_binder_name(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 /// The written invariants of `loop_index`, read through the proof scope the
 /// clause was written under: a clause bound inside a proof `match` arm names
 /// that arm's bindings, and lowering sees the values they stand for.
@@ -328,26 +327,12 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<CheckedLoopInitialization, ClickError> {
-    let legacy_site = ProofSite::LoopPhase {
-        function_name: environment.function_block.signature().name().to_string(),
-        loop_index,
-        phase: "initialize",
-    };
-    let (claim_label, initialize_source_index, initialize_site) = environment
-        .frontier_loop_source
-        .map(|source| {
-            (
-                source.claim_label.clone(),
-                source
-                    .initialize_source_index
-                    .unwrap_or(source.loop_source_index),
-                source
-                    .proof_site
-                    .clone()
-                    .unwrap_or_else(|| legacy_site.clone()),
-            )
-        })
-        .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
+    let source = environment.frontier_loop_source;
+    let claim_label = source.claim_label.clone();
+    let initialize_source_index = source
+        .initialize_source_index
+        .unwrap_or(source.loop_source_index);
+    let initialize_site = source.proof_site.as_ref();
     let mut recorded_snapshots = context.recorded_snapshots.clone();
     recorded_snapshots.insert(
         ProgramPointRef {
@@ -418,18 +403,20 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         )));
     }
     let layout = initialize_script_layout(proof, &invariant_items, initialize_source_index);
-    let selected_source_index =
-        selected_tactic_index_for_site(expansion_capture.as_deref(), &initialize_site);
     let mut phase = Proof::for_fixed_state_frontier(
         &claim_label,
         0,
         &context.pure_facts,
-        environment.parsed_function.parameters(),
-        environment.arguments,
-        environment.initial_state,
-        &context.state,
-        None,
-        &recorded_snapshots,
+        ParameterBinding::new(
+            environment.parsed_function.parameters(),
+            environment.arguments,
+        ),
+        FixedStateFrame::new(
+            environment.initial_state,
+            &context.state,
+            None,
+            &recorded_snapshots,
+        ),
         &context.surface_propositions,
         environment.spec_definitions,
         environment.theorem_environment,
@@ -440,7 +427,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
     .with_nested_tactic_capture(
         expansion_capture
             .as_deref()
-            .and_then(|capture| capture.nested_for_site(Some(&initialize_site))),
+            .and_then(|capture| capture.nested_for_site(initialize_site)),
     );
     let phase_site = phase.site().clone();
     for (source_index, helper) in &layout.helpers {
@@ -458,14 +445,12 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             }
             _ => unreachable!("only unfold and have steps are phase helpers"),
         };
-        if capture_selects_source(
-            expansion_capture.as_deref(),
-            &initialize_site,
-            *source_index,
-        ) {
+        if let Some(site) = initialize_site
+            && capture_selects_source(expansion_capture.as_deref(), site, *source_index)
+        {
             record_proof_site_tactic_expansion(
                 expansion_capture.as_deref_mut(),
-                &initialize_site,
+                site,
                 *source_index,
                 &phase.certificate_since(&checkpoint)?.to_proof_tactics(),
             );
@@ -536,7 +521,6 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             });
             let checkpoint = phase.checkpoint();
             let scope = phase.begin_loop_entry_goal(item.proposition().clone(), obligation)?;
-            let body_checkpoint = scope.checkpoint();
             let checked = check_initialization_body(&scope, invariant_proof, body_sites.as_deref())
                 .map_err(|error| {
                     // The kernel already refused this declaration and says why.
@@ -551,8 +535,10 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                     let owed =
                         crate::surface::proof::surface_synthesis::synthesize_surface_proposition(
                             obligation.proposition(),
-                            environment.parsed_function.parameters(),
-                            environment.arguments,
+                            ParameterBinding::new(
+                                environment.parsed_function.parameters(),
+                                environment.arguments,
+                            ),
                             &context.state,
                         )
                         .map(|surface| crate::surface::printing::source_click_proposition(&surface))
@@ -560,8 +546,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                             let (parameters, arguments) = phase.diagnostic_naming_tables();
                             crate::surface::diagnostics::describe_stated_fact(
                                 obligation.proposition(),
-                                &parameters,
-                                &arguments,
+                                ParameterBinding::new(&parameters, &arguments),
                             )
                         });
                     error.with_context(format!(
@@ -569,32 +554,17 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
                         item.title(invariant_index)
                     ))
                 })?;
-            let body_certificate = checked.certificate_since(&body_checkpoint)?;
             completions.push(checked.completed_loop_entry_goal()?);
             phase = checked.join()?;
             if let Some((selected, _)) = own_body
-                && capture_selects_source(expansion_capture.as_deref(), &initialize_site, selected)
+                && let Some(site) = initialize_site
+                && capture_selects_source(expansion_capture.as_deref(), site, selected)
             {
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
-                    &initialize_site,
+                    site,
                     selected,
                     &phase.certificate_since(&checkpoint)?.to_proof_tactics(),
-                );
-            } else if environment.frontier_loop_source.is_none()
-                && layout.is_whole_proof()
-                && let Some(index) = selected_source_index
-            {
-                let tactics = body_certificate.to_proof_tactics();
-                let expansion = match invariant_proof {
-                    SourceProof::Default | SourceProof::Tactic(_) => tactics,
-                    SourceProof::Script(_) => tactics.get(index).cloned().into_iter().collect(),
-                };
-                record_proof_site_tactic_expansion(
-                    expansion_capture.as_deref_mut(),
-                    &initialize_site,
-                    index,
-                    &expansion,
                 );
             }
         }
@@ -616,7 +586,8 @@ fn check_initialization_body<'a>(
     sites: Option<&[ProofStepSite]>,
 ) -> Result<proof_object::ProofScope<'a>, ClickError> {
     let checked = match source {
-        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
+        SourceProof::Tactic(SmartTactic::Auto) => scope.try_auto_fact_closure()?,
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Simp) => {
             scope.try_simp_closure()?
         }
         SourceProof::Script(tactics) => match sites {
@@ -793,7 +764,6 @@ impl AutomaticBodySearch<'_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     loop_index: usize,
     preservation: &crate::kernel::CLoopPreservationContext,
@@ -802,16 +772,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<AutomaticLoopBody, ClickError> {
-    let claim_label = environment.frontier_loop_source.map_or_else(
-        || {
-            crate::surface::claim_labels::loop_phase_claim_label(
-                environment.function_block.signature().name(),
-                loop_index,
-                "preserve",
-            )
-        },
-        |source| source.claim_label.clone(),
-    );
+    let claim_label = environment.frontier_loop_source.claim_label.clone();
     let source_layout = environment.source_layout.clone();
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
@@ -832,9 +793,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     // Its marks still name fixed states; share their persistent map prefix.
     let mut recorded_snapshots = enclosing_snapshots.clone();
     let constants = ExecutionProofConstants {
-        proof_site: environment
-            .frontier_loop_source
-            .and_then(|source| source.proof_site.clone()),
+        proof_site: environment.frontier_loop_source.proof_site.clone(),
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
         function_source_registry: environment.function_source_registry.clone(),
@@ -1015,26 +974,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     do_while: bool,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<LoopPreservationProofResult, ClickError> {
-    let legacy_site = ProofSite::LoopPhase {
-        function_name: environment.function_block.signature().name().to_string(),
-        loop_index,
-        phase: "preserve",
-    };
-    let (claim_label, preserve_source_index, preserve_site) = environment
-        .frontier_loop_source
-        .map(|source| {
-            (
-                source.claim_label.clone(),
-                source
-                    .preserve_source_index
-                    .unwrap_or(source.loop_source_index),
-                source
-                    .proof_site
-                    .clone()
-                    .unwrap_or_else(|| legacy_site.clone()),
-            )
-        })
-        .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
+    let source = environment.frontier_loop_source;
+    let claim_label = source.claim_label.clone();
+    let preserve_source_index = source
+        .preserve_source_index
+        .unwrap_or(source.loop_source_index);
+    let preserve_site = source.proof_site.as_ref();
 
     // A trailing shared closer can have a different checked body on each
     // execution leaf. Capture the whole phase so those bodies stay where
@@ -1046,7 +991,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         )
     }) && expansion_capture.as_deref().is_some_and(|capture| {
         let index = preserve_source_index + source_tactic_count(&tactics[..tactics.len() - 1]);
-        capture.selects(&preserve_site, index)
+        preserve_site.is_some_and(|site| capture.selects(site, index))
             && capture
                 .batch
                 .as_ref()
@@ -1056,10 +1001,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 .is_none()
     });
 
-    let mut program = if environment
-        .frontier_loop_source
-        .is_some_and(|source| source.preserve_source_index.is_none())
-    {
+    let mut program = if source.preserve_source_index.is_none() {
         build_generated_certificate_proof(tactics, &claim_label, preserve_source_index)?
     } else {
         build_internal_proof_from_source_index(tactics, preserve_source_index)?
@@ -1094,10 +1036,10 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut recorded_snapshots = enclosing_snapshots.clone();
     let nested_tactic_capture = expansion_capture
         .as_deref()
-        .and_then(|capture| capture.nested_for_site(Some(&preserve_site)));
+        .and_then(|capture| capture.nested_for_site(preserve_site));
     let mut constants = ExecutionProofConstants {
         nested_tactic_capture,
-        proof_site: Some(preserve_site),
+        proof_site: preserve_site.cloned(),
         invariant_body_context: Some(Arc::new(InvariantBodyContext {
             loop_entry_state: preservation.loop_entry_state().clone(),
             loop_entry_selector: Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
@@ -1163,12 +1105,16 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         && let Ok(lowered) = lower_fixed_state_proposition(
             &loop_condition,
             pure_facts,
-            environment.parsed_function.parameters(),
-            environment.arguments,
-            environment.initial_state,
-            preservation.state(),
-            None,
-            &recorded_snapshots,
+            ParameterBinding::new(
+                environment.parsed_function.parameters(),
+                environment.arguments,
+            ),
+            FixedStateFrame::new(
+                environment.initial_state,
+                preservation.state(),
+                None,
+                &recorded_snapshots,
+            ),
             environment.spec_definitions,
         )
     {
@@ -1188,7 +1134,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let proof_site_for_driver = constants.proof_site.clone();
     let owning_source_index = if environment
         .frontier_loop_source
-        .is_some_and(|source| source.preserve_source_index.is_none())
+        .preserve_source_index
+        .is_none()
     {
         preserve_source_index
     } else {
@@ -1480,10 +1427,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 ));
                 // A closer the `loop` tactic generated is no written tactic;
                 // the `loop` tactic is where the user reads its failure.
-                match environment.frontier_loop_source {
-                    Some(source) => error.attributed_to_source_tactic(source.loop_source_index),
-                    None => error,
-                }
+                error
+                    .attributed_to_source_tactic(environment.frontier_loop_source.loop_source_index)
             })?
         };
         let checked_execution = checked.execution_view()?.execution.clone();
@@ -1525,9 +1470,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             let mut nested = (**nested).clone();
             nested.owners.push((
                 loop_index,
-                environment
-                    .frontier_loop_source
-                    .map_or(usize::MAX, |s| s.loop_source_index),
+                environment.frontier_loop_source.loop_source_index,
             ));
             return_proofs.push(Arc::new(nested));
         }
@@ -1565,9 +1508,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 let mut nested = (**nested).clone();
                 nested.owners.push((
                     loop_index,
-                    environment
-                        .frontier_loop_source
-                        .map_or(usize::MAX, |s| s.loop_source_index),
+                    environment.frontier_loop_source.loop_source_index,
                 ));
                 return_proofs.push(Arc::new(nested));
             } else {
@@ -1578,12 +1519,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 if tactics.is_empty() {
                     tactics.push(DeferredPostExecutionTactic {
                         lexical_bindings: None,
-                        tactic_index: environment
-                            .frontier_loop_source
-                            .map_or(0, |s| s.loop_tactic_index),
-                        source_index: environment
-                            .frontier_loop_source
-                            .map_or(usize::MAX, |s| s.loop_source_index),
+                        tactic_index: environment.frontier_loop_source.loop_tactic_index,
+                        source_index: environment.frontier_loop_source.loop_source_index,
                         tactic: PostExecutionTactic::Simp,
                         surface_recorded: false,
                     });
@@ -1594,9 +1531,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                         let mut owners = PersistentSequence::default();
                         owners.push((
                             loop_index,
-                            environment
-                                .frontier_loop_source
-                                .map_or(usize::MAX, |s| s.loop_source_index),
+                            environment.frontier_loop_source.loop_source_index,
                         ));
                         owners
                     },
@@ -1728,7 +1663,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         };
         let omitted_frontier_preservation = environment
             .frontier_loop_source
-            .is_some_and(|source| source.preserve_source_index.is_none());
+            .preserve_source_index
+            .is_none();
         if !omitted_frontier_preservation
             && region_simp.is_some_and(|(_, source_index)| {
                 // Region simp is deferred by the preservation driver, so it

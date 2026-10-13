@@ -10,8 +10,7 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
     target: &Proposition,
     available: &[Proposition],
     effect_facts: &(impl ExecutionFactSource + ?Sized),
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     view: ExecutionView<'_>,
     state: &CState,
     spec_definitions: SpecDefinitions<'_>,
@@ -24,8 +23,7 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
                 kernel,
                 SurfaceFactMatch::AvailabilityEquivalent,
                 available,
-                parameters,
-                arguments,
+                parameter_binding,
                 state,
                 spec_definitions,
             )
@@ -206,12 +204,8 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
     tactic_index: usize,
     available: &ProofFacts,
     effect_facts: &(impl ExecutionFactSource + ?Sized),
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    result: Option<&CValue>,
-    recorded_snapshots: &RecordedSnapshots,
+    parameter_binding: ParameterBinding<'_>,
+    fixed_state: FixedStateFrame<'_>,
     surface_propositions: &SurfacePropositionMap,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CheckedFixedStateFactTransport, ClickError> {
@@ -227,12 +221,8 @@ pub(in crate::surface::proof) fn check_fixed_state_fact_transport_using_facts(
             tactic_index,
             available,
             effect_facts,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
-            recorded_snapshots,
+            parameter_binding,
+            fixed_state,
             surface_propositions,
             spec_definitions,
         )
@@ -248,12 +238,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     tactic_index: usize,
     available: &ProofFacts,
     effect_facts: &(impl ExecutionFactSource + ?Sized),
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    result: Option<&CValue>,
-    recorded_snapshots: &RecordedSnapshots,
+    parameter_binding: ParameterBinding<'_>,
+    fixed_state: FixedStateFrame<'_>,
     surface_propositions: &SurfacePropositionMap,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<CheckedFixedStateFactTransport, ClickError> {
@@ -272,12 +258,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             lower_fixed_state_proposition_with_assumptions(
                 surface_premise,
                 available.assumptions(),
-                parameters,
-                arguments,
-                pre_state,
-                state,
-                result,
-                recorded_snapshots,
+                parameter_binding,
+                fixed_state,
                 spec_definitions,
             )
             .map_err(|message| {
@@ -302,9 +284,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                 describe_missing_pure_fact(
                     &premise,
                     &available,
-                    state.resources().facts(),
-                    parameters,
-                    arguments,
+                    fixed_state.state.resources().facts(),
+                    parameter_binding,
                     effect_facts,
                 )
             )));
@@ -333,12 +314,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         lower_fixed_state_proposition_with_assumptions(
             surface_source,
             available.assumptions(),
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
-            recorded_snapshots,
+            parameter_binding,
+            fixed_state,
             spec_definitions,
         )
         .map_err(|message| {
@@ -363,12 +340,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         lower_fixed_state_proposition_with_assumptions(
             surface_source,
             &symbolic_assumptions,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            result,
-            recorded_snapshots,
+            parameter_binding,
+            fixed_state,
             spec_definitions,
         )
         .unwrap_or(ordinary_source)
@@ -376,7 +349,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         ordinary_source
     };
     let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-    let resource_facts = state
+    let resource_facts = fixed_state
+        .state
         .resources()
         .observable_facts_assuming_valid(&explicit_assumptions);
     let selected_assumptions = explicit_premises
@@ -393,7 +367,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     // the stricter rule that `using` must establish its logical source. A
     // selected outcome snapshot that materializes to true likewise checks the
     // equivalent symbolic source used for frame transport.
-    if !(result.is_some() && (available.contains(&source) || concrete_source_is_true))
+    if !(fixed_state.result.is_some() && (available.contains(&source) || concrete_source_is_true))
         && !holds_without_facts_under_binders(&source)
         && !exact_fact_is_available(&source, &explicit_premises)
         && !separation_bridged_fact_is_available(
@@ -412,9 +386,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             describe_missing_pure_fact(
                 &source,
                 &available,
-                state.resources().facts(),
-                parameters,
-                arguments,
+                fixed_state.state.resources().facts(),
+                parameter_binding,
                 effect_facts,
             )
         )));
@@ -437,12 +410,8 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     let target = lower_fixed_state_proposition_with_assumptions(
         surface_target,
         &target_lowering_assumptions,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        result,
-        recorded_snapshots,
+        parameter_binding,
+        fixed_state,
         spec_definitions,
     )
     .map_err(|message| {
@@ -578,13 +547,15 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                 "explicit fact transport: quantified frame",
                 || {
                     let with_resources = |assumptions: PureFactContext| {
-                        state
+                        fixed_state
+                            .state
                             .resources()
                             .observable_facts_assuming_valid(&assumptions)
                             .into_iter()
                             .fold(assumptions, PureFactContext::assume_proposition)
                     };
-                    let resource_facts = state
+                    let resource_facts = fixed_state
+                        .state
                         .resources()
                         .observable_facts_assuming_valid(available.assumptions());
                     let mut context_variables = std::collections::BTreeSet::new();
@@ -608,7 +579,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                             certified_fact_transport_reaches_through(
                                 from,
                                 to,
-                                state.memory(),
+                                fixed_state.state.memory(),
                                 &assumptions.clone().assume_proposition(from.clone()),
                                 &transition_facts,
                             )
@@ -629,7 +600,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         if !certified_fact_transport_reaches_through(
             &source,
             &target,
-            state.memory(),
+            fixed_state.state.memory(),
             &transport_assumptions,
             &transition_facts,
         ) {
@@ -642,7 +613,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             let framed = crate::kernel::closure_memoized_fact_check(
                 crate::kernel::ClosureFactCheck::QuantifiedFrame,
                 &[&source, &target],
-                Some(state.memory()),
+                Some(fixed_state.state.memory()),
                 available.assumptions(),
                 effect_facts,
                 || match quantified_frame() {
@@ -658,9 +629,10 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             }
             let read_refusal =
                 frame_refusal.unwrap_or(crate::kernel::QuantifiedFrameRefusal::NothingToFrame);
-            let mut labels = render::SnapshotLabels::with_state(parameters, arguments, state);
-            labels.source_state(pre_state, "function.entry".into());
-            for (selector, snapshot) in recorded_snapshots.recent(16) {
+            let mut labels =
+                render::SnapshotLabels::with_state(parameter_binding, fixed_state.state);
+            labels.source_state(fixed_state.pre_state, "function.entry".into());
+            for (selector, snapshot) in fixed_state.recorded_snapshots.recent(16) {
                 labels.source_state(snapshot, describe_snapshot_selector(selector));
             }
             let mut rendered = describe_unreachable_fact_transport(
@@ -751,8 +723,10 @@ fn describe_unreachable_fact_transport(
         if let Proposition::CMemoryMutatesOnly { writes, .. } = fact.proposition() {
             for (pointer, bytes) in writes.iter().take(LISTED) {
                 if let Some((names, values)) = labels.naming_tables()
-                    && let Some(cell) =
-                        crate::surface::diagnostics::diagnostic_source_cell(pointer, names, values)
+                    && let Some(cell) = crate::surface::diagnostics::diagnostic_source_cell(
+                        pointer,
+                        ParameterBinding::new(names, values),
+                    )
                 {
                     rendered.push_str(&format!(
                         "\n    memory change: store to {cell} ({bytes} bytes)"
@@ -804,6 +778,7 @@ fn surface_predicate_call_name(proposition: &ClickProposition) -> Option<&str> {
         | ClickProposition::Contains { .. }
         | ClickProposition::Initialized { .. }
         | ClickProposition::Loadable { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::Defined { .. } => None,
     }
 }
@@ -836,8 +811,7 @@ pub(in crate::surface::proof) fn fact_transport_planning_failure(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn fact_transport_candidates_at_outcome(
     available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
@@ -854,8 +828,7 @@ pub(in crate::surface::proof) fn fact_transport_candidates_at_outcome(
             kernel,
             SurfaceFactMatch::CanonicalExact,
             available,
-            parameters,
-            arguments,
+            parameter_binding,
             pre_state,
             post_state,
             result,

@@ -50,7 +50,6 @@ mod wide_storage_tests;
 /// The supplied state and arguments come from the test, not Surface entry
 /// lowering. This helper does not establish that they represent the complete
 /// input domain needed when packaging a reusable function rule.
-#[allow(clippy::too_many_arguments)]
 fn certify_contract_with_kernel_artifacts(
     state: CState,
     function: CFunction,

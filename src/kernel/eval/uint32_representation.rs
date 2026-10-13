@@ -84,16 +84,14 @@ pub(in crate::kernel) fn observe_value(
     if !initialized_span(memory, address, value_type.byte_width()) {
         return None;
     }
-    if !symbolic && value_type == CType::UInt8 {
-        match memory.known_value(address) {
-            Some(CValue::UInt8(bits) | CValue::Int8(bits)) => {
-                return Some(CValue::UInt8(Bitvector32Term::bitwise_and(
-                    bits,
-                    255u32.into(),
-                )));
-            }
-            _ => {}
-        }
+    if !symbolic
+        && value_type == CType::UInt8
+        && let Some(CValue::UInt8(bits) | CValue::Int8(bits)) = memory.known_value(address)
+    {
+        return Some(CValue::UInt8(Bitvector32Term::bitwise_and(
+            bits,
+            255u32.into(),
+        )));
     }
     let word = (!symbolic)
         .then(|| materialized_word(memory, &object))
@@ -173,21 +171,41 @@ impl UInt32PackingEvidence {
                     let observation = project_byte(observation_word.clone(), byte);
                     let value = (result >> (8 * byte)) as u8;
                     crate::instrumentation::record_deterministic_work(1);
-                    let forward = Proposition::ConditionIs(
-                        ConditionTerm::equal(observation.clone(), u32::from(value).into()),
-                        true,
-                    );
-                    let backward = Proposition::ConditionIs(
-                        ConditionTerm::equal(u32::from(value).into(), observation),
-                        true,
-                    );
-                    let premise = if assumptions.contains_assumed_exact(&forward) {
-                        forward
-                    } else if assumptions.contains_assumed_exact(&backward) {
-                        backward
-                    } else {
-                        return None;
-                    };
+                    // Exact premises can retain a named load application or
+                    // its canonical variable. Select only spellings of this
+                    // word; canonicalization is assumption-free and does not
+                    // transport an observation across an intervening write.
+                    let mut words = vec![observation_word.clone()];
+                    if let Bitvector32Term::Variable(variable) = &observation_word {
+                        if let Some((snapshot, address)) = registered_load_for_variable(variable) {
+                            words.push(Bitvector32Term::MemoryLoad(
+                                snapshot,
+                                Box::new(address),
+                                LoadKind::Bits32,
+                            ));
+                        }
+                        if let Some(origin) = registered_load_origin_term_for_variable(variable) {
+                            words.push(origin);
+                        }
+                    }
+                    let premise = words.into_iter().find_map(|candidate| {
+                        let observed = project_byte(candidate, byte);
+                        if canonical_term(&observed) != observation {
+                            return None;
+                        }
+                        let forward = Proposition::ConditionIs(
+                            ConditionTerm::equal(observed.clone(), u32::from(value).into()),
+                            true,
+                        );
+                        let backward = Proposition::ConditionIs(
+                            ConditionTerm::equal(u32::from(value).into(), observed),
+                            true,
+                        );
+                        [forward, backward]
+                            .into_iter()
+                            .find(|premise| assumptions.contains_assumed_exact(premise))
+                    });
+                    let premise = premise?;
                     bytes.push(value);
                     byte_equalities.push(premise);
                 }
@@ -234,8 +252,8 @@ impl UInt32PackingEvidence {
                 assumptions.contains_assumed_exact(premise)
                     && matches!(premise,
                         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-                            if (left.as_ref() == &observation && right.as_ref() == &value)
-                                || (right.as_ref() == &observation && left.as_ref() == &value))
+                            if (canonical_term(left) == observation && right.as_ref() == &value)
+                                || (canonical_term(right) == observation && left.as_ref() == &value))
             })
     }
 }
@@ -345,6 +363,35 @@ mod tests {
             Some(CValue::UInt32(0x12345678u32.into()))
         );
         assert!(!bytes.has_initialized_bytes_at(&bytes_object, 4));
+    }
+
+    #[test]
+    fn uint32_packing_retains_named_load_byte_premises_and_rejects_an_overwrite() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (memory, object) = declared("named-byte-premises");
+        let memory = memory.with_initialized_object(&object, 4);
+        let word = symbolic_word(&memory, &object);
+        let Bitvector32Term::Variable(variable) = &word else {
+            panic!("symbolic word");
+        };
+        let (snapshot, address) = registered_load_for_variable(variable).unwrap();
+        let named = Bitvector32Term::MemoryLoad(snapshot, Box::new(address), LoadKind::Bits32);
+        assert_eq!(canonical_term(&named), word);
+        let assumptions = byte_facts(&named);
+        let result = Bitvector32Term::Constant(0x12345678);
+        let evidence = UInt32PackingEvidence::for_equality(&word, &result, &assumptions)
+            .expect("exact named observations establish all four bytes");
+        assert!(evidence.checks_equality(&word, &result, &assumptions));
+        for premise in &evidence.byte_equalities {
+            let withdrawn = assumptions.without_exact_fact(premise);
+            assert!(!evidence.checks_equality(&word, &result, &withdrawn));
+            assert!(UInt32PackingEvidence::for_equality(&word, &result, &withdrawn).is_none());
+        }
+        let changed = memory.store(object.offset_by_bytes(2), CValue::UInt8(0u32.into()));
+        let changed_word = symbolic_word(&changed, &object);
+        assert!(
+            UInt32PackingEvidence::for_equality(&changed_word, &result, &assumptions).is_none()
+        );
     }
 
     #[test]

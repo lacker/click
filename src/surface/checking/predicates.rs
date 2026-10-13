@@ -271,10 +271,7 @@ pub(in crate::surface) fn instantiate_predicate_definition(
         assumptions,
         &values,
         &array_refs,
-        &state,
-        &state,
-        None,
-        &RecordedSnapshots::new(),
+        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         spec_definitions,
     )
 }

@@ -31,63 +31,52 @@ the affected contracts. Do not restore the old numeric-alias fallback to make
 the compatibility tests pass. Approval of these boundaries does not establish
 that their implementation or the acceptance matrix is complete.
 
-The current integration checkpoint is not green and has not been published or
-merged. Focused checks have repaired compact Rust array dependencies, native
-slice geometry, checked callback loan evidence, constructor-entry alignment,
-selected scalar preconditions and read-defined obligations, branch-prefix
-transport, and typed pointer-read identities. These results do not establish
-that the acceptance matrix is complete. The C++ pointer selection (run 56)
-passes 20 of 24 tests: constructor self-pointers, embedded self-pointers,
-nested qualified pointer fields and record-copy self-pointer claims still fail.
-The scalar unwind case also failed its earlier integration run and needs
-rechecking after the remaining repairs.
+The integration checkpoint is not green and has not been published or merged.
+The latest completed focused selection passes 116 of 121 tests. It covers
+constructor and embedded self-pointers, nested qualified pointer fields,
+aggregate return claims, row-copy modular forwarding, by-value byte-output
+initialization, pointer-field setters and wrappers through expansion/rechecking,
+full-width integer-origin controls, and callback/resource scaling. These checks
+do not replace the full acceptance matrix or `scripts/check.sh`.
 
-Pointer loads now have an intrinsic full-width kind distinct from numeric
-32-bit reads. Exact source/snapshot origin recovery and the narrow-read
-rejection controls pass. Remaining read-kind cleanup includes removing ignored
-width arguments and redundant width keys. Earlier resource-rewrite investigation
-identified lost native-prefix metadata after unfolding (heap differs,
-blocks/cells do not); its exact reconstruction must be repaired without relaxing
-memory equality. Temporary diagnostic probes have been removed.
+Recent repairs preserve initialization when a symbolic input's cached value is
+forgotten, just as for a local object. Contiguous symbolic runs remain compressed;
+the multi-size regression checks unchanged work as their length grows. Typed
+private descriptor observations check both pointer and count fields through
+ordinary initialized local storage. Pointer-effect inference uses the common
+independent-entry reconstruction and recognizes declared by-value parameter
+objects. Numeric equalities still do not confer pointer designation.
 
-Checked integer-origin transport is implemented in the local integration:
-full-width runtime integer values retain the original full pointer separately
-from their numeric bits. Numeric equality no longer supplies object designation.
-Exact stores/loads and bounded tag operations preserve origin; partial byte
-writes and unsupported reconstruction discard it. The first complete focused
-run passes 36 tests (run 51f, exit 0), including original numeric-forgery rejection,
-ordinary/expanded/retained round trips, signed conversion and tag operations.
-The tests also exposed and now reject an escaped C inner-block local: explicit
-lexical scopes preserve its lifetime end in execution and proof checking.
-The final full library run (57) passes 5,729 of 5,751 tests with 22 failures
-and 139 skipped (exit 100). All kernel and language unit tests pass; remaining
-library failures are in Surface contracts, expansion, diagnostics and scaling.
-Formatting and the book build pass. This is not a green-tree verdict.
-The follow-up scope repair preserves enclosing locals across resumed
-`break`/`continue` paths and checks inner-scope retirement before `goto` targets.
-Run 55 passes 422 of 424 scope, loop, control-flow and origin tests, including
-the new ordinary/expanded/retained controls; its two failures are also present
-in run 57. Scope-exit bookkeeping no longer scans unexecuted suffixes. Loop-head
-source handling still has the existing full-body-per-condition cost; the added
-reentry comparison shares that bound. This checkpoint does not claim that
-broader source-cursor efficiency work is complete.
-See the object-model design for the modular-call boundary; numeric postconditions
-alone do not transfer origin across a call.
+The unchanged pinned `ser_readdata32` proof now verifies, including its
+byte-writing helper and the selected standard-library model bodies. Independent
+entry reconstruction no longer retains ownership of a staging argument image,
+and pointer-store effects use the body's private by-value entry while exporting
+only caller-visible writes. Contract observation binds the actual incoming
+aggregate image even when a caller has a same-named local. The decoder proves
+the exact initialized word after `read`, before applying the endian helper; its
+C++ source and exact word, descriptor, and backing-object claims are unchanged.
+The helper, decoder, and outer probe all expand and independently recheck in the
+offline pinned test.
 
-Slice entry now preserves its existing native extent when prefix bounds are
-undecided before preconditions are available. Actual call checks still require
-those bounds. The original slice-iteration and extent-scaling tests pass,
-alongside known-too-short, incompatible-type and expired-input rejection.
+Five focused failures remain: indexed scalar reads across snapshots, linked-list
+full-pointer transport, and a pointer-field tactic whose smart proof verifies
+but whose expanded rewrite does not independently check. The range-membership
+repair now accepts an index pinned to zero while retaining that exact equality
+and the complete access width; withdrawing the equality or extending the access
+outside the range rejects the certificate.
+Temporary investigation probes have been removed.
+Run the complete C/Rust/C++ acceptance matrix after these repairs, then remove
+resolved bug documents and publish the coherent update to PR 646.
 
-Remaining reproduced integration failures include
-[aggregate-return completion](../bugs/aggregate-return-completion-rejects-declared-record-input.md),
-resource close/contract certification, branch pointer transport, and
-loaded-pointer contracts that still rely only on address equality. The original
-C row-crossing rejection and selected-row controls pass. Row-copy modular
-forwarding still loses needed ownership, and the unsigned row-selection proof
-stops at a finite-range arithmetic obligation before accessing the array.
-Validate original source proofs after repairs, not just reduced unit tests, and
-complete the full acceptance matrix before publishing or merging this checkpoint.
+**Approved contract design:** use shared `requires valid_place(p);` for typed
+validity alone. It grants neither ownership nor initialization and uses the
+same geometry checks as typed views, with language-specific access policies.
+The aliasing fixture can state validity for both arena pointer values while
+owning the arena once. The shared implementation and its C and imported C++ caller/negative checks
+pass, including tactic expansion and independent rechecking. The aliasing
+fixture now passes with explicit validity promises; its original insufficient
+contract remains a rejection case. This does not yet close the integration
+checkpoint.
 
 Before activation of checked pointer designation, the returned composed-observer regression was repaired: proof-entry input names
 now use already checked explicit separation facts, without initializing raw
@@ -155,10 +144,15 @@ integrated validation. Numeric pointer equality does not certify full-value
 transport, native validity, ownership or initialization. Uncertified checked
 crossings remain unresolved.
 The sibling-pointer defect remains open until the full ordinary/expanded/retained
-cross-boundary matrix is checked. The design also
-records the concrete
+cross-boundary matrix is checked. The approved
 [byte-access source-profile choice](../design/cpp-object-model.md#byte-access-requires-an-explicit-source-profile-choice)
-that must be settled before expanding the cast-and-index byte writer.
+uses an explicit pinned-compiler guarantee for a live declared uint32's four
+representation bytes, including little-endian order and preservation of object
+identity, lifetime and pointer domain. It grants neither ownership nor
+initialization and is not claimed as strict C++20 coverage. The import profile
+and artifact identity must record it, and verification must report the
+assumption. Integrating and validating that profile with the unchanged decoder
+remains part of this milestone.
 
 The bounded relation between modular byte-value postconditions and the caller's
 automatic declared uint32 is delivered by the shared representation law, with

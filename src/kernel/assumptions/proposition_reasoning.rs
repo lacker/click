@@ -238,6 +238,18 @@ impl PureFactContext {
         proposition: &Proposition,
     ) -> bool {
         match proposition {
+            Proposition::CValidPlace {
+                memory,
+                pointer,
+                place_type,
+                access_policy,
+            } => crate::kernel::functions::valid_places::holds(
+                memory,
+                pointer,
+                place_type,
+                *access_policy,
+                self,
+            ),
             Proposition::CMemoryInitialized {
                 memory,
                 base,
@@ -340,6 +352,18 @@ impl PureFactContext {
                         || self.prop_facts.contains(proposition)
                 }
             },
+            Proposition::CValidPlace {
+                memory,
+                pointer,
+                place_type,
+                access_policy,
+            } => crate::kernel::functions::valid_places::holds(
+                memory,
+                pointer,
+                place_type,
+                *access_policy,
+                self,
+            ),
             Proposition::CMemoryInitialized {
                 memory,
                 base,

@@ -610,6 +610,15 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             if let Some(assumption) = runtime.assumption() {
                 println!("  {} runtime assumption: {assumption}", path.display());
             }
+            if let CInput::PreparedProgram(click::languages::PreparedProgram::Cpp(import)) =
+                &source.inputs
+            {
+                for assumption in std::iter::once(import.byte_representation_assumption())
+                    .chain(import.library_model_equivalence_assumptions())
+                {
+                    println!("  {} runtime assumption: {assumption}", path.display());
+                }
+            }
         }
         inventory_sites(&sources)
     })?;

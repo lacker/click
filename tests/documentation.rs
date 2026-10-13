@@ -1515,3 +1515,21 @@ fn rendered_site_keyboard_enhancement_is_configured() {
     assert!(script.contains("event.key !== \" \""));
     assert!(script.contains("aria-controls"));
 }
+
+#[test]
+fn readme_versions_match_the_package_version() {
+    let version = env!("CARGO_PKG_VERSION");
+    let readme = fs::read_to_string(root().join("README.md")).expect("read README");
+    let mut stale = BTreeSet::new();
+    for word in readme.split(|c: char| !(c.is_ascii_digit() || c == '.')) {
+        let word = word.trim_matches('.');
+        let parts: Vec<&str> = word.split('.').collect();
+        if parts.len() == 3 && parts.iter().all(|part| !part.is_empty()) && word != version {
+            stale.insert(word.to_string());
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "README names versions {stale:?}; the package version is {version}"
+    );
+}

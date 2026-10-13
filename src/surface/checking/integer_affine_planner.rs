@@ -384,9 +384,12 @@ fn reachable_certificate(
 
 fn for_each_node_source(node: &IntegerArithmeticNode, mut visit: impl FnMut(usize)) {
     match node {
-        IntegerArithmeticNode::Premise { .. } | IntegerArithmeticNode::Trivial { .. } => {}
+        IntegerArithmeticNode::Premise { .. }
+        | IntegerArithmeticNode::Trivial { .. }
+        | IntegerArithmeticNode::NegatedGoal { .. } => {}
         IntegerArithmeticNode::Scale { source, .. }
-        | IntegerArithmeticNode::EqualityToLessEqual { source, .. } => visit(*source),
+        | IntegerArithmeticNode::EqualityToLessEqual { source, .. }
+        | IntegerArithmeticNode::Divide { source, .. } => visit(*source),
         IntegerArithmeticNode::Add { left, right, .. }
         | IntegerArithmeticNode::EqualityFromBounds {
             lower: left,
@@ -444,6 +447,18 @@ fn remapped_node(
         } => IntegerArithmeticNode::EqualityFromBounds {
             lower: source(*lower)?,
             upper: source(*upper)?,
+            result: result.clone(),
+        },
+        IntegerArithmeticNode::NegatedGoal { result } => IntegerArithmeticNode::NegatedGoal {
+            result: result.clone(),
+        },
+        IntegerArithmeticNode::Divide {
+            source: from,
+            divisor,
+            result,
+        } => IntegerArithmeticNode::Divide {
+            source: source(*from)?,
+            divisor: divisor.clone(),
             result: result.clone(),
         },
         IntegerArithmeticNode::Trivial { result } => IntegerArithmeticNode::Trivial {

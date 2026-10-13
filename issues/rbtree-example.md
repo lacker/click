@@ -1203,6 +1203,11 @@ Mutation checks reject incorrect links, parent/color writes, and fixup results.
 Depends on 7 and 10.
 
 **Chunk 12. `____rb_erase_color`, left-sibling cases: in progress.**
+The per-case `rbtree_erase_color_*` increments named in chunks 12 and 13 were
+retired once `rbtree_erase_color_flips_red_all.click` subsumed them
+([design/proof-reuse.md](../design/proof-reuse.md) R1); they remain in Git
+history, and their mutations now run against the general proof. The record
+below is kept as development history.
 `rbtree_erase_color_red_left.click` verifies the first-iteration color-flip exit
 for an empty left child, a red parent, and a black leaf right sibling, through
 arbitrary outer contexts. The exact whole-root model is balanced and
@@ -1317,14 +1322,25 @@ propagation. `rbtree_erase_color_flips_red_all.click` completes both
 orientations of propagated red-sibling cases 1/3/4 with nonempty subtrees.
 The unchanged `rb_erase` wrapper now verifies for every leaf deletion: red or
 black leaves on either parent link, and the sole root. Its read-only
-callback-table splice and general color repair are both checked in the same
-unit. A conditional splice contract supplies either the deficit required by
+callback-table splice is checked in `rbtree_erase_leaf_wrapper.click`, which
+imports the separately checked general color-repair proof and refolding tactic.
+A conditional splice contract supplies either the deficit required by
 repair or a balanced context for the no-repair branch. The wrapper returns
 the detached node and exact balanced root, with parent consistency and
 in-order removal. The left-child and right-child sidecars now verify the
 unchanged wrapper for exactly one child at every tree position, including the
 borrowed callback-table splice, callback refinements, and context reconstruction.
-Two-child deletion still needs wrapper integration.
+Two-child wrapper integration now covers every no-repair exit: immediate red-leaf
+successors and immediate successors with replacement children, at the root and
+on either parent link, plus both exits after deeper successor descent.
+The callback tables are borrowed without additional separation preconditions;
+the wrappers return the detached node and exact balanced, parent-consistent
+root with the remaining in-order contents. The immediate and deeper black-leaf
+successor wrappers now import their splice and general repair contracts. The
+splices expose a nonempty deficit context and its repair parent; each wrapper
+returns the exact repaired root with balance, parent consistency, and the
+remaining in-order contents. Wrapper integration now covers all splice cases.
+Shared callback and parent-link proofs are imported and checked separately.
 Depends on 12.
 
 ### Augmented
@@ -1344,6 +1360,20 @@ before the cutover recorded in
 broader [global initializer issue](global-variables.md) is P2. Keep the table
 const and preserve the callback guarantees; the no-op fixture is not evidence
 for the complete mutation-capable augmentation proof.
+
+The public entry-point integration now verifies in `examples/rbtree-augmented`.
+`__rb_insert_augmented` and `rb_insert_augmented` reuse the checked insertion
+contract, and `__rb_erase_color` reuses the general repair contract.
+`rb_erase_augmented` is checked for leaf deletion at every position, including
+both the repair and no-repair paths. The C wrappers are verbatim pinned extracts;
+contracts retain balance, parent consistency, in-order contents, and detached
+ownership. This increment still uses callbacks without writable footprints;
+metadata ownership and its augmentation invariant remain unfinished.
+`rbtree_subtree_size.click` establishes the concrete mathematical count model:
+nonnegative sizes, reparenting invariance, and both rotation callback updates
+(copy the promoted root's summary and recompute the demoted node). C metadata
+fields and their machine-integer bounds are not yet connected to this model.
+
 
 ### Pinned source
 

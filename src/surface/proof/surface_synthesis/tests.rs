@@ -22,10 +22,7 @@ fn relower_written_proposition_with_snapshots(
         &PureFactContext::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
-        pre_state,
-        state,
-        None,
-        recorded_snapshots,
+        FixedStateFrame::new(pre_state, state, None, recorded_snapshots),
         SpecDefinitions::new(&PredicateEnvironment::new(&[]), &ClickFunctionEnvironment::new(&[])),
         &std::collections::BTreeSet::new(),
     )
@@ -150,7 +147,7 @@ fn synthesized_under_sources(
 ) -> Option<ClickProposition> {
     let _sources = QualifiedSynthesisScope::enter(sources);
     let _budget = SurfaceSynthesisScope::enter();
-    synthesize_surface_proposition(proposition, &[], &[], state)
+    synthesize_surface_proposition(proposition, ParameterBinding::default(), state)
 }
 
 /// Every qualified name the spelling of a proposition reaches for.
@@ -414,8 +411,7 @@ fn exact_external_zero_based_byte_range_round_trips_symbolic_end() {
     };
     let synthesized = synthesize_source_projection_proposition_with_bound_variable_names(
         &requirement,
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
         &state,
         &BTreeMap::new(),
     )
@@ -457,8 +453,7 @@ fn exact_external_zero_based_byte_range_resolves_direct_variable_argument() {
     };
     let synthesized = synthesize_source_projection_proposition_with_bound_variable_names(
         &requirement,
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
         &state,
         &BTreeMap::new(),
     )
@@ -490,8 +485,7 @@ fn exact_external_zero_based_byte_range_rejects_ambiguous_alias() {
     assert!(
         synthesize_source_projection_proposition_with_bound_variable_names(
             &requirement,
-            &parameters,
-            &arguments,
+            ParameterBinding::new(&parameters, &arguments),
             &state,
             &BTreeMap::new(),
         )
@@ -730,8 +724,12 @@ fn full_guarded_requirement_with_variable_argument_round_trips() {
         .expect("the production-shaped strlen requirement must lower");
     let synthesized = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("the guarded strlen requirement must be spellable")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("the guarded strlen requirement must be spellable")
     };
     assert!(matches!(synthesized, ClickProposition::Exists { .. }));
     let lowered = relower_written_proposition(&synthesized, &state)
@@ -770,8 +768,12 @@ fn full_guarded_constant_byte_requirement_with_variable_argument_round_trips() {
     replace_full_external_cstr_range_with_constant_byte_count(&mut requirement);
     let synthesized = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("the guarded constant-byte strlen requirement must be spellable")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("the guarded constant-byte strlen requirement must be spellable")
     };
     assert!(matches!(synthesized, ClickProposition::Exists { .. }));
     let lowered = relower_written_proposition(&synthesized, &state)
@@ -799,8 +801,12 @@ fn strlen_symbolic_element_range_round_trips_exactly() {
     let requirement = external_symbolic_element_requirement(memory, Variable(100_001));
     let synthesized = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("strlen's reduced one-element range must be spellable")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("strlen's reduced one-element range must be spellable")
     };
     let ClickProposition::Loadable { segment } = &synthesized else {
         panic!("the requirement must remain one viewability: {synthesized:?}");
@@ -827,8 +833,12 @@ fn strlen_symbolic_element_constant_byte_range_round_trips_exactly() {
         external_symbolic_element_constant_byte_requirement(memory, Variable(100_001));
     let synthesized = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("a constant one-byte symbolic range must be spellable")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("a constant one-byte symbolic range must be spellable")
     };
     let ClickProposition::Loadable { segment } = &synthesized else {
         panic!("the requirement must remain one viewability: {synthesized:?}");
@@ -877,11 +887,23 @@ fn strlen_symbolic_element_range_rejects_wrong_identity() {
         ),
         wide: false,
     };
-    assert!(synthesize_surface_proposition(&wrong_base, &parameters, &arguments, &state).is_none());
+    assert!(
+        synthesize_surface_proposition(
+            &wrong_base,
+            ParameterBinding::new(&parameters, &arguments),
+            &state
+        )
+        .is_none()
+    );
 
     let wrong_index = external_symbolic_element_requirement(memory.clone(), Variable(100_002));
     assert!(
-        synthesize_surface_proposition(&wrong_index, &parameters, &arguments, &state).is_none(),
+        synthesize_surface_proposition(
+            &wrong_index,
+            ParameterBinding::new(&parameters, &arguments),
+            &state
+        )
+        .is_none(),
         "an index with no source binding must not be inferred from the ambient state"
     );
 
@@ -904,13 +926,19 @@ fn strlen_symbolic_element_range_rejects_wrong_identity() {
         requirement
     };
     assert!(
-        synthesize_surface_proposition(&wrong_width, &parameters, &arguments, &state).is_none(),
+        synthesize_surface_proposition(
+            &wrong_width,
+            ParameterBinding::new(&parameters, &arguments),
+            &state
+        )
+        .is_none(),
         "the element width must be the declared one-byte parameter width"
     );
 
     let ambient_only = external_symbolic_element_requirement(memory, Variable(100_001));
     assert!(
-        synthesize_surface_proposition(&ambient_only, &[], &[], &state).is_none(),
+        synthesize_surface_proposition(&ambient_only, ParameterBinding::default(), &state)
+            .is_none(),
         "a local pointer must not substitute for the producer's external parameter"
     );
 }
@@ -921,8 +949,12 @@ fn strlen_constant_element_range_falls_back_to_general_synthesis() {
     let (parameters, arguments, state) = external_symbolic_element_context(memory.clone());
     let requirement =
         external_symbolic_element_requirement_term(memory, Bitvector32Term::Constant(3));
-    let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-        .expect("a constant reduced element must retain the historical range fallback");
+    let synthesized = synthesize_surface_proposition(
+        &requirement,
+        ParameterBinding::new(&parameters, &arguments),
+        &state,
+    )
+    .expect("a constant reduced element must retain the historical range fallback");
     let ClickProposition::Loadable { segment } = &synthesized else {
         panic!("the requirement must remain one viewability: {synthesized:?}");
     };
@@ -968,8 +1000,12 @@ fn strlen_zero_based_element_range_round_trips_exactly() {
         value: Box::new(Bitvector32Term::Variable(Variable(100_001))),
         byte_width: 1,
     };
-    let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-        .expect("the canonical zero-based strlen element must be spellable");
+    let synthesized = synthesize_surface_proposition(
+        &requirement,
+        ParameterBinding::new(&parameters, &arguments),
+        &state,
+    )
+    .expect("the canonical zero-based strlen element must be spellable");
     let ClickProposition::Loadable { segment } = &synthesized else {
         panic!("the requirement must remain one viewability: {synthesized:?}");
     };
@@ -1021,8 +1057,9 @@ fn non_external_named_range_still_uses_general_synthesis() {
         ),
         wide: false,
     };
-    let synthesized = synthesize_surface_proposition(&requirement, &[], &[], &state)
-        .expect("the general named-range path must remain available for local pointers");
+    let synthesized =
+        synthesize_surface_proposition(&requirement, ParameterBinding::default(), &state)
+            .expect("the general named-range path must remain available for local pointers");
     let ClickProposition::Loadable { segment } = &synthesized else {
         panic!("the requirement should remain one viewability: {synthesized:?}");
     };
@@ -1070,8 +1107,12 @@ fn strlen_quantified_element_range_requirement_round_trips() {
     };
     let synthesized = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("strlen's quantified one-element range must be spellable")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("strlen's quantified one-element range must be spellable")
     };
     let lowered = relower_written_proposition(&synthesized, &state)
         .expect("the quantified range must lower through the have path");
@@ -1170,8 +1211,12 @@ fn external_argument_range_loadability_round_trips_through_the_range_form() {
     let requirement = external_byte_range_requirement(Variable(3_100_000), &length);
     let spelled = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("a range over an external argument must be spellable")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("a range over an external argument must be spellable")
     };
 
     // The spelling is the written range form over the parameter's own name,
@@ -1210,8 +1255,7 @@ fn quantified_loadability_uses_saved_snapshot() {
     let selector = SnapshotSelector::Mark("quantified_viewability_head".into());
     let spelled = synthesize_surface_proposition_at_entry_post_and_snapshot(
         &requirement,
-        &parameters,
-        &arguments,
+        ParameterBinding::new(&parameters, &arguments),
         &post,
         &post,
         Some((&snapshot, &selector)),
@@ -1271,8 +1315,12 @@ fn named_element_ranges_preserve_nonzero_starts_and_folded_byte_counts() {
         );
         let synthesized = {
             let _budget = SurfaceSynthesisScope::enter();
-            synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-                .expect("a named element range must be spellable")
+            synthesize_surface_proposition(
+                &requirement,
+                ParameterBinding::new(&parameters, &arguments),
+                &state,
+            )
+            .expect("a named element range must be spellable")
         };
         let ClickProposition::Loadable { segment } = &synthesized else {
             panic!("the requirement should synthesize as one viewable range: {synthesized:?}");
@@ -1309,8 +1357,12 @@ fn named_element_ranges_preserve_nonzero_starts_and_folded_byte_counts() {
     );
     let synthesized = {
         let _budget = SurfaceSynthesisScope::enter();
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-            .expect("a folded byte count must retain its nonzero named range")
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state,
+        )
+        .expect("a folded byte count must retain its nonzero named range")
     };
     let ClickProposition::Loadable { segment } = &synthesized else {
         panic!("the folded requirement should synthesize as one range");
@@ -1360,7 +1412,11 @@ fn named_element_range_does_not_infer_start_from_an_unrelated_index() {
         }),
     );
     let _budget = SurfaceSynthesisScope::enter();
-    let synthesized = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state);
+    let synthesized = synthesize_surface_proposition(
+        &requirement,
+        ParameterBinding::new(&parameters, &arguments),
+        &state,
+    );
     assert!(
         synthesized.is_none(),
         "a range start must come from the named pointer's exact offset, not an unrelated index: {synthesized:?}"
@@ -1376,7 +1432,12 @@ fn forall_loadable_range_call_requirement_is_spellable() {
     let requirement = external_byte_range_requirement(Variable(3_100_000), &length);
     let _budget = SurfaceSynthesisScope::enter();
     assert!(
-        synthesize_surface_proposition(&requirement, &parameters, &arguments, &state).is_some(),
+        synthesize_surface_proposition(
+            &requirement,
+            ParameterBinding::new(&parameters, &arguments),
+            &state
+        )
+        .is_some(),
         "the call requirement must be spellable"
     );
 }
@@ -1400,8 +1461,12 @@ fn exists_loadable_range_call_requirement_is_spellable() {
         )),
     };
     let _budget = SurfaceSynthesisScope::enter();
-    let spelled = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-        .expect("the call requirement must be spellable");
+    let spelled = synthesize_surface_proposition(
+        &requirement,
+        ParameterBinding::new(&parameters, &arguments),
+        &state,
+    )
+    .expect("the call requirement must be spellable");
     assert!(
         matches!(spelled, ClickProposition::Exists { .. }),
         "the existential is spelled as one: {spelled:?}"
@@ -1415,8 +1480,14 @@ fn function_call_synthesis_scales_with_named_arguments() {
     for size in [16, 32, 64, 128] {
         let values = vec![crate::kernel::PureFunctionArgument::Value(int32(7)); size];
         let _scope = SurfaceSynthesisScope::enter();
-        let call = synthesize_surface_call("selected", &values, &[], &[], &state, &BTreeMap::new())
-            .unwrap();
+        let call = synthesize_surface_call(
+            "selected",
+            &values,
+            ParameterBinding::default(),
+            &state,
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert!(
             matches!(call, ContractExpression::Call { arguments, .. } if arguments.len() == size)
         );
@@ -1448,9 +1519,25 @@ fn function_array_synthesis_requires_the_exact_named_snapshot() {
     }];
     let bindings = BTreeMap::new();
     // An unnamed historical memory cannot be silently printed as current.
-    assert!(synthesize_surface_call("selected", &values, &[], &[], &post, &bindings).is_none());
+    assert!(
+        synthesize_surface_call(
+            "selected",
+            &values,
+            ParameterBinding::default(),
+            &post,
+            &bindings
+        )
+        .is_none()
+    );
     let _entry = SynthesisEntryScope(SYNTHESIS_ENTRY_STATE.with(|slot| slot.replace(Some(entry))));
-    let call = synthesize_surface_call("selected", &values, &[], &[], &post, &bindings).unwrap();
+    let call = synthesize_surface_call(
+        "selected",
+        &values,
+        ParameterBinding::default(),
+        &post,
+        &bindings,
+    )
+    .unwrap();
     assert!(
         matches!(call, ContractExpression::Call { arguments, .. } if matches!(arguments.as_slice(), [ContractExpression::Old(_)]))
     );
@@ -1486,8 +1573,7 @@ fn nested_propositions_synthesize_with_small_frames_and_linear_work() {
                 let _scope = SurfaceSynthesisScope::enter();
                 let surface = synthesize_surface_proposition_with_bound_variables(
                     &proposition,
-                    &[],
-                    &[],
+                    ParameterBinding::default(),
                     &state,
                     &BTreeMap::new(),
                 )
@@ -1553,7 +1639,7 @@ fn load_defining_equation_round_trips() {
         ),
         true,
     );
-    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+    let spelled = synthesize_surface_proposition(&requirement, ParameterBinding::default(), &state)
         .expect("load-defining equation must be spellable");
     assert_eq!(
         relower_written_proposition(&spelled, &state)
@@ -1593,9 +1679,13 @@ fn load_defining_equation_uses_entry_snapshot() {
         ),
         true,
     );
-    let spelled =
-        synthesize_surface_proposition_at_entry_and_post(&requirement, &[], &[], &entry, &post)
-            .expect("entry load-defining equation must be spellable");
+    let spelled = synthesize_surface_proposition_at_entry_and_post(
+        &requirement,
+        ParameterBinding::default(),
+        &entry,
+        &post,
+    )
+    .expect("entry load-defining equation must be spellable");
     let ClickProposition::At {
         selector: SnapshotSelector::ProgramPoint(point),
         proposition,
@@ -1655,8 +1745,7 @@ fn load_defining_equation_uses_saved_snapshot() {
     let selector = SnapshotSelector::Mark("saved_load_epoch".into());
     let spelled = synthesize_surface_proposition_at_entry_post_and_snapshot(
         &requirement,
-        &[],
-        &[],
+        ParameterBinding::default(),
         &entry,
         &post,
         Some((&snapshot, &selector)),
@@ -1734,7 +1823,7 @@ fn bounded_pool_load_equation_round_trips_without_internal_names() {
     let (state, requirement, variable) =
         example_load_defining_requirement("bounded-pool:pool", "pool", 4);
     let state = state.with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
-    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+    let spelled = synthesize_surface_proposition(&requirement, ParameterBinding::default(), &state)
         .expect("bounded-pool call load equation must be spellable");
     let ClickProposition::Comparison { left, right, .. } = &spelled else {
         panic!("load equation must remain an equality: {spelled:?}");
@@ -1753,7 +1842,7 @@ fn owned_string_load_equation_round_trips_without_internal_names() {
     let (state, requirement, variable) =
         example_load_defining_requirement("owned-string:owner", "owner", 0);
     let state = state.with_local("result", CValue::Int32(Bitvector32Term::Variable(variable)));
-    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+    let spelled = synthesize_surface_proposition(&requirement, ParameterBinding::default(), &state)
         .expect("owned-string call load equation must be spellable");
     let ClickProposition::Comparison { left, right, .. } = &spelled else {
         panic!("load equation must remain an equality: {spelled:?}");
@@ -1791,7 +1880,14 @@ fn load_equation_rejects_wrong_snapshot_and_unresolvable_variable() {
         ),
         true,
     );
-    assert!(synthesize_surface_proposition(&wrong_pointer_requirement, &[], &[], &state).is_none());
+    assert!(
+        synthesize_surface_proposition(
+            &wrong_pointer_requirement,
+            ParameterBinding::default(),
+            &state
+        )
+        .is_none()
+    );
 
     let wrong_epoch = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
@@ -1807,7 +1903,9 @@ fn load_equation_rejects_wrong_snapshot_and_unresolvable_variable() {
         ),
         true,
     );
-    assert!(synthesize_surface_proposition(&wrong_epoch, &[], &[], &state).is_none());
+    assert!(
+        synthesize_surface_proposition(&wrong_epoch, ParameterBinding::default(), &state).is_none()
+    );
 
     let unresolvable = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
@@ -1816,7 +1914,10 @@ fn load_equation_rejects_wrong_snapshot_and_unresolvable_variable() {
         ),
         true,
     );
-    assert!(synthesize_surface_proposition(&unresolvable, &[], &[], &state).is_none());
+    assert!(
+        synthesize_surface_proposition(&unresolvable, ParameterBinding::default(), &state)
+            .is_none()
+    );
 }
 
 fn actual_struct_field_load_equation(
@@ -1862,8 +1963,12 @@ fn actual_struct_field_load_equation(
         base,
         CType::UInt8Pointer,
     ))];
-    let spelled = synthesize_surface_proposition(&requirement, &parameters, &arguments, &state)
-        .expect("the example-shaped load equation must be spellable");
+    let spelled = synthesize_surface_proposition(
+        &requirement,
+        ParameterBinding::new(&parameters, &arguments),
+        &state,
+    )
+    .expect("the example-shaped load equation must be spellable");
     let ClickProposition::Comparison { left, right, .. } = &spelled else {
         panic!("load equation must remain an equality: {spelled:?}");
     };
@@ -1927,7 +2032,7 @@ fn strlen_existential_guard_round_trips_without_duplicate_guard() {
         )),
     };
     let state = CState::new();
-    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+    let spelled = synthesize_surface_proposition(&requirement, ParameterBinding::default(), &state)
         .expect("strlen requirement should synthesize");
     assert!(matches!(
         &spelled,
@@ -1969,7 +2074,7 @@ fn strlen_guard_is_retained_when_the_sibling_does_not_regenerate_it() {
         )),
     };
     let state = CState::new();
-    let spelled = synthesize_surface_proposition(&requirement, &[], &[], &state)
+    let spelled = synthesize_surface_proposition(&requirement, ParameterBinding::default(), &state)
         .expect("the negative shape should remain spellable");
     assert!(matches!(
         &spelled,
@@ -2024,8 +2129,7 @@ fn strlen_guard_prefix_synthesis_scales_linearly_and_fails_closed() {
         let _scope = SurfaceSynthesisScope::enter();
         let surface = synthesize_surface_proposition_with_guard_fallback(
             &proposition,
-            &[],
-            &[],
+            ParameterBinding::default(),
             &CState::new(),
             &BTreeMap::new(),
         )
@@ -2105,8 +2209,7 @@ fn pointer_field_synthesis_through_cast_and_local_selects_current_value() {
         );
         let spelled = synthesize_parameter_field_pointer_value(
             &selected,
-            function.parameters(),
-            &arguments,
+            ParameterBinding::new(function.parameters(), &arguments),
             &state,
         )
         .expect("the actual pointer field must have a spelling");
@@ -2126,8 +2229,7 @@ fn pointer_field_synthesis_through_cast_and_local_selects_current_value() {
         assert!(
             synthesize_parameter_field_pointer_value(
                 &selected,
-                function.parameters(),
-                &arguments,
+                ParameterBinding::new(function.parameters(), &arguments),
                 &changed,
             )
             .is_none(),
@@ -2163,7 +2265,12 @@ fn a_local_indexes_only_addresses_formed_from_it() {
         Box::new(scaled(index)),
     ));
     assert_eq!(
-        synthesize_local_indexed_int32_load(&unrelated_cell, &[], &[], &state, &BTreeMap::new()),
+        synthesize_local_indexed_int32_load(
+            &unrelated_cell,
+            ParameterBinding::default(),
+            &state,
+            &BTreeMap::new()
+        ),
         None,
         "a cell addressed from another pointer is not an index of the local"
     );
@@ -2173,7 +2280,7 @@ fn a_local_indexes_only_addresses_formed_from_it() {
     ));
     let bound = BTreeMap::from([(Variable(index), "k".to_string())]);
     let Some(ContractExpression::Index(base, _)) =
-        synthesize_local_indexed_int32_load(&own_cell, &[], &[], &state, &bound)
+        synthesize_local_indexed_int32_load(&own_cell, ParameterBinding::default(), &state, &bound)
     else {
         panic!("a cell addressed from the local is its index");
     };
@@ -2204,8 +2311,9 @@ fn unsigned_comparison_is_spelled_without_its_sign_bias() {
     ] {
         for value in [true, false] {
             let fact = Proposition::ConditionIs(condition.clone(), value);
-            let synthesized = synthesize_surface_proposition(&fact, &[], &[], &state)
-                .expect("an unsigned comparison over a uint32 local is spellable");
+            let synthesized =
+                synthesize_surface_proposition(&fact, ParameterBinding::default(), &state)
+                    .expect("an unsigned comparison over a uint32 local is spellable");
             let written = crate::surface::diagnostics::describe_click_proposition(&synthesized);
             assert!(
                 written.contains(spelling) && !written.contains('^'),
@@ -2223,7 +2331,7 @@ fn unsigned_comparison_is_spelled_without_its_sign_bias() {
         ConditionTerm::unsigned_less_than(x, Bitvector32Term::Constant(4)),
         true,
     );
-    let synthesized = synthesize_surface_proposition(&fact, &[], &[], &signed)
+    let synthesized = synthesize_surface_proposition(&fact, ParameterBinding::default(), &signed)
         .expect("a signed local can be explicitly cast");
     assert!(
         crate::surface::printing::source_click_proposition(&synthesized).contains("uint32"),
@@ -2252,7 +2360,8 @@ fn synthesized_unsigned_operations_and_computed_orders_relower_exactly() {
     ] {
         for polarity in [true, false] {
             let fact = Proposition::ConditionIs(condition.clone(), polarity);
-            let surface = synthesize_surface_proposition(&fact, &[], &[], &state).unwrap();
+            let surface =
+                synthesize_surface_proposition(&fact, ParameterBinding::default(), &state).unwrap();
             assert_eq!(relower_written_proposition(&surface, &state), Ok(fact));
         }
     }
@@ -2303,7 +2412,12 @@ fn boolean_local_synthesis_round_trips_and_scales_with_local_population() {
         };
         state = state.with_local("z_bool", value.clone());
         let (surface, work) = crate::instrumentation::measure_deterministic_work(|| {
-            synthesize_surface_bitvector(term, &[], &[], &state, &BTreeMap::new())
+            synthesize_surface_bitvector(
+                term,
+                ParameterBinding::default(),
+                &state,
+                &BTreeMap::new(),
+            )
         });
         let surface = surface.expect("a normalized Boolean local has its source spelling");
         assert_eq!(
@@ -2379,8 +2493,10 @@ fn wide_memory_selectors_preserve_width_and_signedness() {
                 let fact = Proposition::ConditionIs(condition.clone(), truth);
                 let surface = synthesize_surface_proposition(
                     &fact,
-                    function.parameters(),
-                    &[CExpression::Value(argument.clone())],
+                    ParameterBinding::new(
+                        function.parameters(),
+                        &[CExpression::Value(argument.clone())],
+                    ),
                     &state,
                 )
                 .expect("a typed wide selector is spellable");
@@ -2407,8 +2523,7 @@ fn struct_loadable_spans_relower_without_widening_over_padding() {
     let plain = synthesize_struct_loadable_segment(
         &pointer.offset_by_bytes(4),
         &Bitvector32Term::Constant(4),
-        &[parameter],
-        &arguments,
+        ParameterBinding::new(&[parameter], &arguments),
         &state,
     )
     .unwrap();
@@ -2431,8 +2546,7 @@ fn struct_loadable_spans_relower_without_widening_over_padding() {
     let clipped = synthesize_struct_loadable_segment(
         &pointer.offset_by_bytes(4),
         &Bitvector32Term::Constant(4),
-        &[parameter],
-        &arguments,
+        ParameterBinding::new(&[parameter], &arguments),
         &state,
     )
     .unwrap();

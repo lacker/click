@@ -91,6 +91,9 @@ admitted profile; dynamic facts belong in snapshots or checked execution state.
 
 Unknown contents are different from uninitialized contents. Havoc can forget a
 value while preserving definite initialization and the declared object type.
+This applies to symbolic contract inputs as well as local objects: forgetting
+an admitted complete typed cell retains its initialized bytes. Adjacent cells
+in a symbolic run remain one interval, without enumerating its elements.
 Conversely, obtaining ownership of raw storage does not give it a value.
 
 ### Addresses and objects
@@ -147,6 +150,17 @@ substitution; adding a field to `CPointerValue` while discarding it through
 `into_pointer()` or treating it like an ignored qualifier would not suffice.
 Pure memory observation at an address and executable typed dereference need
 different validity interfaces even when they share the same value observer.
+
+The shared `valid_place(p)` predicate states typed location validity separately
+from byte access and initialization. Its source-selected scalar type or complete
+record layout, full pointer carrier and memory snapshot remain in the kernel
+proposition. A direct entry requirement may authenticate that exact carrier;
+actual calls check it through the same record/scalar geometry judgments used by
+typed views. The C allocation/access policy and C++ native object policy remain
+distinct. Numeric equality rewriting cannot manufacture or substitute a carrier
+in a validity fact. Ending a lifetime invalidates the current location without
+changing a fact about an earlier snapshot. A disjunctive, conditional or
+quantified requirement is not an unconditional entry promise.
 
 Input array extents must come from a checked declaration or explicit contract
 validity obligation that the caller discharges for the actual pointer domain.
@@ -385,7 +399,7 @@ and an explicit root/path/base/element/stride/count term. Counts and array path
 selections are mathematical integers. Value identity, snapshot identity, alpha
 keys, dependency collection, full-value substitution and resource matching retain
 these terms; address-only substitution cannot replace them. Raw pointer comparison
-and storage keys remain address-based. Resource semantics version 72 invalidates
+and storage keys remain address-based. Resource semantics version 75 invalidates
 older retained artifacts.
 
 Native input spans are minimum guarantees, not declarations of the complete
@@ -688,9 +702,12 @@ clause supplies access, and byte equalities supply values. None silently supplie
 the others. It also does not create a different object type in the range.
 
 The current atom is deliberately bounded: a top-level normal postcondition on
-a mutable native byte-pointer parameter, zero start and constant byte count,
-with the address frozen at entry. Parameter reassignment cannot redirect the
-guarantee. Body verification starts that output footprint unwritten; holes,
+a mutable native byte-pointer parameter or a selected byte-pointer field of a
+supported by-value record, with zero start and constant byte count. The address
+is frozen at entry. Parameter or descriptor reassignment cannot redirect the
+guarantee. Selecting a descriptor field checks its retained layout and complete
+initialized pointer value; it does not grant backing storage or object validity.
+Body verification starts that output footprint unwritten; holes,
 no-op bodies and premature reads are rejected. Calls transfer precisely the
 checked initialization effect. Conditional, exceptional, callback and ordinary
 external initialization guarantees remain outside this profile.
@@ -814,20 +831,55 @@ current pinned C++20 profile already includes a suitable read/write rule. Do
 not silently import a proposal or call it an adopted defect resolution without
 checking its exact wording and status.
 
-The source-profile choice is therefore explicit: either retain literal C++20
-coverage and pause the unchanged cast-and-index byte writer, or specify an
-additional bounded implementation contract for the pinned compiler. The latter
-would cover declared uint32 representation bytes, endian mapping, write/read
-validity and object-domain preservation, with its assumptions reported in the
-verification profile and included in artifact identity. Compiler execution
-probes can corroborate that contract, but are not a proof of a general C++
-standard guarantee. A `memcpy`-based source target is another standards-based
-route when that is the original program; it is not permission to rewrite the
-selected unchanged decoder.
+The pinned compiler profile includes an additional bounded implementation
+contract. This traversal is not claimed as a literal C++20 guarantee.
+Its versioned marker is
+`clang19_1_7_lp64_le_declared_uint32_bytes_v1`. It applies to Clang 19.1.7 on
+`x86_64-unknown-linux-gnu`, with LP64 pointers and `unsigned long`, eight-bit
+bytes, and a four-byte `unsigned int`/uint32 object on the little-endian target.
+The exporter records the actual widths and byte order; import validation checks
+them and the configured supported marker. The approved marker is the default
+of this bounded import profile, and an explicitly different marker is refused.
 
-This choice blocks expansion of the byte-writer profile, not independent
-constructor/observer regression repairs. It does not change the existing
-decision to use native uint8 contracts with authenticated enum identities.
+The contract permits reading and writing a live declared uint32 object's four
+representation bytes through the admitted byte view, including checked byte
+pointer formation within that extent and its one-past endpoint. Dereferencing
+the endpoint remains invalid. Each byte at offset `i` denotes bits `8*i` through
+`8*i+7` of the same selected uint32 snapshot. Four initialized byte values
+therefore determine the word under the shared packing law. Partial writes do
+not complete initialization, and stale snapshots do not determine a current
+value. Every operation still requires its independent permission,
+initialization and lifetime checks, and retains the original object and pointer
+domain. The assumption creates neither an array object nor a different scalar
+object; casts and byte ownership cannot supply those facts.
+
+This guarantee does not cover arbitrary records, other scalar representations,
+or same-sized substitute enums. Genuine byte arrays keep their ordinary array
+rules. The pinned `std::byte` declaration must still be authenticated, and the
+standard-library catalog's explicitly assumed contracts, including
+`std::as_writable_bytes`, remain a separate boundary. No general language-law
+claim is made for the compiler extension.
+
+The selected standard-library bridge additionally assumes source-to-model
+equivalence for the pinned `std::span<unsigned int>` constructor,
+`std::as_writable_bytes`, and `std::span<std::byte>::data`. Their model bodies
+use ordinary checked stores, loads and casts; those bodies require independent
+certification before supplying modular effects. Selection checks the exact
+function identity, receiver/signature, nominal record layout, declaration header
+and locked span-header digest. A missing or different pin supplies no model
+effects. The word constructor and writable-byte conversion require exactly one
+word; these contracts do not claim general span conversion coverage. The
+library equivalence assumptions are separate from the compiler byte-access
+assumption and from proofs of the model bodies.
+
+Artifact schema 60 requires the marker and target facts in both the semantic
+artifact and import lock. They participate in import identity; older artifacts,
+missing or changed markers, and mismatched target dimensions cannot silently
+authenticate a proof under the new assumption. Import locking, verification and expansion audit report the marker
+through the existing explicit runtime-assumption format. Compiler execution
+probes may corroborate this contract, but are not proofs of a general C++
+standard guarantee. This resolves the source-profile decision; implementation
+and the unchanged decoder's complete acceptance obligations must still pass.
 
 ## Implementation assessment
 
@@ -911,7 +963,7 @@ allocations, by-value parameter copies and actual copy-result allocations issue
 that evidence. Synthetic symbolic result blocks and constructor proof-entry raw
 markers do not. The metadata participates in snapshot identity and joins.
 The layout checkpoint introduced resource semantics version 71; the current
-designation semantics use version 72. This metadata grants no access.
+designation and checked interface semantics use version 75. This metadata grants no access.
 C++ declarations and explicit child boundaries now additionally
 retain their checked nominal identity. Embedded-record boundaries retain parent
 relationships, root-relative offsets, full extents including padding, and

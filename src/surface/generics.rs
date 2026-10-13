@@ -1015,6 +1015,13 @@ fn instantiate_proposition(
         ClickProposition::Defined { expression: value } => ClickProposition::Defined {
             expression: expression(value)?,
         },
+        ClickProposition::ValidPlace {
+            expression: value,
+            pointee_struct,
+        } => ClickProposition::ValidPlace {
+            pointee_struct: pointee_struct.clone(),
+            expression: expression(value)?,
+        },
         ClickProposition::At {
             selector,
             proposition,

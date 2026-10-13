@@ -273,7 +273,10 @@ impl<'a> Proof<'a> {
         spell(&GuardedTermSpeller {
             view: &view,
             accesses: &accesses,
-            snapshots: view.recorded_snapshots.recent(MAX_SPELLING_SNAPSHOTS),
+            snapshots: view
+                .fixed_state
+                .recorded_snapshots
+                .recent(MAX_SPELLING_SNAPSHOTS),
             bound,
         })
     }
@@ -319,7 +322,10 @@ fn collect_goal_field_accesses(
                 pending_expressions.push(left);
                 pending_expressions.push(right);
             }
-            ClickProposition::Defined { expression } => pending_expressions.push(expression),
+            ClickProposition::Defined { expression }
+            | ClickProposition::ValidPlace { expression, .. } => {
+                pending_expressions.push(expression)
+            }
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)
             | ClickProposition::Implies(left, right) => {
@@ -390,9 +396,8 @@ impl GuardedTermSpeller<'_, '_> {
         if !self.bound.is_empty()
             && let Some(whole) = synthesize_surface_proposition_with_bound_variable_names(
                 proposition,
-                self.view.parameters,
-                self.view.arguments,
-                self.view.state,
+                self.view.parameter_binding,
+                self.view.fixed_state.state,
                 &self.bound,
             )
         {
@@ -461,12 +466,12 @@ impl GuardedTermSpeller<'_, '_> {
             Box::new(ContractExpression::ResourceField(access.clone()))
         };
         for access in self.accesses {
-            if Self::field_value(self.view.state, access) == Some(term) {
+            if Self::field_value(self.view.fixed_state.state, access) == Some(term) {
                 return Some(*named(access));
             }
         }
         for access in self.accesses {
-            if Self::field_value(self.view.pre_state, access) == Some(term) {
+            if Self::field_value(self.view.fixed_state.pre_state, access) == Some(term) {
                 return Some(ContractExpression::Old(named(access)));
             }
         }
@@ -518,9 +523,8 @@ impl GuardedTermSpeller<'_, '_> {
             .or_else(|| {
                 synthesize_surface_machine_expression(
                     term,
-                    self.view.parameters,
-                    self.view.arguments,
-                    self.view.state,
+                    self.view.parameter_binding,
+                    self.view.fixed_state.state,
                 )
             })
             .or_else(|| {
@@ -529,8 +533,7 @@ impl GuardedTermSpeller<'_, '_> {
                 self.preferred_snapshots().find_map(|(selector, state)| {
                     let expression = synthesize_surface_machine_expression(
                         term,
-                        self.view.parameters,
-                        self.view.arguments,
+                        self.view.parameter_binding,
                         state,
                     )?;
                     Some(ContractExpression::At {

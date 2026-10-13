@@ -21,13 +21,13 @@ const INT64_MAX: &str = "9223372036854775807";
 
 /// Which 64-bit integers a goal orders.
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum Carrier {
+pub(super) enum Carrier {
     UInt64,
     Int64,
 }
 
 impl Carrier {
-    fn of(proposition: &Proposition) -> Option<Self> {
+    pub(super) fn of(proposition: &Proposition) -> Option<Self> {
         match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector64UnsignedLessThan(..)
@@ -47,7 +47,7 @@ impl Carrier {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::UInt64 => "uint64",
             Self::Int64 => "int64",
@@ -56,7 +56,7 @@ impl Carrier {
 
     /// Preserve the comparison's implicit promotion when emitting arguments
     /// for a bridge whose binders explicitly require a 64-bit value.
-    fn typed_literals(self, expression: &ContractExpression) -> ContractExpression {
+    pub(super) fn typed_literals(self, expression: &ContractExpression) -> ContractExpression {
         match expression {
             ContractExpression::IntegerLiteral(text) => {
                 let value = match self {
@@ -103,8 +103,8 @@ impl Carrier {
 }
 
 /// How a premise or a goal relates its two sides.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Relation {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Relation {
     Less,
     LessEqual,
     Equal,
@@ -115,7 +115,7 @@ enum Relation {
 /// exchanged, and so is a negated order: `not a < b` is `b <= a`, which
 /// holds of every pair of values of one integer type. The last part says
 /// whether the proposition is written in the bridge's own form.
-fn relation_parts(
+pub(super) fn relation_parts(
     proposition: &ClickProposition,
 ) -> Option<(ContractExpression, ContractExpression, Relation, bool)> {
     if let ClickProposition::At {
@@ -184,7 +184,7 @@ fn at_operand(selector: &SnapshotSelector, expression: &ContractExpression) -> C
     }
 }
 
-fn relate(
+pub(super) fn relate(
     lower: ContractExpression,
     upper: ContractExpression,
     relation: Relation,
@@ -215,7 +215,7 @@ fn order(lower: ContractExpression, upper: ContractExpression, strict: bool) -> 
 /// The exact Integer observation of a `uint64` expression. A literal is
 /// written as the Integer it is: the Integer certificate reads a premise as
 /// it is spelled, and `to_integer(2u64)` spelled out is an atom to it.
-fn to_integer(expression: &ContractExpression) -> ContractExpression {
+pub(super) fn to_integer(expression: &ContractExpression) -> ContractExpression {
     if let ContractExpression::CFragment(CExpression::Value(CValue::PointerInteger(value))) =
         expression
     {
@@ -320,14 +320,14 @@ fn literal_carrier(expression: &ContractExpression) -> Option<Carrier> {
     }
 }
 
-fn have(proposition: ClickProposition, proof: Vec<ProofStep>) -> ProofStep {
+pub(super) fn have(proposition: ClickProposition, proof: Vec<ProofStep>) -> ProofStep {
     ProofStep::Have {
         proposition,
         proof: Box::new(ProofCertificate::from_validated_steps(proof)),
     }
 }
 
-fn apply(
+pub(super) fn apply(
     name: &str,
     arguments: Vec<ContractExpression>,
     premises: Vec<ClickProposition>,

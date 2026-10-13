@@ -77,11 +77,13 @@ documentation inventory keep the following accepted words synchronized.
 | `equal_from_bounds` | Closes an equality from opposite non-strict bounds. |
 | `less_than_from_not_equal` | Sharpens a non-strict bound to a strict one with a disequality on the same sides. |
 | `trivial` | Checks a context-free affine identity. |
+| `negated_goal` | Assumes the integer negation of a bound goal in a mathematical `Integer` certificate: `r < l` for the goal `l <= r`, and `r <= l` for `l < r`. |
+| `divide` | Divides a non-strict `Integer` bound by a positive common factor of its coefficients and rounds its constant to the integer bound. |
 | `int32_range` | States one opaque `int32` term's own range as an affine bound, `t <= 2147483647` or `-2147483648 <= t`. |
 | `interval_from_affine`, `interval_from_affine_direct`, `interval_atom`, `interval_intersect` | Introduce, import, or intersect, checked signed-machine intervals. `interval_from_affine_direct` is required when the cited affine premise already contains a compound machine operation; it does not silently decompose that operation. |
 | `defined`, `interval_add`, `interval_add_bounded`, `interval_subtract`, `interval_multiply`, `interval_remainder`, `interval_shift_left`, `interval_arithmetic_shift_right`, `interval_bitwise_and`, `interval_sign_bit_flip`, `interval_compare` | Record exact definedness premises and bounded interval-operation evidence for signed-machine expressions. |
 | `affine_conclusion`, `affine_conclusion_pair` | Bridge an affine claim to a machine proposition using one, or separately named left and right, interval/definedness evidence. The pair form is required when both comparison sides contain compound operations. |
-| `conclusion` | Selects the final node of an arithmetic certificate. |
+| `conclusion` | Selects the final node of an arithmetic certificate. In the mathematical `Integer` family, a conclusion node that is a contradiction, such as `1 <= 0`, also proves the goal. |
 | `reverse` | Selects the reverse equality direction for `less_equal_from_equal`. |
 | `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |
 | `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. `as` also introduces the target contract's proof instances on an `executes` conclusion. |
@@ -172,7 +174,14 @@ From lowest to highest precedence:
 | 9 | indexing `[]`, field access `->` | Left, postfix |
 | 10 | literals, names, calls, constructors, matches, ranges, conditionals, folds | Not applicable |
 
-Comparisons form propositions rather than contract expressions. See
+Comparisons form propositions rather than contract expressions, so they bind
+looser than every operator in this table. C binds `==`, `!=`, `<`, `<=`, `>`
+and `>=` tighter than `&`, `^` and `|`, so a comparison operand whose
+outermost operator is `&`, `^` or `|` must be parenthesized: `x & 1 == 0` is
+refused and `(x & 1) == 0` is accepted
+(`mdtests/bitwise_comparison_operand_needs_parentheses.md`,
+`mdtests/parenthesized_bitwise_comparison_operand_is_accepted.md`). Shifts and
+arithmetic group the same way in C and Click and need no parentheses. See
 [Propositions](index.md#propositions) for their syntax and typing rules.
 
 ## Algebraic datatypes

@@ -633,6 +633,7 @@ impl<'a> Proof<'a> {
                     context.claim_label,
                     context.tactic_index,
                     "step",
+                    self.facts().assumptions(),
                 )
                 .ok()?;
                 let callee = match statement {
@@ -705,6 +706,7 @@ impl<'a> Proof<'a> {
                                 context.claim_label,
                                 context.tactic_index,
                                 "step",
+                                self.facts().assumptions(),
                             )
                             .ok()
                             .map(|(_, _, statement, _)| {
@@ -727,9 +729,10 @@ impl<'a> Proof<'a> {
                     if old != new {
                         let description = match self.context.as_ref() {
                             ProofContext::Execution(context) => trace_resource_fact(fact, context),
-                            _ => {
-                                crate::surface::diagnostics::describe_resource_fact(fact, &[], &[])
-                            }
+                            _ => crate::surface::diagnostics::describe_resource_fact(
+                                fact,
+                                ParameterBinding::default(),
+                            ),
                         };
                         detail
                             .resources
@@ -1053,7 +1056,8 @@ impl<'a> Proof<'a> {
                     self.step_error(format!(
                         "`assumption` closes a conjunction when every side is an available fact and a disjunction when one side is; `{}` is not available",
                         crate::surface::diagnostics::describe_pure_fact_spelled(
-                            &side, &names, &values
+                            &side,
+                            ParameterBinding::new(&names, &values),
                         )
                     ))
                 }
@@ -1205,8 +1209,7 @@ impl<'a> Proof<'a> {
                 let execution = self.execution()?;
                 crate::surface::proof::surface_synthesis::synthesize_surface_proposition(
                     goal,
-                    context.parsed_function.parameters(),
-                    context.arguments,
+                    context.parameter_binding(),
                     &execution.core.state,
                 )
             });
@@ -2385,6 +2388,24 @@ impl<'a> Proof<'a> {
                                 }),
                     )?,
                 },
+                IntegerCertificateNode::NegatedGoal { result } => {
+                    IntegerArithmeticNode::NegatedGoal {
+                        result: claim(self, result, "integer certificate negated goal", false)?,
+                    }
+                }
+                IntegerCertificateNode::Divide {
+                    source,
+                    divisor,
+                    result,
+                } => IntegerArithmeticNode::Divide {
+                    source: *source,
+                    divisor: integer_constant_expression(divisor).ok_or_else(|| {
+                        self.step_error(
+                            "integer certificate divisor must be a constant Integer expression",
+                        )
+                    })?,
+                    result: claim(self, result, "integer certificate division result", false)?,
+                },
             };
             if nodes.len() != node_index {
                 return Err(self.step_error("integer certificate node indexing is not contiguous"));
@@ -2637,9 +2658,9 @@ impl<'a> Proof<'a> {
                                 context.theorem_context.values.get(name).cloned().map(CExpression::Value)
                             }
                             ProofContext::FixedState(context) => context
-                                .parameters
+                                .parameter_binding.parameters
                                 .iter()
-                                .zip(context.arguments)
+                                .zip(context.parameter_binding.arguments)
                                 .find(|(parameter, _)| parameter.name() == name)
                                 .map(|(_, argument)| argument.clone()),
                             ProofContext::Execution(context) => context
@@ -3024,8 +3045,7 @@ impl<'a> Proof<'a> {
                         "`apply` of the induction hypothesis failed: {}",
                         crate::surface::proof::format_forall_int32_instantiation_error(
                             error,
-                            &parameters,
-                            &arguments,
+                            ParameterBinding::new(&parameters, &arguments),
                         )
                     ))
                 }
@@ -3174,8 +3194,10 @@ fn trace_resource_fact(fact: &CResourceFact, context: &ExecutionProofContext<'_>
             {
                 return crate::surface::diagnostics::describe_resource_fact(
                     fact,
-                    std::slice::from_ref(parameter),
-                    std::slice::from_ref(argument),
+                    ParameterBinding::new(
+                        std::slice::from_ref(parameter),
+                        std::slice::from_ref(argument),
+                    ),
                 );
             }
         }
@@ -3185,11 +3207,7 @@ fn trace_resource_fact(fact: &CResourceFact, context: &ExecutionProofContext<'_>
             "view of a memory range (no source name)".into()
         };
     }
-    crate::surface::diagnostics::describe_resource_fact(
-        fact,
-        context.parsed_function.parameters(),
-        context.arguments,
-    )
+    crate::surface::diagnostics::describe_resource_fact(fact, context.parameter_binding())
 }
 
 fn describe_assumption_goal(goal: &Proposition) -> &'static str {
@@ -3310,8 +3328,16 @@ fn describe_integer_arithmetic_check_error(
         Error::InvalidRelation(index) => {
             format!("node {index} combines relations its rule does not accept")
         }
+        Error::InvalidDivisor(index) => format!(
+            "node {index} divides by a value that is not positive or does not divide every coefficient"
+        ),
+        Error::NegatedGoalUnsupported(index) => {
+            format!("node {index} negates an equality goal; prove each direction as its own bound")
+        }
         Error::WorkLimitExceeded => "checking exceeded the work limit".to_string(),
-        Error::DoesNotFollow => "the conclusion node does not establish the goal".to_string(),
+        Error::DoesNotFollow => {
+            "the conclusion node neither establishes the goal nor is a contradiction".to_string()
+        }
     }
 }
 

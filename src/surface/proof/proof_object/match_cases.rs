@@ -180,8 +180,11 @@ impl<'a> Proof<'a> {
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .cloned()
         });
-        let values = parameter_values(context.parsed_function.parameters(), context.arguments)
-            .map_err(|error| self.step_error(error.message))?;
+        let values = parameter_values(ParameterBinding::new(
+            context.parsed_function.parameters(),
+            context.arguments,
+        ))
+        .map_err(|error| self.step_error(error.message))?;
         let array_refs = array_refs_for_parameters(
             context.parsed_function.parameters(),
             &values,
@@ -493,8 +496,10 @@ impl<'a> Proof<'a> {
         // arms checked before this one, which are not on this arm's path.
         let tactic_offset = self.path_step_count()?;
         let proof = self.with_kernel_state(state.with_locals(locals));
-        let function_values =
-            parameter_values(context.parsed_function.parameters(), context.arguments)?;
+        let function_values = parameter_values(ParameterBinding::new(
+            context.parsed_function.parameters(),
+            context.arguments,
+        ))?;
         let clause_presentations = if let Some(instance) = plan.matched_instance.as_ref() {
             crate::surface::proof::resources::pair_instance_body_clause_presentations(
                 context.resource_environment,

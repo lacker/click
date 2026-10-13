@@ -588,6 +588,8 @@ pub(in crate::surface) fn register_kernel_fold_read_definitions(
             entry_state: &entry_state,
             result_type: CType::Int32,
             entry_values: BTreeMap::new(),
+            place_record_names: BTreeMap::new(),
+            place_layouts: None,
             aggregate_parameters: BTreeSet::new(),
             c_parameter_types: BTreeMap::new(),
             local_type_state: None,
@@ -643,6 +645,8 @@ fn lower_kernel_pure_function_definition(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        place_record_names: BTreeMap::new(),
+        place_layouts: None,
         aggregate_parameters: BTreeSet::new(),
         c_parameter_types: BTreeMap::new(),
         local_type_state: None,
@@ -729,6 +733,8 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        place_record_names: BTreeMap::new(),
+        place_layouts: None,
         aggregate_parameters: BTreeSet::new(),
         c_parameter_types: BTreeMap::new(),
         local_type_state: None,
@@ -809,6 +815,8 @@ pub(in crate::surface) fn lower_composite_resource_facts_with_bindings(
         entry_state: &entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        place_record_names: BTreeMap::new(),
+        place_layouts: None,
         aggregate_parameters: BTreeSet::new(),
         c_parameter_types: BTreeMap::new(),
         local_type_state: None,
@@ -1001,7 +1009,18 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         } else {
             parsed_function.return_type().to_kernel_type()
         },
-        entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        entry_values: parameter_values(ParameterBinding::new(
+            parsed_function.parameters(),
+            arguments,
+        ))?,
+        place_record_names: parsed_function
+            .parameters()
+            .iter()
+            .filter_map(|p| Some((p.name().to_string(), p.struct_name()?.to_string())))
+            .collect(),
+        place_layouts: spec_definitions
+            .struct_layouts
+            .or(Some(parsed_function.structs())),
         aggregate_parameters: parsed_function
             .parameters()
             .iter()
@@ -1149,6 +1168,12 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
         &parsed_kernel_function,
     )?;
     let mut function = function
+        .with_native_span_expression_inputs(
+            parsed_kernel_function
+                .contract_interface()
+                .native_span_expression_inputs()
+                .to_vec(),
+        )
         .with_native_span_inputs(
             parsed_kernel_function
                 .contract_interface()
@@ -1293,7 +1318,18 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         } else {
             parsed_function.return_type().to_kernel_type()
         },
-        entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        entry_values: parameter_values(ParameterBinding::new(
+            parsed_function.parameters(),
+            arguments,
+        ))?,
+        place_record_names: parsed_function
+            .parameters()
+            .iter()
+            .filter_map(|p| Some((p.name().to_string(), p.struct_name()?.to_string())))
+            .collect(),
+        place_layouts: spec_definitions
+            .struct_layouts
+            .or(Some(parsed_function.structs())),
         aggregate_parameters: parsed_function
             .parameters()
             .iter()
@@ -1364,6 +1400,8 @@ fn fixed_state_elaboration<'a>(
         entry_state,
         result_type: result.map(CValue::c_type).unwrap_or(CType::Int32),
         entry_values,
+        place_record_names: BTreeMap::new(),
+        place_layouts: spec_definitions.struct_layouts,
         aggregate_parameters: BTreeSet::new(),
         c_parameter_types: BTreeMap::new(),
         local_type_state: None,
@@ -1689,6 +1727,11 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         entry_state,
         result_type: CType::Int32,
         entry_values: BTreeMap::new(),
+        place_record_names: parameters
+            .iter()
+            .filter_map(|p| Some((p.name().to_string(), p.struct_name()?.to_string())))
+            .collect(),
+        place_layouts: spec_definitions.struct_layouts,
         aggregate_parameters: BTreeSet::new(),
         c_parameter_types: parameters
             .iter()
@@ -1742,12 +1785,21 @@ pub(in crate::surface) fn function_contract_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     spec_definitions: SpecDefinitions<'_>,
-    _resource_environment: &ResourceEnvironment,
+    resource_environment: &ResourceEnvironment,
 ) -> Result<FunctionContractSummary, ClickError> {
+    let spec_definitions =
+        spec_definitions.with_struct_layouts(resource_environment.struct_layouts());
     let resolved_block = resolved_function_block(function_block)?;
     let function_block: &FunctionBlock = &resolved_block;
     let entry_state = crate::kernel::initialize_c_function_globals(
-        &CState::new().with_population_creation_tracking(),
+        &CState::new()
+            .with_typed_access_policy(
+                parsed_function
+                    .to_kernel_function()
+                    .contract_interface()
+                    .typed_access_policy(),
+            )
+            .with_population_creation_tracking(),
         &parsed_function.to_kernel_function(),
     );
     let mut lowerer = AnnotationLowerer {
@@ -1760,6 +1812,14 @@ pub(in crate::surface) fn function_contract_summary(
         entry_state: &entry_state,
         result_type: parsed_function.return_type().to_kernel_type(),
         entry_values: BTreeMap::new(),
+        place_record_names: parsed_function
+            .parameters()
+            .iter()
+            .filter_map(|p| Some((p.name().to_string(), p.struct_name()?.to_string())))
+            .collect(),
+        place_layouts: spec_definitions
+            .struct_layouts
+            .or(Some(parsed_function.structs())),
         aggregate_parameters: BTreeSet::new(),
         c_parameter_types: parsed_function
             .parameters()
@@ -2026,6 +2086,7 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
         | ClickProposition::Contains { .. }
         | ClickProposition::Initialized { .. }
         | ClickProposition::Loadable { .. }
+        | ClickProposition::ValidPlace { .. }
         | ClickProposition::Defined { .. } => true,
         ClickProposition::At { .. } => false,
         ClickProposition::And(left, right)
@@ -2227,6 +2288,8 @@ struct AnnotationLowerer<'a> {
     /// Declared pointee types of parameters and encountered automatic locals.
     /// Local names are the frontend's distinct kernel bindings.
     pointer_element_types: BTreeMap<String, CType>,
+    place_record_names: BTreeMap<String, String>,
+    place_layouts: Option<&'a BTreeMap<String, syntax::C0StructLayout>>,
     aggregate_parameters: BTreeSet<String>,
     /// Source-side pointee widths which are not representable in the kernel's
     /// nominal `CType` (notably pointers to structs, which use the compatible
@@ -3169,6 +3232,7 @@ impl AnnotationLowerer<'_> {
             | ClickProposition::Contains { .. }
             | ClickProposition::Initialized { .. }
             | ClickProposition::Loadable { .. }
+            | ClickProposition::ValidPlace { .. }
             | ClickProposition::Defined { .. } => {
                 self.lower_atomic_proposition_to_spec(proposition, environment)
             }
@@ -3563,6 +3627,77 @@ impl AnnotationLowerer<'_> {
         }
     }
 
+    fn valid_place_type(
+        &self,
+        expression: &ContractExpression,
+    ) -> Result<crate::kernel::CPlaceType, String> {
+        fn record_name<'a>(
+            source: &'a ContractExpression,
+            names: &'a BTreeMap<String, String>,
+            layouts: &'a BTreeMap<String, syntax::C0StructLayout>,
+        ) -> Option<&'a str> {
+            match source {
+                ContractExpression::Binding(name)
+                | ContractExpression::CBinding(name)
+                | ContractExpression::CFragment(CExpression::Variable(name))
+                | ContractExpression::QualifiedC {
+                    lowered: CExpression::Variable(name),
+                    ..
+                } => names.get(name).map(String::as_str),
+                ContractExpression::Field { base, field, .. } => {
+                    let parent = record_name(base, names, layouts)?;
+                    layouts.get(parent)?.field(field)?.struct_name()
+                }
+                _ => None,
+            }
+        }
+        if let Some(layouts) = self.place_layouts
+            && let Some(name) = record_name(expression, &self.place_record_names, layouts)
+        {
+            let layout = layouts
+                .get(name)
+                .ok_or("valid_place needs a complete record declaration")?
+                .to_kernel_aggregate_layout();
+            if !layout.unions().is_empty() {
+                return Err("valid_place does not yet support union locations".into());
+            }
+            return Ok(crate::kernel::CPlaceType::Record(std::sync::Arc::new(
+                layout,
+            )));
+        }
+        let ty = match expression {
+            ContractExpression::Binding(name)
+            | ContractExpression::CBinding(name)
+            | ContractExpression::CFragment(CExpression::Variable(name))
+            | ContractExpression::QualifiedC {
+                lowered: CExpression::Variable(name),
+                ..
+            } => self
+                .c_parameter_types
+                .get(name)
+                .copied()
+                .or_else(|| self.entry_values.get(name).map(CValue::c_type)),
+            ContractExpression::Field {
+                lowered: CExpression::TypedLoad { value_type, .. },
+                ..
+            }
+            | ContractExpression::CFragment(CExpression::TypedLoad { value_type, .. }) => {
+                Some(*value_type)
+            }
+            ContractExpression::CFragment(CExpression::Value(value)) => Some(value.c_type()),
+            _ => None,
+        }
+        .and_then(CType::pointee_type)
+        .ok_or("valid_place expects a supported typed object pointer")?;
+        if !matches!(
+            ty,
+            CType::Int32 | CType::UInt32 | CType::Int64 | CType::UInt8
+        ) {
+            return Err("valid_place does not yet support this pointee type".into());
+        }
+        Ok(crate::kernel::CPlaceType::Scalar(ty))
+    }
+
     #[inline(never)]
     fn lower_predicate_call_proposition_to_spec(
         &mut self,
@@ -3873,6 +4008,15 @@ impl AnnotationLowerer<'_> {
                         "initialized currently requires the current memory snapshot".to_string()
                     );
                 }
+                if matches!(
+                    &segment.base,
+                    CExpression::TypedLoad {
+                        pointee_constant: true,
+                        ..
+                    }
+                ) {
+                    return Err("initialized output requires a mutable byte pointer".into());
+                }
                 let constant = |expression: &CExpression| match expression {
                     CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))) => {
                         Some(*value)
@@ -3916,6 +4060,33 @@ impl AnnotationLowerer<'_> {
                     end: self.lower_c_fragment_to_spec(&segment.end, &segment_environment)?,
                     element_width: self
                         .contract_segment_element_width(segment, &segment_environment),
+                })
+            }
+            ClickProposition::ValidPlace {
+                expression,
+                pointee_struct,
+            } => {
+                let place_type = if let Some(name) = pointee_struct {
+                    let layouts = self
+                        .place_layouts
+                        .or(self.spec_definitions.struct_layouts)
+                        .ok_or("valid_place needs the source record declarations")?;
+                    let layout = layouts
+                        .get(name)
+                        .ok_or("valid_place needs a complete source record declaration")?
+                        .to_kernel_aggregate_layout();
+                    if !layout.unions().is_empty() {
+                        return Err("valid_place does not yet support union locations".into());
+                    }
+                    crate::kernel::CPlaceType::Record(std::sync::Arc::new(layout))
+                } else {
+                    self.valid_place_type(expression)?
+                };
+                Ok(SpecProposition::ValidPlace {
+                    memory: environment.current_memory.clone(),
+                    pointer: self.lower_contract_expression_to_spec(expression, environment)?,
+                    place_type,
+                    access_policy: self.entry_state.typed_access_policy(),
                 })
             }
             ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
@@ -5474,7 +5645,10 @@ impl AnnotationLowerer<'_> {
                 {
                     return Err(format!(
                         "let binding `{name}` evaluated to `{}` of type `{}`, which does not match the declared type `{}`",
-                        crate::surface::diagnostics::describe_c_value(fixed, &[], &[]),
+                        crate::surface::diagnostics::describe_c_value(
+                            fixed,
+                            ParameterBinding::default()
+                        ),
                         crate::kernel::c_type_spelling(fixed.c_type()),
                         crate::surface::validation::describe_c0_type(*c_type)
                     ));

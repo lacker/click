@@ -321,10 +321,10 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         .map_err(|error| error.at_declaration(function_block.signature().name()))?;
     // A shared context was built for an earlier claim; name this function's
     // parameters for diagnostics as building it would have.
-    crate::surface::proof_diagnostics::render::enter_ambient_naming(
+    crate::surface::proof_diagnostics::render::enter_ambient_naming(ParameterBinding::new(
         parsed_function.parameters(),
         &arguments,
-    );
+    ));
     let entry_context = Arc::new(ProofEntryContext {
         state: state.clone(),
         arguments: arguments.clone(),
@@ -364,9 +364,8 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     let state = install_borrowed_contract_inputs(
         state,
         &function,
-        &arguments,
         &pure_facts,
-        parsed_function.parameters(),
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         claim_label,
     )?;
     let function_entry_state = c_function_entry_state_with_assumptions(
@@ -419,7 +418,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
     };
     let frontier = ExecutionFrontier::default();
     let mut recorded_snapshots = RecordedSnapshots::new();
-    record_current_statement_entry(
+    record_current_statement_entry_with_assumptions(
         &frontier,
         &mut recorded_snapshots,
         &state,
@@ -429,6 +428,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         claim_label,
         0,
         "proof entry",
+        &assumptions_from_propositions(&pure_facts),
     )?;
     let mut initial = ExecutionProofState::at_entry(
         state,
@@ -453,8 +453,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
                 "could not check the function entry resources: {}",
                 crate::surface::diagnostics::describe_runtime_error(
                     &error,
-                    parsed_function.parameters(),
-                    &arguments,
+                    ParameterBinding::new(parsed_function.parameters(), &arguments),
                 ),
             ))
         })?;
@@ -600,10 +599,10 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         .map_err(|error| error.at_declaration(function_block.signature().name()))?;
     // A shared context was built for an earlier claim; name this function's
     // parameters for diagnostics as building it would have.
-    crate::surface::proof_diagnostics::render::enter_ambient_naming(
+    crate::surface::proof_diagnostics::render::enter_ambient_naming(ParameterBinding::new(
         parsed_function.parameters(),
         &arguments,
-    );
+    ));
     let entry_context = Arc::new(ProofEntryContext {
         state: state.clone(),
         arguments: arguments.clone(),
@@ -643,9 +642,8 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     let state = install_borrowed_contract_inputs(
         state,
         &function,
-        &arguments,
         &pure_facts,
-        parsed_function.parameters(),
+        ParameterBinding::new(parsed_function.parameters(), &arguments),
         &proof_label,
     )?;
     let function_entry_state = c_function_entry_state_with_assumptions(
@@ -692,7 +690,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
     };
     let frontier = ExecutionFrontier::default();
     let mut recorded_snapshots = RecordedSnapshots::new();
-    record_current_statement_entry(
+    record_current_statement_entry_with_assumptions(
         &frontier,
         &mut recorded_snapshots,
         &state,
@@ -702,6 +700,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         &proof_label,
         0,
         "proof entry",
+        &assumptions_from_propositions(&pure_facts),
     )?;
     let mut initial = ExecutionProofState::at_entry(
         state,
@@ -726,8 +725,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
                 "could not check the function entry resources: {}",
                 crate::surface::diagnostics::describe_runtime_error(
                     &error,
-                    parsed_function.parameters(),
-                    &arguments,
+                    ParameterBinding::new(parsed_function.parameters(), &arguments),
                 ),
             ))
         })?;
@@ -1364,7 +1362,6 @@ fn close_claim_directly_from_outcome<'a>(
     function: &CFunction,
     claim: &FunctionClaimRef<'_>,
     pre_state: &CState,
-    arguments: &[CExpression],
     outcome: &CFunctionOutcome,
     surface_goal: &ClickProposition,
     rewrite_equalities: &[ClickProposition],
@@ -1373,7 +1370,7 @@ fn close_claim_directly_from_outcome<'a>(
     path_index: usize,
     entry_facts: &[Proposition],
     execution_paths: &[crate::kernel::CFunctionExecutionCandidate],
-    parameters: &[syntax::C0Parameter],
+    parameter_binding: ParameterBinding<'_>,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Result<Proof<'a>, ClickError>, ClickError> {
     let surface = describe_click_proposition(surface_goal);
@@ -1383,14 +1380,14 @@ fn close_claim_directly_from_outcome<'a>(
         ))))
     };
     if !claim.applies_to(outcome) {
-        return failure(describe_function_outcome(outcome, parameters, arguments));
+        return failure(describe_function_outcome(outcome, parameter_binding));
     }
     let root = outcome_root.clone();
     let kernel_goal = kernel_claim_goal(
         function,
         claim,
         pre_state,
-        arguments,
+        parameter_binding.arguments,
         outcome,
         root.facts().assumptions(),
         &[],
@@ -1448,18 +1445,16 @@ fn close_claim_directly_from_outcome<'a>(
             ClickProposition::Comparison { left, right, .. },
             CFunctionOutcome::Return { value, state },
         ) => {
-            let values = parameter_values(parameters, arguments).unwrap_or_default();
-            let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+            let values = parameter_values(parameter_binding).unwrap_or_default();
+            let array_refs =
+                array_refs_for_parameters(parameter_binding.parameters, &values, state.memory());
             let evaluate = |expression: &ContractExpression| {
                 evaluate_fixed_state_expression_through_kernel(
                     expression,
                     root.facts().assumptions(),
                     &values,
                     &array_refs,
-                    pre_state,
-                    state,
-                    Some(value),
-                    &RecordedSnapshots::new(),
+                    FixedStateFrame::new(pre_state, state, Some(value), &RecordedSnapshots::new()),
                     spec_definitions,
                     &BTreeSet::new(),
                 )
@@ -1467,16 +1462,15 @@ fn close_claim_directly_from_outcome<'a>(
             };
             match (evaluate(left), evaluate(right)) {
                 (Some(kernel_left), Some(kernel_right)) => {
-                    let rendered_left = describe_c_value(&kernel_left, parameters, arguments);
-                    let rendered_right = describe_c_value(&kernel_right, parameters, arguments);
+                    let rendered_left = describe_c_value(&kernel_left, parameter_binding);
+                    let rendered_right = describe_c_value(&kernel_right, parameter_binding);
                     // Two reads of one address of different kinds are two
                     // values whatever happened in between: say that, and not
                     // which snapshot or store set them apart.
                     if let Some(mismatch) = crate::surface::diagnostics::describe_load_kind_mismatch(
                         &kernel_left,
                         &kernel_right,
-                        parameters,
-                        arguments,
+                        parameter_binding,
                     ) {
                         format!(
                             "; left side evaluated to {rendered_left}, right side evaluated to \
@@ -1518,8 +1512,7 @@ fn close_claim_directly_from_outcome<'a>(
                                 &kernel_right,
                                 left_role,
                                 right_role,
-                                parameters,
-                                arguments,
+                                parameter_binding,
                             )
                             .map(|mismatch| format!("; {mismatch}"))
                             .unwrap_or_default();
@@ -1546,22 +1539,18 @@ fn close_claim_directly_from_outcome<'a>(
                                     } else {
                                         role
                                     },
-                                    parameters,
-                                    arguments,
+                                    parameter_binding,
                                 )
                             };
                             let unseparated = describe_read_address_mismatch(
                                 &kernel_left,
                                 &kernel_right,
-                                parameters,
-                                arguments,
+                                parameter_binding,
                             )
                             .map(|mismatch| format!("; {mismatch}"))
+                            .or_else(|| describe_unseparated_write(&kernel_left, parameter_binding))
                             .or_else(|| {
-                                describe_unseparated_write(&kernel_left, parameters, arguments)
-                            })
-                            .or_else(|| {
-                                describe_unseparated_write(&kernel_right, parameters, arguments)
+                                describe_unseparated_write(&kernel_right, parameter_binding)
                             })
                             .or_else(|| {
                                 model_field(&kernel_left, snapshot_role(left))
@@ -1601,8 +1590,7 @@ fn close_claim_directly_from_outcome<'a>(
         &path_facts,
         &path_case_facts(entry_facts, execution_paths, path_index),
         resource_facts,
-        parameters,
-        arguments,
+        parameter_binding,
     );
     let error = proof.step_error(format!(
         "`ensures {surface}` failed for `{claim_label}` path {path_index}: unclosed goal: {surface}{evaluated_sides}\n{context}"
@@ -1706,6 +1694,9 @@ pub(super) fn finish_ordered_proof<'a>(
     certificate_tactics: &std::sync::Arc<[ProofTactic]>,
     claim_surface_builders: &mut Vec<(VerifiedClaim, ProofCertificateBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let spec_definitions =
+        spec_definitions.with_struct_layouts(resource_environment.struct_layouts());
+    let parameter_binding = ParameterBinding::new(parsed_function.parameters(), arguments);
     let proof_label = if require_explicit_closers {
         function_block.contract_claim_label()
     } else {
@@ -1823,6 +1814,7 @@ pub(super) fn finish_ordered_proof<'a>(
         // step, which completion reads per path. They are not entry
         // assumptions of the whole function; inside a proof-level `if` arm
         // they hold only under that arm's case.
+
         certification_facts.extend(
             proof_execution
                 .presentation
@@ -2096,8 +2088,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             describe_refuted_proof_obligation(
                                 refuted,
                                 &path_base_facts.to_vec(),
-                                parsed_function.parameters(),
-                                arguments,
+                                parameter_binding,
                             )
                         )));
                     }
@@ -2108,8 +2099,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 &missing_obligations,
                                 &path_base_facts.to_vec(),
                                 pre_state.resources().facts(),
-                                parsed_function.parameters(),
-                                arguments,
+                                parameter_binding,
                                 path.facts()
                             )
                         )));
@@ -2152,8 +2142,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 } => surface_branch_path_for_outcome(
                                     &deferred.branch_skeleton,
                                     &path_requirements,
-                                    parsed_function.parameters(),
-                                    arguments,
+                                    parameter_binding,
                                     pre_state,
                                     post_state,
                                     result,
@@ -2690,10 +2679,13 @@ pub(super) fn finish_ordered_proof<'a>(
                                             prepared.begin_have(have.proposition.clone())?;
                                         let source_proof = have.checking_proof();
                     let selected = match source_proof.as_ref() {
+                                            SourceProof::Tactic(SmartTactic::Auto) => {
+                                                scope.try_auto_fact_closure()?
+                                            }
                                             SourceProof::Default
-                                            | SourceProof::Tactic(
-                                                SmartTactic::Auto | SmartTactic::Simp,
-                                            ) => scope.try_simp_closure()?,
+                                            | SourceProof::Tactic(SmartTactic::Simp) => {
+                                                scope.try_simp_closure()?
+                                            }
                                             SourceProof::Script(tactics) => {
                                                 scope.try_authoritative_linear_script(tactics)?
                                             }
@@ -2792,8 +2784,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                 let candidates = if premises.is_none() {
                                     Some(fact_transport_candidates_at_outcome(
                                         &transport_available.to_vec(),
-                                        parsed_function.parameters(),
-                                        arguments,
+                                        ParameterBinding::new(
+                                            parsed_function.parameters(),
+                                            arguments,
+                                        ),
                                         pre_state,
                                         post_state,
                                         result,
@@ -3208,8 +3202,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 lower_ensure_proposition_goal(
                                             &path_requirements,
                                             surface_goal,
-                                            parsed_function.parameters(),
-                                            arguments,
+                                            parameter_binding,
                                             pre_state,
                                             &outcome,
                                             spec_definitions,
@@ -3519,8 +3512,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             lower_ensure_proposition_goal(
                                                 &path_requirements,
                                                 surface_goal,
-                                                parsed_function.parameters(),
-                                                arguments,
+                                                parameter_binding,
                                                 pre_state,
                                                 &outcome,
                                                 spec_definitions,
@@ -3799,8 +3791,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             lower_ensure_proposition_goal(
                                                 &path_requirements,
                                                 surface_goal,
-                                                parsed_function.parameters(),
-                                                arguments,
+                                                parameter_binding,
                                                 pre_state,
                                                 &outcome,
                                                 spec_definitions,
@@ -4293,7 +4284,6 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         function,
                                                         &claims[claim_index],
                                                         pre_state,
-                                                        arguments,
                                                         &outcome,
                                                         surface_goal,
                                                         equalities,
@@ -4302,7 +4292,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         path_index,
                                                         entry_pure_facts.as_slice(),
                                                         execution.paths(),
-                                                        parsed_function.parameters(),
+                                                        parameter_binding,
                                                         spec_definitions,
                                                     )?
                                                     .err()
@@ -4539,7 +4529,6 @@ pub(super) fn finish_ordered_proof<'a>(
                                         function,
                                         claim,
                                         pre_state,
-                                        arguments,
                                         &outcome,
                                         surface_goal,
                                         &rewrite_claim_equalities[claim_index],
@@ -4548,7 +4537,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                         path_index,
                                         entry_pure_facts.as_slice(),
                                         execution.paths(),
-                                        parsed_function.parameters(),
+                                        ParameterBinding::new(
+                                            parsed_function.parameters(),
+                                            arguments,
+                                        ),
                                         spec_definitions,
                                     )? {
                                         reasons.push(reason.raw_summary().to_owned());
@@ -4678,8 +4670,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     .cloned()
                                                     .map(Box::new),
                                             },
-                                            parsed_function.parameters(),
-                                            arguments,
+                                            ParameterBinding::new(
+                                                parsed_function.parameters(),
+                                                arguments
+                                            ),
                                         ),
                                         outcome_substrate
                                             .describe_outcome_statement_site(path_index),
@@ -4691,8 +4685,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                         "`{proof_label}` path {path_index}: C operation could not be verified: {}{}",
                                         describe_runtime_error(
                                             &error,
-                                            parsed_function.parameters(),
-                                            arguments,
+                                            ParameterBinding::new(
+                                                parsed_function.parameters(),
+                                                arguments
+                                            ),
                                         ),
                                         outcome_substrate
                                             .describe_outcome_statement_site(path_index),
@@ -4751,7 +4747,6 @@ pub(super) fn finish_ordered_proof<'a>(
                                     function,
                                     claim,
                                     pre_state,
-                                    arguments,
                                     &outcome,
                                     surface_goal,
                                     &rewrite_claim_equalities[claim_index],
@@ -4760,7 +4755,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     path_index,
                                     entry_pure_facts.as_slice(),
                                     execution.paths(),
-                                    parsed_function.parameters(),
+                                    parameter_binding,
                                     spec_definitions,
                                 )? {
                                     Ok(completed) => {
@@ -4798,8 +4793,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                         "`{claim_label}` failed on path {path_index}: {}",
                                         describe_function_outcome(
                                             &outcome,
-                                            parsed_function.parameters(),
-                                            arguments
+                                            ParameterBinding::new(
+                                                parsed_function.parameters(),
+                                                arguments
+                                            )
                                         )
                                     )))
                                 }
@@ -5800,8 +5797,7 @@ mod evidence_tests {
             &facts,
             resource,
             clause.borrowed(),
-            &[],
-            arguments,
+            ParameterBinding::new(&[], arguments),
             state,
             state,
             outcome,

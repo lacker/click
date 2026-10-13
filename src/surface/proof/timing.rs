@@ -141,7 +141,6 @@ impl TacticTiming {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn named_at_path(
         claim_label: &str,
         name: &str,

@@ -3,14 +3,17 @@ use super::*;
 
 mod contract_evaluation;
 mod integer_affine_planner;
+mod integer_refutation_planner;
 mod predicates;
 mod segments;
 mod signed_arithmetic_planner;
 mod simp;
+mod simplex;
 mod special_arithmetic_planner;
 use crate::kernel::memory_effect_write_pointers;
 pub(super) use contract_evaluation::*;
 pub(super) use integer_affine_planner::*;
+pub(super) use integer_refutation_planner::*;
 pub(super) use predicates::*;
 pub(super) use segments::*;
 #[allow(unused_imports)]
@@ -154,8 +157,7 @@ pub(super) fn prove_ensure_resource<'e>(
     available_pure_facts: &(impl PropositionSource + ?Sized),
     resource: &ResourceClause,
     borrowed: bool,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     entry_state: &CState,
     outcome: &CFunctionOutcome,
@@ -179,15 +181,14 @@ pub(super) fn prove_ensure_resource<'e>(
         else {
             return Err(ClickError::new(format!(
                 "`{claim_label}` failed on path {path_index}: {}\n{}",
-                describe_function_outcome(outcome, parameters, arguments),
+                describe_function_outcome(outcome, parameter_binding),
                 describe_proof_context(
                     &available_pure_facts
                         .propositions()
                         .cloned()
                         .collect::<Vec<_>>(),
                     pre_state.resources().facts(),
-                    parameters,
-                    arguments,
+                    parameter_binding,
                     execution_pure_facts
                 )
             )));
@@ -219,8 +220,7 @@ pub(super) fn prove_ensure_resource<'e>(
         let lower_at = |clause_state: &CState| {
             lower_resource_clause_facts_at_state_with_result_and_entry(
                 resource,
-                parameters,
-                arguments,
+                parameter_binding,
                 entry_state,
                 clause_state,
                 result,
@@ -294,7 +294,7 @@ pub(super) fn prove_ensure_resource<'e>(
                 | ResourceClause::ViewMemory(_)
                 | ResourceClause::MemoryAggregate { .. }
         ) {
-            requirement = Some(describe_resource_fact(expected, parameters, arguments));
+            requirement = Some(describe_resource_fact(expected, parameter_binding));
         }
         Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: {}",
@@ -305,8 +305,7 @@ pub(super) fn prove_ensure_resource<'e>(
                     .cloned()
                     .collect::<Vec<_>>(),
                 post_state.resources().facts(),
-                parameters,
-                arguments,
+                parameter_binding,
                 execution_pure_facts
             )
         )))
@@ -451,8 +450,7 @@ pub(super) fn apply_witness_tactic(
 pub(super) fn lower_ensure_proposition_goal(
     available_pure_facts: &(impl PropositionSource + ?Sized),
     proposition: &ClickProposition,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
+    parameter_binding: ParameterBinding<'_>,
     pre_state: &CState,
     outcome: &CFunctionOutcome,
     spec_definitions: SpecDefinitions<'_>,
@@ -463,8 +461,7 @@ pub(super) fn lower_ensure_proposition_goal(
         return Err("the execution path does not return".to_string());
     };
     let proposition = lower_outcome_proposition_with_recorded_snapshots(
-        parameters,
-        arguments,
+        parameter_binding,
         pre_state,
         state,
         value,

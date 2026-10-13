@@ -6,6 +6,22 @@ use super::*;
 #[path = "native_slice_input_tests.rs"]
 mod native_slice_input_tests;
 
+/// Build only fresh symbolic declaration parameter storage. Descriptor-field
+/// prerequisites cannot be checked until its independently declared fields
+/// are named. This local staging declaration never escapes: source/universal
+/// entry producers subsequently assume the original declared prerequisites,
+/// and executable calls always bind against the original strict interface.
+pub(crate) fn materialize_symbolic_declaration_parameters(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+) -> Option<CState> {
+    let staging = function
+        .clone()
+        .with_native_span_expression_inputs(Vec::new());
+    crate::kernel::c_function_entry_state(state, &staging, arguments)
+}
+
 /// Source-obligation setup only. The same interface is validated at actual
 /// calls by `bind`; an input spelling is never treated as a fresh allocation.
 pub(crate) fn assume_scalar_object_inputs(
@@ -215,6 +231,15 @@ pub(super) fn bind(
             return None;
         }
     }
+    // These expressions refer to the already-bound parameter objects. Loads
+    // retain normal byte ownership/initialization checks; only geometry is an
+    // independent prerequisite.
+    let expression_inputs = super::native_span_inputs::check_native_span_requirements(
+        callee,
+        interface.native_span_expression_inputs(),
+        assumptions,
+    );
+    expression_inputs.ok()?;
     Some(())
 }
 

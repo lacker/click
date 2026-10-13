@@ -2457,6 +2457,12 @@ impl PureFactContext {
     }
 
     pub(crate) fn proves_resource_contains(&self, parent: &CResource, child: &CResource) -> bool {
+        if let (CResource::Memory(parent_range), CResource::Memory(child_range)) = (parent, child) {
+            return self.with_selected_pointer_read_frames(
+                &[parent_range.base(), child_range.base()],
+                |context| context.proves_resource_contains_inner(parent, child),
+            );
+        }
         self.proves_resource_contains_inner(parent, child)
     }
 
@@ -2690,6 +2696,12 @@ impl PureFactContext {
     }
 
     pub(crate) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
+        if let (CResource::Memory(left_range), CResource::Memory(right_range)) = (left, right) {
+            return self.with_selected_pointer_read_frames(
+                &[left_range.base(), right_range.base()],
+                |context| context.proves_resource_separate_inner(left, right),
+            );
+        }
         self.proves_resource_separate_inner(left, right)
     }
 

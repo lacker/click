@@ -53,7 +53,6 @@ pub(in crate::surface::proof) fn check_unfold_predicate_in_facts(
 
 /// Checks the existing deterministic `unfold predicate` transition against
 /// the persistent facts owned by `Proof`.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn check_unfold_predicate_facts(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,

@@ -60,7 +60,7 @@ int32 write_zero(struct buffer* buffer) {
             unfold(prefix);
             step();
             have buffer->data[0] == 0 by {
-                normalize();
+                simp();
             }
             have forall (k: int32) {
                 0 <= k and k < end implies buffer->data[k] == 0
@@ -80,7 +80,7 @@ int32 write_zero(struct buffer* buffer) {
                     }
                 }
                 rewrite(k == 0);
-                normalize();
+                simp();
             }
             let prefix = fold(zero_prefix(buffer), {
                 tag: PrefixTag::End(end)

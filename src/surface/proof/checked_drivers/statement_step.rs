@@ -12,7 +12,6 @@ pub(in crate::surface::proof) struct CheckedStatementStep {
 /// This is the audited semantic operation shared by explicit source check
 /// and the checked proof-object frontier. It performs no premise selection;
 /// the proof's facts and resources are the transition context.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn check_statement_step(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
@@ -36,7 +35,6 @@ pub(in crate::surface::proof) fn check_statement_step(
 /// Checks one statement with the caller-selected prerequisite policy. The
 /// source-backed retry policy shares Contextual derivation and differs only in
 /// exposing a supported call carrier before hidden derivation.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::surface::proof) fn check_statement_step_with_policy(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
@@ -65,7 +63,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
     let loop_step_policy = LoopStepPolicy::EnterBody;
     // Resuming from a completed branch region reaches this statement without
     // recording its entry snapshot. Later facts may still name this boundary.
-    record_current_statement_entry(
+    record_current_statement_entry_with_assumptions(
         &execution.core.frontier,
         &mut execution.presentation.recorded_snapshots,
         state,
@@ -75,6 +73,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
         claim_label,
         tactic_index,
         tactic_name,
+        assumptions,
     )?;
     let pre_state = proof_context
         .old_reference_state(&execution.core.frontier, state)
@@ -87,12 +86,8 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             let proposition = lower_fixed_state_proposition_with_assumptions(
                 &case.condition,
                 assumptions,
-                parsed_function.parameters(),
-                arguments,
-                &pre_state,
-                state,
-                None,
-                &execution.presentation.recorded_snapshots,
+                ParameterBinding::new(parsed_function.parameters(), arguments),
+                FixedStateFrame::new(&pre_state, state, None, &execution.presentation.recorded_snapshots),
                 SpecDefinitions::new(predicate_environment, click_function_environment),
             )
             .map_err(|message| {
@@ -159,6 +154,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             StatementFactTransportPolicy::None,
             loop_step_policy,
             selected_context,
+            requirement_pure_facts.assumptions(),
         )
     };
     let successor = match apply(prerequisite_policy, context) {

@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 
 use super::schema::{
     CppExceptionBehavior, CppExport, CppLibraryAssertion, CppPreprocessorFile, CppProfile,
-    CppStatement, EXPORT_SCHEMA, LANGUAGE, MAX_PREPROCESSOR_FILES, STANDARD, TARGET,
+    CppStatement, DECLARED_UINT32_BYTE_GUARANTEE, EXPORT_SCHEMA, LANGUAGE, MAX_PREPROCESSOR_FILES,
+    STANDARD, TARGET,
 };
 use crate::cli::write_file_atomically;
 use crate::languages::compiler_process::{CompilerLimits, run_compiler};
@@ -41,6 +42,7 @@ struct PreparedInner {
     logical_source: String,
     identity: String,
     export: CppExport,
+    dependency_digests: BTreeMap<String, String>,
     execution: crate::languages::ExecutionCache,
 }
 
@@ -55,6 +57,42 @@ impl PreparedCppImport {
 
     pub fn export(&self) -> &CppExport {
         &self.inner.export
+    }
+
+    pub fn byte_representation_assumption(&self) -> String {
+        self.export().profile.byte_representation_assumption()
+    }
+
+    /// Explicit source-to-model equivalence assumptions for selected pinned
+    /// library declarations. Their model bodies still require checked proofs.
+    pub fn library_model_equivalence_assumptions(&self) -> Vec<String> {
+        super::library_models::assumptions(self)
+    }
+
+    /// Exact model proof names, reconstructed through the same declaration
+    /// naming table as executable lowering. These are proof dependencies,
+    /// never unverified semantic effects.
+    pub(crate) fn library_model_function_names(
+        &self,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        let declarations =
+            std::iter::once(&self.export().function).chain(&self.export().reachable_functions);
+        let names = super::names::ResolvedNames::new(
+            declarations
+                .clone()
+                .map(|function| (function.declaration_id.as_str(), function.name.as_str())),
+        )?;
+        declarations
+            .filter(|source| super::library_models::selected(self, source).is_some())
+            .map(|source| names.require(&source.declaration_id).map(str::to_string))
+            .collect()
+    }
+
+    pub(super) fn dependency_digest(&self, logical_path: &str) -> Option<&str> {
+        self.inner
+            .dependency_digests
+            .get(logical_path)
+            .map(String::as_str)
     }
 
     pub(crate) fn prepared_execution(
@@ -73,6 +111,8 @@ struct Config {
     language: String,
     standard: String,
     target: String,
+    #[serde(default = "default_byte_representation_guarantee")]
+    byte_representation_guarantee: String,
     exceptions: bool,
     #[serde(default)]
     exception_behavior: CppExceptionBehavior,
@@ -89,6 +129,10 @@ struct Config {
     artifact: String,
     #[serde(skip)]
     directory: PathBuf,
+}
+
+fn default_byte_representation_guarantee() -> String {
+    DECLARED_UINT32_BYTE_GUARANTEE.into()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -405,6 +449,7 @@ fn load_import_inner(config_path: &Path) -> Result<PreparedCppImport, String> {
             logical_source: config.logical_source,
             identity,
             export,
+            dependency_digests: lock.dependencies,
             execution: Default::default(),
         }),
     })
@@ -426,6 +471,9 @@ fn decode_artifact(
         config.rtti,
         &config.dependencies,
     )?;
+    if export.profile.byte_representation_guarantee != config.byte_representation_guarantee {
+        return Err("C++ byte representation guarantee differs from the configured profile".into());
+    }
     validate_standard_byte_declarations(&export, config, dependencies)?;
     // One explicit statement walk; contract lookup never scans the inventory per site.
     let contracts: BTreeMap<_, _> = config
@@ -442,6 +490,23 @@ fn decode_artifact(
         .iter()
         .map(|(header, path)| (header.as_str(), path.to_string_lossy()))
         .collect();
+    for function in std::iter::once(&export.function).chain(&export.reachable_functions) {
+        if let Some(header) = function
+            .axiom
+            .as_ref()
+            .and_then(|axiom| axiom.declaration_header.as_deref())
+        {
+            let file = dependency_files
+                .get(header)
+                .ok_or("C++ axiom declaration header must belong to the locked dependencies")?;
+            if !metadata_files.contains(file.as_ref()) {
+                return Err(
+                    "C++ axiom declaration header must belong to the locked preprocessor closure"
+                        .into(),
+                );
+            }
+        }
+    }
     let mut pending = vec![export.function.body.as_slice()];
     pending.extend(
         export
@@ -708,6 +773,12 @@ fn validate_config(config: &Config) -> Result<(), String> {
     {
         return Err(format!(
             "C++ import config must use schema {CONFIG_SCHEMA}, Clang {STANDARD} for {TARGET}"
+        ));
+    }
+    if config.byte_representation_guarantee != DECLARED_UINT32_BYTE_GUARANTEE {
+        return Err(format!(
+            "unsupported configured C++ byte representation guarantee `{}`; expected {DECLARED_UINT32_BYTE_GUARANTEE}",
+            config.byte_representation_guarantee
         ));
     }
     if matches!(config.exception_behavior, CppExceptionBehavior::ScalarInt32) && !config.exceptions
@@ -1043,5 +1114,87 @@ fn bounded_error(error: String) -> String {
             "{}... [diagnostic truncated]",
             error.chars().take(MAX_CHARS).collect::<String>()
         )
+    }
+}
+
+#[cfg(test)]
+mod byte_profile_tests {
+    use super::*;
+
+    fn config() -> Config {
+        serde_json::from_value(serde_json::json!({
+            "schema": CONFIG_SCHEMA,
+            "language": LANGUAGE,
+            "standard": STANDARD,
+            "target": TARGET,
+            "exceptions": false,
+            "rtti": false,
+            "exporter": "exporter",
+            "compilation_database": "compile_commands.json",
+            "working_directory": ".",
+            "source": "fixture.cpp",
+            "logical_source": "fixture.cpp",
+            "dependencies": [],
+            "function": "probe",
+            "artifact": "fixture.click-cpp.json"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn configured_uint32_byte_guarantee_defaults_to_supported_version_and_refuses_other_profiles() {
+        let mut config = config();
+        assert_eq!(
+            config.byte_representation_guarantee,
+            DECLARED_UINT32_BYTE_GUARANTEE
+        );
+        validate_config(&config).unwrap();
+        for profile in [
+            "",
+            "literal_cpp20",
+            "arbitrary_object_bytes_v1",
+            "clang19_1_7_lp64_le_declared_uint32_bytes_v2",
+        ] {
+            config.byte_representation_guarantee = profile.into();
+            assert!(validate_config(&config).is_err(), "unsupported {profile}");
+        }
+    }
+
+    #[test]
+    fn byte_guarantee_and_target_dimensions_participate_in_import_identity() {
+        let profile: CppProfile = serde_json::from_value(serde_json::json!({
+            "byte_representation_guarantee": DECLARED_UINT32_BYTE_GUARANTEE,
+            "byte_order": "little", "byte_width": 8,
+            "pointer_width": 64, "long_width": 64, "uint32_width": 32,
+            "frontend": "clang", "frontend_version": "clang version 19.1.7",
+            "standard": STANDARD, "target": TARGET,
+            "exceptions": false, "rtti": false,
+            "compilation_directory": "/fixture", "compilation_file": "fixture.cpp",
+            "compilation_command": ["clang++"]
+        }))
+        .unwrap();
+        let identity = |profile: &CppProfile| {
+            semantic_identity(
+                "config",
+                "database",
+                "source",
+                "logical",
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                "exporter",
+                "artifact",
+                profile,
+            )
+        };
+        let supported = identity(&profile);
+        for change in 0..3 {
+            let mut changed = profile.clone();
+            match change {
+                0 => changed.byte_representation_guarantee.push_str("_changed"),
+                1 => changed.byte_order = "big".into(),
+                _ => changed.pointer_width = 32,
+            }
+            assert_ne!(supported, identity(&changed));
+        }
     }
 }

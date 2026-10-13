@@ -1173,7 +1173,14 @@ fn c_function_contract_entry_facts(
         return Err(message.into());
     }
     let mut budget = ExecutionBudget::beside_live_state();
-    let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
+    // Certification derives the declared entry premises below. Defer only
+    // expression geometry during this declaration-only bootstrap; the original
+    // interface is checked again once its requires clauses have been lowered.
+    let staging_function = function
+        .clone()
+        .with_native_span_expression_inputs(Vec::new());
+    let Some(mut entry_state) = c_function_entry_state(caller_state, &staging_function, arguments)
+    else {
         return Err("could not build the contract entry state from the call arguments".to_string());
     };
     if function
@@ -1193,7 +1200,7 @@ fn c_function_contract_entry_facts(
             })?;
         entry_state = match prepare_function_contract_entry_state_with_values(
             caller_state,
-            function,
+            &staging_function,
             &argument_values,
             &assumptions,
             &mut budget,
@@ -1334,6 +1341,14 @@ fn c_function_contract_entry_facts(
             path.proposition.clone(),
         );
     }
+    // This is a contract-certification entry, not an executable call: only
+    // independently lowered declared premises justify the final strict bind.
+    entry_state =
+        c_function_entry_state_with_assumptions(caller_state, function, arguments, &assumptions)
+            .ok_or_else(|| {
+                "could not validate the contract entry arguments against the declared prerequisites"
+                    .to_string()
+            })?;
     let quantity_assumptions = match quantified_resource_requirement_assumptions(
         &entry_state,
         function.resource_requires(),

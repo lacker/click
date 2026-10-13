@@ -39,7 +39,10 @@ impl Proof<'_> {
             Some(ClickProposition::Comparison { left, right, .. }) => vec![left, right],
             _ => vec![],
         };
-        let recent = view.recorded_snapshots.recent(MAX_TRACE_SNAPSHOTS);
+        let recent = view
+            .fixed_state
+            .recorded_snapshots
+            .recent(MAX_TRACE_SNAPSHOTS);
         let function = match self.context.as_ref() {
             ProofContext::Execution(context) => Some(context.parsed_function),
             _ => None,
@@ -102,8 +105,7 @@ impl Proof<'_> {
                     crate::surface::diagnostics::local_naming_tables_with_source(state, function);
                 if let Some(text) = crate::surface::diagnostics::diagnostic_source_pointer_cell(
                     &address,
-                    &parameters,
-                    &arguments,
+                    ParameterBinding::new(&parameters, &arguments),
                     None,
                 ) {
                     return Some(PointerTraceView {
@@ -134,8 +136,7 @@ impl Proof<'_> {
                 let base_point = crate::surface::diagnostics::describe_snapshot_selector(selector);
                 if let Some(text) = crate::surface::diagnostics::diagnostic_source_pointer_cell(
                     &address,
-                    &parameters,
-                    &arguments,
+                    ParameterBinding::new(&parameters, &arguments),
                     Some(&base_point),
                 ) {
                     return Some(PointerTraceView {
