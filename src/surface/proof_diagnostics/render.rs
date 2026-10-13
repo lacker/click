@@ -911,6 +911,7 @@ impl Renderer<'_> {
                 memory,
                 pointer,
                 place_type,
+                range,
                 ..
             } => {
                 self.push("valid_place(memory=");
@@ -918,6 +919,13 @@ impl Renderer<'_> {
                 self.push(", pointer=");
                 self.pointer(pointer.pointer());
                 self.fmt(format_args!(", type={place_type:?}"));
+                if let Some((start, end)) = range {
+                    self.push(", range=[");
+                    self.integer(start.as_ref());
+                    self.push("..");
+                    self.integer(end.as_ref());
+                    self.push("]");
+                }
                 self.push(")");
             }
             Proposition::CMemoryInitialized {

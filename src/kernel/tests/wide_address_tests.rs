@@ -589,3 +589,65 @@ fn wide_pointer_subtraction_preserves_unsigned_magnitude_and_bounds() {
         }
     }
 }
+
+#[test]
+fn native_reference_binding_uses_geometry_without_byte_permission_or_initialization() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let input = CPointerValue::new(Pointer::symbolic(Variable(989_831)), CType::Int32Pointer)
+        .with_designation(PointerDesignation::Unresolved(Variable(989_831)));
+    let memory = CMemory::new()
+        .with_native_input_span(
+            input.clone(),
+            CType::Int32,
+            IntegerTerm::constant_i64(3).into(),
+        )
+        .unwrap();
+    let state = CState::new()
+        .with_memory(memory)
+        .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+    let selected = input
+        .clone()
+        .with_pointer(input.pointer().offset_by_bytes(4));
+    let expression = c_checked_object_address(c_typed_load(
+        CExpression::Value(CValue::Pointer(selected.clone())),
+        CType::Int32,
+    ));
+    assert_eq!(value(&state, expression), CValue::Pointer(selected.clone()));
+    assert!(state.resources().facts().is_empty());
+    assert!(!state.memory().has_initialized_bytes_under(
+        selected.pointer(),
+        4,
+        &PureFactContext::new()
+    ));
+    assert!(!matches!(
+        outcome(
+            &state,
+            c_typed_load(CExpression::Value(CValue::Pointer(selected)), CType::Int32)
+        ),
+        CExpressionOutcome::Value(_)
+    ));
+    let one_past = input
+        .clone()
+        .with_pointer(input.pointer().offset_by_bytes(12));
+    assert!(
+        prove_c_expression_evaluation(
+            state.clone(),
+            c_checked_object_address(c_typed_load(
+                CExpression::Value(CValue::Pointer(one_past)),
+                CType::Int32
+            ))
+        )
+        .is_none()
+    );
+    let forged = CPointerValue::new(input.pointer().clone(), input.c_type());
+    assert!(
+        prove_c_expression_evaluation(
+            state,
+            c_checked_object_address(c_typed_load(
+                CExpression::Value(CValue::Pointer(forged)),
+                CType::Int32
+            ))
+        )
+        .is_none()
+    );
+}

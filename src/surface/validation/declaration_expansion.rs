@@ -2251,9 +2251,17 @@ fn expand_declared_resource_proposition_one(
             expression: expand_declared_resource_expression(expression, resource_definitions)?,
         }),
         ClickProposition::ValidPlace {
+            range,
             expression,
             pointee_struct,
         } => Ok(ClickProposition::ValidPlace {
+            range: match range {
+                Some((start, end)) => Some((
+                    expand_declared_resource_expression(start, resource_definitions)?,
+                    expand_declared_resource_expression(end, resource_definitions)?,
+                )),
+                None => None,
+            },
             pointee_struct: pointee_struct.clone(),
             expression: expand_declared_resource_expression(expression, resource_definitions)?,
         }),

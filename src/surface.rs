@@ -1677,6 +1677,7 @@ pub enum ClickProposition {
     ValidPlace {
         expression: ContractExpression,
         pointee_struct: Option<String>,
+        range: Option<(ContractExpression, ContractExpression)>,
     },
     Defined {
         expression: ContractExpression,
@@ -1771,9 +1772,11 @@ fn clone_click_proposition_atom(proposition: &ClickProposition) -> ClickProposit
             expression: expression.clone(),
         },
         ClickProposition::ValidPlace {
+            range,
             expression,
             pointee_struct,
         } => ClickProposition::ValidPlace {
+            range: range.clone(),
             pointee_struct: pointee_struct.clone(),
             expression: expression.clone(),
         },
@@ -2348,9 +2351,17 @@ fn collect_current_proposition_variables(
             ClickProposition::Initialized { segment } | ClickProposition::Loadable { segment } => {
                 collect_current_segment_variables(segment, names);
             }
-            ClickProposition::Defined { expression }
-            | ClickProposition::ValidPlace { expression, .. } => {
+            ClickProposition::Defined { expression } => {
                 collect_current_contract_expression_variables(expression, names);
+            }
+            ClickProposition::ValidPlace {
+                expression, range, ..
+            } => {
+                collect_current_contract_expression_variables(expression, names);
+                if let Some((start, end)) = range {
+                    collect_current_contract_expression_variables(start, names);
+                    collect_current_contract_expression_variables(end, names);
+                }
             }
             // The proposition itself is anchored, so current-local writes cannot
             // change its meaning even if its body contains a C fragment.

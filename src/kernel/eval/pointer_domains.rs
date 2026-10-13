@@ -331,6 +331,29 @@ fn resolved_carrier<'a>(
     assumptions: &PureFactContext,
 ) -> Result<std::borrow::Cow<'a, CPointerValue>, PointerDomainRefusal> {
     if matches!(pointer.designation(), Some(PointerDesignation::Loaded(_))) {
+        // A checked call can preserve the full read identity while giving its
+        // result a fresh numeric name. Align that name to the existing read;
+        // the equality supplies coordinates, never a pointer designation.
+        if let Some(PointerDesignation::Loaded(origin)) = pointer.designation()
+            && crate::kernel::memory_provenance::paired_pointer_load_displacement(pointer, origin)
+                .is_none()
+        {
+            let base = Pointer::loaded_value(origin.memory(), origin.address());
+            if let Some(address) = assumptions
+                .equality_graph
+                .pointer_at_base(pointer.pointer(), &base)
+            {
+                let aligned = pointer.clone().with_pointer(address);
+                if crate::kernel::memory_provenance::paired_pointer_load_displacement(
+                    &aligned, origin,
+                )
+                .is_some()
+                {
+                    return resolved_carrier(state, &aligned, assumptions)
+                        .map(|carrier| std::borrow::Cow::Owned(carrier.into_owned()));
+                }
+            }
+        }
         let resolved =
             crate::kernel::memory_provenance::resolve_loaded_pointer_carrier(pointer, assumptions)
                 .or_else(|| {
@@ -2830,6 +2853,74 @@ mod tests {
                 &context
             ),
             Err(PointerDomainRefusal::UnresolvedDesignation)
+        );
+    }
+
+    #[test]
+    fn loaded_result_coordinates_require_both_origin_and_checked_equality() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (mut state, object) = scalar_state();
+        state = state.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+        let cell = CMemory::local_pointer("loaded-result-coordinate-slot");
+        let memory = state
+            .memory()
+            .clone()
+            .with_block(cell.block.clone(), 8)
+            .store(cell.clone(), CValue::Pointer(object));
+        state.set_memory(memory.clone());
+        let read = paired_read(&memory, &cell);
+        let address = Pointer::symbolic(Variable(989_490));
+        let result = read.clone().with_pointer(address.clone());
+        let empty = PureFactContext::new();
+        assert!(
+            checked_pointer_access(
+                &state,
+                &result,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &empty
+            )
+            .is_err()
+        );
+        let facts = empty.assume_condition(
+            ConditionTerm::pointer_equal(address.clone(), read.pointer().clone()),
+            true,
+        );
+        assert!(
+            conditions(checked_pointer_access(
+                &state,
+                &result,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &facts
+            ))
+            .is_empty()
+        );
+        let numeric_only = CPointerValue::new(address, CType::Int32Pointer);
+        assert!(
+            checked_pointer_access(
+                &state,
+                &numeric_only,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &facts
+            )
+            .is_err()
+        );
+        let outside = result.clone().with_pointer(result.offset_by_bytes(4));
+        assert!(
+            conditions(checked_pointer_access(
+                &state,
+                &outside,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &facts
+            ))
+            .contains(&ConditionTerm::Constant(false))
         );
     }
 

@@ -3520,7 +3520,7 @@ fn verify_c0_sources_in_context(
             function_environment = function_environment
                 .without_verified_function_rule(&function_name)
                 .without_verified_function_rule(&executing_name)
-                .without_external_function_rule(&function_name);
+                .without_scoped_external_function_rule(&function_name);
         }
     }
     let partial_rules = function_environment.verified_function_rules();
@@ -3994,6 +3994,7 @@ pub(in crate::surface) fn tactic_expansion_checked_dependencies(
         .filter(|(_, kernel_name, _)| producers.contains(*kernel_name))
         .map(|(name, _, _)| name.to_string())
         .collect::<BTreeSet<_>>();
+
     if selected.is_empty() {
         return Ok(None);
     }
@@ -4027,6 +4028,7 @@ fn carrier_dependency_closure(
 
 fn expansion_dependency_can_produce_carrier(function: &syntax::C0Function) -> bool {
     if function.return_type().is_pointer()
+        || function.returns_reference()
         || function.return_struct_name().is_some()
         || function.prelowered_kernel_function().is_some_and(|kernel| {
             kernel

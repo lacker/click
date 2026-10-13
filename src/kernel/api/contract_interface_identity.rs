@@ -841,9 +841,14 @@ impl Names {
                 self.expression(left);
                 self.expression(right);
             }
-            ValidPlace { pointer: e, .. }
-            | Defined(e)
-            | FloatClassification { expression: e, .. } => self.expression(e),
+            Defined(e) | FloatClassification { expression: e, .. } => self.expression(e),
+            ValidPlace { pointer, range, .. } => {
+                self.expression(pointer);
+                if let Some((start, end)) = range {
+                    self.expression(start);
+                    self.expression(end);
+                }
+            }
             And(a, b) | Or(a, b) | Implies(a, b) => {
                 self.proposition(a);
                 self.proposition(b);

@@ -106,6 +106,19 @@ and bytes). Direct requirements and conjunctions authenticate entry locations;
 callers check the actual full carriers. A requirement under a disjunction,
 implication or quantifier does not unconditionally authenticate a location.
 
+A zero-based typed prefix can be required without backing read permission:
+
+<!-- verified-example: mdtests/valid_place_prefix.md -->
+```click
+requires valid_place(p[0..n]);
+```
+
+This promises the supported typed geometry for the prefix, including its native
+extent bounds. It grants neither access nor initialization. The initial range
+profile supports the scalar types above and 32/64-bit native integer bounds;
+nonzero starts and record-element ranges remain unsupported. An empty prefix
+claims no objects and does not justify pointer formation or dereference.
+
 Requirements are written without fact labels:
 
 <!-- verified-example: mdtests/contract_let_bindings.md -->

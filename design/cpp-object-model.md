@@ -162,6 +162,20 @@ in a validity fact. Ending a lifetime invalidates the current location without
 changing a fact about an earlier snapshot. A disjunctive, conditional or
 quantified requirement is not an unconditional entry promise.
 
+`valid_place(p[0..n])` extends the same judgment to a typed prefix. The
+bounded implementation supports the existing scalar element types and native
+32/64-bit signed or unsigned bounds. The prefix begins at zero and its byte
+extent must fit the admitted pointer-offset profile. Kernel lowering exposes
+those bounds alongside the exact carrier's validity; all are checked at calls.
+An empty prefix claims no objects and permits no pointer formation or access.
+The promise creates neither initialized cells nor backing resources, and does
+not turn a scalar or member domain into a larger array. Nonzero-start intervals
+and record-element ranges remain outside this first implementation.
+
+Native reference formation uses typed location validity for the complete
+referent. A valid location can be uninitialized and need not be readable;
+actual reads and writes still require their own access and initialization rules.
+
 Input array extents must come from a checked declaration or explicit contract
 validity obligation that the caller discharges for the actual pointer domain.
 An ownership clause alone must not silently enlarge an already known member

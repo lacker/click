@@ -1074,6 +1074,7 @@ pub(super) fn execute_c_call_assign_paths(
                         loan_evidence: path.loan_evidence.clone(),
                     };
                 }
+
                 let current = crate::kernel::reasoning::path_facts::assumptions_with_path_context(
                     assumptions,
                     &path.facts,

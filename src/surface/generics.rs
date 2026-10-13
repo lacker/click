@@ -1016,9 +1016,14 @@ fn instantiate_proposition(
             expression: expression(value)?,
         },
         ClickProposition::ValidPlace {
+            range,
             expression: value,
             pointee_struct,
         } => ClickProposition::ValidPlace {
+            range: match range {
+                Some((start, end)) => Some((expression(start)?, expression(end)?)),
+                None => None,
+            },
             pointee_struct: pointee_struct.clone(),
             expression: expression(value)?,
         },

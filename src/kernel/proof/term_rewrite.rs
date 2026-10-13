@@ -1032,8 +1032,18 @@ fn collect_integer_substitution_variables_with_carriers(
             // read carry the selected pointer and byte-count terms directly.  The
             // memory snapshot is intentionally opaque: only these expressions
             // participate in capture reservation.
-            Proposition::CValidPlace { pointer, .. } => {
+            Proposition::CValidPlace { pointer, range, .. } => {
                 collect_c_value_carriers(&CValue::Pointer(pointer.clone()), carriers);
+                if let Some((start, end)) = range {
+                    collect_integer_substitution_term_variables(
+                        &Term::Integer(start.as_ref().clone()),
+                        carriers,
+                    );
+                    collect_integer_substitution_term_variables(
+                        &Term::Integer(end.as_ref().clone()),
+                        carriers,
+                    );
+                }
             }
             Proposition::CMemoryReadDefined { pointer, .. }
             | Proposition::CMemoryInitialized { base: pointer, .. } => {
@@ -2314,6 +2324,7 @@ impl<'a> TermRewrite<'a> {
                 }
             }
             Proposition::CValidPlace {
+                range,
                 memory,
                 pointer,
                 place_type,
@@ -2325,6 +2336,22 @@ impl<'a> TermRewrite<'a> {
                     return exhausted_proposition();
                 };
                 Proposition::CValidPlace {
+                    range: match range {
+                        Some((start, end)) => {
+                            let Term::Integer(start) =
+                                self.term(&Term::Integer(start.as_ref().clone()))
+                            else {
+                                return exhausted_proposition();
+                            };
+                            let Term::Integer(end) =
+                                self.term(&Term::Integer(end.as_ref().clone()))
+                            else {
+                                return exhausted_proposition();
+                            };
+                            Some((start.into(), end.into()))
+                        }
+                        None => None,
+                    },
                     memory: memory.clone(),
                     pointer,
                     place_type: place_type.clone(),

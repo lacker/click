@@ -2785,8 +2785,15 @@ pub(in crate::surface) fn describe_consumed_instance_field_read(
                 expressions.push(right);
             }
             ClickProposition::FloatClassification { expression, .. }
-            | ClickProposition::Defined { expression }
-            | ClickProposition::ValidPlace { expression, .. } => expressions.push(expression),
+            | ClickProposition::Defined { expression } => expressions.push(expression),
+            ClickProposition::ValidPlace {
+                expression, range, ..
+            } => {
+                expressions.push(expression);
+                if let Some((start, end)) = range {
+                    expressions.extend([start, end]);
+                }
+            }
             ClickProposition::Not(inner)
             | ClickProposition::ForAll { body: inner, .. }
             | ClickProposition::Exists { body: inner, .. } => pending.push(inner),
@@ -6038,8 +6045,18 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
         ClickProposition::Defined { expression } => {
             format!("defined({})", describe_contract_expression(expression))
         }
-        ClickProposition::ValidPlace { expression, .. } => {
-            format!("valid_place({})", describe_contract_expression(expression))
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            let base = describe_contract_expression(expression);
+            match range {
+                Some((start, end)) => format!(
+                    "valid_place({base}[{}..{}])",
+                    describe_contract_expression(start),
+                    describe_contract_expression(end)
+                ),
+                None => format!("valid_place({base})"),
+            }
         }
         ClickProposition::At {
             selector,

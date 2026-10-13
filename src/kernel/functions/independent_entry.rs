@@ -605,7 +605,6 @@ pub(crate) fn matches(
     actual_premises: &PureFactContext,
     checked_case: Option<&crate::kernel::api::CCheckedResourceGuardCase>,
 ) -> bool {
-    let refusal = |_reason: &str| false;
     let destination = actual
         .aggregate_destination
         .as_deref()
@@ -616,22 +615,22 @@ pub(crate) fn matches(
         destination,
         actual.population_effects.creation.is_some(),
     ) else {
-        return refusal("construct");
+        return false;
     };
     if expected.arguments != arguments {
-        return refusal("arguments");
+        return false;
     }
     let Ok(contract) =
         crate::kernel::c_function_contract_entry(&expected.caller, function, &expected.arguments)
     else {
-        return refusal("contract");
+        return false;
     };
     let mut premises = contract.into_assumptions();
     if function.contract_interface().aggregate_return_mode() == CAggregateReturnMode::Construction {
         // The source producer evaluates the complete declared clause list in
         // order, including its trailing implicit destination requirement.
         let Some(bound) = declaration_scope(&expected.caller, function, arguments) else {
-            return refusal("construction scope");
+            return false;
         };
         let mut budget = ExecutionBudget::beside_live_state();
         let Ok(Ok((resources, _))) = evaluate_function_resource_context_with_metadata(
@@ -641,7 +640,7 @@ pub(crate) fn matches(
             &premises,
             &mut budget,
         ) else {
-            return refusal("construction partition");
+            return false;
         };
         expected.caller = expected.caller.with_resource_context(resources);
     }
@@ -649,7 +648,7 @@ pub(crate) fn matches(
     // recipes instead of invoking the general source-by-target cell search.
     // Exact equality includes all physical and native authority metadata.
     if expected.caller.memory() != actual.memory() {
-        return refusal("memory");
+        return false;
     }
     // Require exact declared resource content and support/expansion graph.
     // Preserve occurrence identity only after this check, and independently
@@ -657,12 +656,12 @@ pub(crate) fn matches(
     let mut named_resources = actual.resources().clone();
     named_resources.loan_dependencies = expected.caller.resources().loan_dependencies.clone();
     if &named_resources != expected.caller.resources() {
-        return refusal("resources");
+        return false;
     }
     expected.caller = expected.caller.with_resource_context(named_resources);
     if let Some(events) = actual.population_effects.creation.as_ref() {
         if !events.records_nothing() {
-            return refusal("creation");
+            return false;
         }
         Arc::make_mut(&mut expected.caller.population_effects).creation = Some(events.clone());
     }
@@ -676,12 +675,12 @@ pub(crate) fn matches(
             arguments,
             &premises,
         ) else {
-            return refusal("loans");
+            return false;
         };
         let Ok(contract) =
             crate::kernel::c_function_contract_entry(&rooted, function, &expected.arguments)
         else {
-            return refusal("rooted contract");
+            return false;
         };
         premises = contract.into_assumptions();
         expected.caller = rooted;
@@ -690,7 +689,7 @@ pub(crate) fn matches(
         let Some(entry_assumptions) =
             case.entry_assumptions(function, arguments, actual, actual_premises)
         else {
-            return refusal("case provenance");
+            return false;
         };
         for guard in case.guards() {
             premises = premises.assume_proposition(guard.clone());
@@ -700,9 +699,9 @@ pub(crate) fn matches(
         actual_premises
     };
     if &premises != expected_actual_premises {
-        return refusal("premises");
+        return false;
     }
-    expected.caller.equal_up_to_unused_creation_ledgers(actual) || refusal("state")
+    expected.caller.equal_up_to_unused_creation_ledgers(actual)
 }
 
 /// Only interface-selected roots can yield the bounded member-store summary.

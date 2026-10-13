@@ -3433,6 +3433,7 @@ pub enum SpecProposition {
     ValidPlace {
         memory: SpecMemory,
         pointer: SpecExpression,
+        range: Option<(SpecExpression, SpecExpression)>,
         place_type: CPlaceType,
         access_policy: CTypedAccessPolicy,
     },
@@ -5480,6 +5481,8 @@ pub struct CVerifiedFunctionRule {
 pub(super) enum CPointerResultEffect {
     /// Exact initialized pointer-valued field read from the input snapshot.
     ExactFromPointerField { source: CPointerFieldSource },
+    /// Preserve the initialized input field's full domain, allowing a checked displacement.
+    FromPointerField { source: CPointerFieldSource },
     /// Every checked return preserves both the selected address and designation.
     ExactFromParameter {
         parameter: usize,
@@ -10601,6 +10604,7 @@ pub enum Proposition {
     CValidPlace {
         memory: CMemory,
         pointer: CPointerValue,
+        range: Option<(SharedIntegerTerm, SharedIntegerTerm)>,
         place_type: CPlaceType,
         access_policy: CTypedAccessPolicy,
     },
@@ -10860,6 +10864,7 @@ fn hash_atomic_proposition<H: Hasher>(atomic: &Proposition, state: &mut H) {
             bytes.hash(state);
         }
         Proposition::CValidPlace {
+            range,
             memory,
             pointer,
             place_type,
@@ -10867,6 +10872,7 @@ fn hash_atomic_proposition<H: Hasher>(atomic: &Proposition, state: &mut H) {
         } => {
             memory.hash(state);
             pointer.hash(state);
+            range.hash(state);
             place_type.hash(state);
             access_policy.hash(state);
         }
@@ -11166,11 +11172,13 @@ fn clone_atomic_proposition(proposition: &Proposition) -> Proposition {
             wide: *wide,
         },
         Proposition::CValidPlace {
+            range,
             memory,
             pointer,
             place_type,
             access_policy,
         } => Proposition::CValidPlace {
+            range: range.clone(),
             memory: memory.clone(),
             pointer: pointer.clone(),
             place_type: place_type.clone(),

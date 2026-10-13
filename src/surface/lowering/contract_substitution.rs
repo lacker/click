@@ -102,9 +102,11 @@ pub(in crate::surface) fn unfold_selected_predicates_in_proposition(
             expression: expression.clone(),
         }),
         ClickProposition::ValidPlace {
+            range,
             expression,
             pointee_struct,
         } => Ok(ClickProposition::ValidPlace {
+            range: range.clone(),
             pointee_struct: pointee_struct.clone(),
             expression: expression.clone(),
         }),
@@ -388,9 +390,17 @@ fn substitute_click_proposition_nonlogical(
             expression: substitute_contract_expression_in(expression, substitutions)?,
         }),
         ClickProposition::ValidPlace {
+            range,
             expression,
             pointee_struct,
         } => Ok(ClickProposition::ValidPlace {
+            range: match range {
+                Some((start, end)) => Some((
+                    substitute_contract_expression_in(start, substitutions)?,
+                    substitute_contract_expression_in(end, substitutions)?,
+                )),
+                None => None,
+            },
             pointee_struct: pointee_struct.clone(),
             expression: substitute_contract_expression_in(expression, substitutions)?,
         }),
@@ -777,9 +787,17 @@ fn collect_click_proposition_binding_names(
         ClickProposition::Loadable { segment } => {
             collect_contract_segment_binding_names(segment, names);
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::Defined { expression } => {
             collect_contract_expression_binding_names(expression, names);
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            collect_contract_expression_binding_names(expression, names);
+            if let Some((start, end)) = range {
+                collect_contract_expression_binding_names(start, names);
+                collect_contract_expression_binding_names(end, names);
+            }
         }
         ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
             collect_click_proposition_binding_names(proposition, names);
@@ -1170,12 +1188,20 @@ fn rewrite_click_proposition_expression(
             (ClickProposition::Defined { expression: value }, changed)
         }
         ClickProposition::ValidPlace {
+            range,
             expression: value,
             pointee_struct,
         } => {
-            let (value, changed) = expression(value);
+            let (value, mut changed) = expression(value);
+            let range = range.as_ref().map(|(start, end)| {
+                let (start, a) = expression(start);
+                let (end, b) = expression(end);
+                changed |= a || b;
+                (start, end)
+            });
             (
                 ClickProposition::ValidPlace {
+                    range,
                     pointee_struct: pointee_struct.clone(),
                     expression: value,
                 },
@@ -2121,9 +2147,17 @@ fn apply_contract_let_expressions_inner(
             expression: apply_contract_lets_to_expression(expression, bindings)?,
         }),
         ClickProposition::ValidPlace {
+            range,
             expression,
             pointee_struct,
         } => Ok(ClickProposition::ValidPlace {
+            range: match range {
+                Some((start, end)) => Some((
+                    apply_contract_lets_to_expression(start, bindings)?,
+                    apply_contract_lets_to_expression(end, bindings)?,
+                )),
+                None => None,
+            },
             pointee_struct: pointee_struct.clone(),
             expression: apply_contract_lets_to_expression(expression, bindings)?,
         }),
@@ -2661,9 +2695,17 @@ fn collect_click_proposition_referenced_names_one(
         ClickProposition::Loadable { segment } => {
             names.extend(contract_segment_referenced_names(segment));
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::Defined { expression } => {
             collect_contract_expression_referenced_names(expression, names);
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            collect_contract_expression_referenced_names(expression, names);
+            if let Some((start, end)) = range {
+                collect_contract_expression_referenced_names(start, names);
+                collect_contract_expression_referenced_names(end, names);
+            }
         }
         ClickProposition::At { proposition, .. } => {
             collect_click_proposition_referenced_names(proposition, names);

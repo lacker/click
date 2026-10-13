@@ -372,7 +372,7 @@ impl Gen {
         let choice = if depth == 0 {
             self.pick(2)
         } else {
-            self.pick(17)
+            self.pick(18)
         };
         match choice {
             0 => SpecProposition::Comparison {
@@ -446,6 +446,13 @@ impl Gen {
                 classification: CFloatClassification::Finite,
             },
             15 => SpecProposition::Or(Box::new(self.prop(d)), Box::new(self.prop(d))),
+            17 => SpecProposition::ValidPlace {
+                memory: self.memory(),
+                pointer: self.expr(d),
+                range: Some((self.expr(d), self.expr(d))),
+                place_type: crate::kernel::CPlaceType::Scalar(CType::Int32),
+                access_policy: crate::kernel::CTypedAccessPolicy::NativeObjectOnly,
+            },
             _ => SpecProposition::ResourceContains {
                 parent: self.resource(d),
                 child: self.resource(d),

@@ -172,14 +172,22 @@ fn old_collect_spec_proposition_bitvector_variables(
             old_collect_spec_resource_bitvector_variables(left, variables);
             old_collect_spec_resource_bitvector_variables(right, variables);
         }
+        SpecProposition::MemoryInitialized { memory, base, .. } => {
+            old_collect_spec_memory_bitvector_variables(memory, variables);
+            old_collect_spec_expression_bitvector_variables(base, variables);
+        }
         SpecProposition::ValidPlace {
             memory,
             pointer: base,
+            range,
             ..
-        }
-        | SpecProposition::MemoryInitialized { memory, base, .. } => {
+        } => {
             old_collect_spec_memory_bitvector_variables(memory, variables);
             old_collect_spec_expression_bitvector_variables(base, variables);
+            if let Some((start, end)) = range {
+                old_collect_spec_expression_bitvector_variables(start, variables);
+                old_collect_spec_expression_bitvector_variables(end, variables);
+            }
         }
         SpecProposition::MemoryLoadable {
             memory,
@@ -614,14 +622,22 @@ fn old_collect_spec_proposition_bound_identities(
             old_collect_spec_resource_bound_identities(left, variables, integer_seen);
             old_collect_spec_resource_bound_identities(right, variables, integer_seen);
         }
+        SpecProposition::MemoryInitialized { memory, base, .. } => {
+            old_collect_spec_memory_bound_identities(memory, variables, integer_seen);
+            old_collect_spec_integer_bound_expression(base, variables, integer_seen);
+        }
         SpecProposition::ValidPlace {
             memory,
             pointer: base,
+            range,
             ..
-        }
-        | SpecProposition::MemoryInitialized { memory, base, .. } => {
+        } => {
             old_collect_spec_memory_bound_identities(memory, variables, integer_seen);
             old_collect_spec_integer_bound_expression(base, variables, integer_seen);
+            if let Some((start, end)) = range {
+                old_collect_spec_integer_bound_expression(start, variables, integer_seen);
+                old_collect_spec_integer_bound_expression(end, variables, integer_seen);
+            }
         }
         SpecProposition::MemoryLoadable {
             memory,

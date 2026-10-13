@@ -5403,10 +5403,30 @@ impl Parser {
         if self.peek_ident() == Some("valid_place") && self.peek_next() == Some(&Token::LParen) {
             self.position += 1;
             self.expect(Token::LParen)?;
+            let start = self.position;
+            if let Ok(segment) = self.parse_contract_segment()
+                && self.tokens[start..self.position].contains(&Token::DotDot)
+            {
+                if segment.state != ContractSegmentState::Current {
+                    return Err(self.error("anchor valid_place at a snapshot outside the range"));
+                }
+                let ContractSegmentSurface::Range { base, start, end } = segment.surface else {
+                    return Err(self.error("valid_place ranges currently require scalar pointers"));
+                };
+                self.expect(Token::RParen)?;
+                let pointee_struct = self.contract_expression_struct_name(&base);
+                return Ok(ClickProposition::ValidPlace {
+                    expression: base,
+                    pointee_struct,
+                    range: Some((start, end)),
+                });
+            }
+            self.position = start;
             let expression = self.parse_contract_expression()?;
             self.expect(Token::RParen)?;
             let pointee_struct = self.contract_expression_struct_name(&expression);
             return Ok(ClickProposition::ValidPlace {
+                range: None,
                 expression,
                 pointee_struct,
             });

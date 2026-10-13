@@ -256,10 +256,17 @@ fn collect_proposition_bitvector_variables_one(
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
         }
         Proposition::CValidPlace {
-            memory, pointer, ..
+            memory,
+            pointer,
+            range,
+            ..
         } => {
             collect_memory_bitvector_variables(memory, variables);
             collect_c_value_bitvector_variables(&CValue::Pointer(pointer.clone()), variables);
+            if let Some((start, end)) = range {
+                collect_integer_variables(start.as_ref(), variables);
+                collect_integer_variables(end.as_ref(), variables);
+            }
         }
         Proposition::CMemoryInitialized {
             memory,

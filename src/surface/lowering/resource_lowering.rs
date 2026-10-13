@@ -2576,8 +2576,13 @@ pub(in crate::surface) fn requirement_definedness_surfaces(
                     expressions.push(expression);
                 }
             }
-            ClickProposition::ValidPlace { expression, .. } => {
+            ClickProposition::ValidPlace {
+                expression, range, ..
+            } => {
                 expressions.push(expression);
+                if let Some((start, end)) = range {
+                    expressions.extend([start, end]);
+                }
             }
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)

@@ -239,17 +239,31 @@ impl PureFactContext {
     ) -> bool {
         match proposition {
             Proposition::CValidPlace {
+                range,
                 memory,
                 pointer,
                 place_type,
                 access_policy,
-            } => crate::kernel::functions::valid_places::holds(
-                memory,
-                pointer,
-                place_type,
-                *access_policy,
-                self,
-            ),
+            } => {
+                if range.is_none() {
+                    crate::kernel::functions::valid_places::holds(
+                        memory,
+                        pointer,
+                        place_type,
+                        *access_policy,
+                        self,
+                    )
+                } else {
+                    crate::kernel::functions::valid_places::holds_range(
+                        memory,
+                        pointer,
+                        place_type,
+                        range.as_ref(),
+                        *access_policy,
+                        self,
+                    )
+                }
+            }
             Proposition::CMemoryInitialized {
                 memory,
                 base,
@@ -353,17 +367,31 @@ impl PureFactContext {
                 }
             },
             Proposition::CValidPlace {
+                range,
                 memory,
                 pointer,
                 place_type,
                 access_policy,
-            } => crate::kernel::functions::valid_places::holds(
-                memory,
-                pointer,
-                place_type,
-                *access_policy,
-                self,
-            ),
+            } => {
+                if range.is_none() {
+                    crate::kernel::functions::valid_places::holds(
+                        memory,
+                        pointer,
+                        place_type,
+                        *access_policy,
+                        self,
+                    )
+                } else {
+                    crate::kernel::functions::valid_places::holds_range(
+                        memory,
+                        pointer,
+                        place_type,
+                        range.as_ref(),
+                        *access_policy,
+                        self,
+                    )
+                }
+            }
             Proposition::CMemoryInitialized {
                 memory,
                 base,

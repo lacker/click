@@ -1232,8 +1232,7 @@ fn validate_algebraic_proposition_one(
             .map(|_| ())
         }
         ClickProposition::FloatClassification { expression, .. }
-        | ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => validate_algebraic_expression(
+        | ClickProposition::Defined { expression } => validate_algebraic_expression(
             expression,
             variables,
             click_functions,
@@ -1242,6 +1241,23 @@ fn validate_algebraic_proposition_one(
             context,
         )
         .map(|_| ()),
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            for component in std::iter::once(expression)
+                .chain(range.iter().flat_map(|(start, end)| [start, end]))
+            {
+                validate_algebraic_expression(
+                    component,
+                    variables,
+                    click_functions,
+                    predicates,
+                    definitions,
+                    context,
+                )?;
+            }
+            Ok(())
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2823,8 +2839,7 @@ fn validate_generic_proposition_types(
             context,
         ),
         ClickProposition::FloatClassification { expression, .. }
-        | ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        | ClickProposition::Defined { expression } => {
             let _ = infer_generic_expression_type(
                 expression,
                 variables,
@@ -2832,6 +2847,22 @@ fn validate_generic_proposition_types(
                 definitions,
                 context,
             )?;
+            Ok(())
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            for component in std::iter::once(expression)
+                .chain(range.iter().flat_map(|(start, end)| [start, end]))
+            {
+                infer_generic_expression_type(
+                    component,
+                    variables,
+                    click_functions,
+                    definitions,
+                    context,
+                )?;
+            }
             Ok(())
         }
         ClickProposition::RangeAll { body, .. } | ClickProposition::RangeAny { body, .. } => {

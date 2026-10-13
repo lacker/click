@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 const SPAN_HEADER: &str = "sysroot/usr/include/c++/12/span";
 const SPAN_SHA256: &str = "f1e67ea2c1e2e0faef697f37d995abb59eeb7fb0c0cf13a586fe2799ed9196bd";
+const INT_RECORD: &str = "c:@N@std@S@span>#I#Vl18446744073709551615";
 const WORD_RECORD: &str = "c:@N@std@S@span>#i#Vl18446744073709551615";
 const BYTE_RECORD: &str = "c:@N@std@S@span>#$@N@std@E@byte#Vl18446744073709551615";
 
@@ -15,6 +16,8 @@ pub(super) enum Model {
     WordConstructor,
     WritableBytes,
     ByteData,
+    IntBack,
+    IntFirst,
 }
 
 /// Declaration candidate only. This admits no execution or equivalence claim:
@@ -41,6 +44,16 @@ pub(super) fn candidate(source: &CppFunction) -> Option<Model> {
             "enum std::byte *(void) const noexcept",
             "c:@N@std@S@span>#$@N@std@E@byte#Vl18446744073709551615@F@data#1",
         ) => Some(Model::ByteData),
+        (
+            "std::span<int>::back",
+            "int &(void) const noexcept",
+            "c:@N@std@S@span>#I#Vl18446744073709551615@F@back#1",
+        ) => Some(Model::IntBack),
+        (
+            "std::span<int>::first",
+            "class std::span<int> (unsigned long) const noexcept",
+            "c:@N@std@S@span>#I#Vl18446744073709551615@F@first#l#1",
+        ) => Some(Model::IntFirst),
         _ => None,
     }
 }
@@ -100,6 +113,11 @@ fn layout_matches(import: &PreparedCppImport, id: &str, pointer_type: CType) -> 
     }
     if id == WORD_RECORD
         && !super::scalar::Scalar::is(pointee, super::scalar::ScalarKind::UInt32, false)
+    {
+        return false;
+    }
+    if id == INT_RECORD
+        && !super::scalar::Scalar::is(pointee, super::scalar::ScalarKind::Int32, false)
     {
         return false;
     }
@@ -190,6 +208,22 @@ pub(super) fn selected(import: &PreparedCppImport, source: &CppFunction) -> Opti
         return None;
     }
     let types_match = match kind {
+        Model::IntBack => {
+            source.parameters.len() == 1
+                && receiver_matches(source, INT_RECORD, true)
+                && matches!(&source.return_type, CppType::LvalueReference { pointee }
+                    if super::scalar::Scalar::is(pointee, super::scalar::ScalarKind::Int32, false))
+        }
+        Model::IntFirst => {
+            source.parameters.len() == 2
+                && receiver_matches(source, INT_RECORD, true)
+                && matches!(&source.return_type, CppType::Record { declaration_id, is_const: false, .. } if declaration_id == INT_RECORD)
+                && super::scalar::Scalar::is(
+                    &source.parameters[1].value_type,
+                    super::scalar::ScalarKind::UInt64,
+                    false,
+                )
+        }
         Model::WordConstructor => {
             source.parameters.len() == 3
                 && receiver_matches(source, WORD_RECORD, false)
@@ -229,16 +263,19 @@ pub(super) fn selected(import: &PreparedCppImport, source: &CppFunction) -> Opti
                 && matches!(&source.return_type, CppType::Pointer { pointee } if matches!(pointee.as_ref(), CppType::Enumeration { declaration_id, is_const: false, .. } if declaration_id == "c:@N@std@E@byte"))
         }
     };
-    (types_match
-        && layout_matches(import, WORD_RECORD, CType::UInt32Pointer)
-        && (kind == Model::WordConstructor
-            || layout_matches(import, BYTE_RECORD, CType::UInt8Pointer)))
-    .then_some(kind)
+    let layout_match = if matches!(kind, Model::IntBack | Model::IntFirst) {
+        layout_matches(import, INT_RECORD, CType::Int32Pointer)
+    } else {
+        layout_matches(import, WORD_RECORD, CType::UInt32Pointer)
+            && (kind == Model::WordConstructor
+                || layout_matches(import, BYTE_RECORD, CType::UInt8Pointer))
+    };
+    (types_match && layout_match).then_some(kind)
 }
 
 pub(super) fn assumptions(import: &PreparedCppImport) -> Vec<String> {
-    std::iter::once(&import.export().function).chain(&import.export().reachable_functions).filter_map(|source| selected(import, source).map(|_| {
-        format!("assumed source-to-model equivalence for {} [{}; span SHA256 {}]; model implementation requires independent checked certification", source.axiom.as_ref().unwrap().qualified_name, super::schema::DECLARED_UINT32_BYTE_GUARANTEE, SPAN_SHA256)
+    std::iter::once(&import.export().function).chain(&import.export().reachable_functions).filter_map(|source| selected(import, source).map(|kind| {
+        format!("assumed source-to-model equivalence for {} [{}; span SHA256 {}]; model implementation requires independent checked certification", source.axiom.as_ref().unwrap().qualified_name, if matches!(kind, Model::IntBack | Model::IntFirst) { "Clang 19.1.7 LP64 native typed-prefix profile" } else { super::schema::DECLARED_UINT32_BYTE_GUARANTEE }, SPAN_SHA256)
     })).collect()
 }
 
@@ -278,10 +315,10 @@ pub(super) fn implementation(
     } else {
         "this"
     });
-    let pointer_type = if kind == Model::ByteData {
-        CType::UInt8Pointer
-    } else {
-        CType::UInt32Pointer
+    let pointer_type = match kind {
+        Model::ByteData => CType::UInt8Pointer,
+        Model::IntBack | Model::IntFirst => CType::Int32Pointer,
+        _ => CType::UInt32Pointer,
     };
     let pointer = member(
         input_layout.clone(),
@@ -296,6 +333,47 @@ pub(super) fn implementation(
         CType::UInt64,
     );
     let body = match kind {
+        Model::IntBack => c_return(c_checked_object_address(c_typed_load(
+            c_add(
+                c_typed_load(pointer, CType::Int32Pointer),
+                c_subtract(c_typed_load(count, CType::UInt64), c_uint64_literal(1)),
+            ),
+            CType::Int32,
+        ))),
+        Model::IntFirst => {
+            let destination = c_variable(C_CONTRACT_RESULT_NAME);
+            let result_layout = layouts
+                .get(record_name(&source.return_type).ok_or("model result missing")?)
+                .ok_or("model result layout missing")?
+                .clone();
+            let output_pointer = member(
+                result_layout.clone(),
+                destination.clone(),
+                &["_M_ptr"],
+                CType::Int32Pointer,
+            );
+            let output_count = member(
+                result_layout,
+                destination.clone(),
+                &["_M_extent", "_M_extent_value"],
+                CType::UInt64,
+            );
+            c_seq(
+                c_typed_store(
+                    output_pointer,
+                    c_typed_load(pointer, CType::Int32Pointer),
+                    CType::Int32Pointer,
+                ),
+                c_seq(
+                    c_typed_store(
+                        output_count,
+                        c_variable(&source.parameters[1].name),
+                        CType::UInt64,
+                    ),
+                    c_return(destination),
+                ),
+            )
+        }
         Model::WordConstructor => {
             function = function.with_native_span_inputs(vec![CNativeSpanInput {
                 parameter_index: 1,
@@ -369,6 +447,15 @@ pub(super) fn contract(
     let kind = selected(import, source)?;
     let record = record_name(&source.parameters[0].value_type)?;
     Some(match kind {
+        Model::IntBack => format!(
+            "int32& {name}(const struct {record}* this) {{\n views std_span_data(this);\n views std_span_size(this);\n requires 1u64 <= std_span_size(this);\n requires valid_place(std_span_data(this)[0..std_span_size(this)]);\n ensures &result == std_span_data(this) + (std_span_size(this) - 1u64);\n}} by {{ execute(); simp(); }}\n"
+        ),
+        Model::IntFirst => {
+            let count = &source.parameters[1].name;
+            format!(
+                "struct {record} {name}(const struct {record}* this, uint64 {count}) {{\n views std_span_data(this);\n views std_span_size(this);\n requires {count} <= std_span_size(this);\n requires valid_place(std_span_data(this)[0..{count}]);\n ensures std_span_data(result) == std_span_data(this);\n ensures std_span_size(result) == {count};\n}} by {{ execute(); simp(); }}\n"
+            )
+        }
         Model::WordConstructor => {
             let pointer = &source.parameters[1].name;
             let count = &source.parameters[2].name;

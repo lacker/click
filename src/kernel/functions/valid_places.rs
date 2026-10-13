@@ -10,9 +10,64 @@ pub(crate) fn holds(
     access_policy: CTypedAccessPolicy,
     assumptions: &PureFactContext,
 ) -> bool {
+    holds_range(
+        memory,
+        pointer,
+        place_type,
+        None,
+        access_policy,
+        assumptions,
+    )
+}
+
+pub(in crate::kernel) fn range_guards(
+    range: &(SharedIntegerTerm, SharedIntegerTerm),
+    element: CType,
+) -> Vec<ConditionTerm> {
+    let (start, end) = range;
+    let zero = IntegerTerm::constant_i64(0);
+    vec![
+        crate::kernel::eval::pointer_domains::domain_equal(start.as_ref().clone(), zero.clone()),
+        crate::kernel::eval::pointer_domains::domain_less_equal(zero, end.as_ref().clone()),
+        crate::kernel::eval::pointer_domains::domain_less_equal(
+            end.as_ref().clone(),
+            IntegerTerm::constant_i64(
+                crate::kernel::eval::pointer_domains::native_prefix_element_limit(
+                    element.byte_width(),
+                ),
+            ),
+        ),
+    ]
+}
+
+pub(crate) fn holds_range(
+    memory: &CMemory,
+    pointer: &CPointerValue,
+    place_type: &CPlaceType,
+    range: Option<&(SharedIntegerTerm, SharedIntegerTerm)>,
+    access_policy: CTypedAccessPolicy,
+    assumptions: &PureFactContext,
+) -> bool {
     let state = CState::new()
         .with_memory(memory.clone())
         .with_typed_access_policy(access_policy);
+    if let Some((start, end)) = range {
+        let CPlaceType::Scalar(element) = place_type else {
+            return false;
+        };
+        let guards = range_guards(&(start.clone(), end.clone()), *element);
+        return guards
+            .iter()
+            .all(|guard| assumptions.decide(guard) == Some(true))
+            && native_span_inputs::span_holds(
+                &state,
+                pointer,
+                *element,
+                end,
+                access_policy,
+                assumptions,
+            );
+    }
     match place_type {
         CPlaceType::Record(layout) => {
             let requirement = CNativeRecordPlaceRequirement {
@@ -31,6 +86,15 @@ pub(crate) fn holds(
             assumptions,
         ),
     }
+}
+
+pub(in crate::kernel) fn native_bound(value: &CValue) -> Option<SharedIntegerTerm> {
+    let ty = MachineIntegerType::from_c_type(value.c_type())?;
+    crate::kernel::eval::pointer_domains::native_count_observation(
+        ty,
+        crate::kernel::spec::c_value_bitvector_term(value)?,
+    )
+    .map(Into::into)
 }
 
 pub(super) fn has_entry_requirements(specs: &[SpecProposition]) -> bool {
@@ -71,6 +135,7 @@ pub(super) fn assume_entry_requirements(
                 pending.push(left);
             }
             SpecProposition::ValidPlace {
+                range,
                 memory: SpecMemory::Current,
                 pointer: expression,
                 place_type,
@@ -90,12 +155,55 @@ pub(super) fn assume_entry_requirements(
                 let CValue::Pointer(pointer) = &path.value else {
                     return Err("valid_place requires a defined object pointer".into());
                 };
-                let context = assumptions_with_path_context(&observer, &path.facts, &[]);
+                let mut context = assumptions_with_path_context(&observer, &path.facts, &[]);
                 if path.obligations.iter().any(|goal| {
                     !required_obligation_is_exactly_discharged(&context, goal.proposition())
                 }) {
                     return Err("valid_place entry carrier has an unproved condition".into());
                 }
+                let count = if let Some((start, end)) = range {
+                    let mut values = Vec::new();
+                    for expression in [start, end] {
+                        let paths =
+                            crate::kernel::spec::evaluate_spec_expression_paths_with_loop_entry(
+                                &next,
+                                expression,
+                                Some(&next),
+                                &context,
+                                &mut budget,
+                            )
+                            .map_err(|_| "valid_place range evaluation exceeded its budget")?;
+                        let [path] = paths.as_slice() else {
+                            return Err("valid_place needs one established range".into());
+                        };
+                        context = assumptions_with_path_context(&context, &path.facts, &[]);
+                        if path.obligations.iter().any(|goal| {
+                            !required_obligation_is_exactly_discharged(&context, goal.proposition())
+                        }) {
+                            return Err("valid_place range has an unproved condition".into());
+                        }
+                        values.push(path.value.clone());
+                    }
+                    let start = native_bound(&values[0])
+                        .ok_or("valid_place requires native integer bounds")?;
+                    let zero = crate::kernel::eval::pointer_domains::domain_equal(
+                        start.as_ref().clone(),
+                        IntegerTerm::constant_i64(0),
+                    );
+                    if context.decide(&zero) != Some(true) {
+                        return Err(
+                            "valid_place currently requires a checked zero-based prefix".into()
+                        );
+                    }
+                    let end = &values[1];
+                    native_bound(end).ok_or("valid_place requires native integer bounds")?;
+                    if !matches!(place_type, CPlaceType::Scalar(_)) {
+                        return Err("valid_place ranges currently require scalar pointers".into());
+                    }
+                    CExpression::Value(end.clone())
+                } else {
+                    c_int32_literal(1)
+                };
                 match place_type {
                     CPlaceType::Record(layout) => next.set_memory(
                         next.memory()
@@ -105,7 +213,7 @@ pub(super) fn assume_entry_requirements(
                     CPlaceType::Scalar(element_type) => {
                         let requirement = CNativeSpanRequirement {
                             carrier: CExpression::Value(CValue::Pointer(pointer.clone())),
-                            count: c_int32_literal(1),
+                            count,
                             element_type: *element_type,
                             access_policy: *access_policy,
                         };
@@ -133,6 +241,7 @@ mod tests {
 
     fn scalar_requirement(pointer: CPointerValue) -> SpecProposition {
         SpecProposition::ValidPlace {
+            range: None,
             memory: SpecMemory::Current,
             pointer: SpecExpression::Value(CValue::Pointer(pointer)),
             place_type: CPlaceType::Scalar(CType::Int32),
@@ -177,6 +286,7 @@ mod tests {
             state.memory().cells.representation_len()
         );
         let proposition = Proposition::CValidPlace {
+            range: None,
             memory: admitted.memory().clone(),
             pointer: pointer.clone(),
             place_type: place_type.clone(),
@@ -226,6 +336,7 @@ mod tests {
             unreachable!()
         };
         let old = SpecProposition::ValidPlace {
+            range: None,
             memory: SpecMemory::FunctionEntry,
             pointer,
             place_type,

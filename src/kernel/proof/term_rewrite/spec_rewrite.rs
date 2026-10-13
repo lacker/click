@@ -63,12 +63,19 @@ fn collect_spec_proposition_carriers(
             collect_spec_expression_carriers(right, variables, integer_seen);
         }
         SpecProposition::FloatClassification { expression, .. }
-        | SpecProposition::Defined(expression)
-        | SpecProposition::ValidPlace {
+        | SpecProposition::Defined(expression) => {
+            collect_spec_expression_carriers(expression, variables, integer_seen);
+        }
+        SpecProposition::ValidPlace {
             pointer: expression,
+            range,
             ..
         } => {
             collect_spec_expression_carriers(expression, variables, integer_seen);
+            if let Some((start, end)) = range {
+                collect_spec_expression_carriers(start, variables, integer_seen);
+                collect_spec_expression_carriers(end, variables, integer_seen);
+            }
         }
         SpecProposition::And(left, right)
         | SpecProposition::Or(left, right)
@@ -1022,11 +1029,19 @@ impl<'a> TermRewrite<'a> {
                 element_width: *element_width,
             },
             SpecProposition::ValidPlace {
+                range,
                 memory,
                 pointer,
                 place_type,
                 access_policy,
             } => SpecProposition::ValidPlace {
+                range: match range {
+                    Some((start, end)) => Some((
+                        self.rewrite_spec_expression(start)?,
+                        self.rewrite_spec_expression(end)?,
+                    )),
+                    None => None,
+                },
                 memory: memory.clone(),
                 pointer: self.rewrite_spec_expression(pointer)?,
                 place_type: place_type.clone(),

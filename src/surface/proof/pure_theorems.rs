@@ -3228,10 +3228,20 @@ pub(super) fn click_function_applications(
             } => {
                 expression(value, known_facts, applications);
             }
-            ClickProposition::Defined { expression: value }
-            | ClickProposition::ValidPlace {
-                expression: value, ..
-            } => expression(value, known_facts, applications),
+            ClickProposition::Defined { expression: value } => {
+                expression(value, known_facts, applications)
+            }
+            ClickProposition::ValidPlace {
+                expression: value,
+                range,
+                ..
+            } => {
+                expression(value, known_facts, applications);
+                if let Some((start, end)) = range {
+                    expression(start, known_facts, applications);
+                    expression(end, known_facts, applications);
+                }
+            }
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)
             | ClickProposition::Implies(left, right) => {

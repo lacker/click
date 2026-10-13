@@ -833,9 +833,15 @@ fn walk_written_expressions_in_proposition(
             walk_written_expressions(right, visit);
         }
         ClickProposition::FloatClassification { expression, .. }
-        | ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
-            walk_written_expressions(expression, visit)
+        | ClickProposition::Defined { expression } => walk_written_expressions(expression, visit),
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            walk_written_expressions(expression, visit);
+            if let Some((start, end)) = range {
+                walk_written_expressions(start, visit);
+                walk_written_expressions(end, visit);
+            }
         }
         ClickProposition::At { proposition, .. }
         | ClickProposition::Not(proposition)

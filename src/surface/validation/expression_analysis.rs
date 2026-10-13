@@ -193,8 +193,15 @@ pub(in crate::surface) fn proposition_contains_resource_count(
         ClickProposition::FloatClassification { expression, .. } => {
             contains_resource_count(expression)
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => contains_resource_count(expression),
+        ClickProposition::Defined { expression } => contains_resource_count(expression),
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            contains_resource_count(expression)
+                || range.as_ref().is_some_and(|(start, end)| {
+                    contains_resource_count(start) || contains_resource_count(end)
+                })
+        }
         ClickProposition::At { proposition, .. }
         | ClickProposition::Not(proposition)
         | ClickProposition::ForAll {
@@ -403,9 +410,15 @@ pub(in crate::surface) fn collect_resource_count_families(
         ClickProposition::FloatClassification { expression, .. } => {
             collect_expression(expression, families);
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
-            collect_expression(expression, families)
+        ClickProposition::Defined { expression } => collect_expression(expression, families),
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            collect_expression(expression, families);
+            if let Some((start, end)) = range {
+                collect_expression(start, families);
+                collect_expression(end, families);
+            }
         }
         ClickProposition::At { proposition, .. }
         | ClickProposition::Not(proposition)
@@ -522,8 +535,15 @@ pub(in crate::surface) fn proposition_contains_old_expression(
             contract_segment_contains_old_expression(segment)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_old_expression(segment),
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => contains_old_expression(expression),
+        ClickProposition::Defined { expression } => contains_old_expression(expression),
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            contains_old_expression(expression)
+                || range.as_ref().is_some_and(|(start, end)| {
+                    contains_old_expression(start) || contains_old_expression(end)
+                })
+        }
         ClickProposition::At { proposition, .. } => {
             proposition_contains_old_expression(proposition)
         }
@@ -657,8 +677,15 @@ pub(in crate::surface) fn proposition_contains_at_expression(
             contract_segment_contains_at_expression(segment)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_at_expression(segment),
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => contains_at_expression(expression),
+        ClickProposition::Defined { expression } => contains_at_expression(expression),
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            contains_at_expression(expression)
+                || range.as_ref().is_some_and(|(start, end)| {
+                    contains_at_expression(start) || contains_at_expression(end)
+                })
+        }
         ClickProposition::At { .. } => true,
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -867,9 +894,17 @@ fn collect_click_function_calls_in_proposition_one(
         ClickProposition::Loadable { segment } => {
             collect_click_function_calls_in_segment(segment, calls);
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::Defined { expression } => {
             collect_click_function_calls(expression, calls);
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            collect_click_function_calls(expression, calls);
+            if let Some((start, end)) = range {
+                collect_click_function_calls(start, calls);
+                collect_click_function_calls(end, calls);
+            }
         }
         ClickProposition::At { proposition, .. } => {
             collect_click_function_calls_in_proposition(proposition, calls);
@@ -1431,10 +1466,19 @@ fn validate_recursive_calls_in_proposition(
             }
             Ok(())
         }
-        ClickProposition::Defined { expression: body }
-        | ClickProposition::ValidPlace {
-            expression: body, ..
-        } => expression(body),
+        ClickProposition::Defined { expression: body } => expression(body),
+        ClickProposition::ValidPlace {
+            expression: body,
+            range,
+            ..
+        } => {
+            expression(body)?;
+            if let Some((start, end)) = range {
+                expression(start)?;
+                expression(end)?;
+            }
+            Ok(())
+        }
         ClickProposition::Separate { left, right }
         | ClickProposition::Contains {
             parent: left,

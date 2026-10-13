@@ -1691,6 +1691,7 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_one_in(
             true,
         ),
         SpecProposition::ValidPlace {
+            range,
             memory,
             pointer: expression,
             place_type,
@@ -1706,30 +1707,65 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_one_in(
                 }
                 SpecMemory::Fixed(memory) => memory,
             };
-            Ok(evaluate_spec_values_at_state_in(
-                scope,
-                std::slice::from_ref(expression),
-                assumptions,
-                budget,
-            )?
-            .into_iter()
-            .filter_map(|path| {
-                let [CValue::Pointer(pointer)] = path.values.as_slice() else {
-                    return None;
-                };
-                Some(SpecPropositionPath {
-                    introductions: Vec::new(),
-                    proposition: Proposition::CValidPlace {
-                        memory: selected.clone(),
-                        pointer: pointer.clone(),
-                        place_type: place_type.clone(),
-                        access_policy: *access_policy,
-                    },
-                    facts: path.facts,
-                    obligations: path.obligations,
-                })
-            })
-            .collect())
+            let mut expressions = vec![expression.clone()];
+            if let Some((start, end)) = range {
+                expressions.extend([start.clone(), end.clone()]);
+            }
+            Ok(
+                evaluate_spec_values_at_state_in(scope, &expressions, assumptions, budget)?
+                    .into_iter()
+                    .filter_map(|path| {
+                        let Some(CValue::Pointer(pointer)) = path.values.first() else {
+                            return None;
+                        };
+                        let validity = Proposition::CValidPlace {
+                            range: if range.is_some() {
+                                Some((
+                                    crate::kernel::functions::valid_places::native_bound(
+                                        path.values.get(1)?,
+                                    )?,
+                                    crate::kernel::functions::valid_places::native_bound(
+                                        path.values.get(2)?,
+                                    )?,
+                                ))
+                            } else {
+                                None
+                            },
+                            memory: selected.clone(),
+                            pointer: pointer.clone(),
+                            place_type: place_type.clone(),
+                            access_policy: *access_policy,
+                        };
+                        // Typed prefix validity includes its native representable bounds.
+                        // Lower these at the shared semantic boundary, using the actual
+                        // bound carriers, so entry and call contexts receive exactly the
+                        // same native conditions as pointer checking.
+                        let proposition = if let Proposition::CValidPlace {
+                            range: Some(range),
+                            place_type: CPlaceType::Scalar(element),
+                            ..
+                        } = &validity
+                        {
+                            crate::kernel::functions::valid_places::range_guards(range, *element)
+                                .into_iter()
+                                .fold(validity.clone(), |body, guard| {
+                                    Proposition::And(
+                                        Box::new(Proposition::ConditionIs(guard, true)),
+                                        Box::new(body),
+                                    )
+                                })
+                        } else {
+                            validity
+                        };
+                        Some(SpecPropositionPath {
+                            introductions: Vec::new(),
+                            proposition,
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        })
+                    })
+                    .collect(),
+            )
         }
         SpecProposition::MemoryInitialized {
             memory,

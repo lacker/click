@@ -2933,6 +2933,7 @@ fn infer_pointer_result_effects(
                 continue;
             };
             candidates.insert(CPointerResultEffect::Opaque);
+
             if !pointer_effect_entry_has_independent_binders(function, path) {
                 continue;
             }
@@ -2943,9 +2944,15 @@ fn infer_pointer_result_effects(
                     &arguments,
                     &path.assumptions,
                 ) {
-                    let effect = CPointerResultEffect::ExactFromPointerField { source };
-                    if pointer_result_effect_holds(function, &effect, path) {
-                        candidates.insert(effect);
+                    for effect in [
+                        CPointerResultEffect::ExactFromPointerField {
+                            source: source.clone(),
+                        },
+                        CPointerResultEffect::FromPointerField { source },
+                    ] {
+                        if pointer_result_effect_holds(function, &effect, path) {
+                            candidates.insert(effect);
+                        }
                     }
                 }
             }
@@ -3096,19 +3103,27 @@ fn pointer_result_effect_holds(
     let CValue::Pointer(result) = value else {
         return false;
     };
-    if let CPointerResultEffect::ExactFromPointerField { source } = effect {
+    if let CPointerResultEffect::ExactFromPointerField { source }
+    | CPointerResultEffect::FromPointerField { source } = effect
+    {
         let Some(arguments) = pointer_store_arguments(function, path) else {
             return false;
         };
-        return crate::kernel::functions::pointer_store_effects::field_source(
+        let input = crate::kernel::functions::pointer_store_effects::field_source(
             &path.entry_state,
             function.contract_interface(),
             &arguments,
             source,
             result.c_type(),
             &path.assumptions,
-        )
-        .is_some_and(|input| input == *result);
+        );
+
+        return input.is_some_and(|input| {
+            input.designation().is_some()
+                && input.same_designation(result)
+                && (!matches!(effect, CPointerResultEffect::ExactFromPointerField { .. })
+                    || input == *result)
+        });
     }
     let (parameter, child_path, exact) = match effect {
         CPointerResultEffect::FromParameter {
@@ -3121,7 +3136,8 @@ fn pointer_result_effect_holds(
         } => (parameter, child_path, true),
         // This marker only prevents erasure and promises no object or access.
         CPointerResultEffect::Opaque => return true,
-        CPointerResultEffect::ExactFromPointerField { .. } => return false,
+        CPointerResultEffect::ExactFromPointerField { .. }
+        | CPointerResultEffect::FromPointerField { .. } => return false,
     };
     let Some(CValue::Pointer(input)) = path
         .entry_state

@@ -95,9 +95,9 @@ partition and rooting borrowed views before comparing its entry premises.
 The original raw-pointer byte write also passes with a checked one-element
 uint32 prefix. Its four-byte representation range preserves the original
 carrier and admits no multiword prefix, ownership, or initialization.
-Remaining reproduced failures involve the legacy axiomatic span
-reference-return boundary and two C tagged-word
-audit contracts that state address bits without retained integer origin.
+The legacy span reference-return gap is repaired locally with checked pinned
+models and explicit typed-prefix validity. Two C tagged-word audit contracts
+still state address bits without retained integer origin.
 Diagnose these against the approved designation and byte-access boundaries
 before changing implementation or contracts. The range-membership repair
 accepts an index pinned to zero while retaining that exact equality and complete access width; withdrawing the equality or extending
@@ -113,11 +113,25 @@ These local repairs have not yet been published to PR 646.
 The span boundary needs geometry without read permission: its current
 `back()` catalog axiom states only numerical address equality. A checked
 pinned-library body must retain the data field's full pointer carrier, while
-its contract must state that the backing range is valid. Extending
-`valid_place` to typed ranges is proposed for that prerequisite; do not
+its contract must state that the backing range is valid. The user approved
+`valid_place(p[0..n])` for this prerequisite. Shared zero-based scalar-prefix
+contracts and their permission/initialization rejection controls are now
+implemented locally; checked pinned `back`/`first` model bodies verify. Do not
 silently substitute backing `views` or recover origins from address equality.
-The scalar `valid_place` implementation alone does not settle this range
-contract choice.
+The original helper and write caller now verify: checked result effects preserve
+the data field's full origin, and checked equalities align a fresh result address
+with that existing read. Numeric equalities alone still cannot create origin.
+The original caller also passes tactic expansion, rewritten-proof verification
+and retained-session rechecking. Partial verification now preserves permanent
+external assumptions during both selection and cleanup; otherwise it discarded
+unchanged checked helper certificates. The final focused acceptance matrix passed all 360 tests, including the
+original decoder. The executable range-contract documentation fixture and
+Clippy across all targets pass. The full unit sweep passed 5,960 tests and
+found one obsolete expansion-syntax assertion; that assertion was updated
+without changing the proved separation claim, and its regression passes on
+recheck. The two C tagged-pointer audit examples still
+need an explicit integer-origin contract design decision before this PR can
+be green; their numeric-only contracts have not been weakened.
 
 Run the complete C/Rust/C++ acceptance matrix after these repairs, then remove
 resolved bug documents and publish the coherent update to PR 646.

@@ -3426,6 +3426,18 @@ impl CExecutionEnvironment {
     }
 
     pub fn with_external_function_rule(mut self, rule: CExternalFunctionRule) -> Self {
+        // Partial verification must not replace an existing declaration
+        // assumption (including its intrinsic effects) with a temporary one.
+        if rule.scoped_unselected
+            && self
+                .external_function_rules
+                .get(rule.function.name())
+                .is_some_and(|existing| {
+                    !existing.scoped_unselected && existing.function == rule.function
+                })
+        {
+            return self;
+        }
         std::sync::Arc::make_mut(&mut self.external_function_rules)
             .insert(rule.function.name().to_string(), rule);
         self.variable_index = CExecutionEnvironmentVariableIndex::default();
@@ -3436,6 +3448,18 @@ impl CExecutionEnvironment {
         std::sync::Arc::make_mut(&mut self.external_function_rules).remove(name);
         self.variable_index = CExecutionEnvironmentVariableIndex::default();
         self
+    }
+
+    pub(crate) fn without_scoped_external_function_rule(self, name: &str) -> Self {
+        if self
+            .external_function_rules
+            .get(name)
+            .is_some_and(|rule| rule.scoped_unselected)
+        {
+            self.without_external_function_rule(name)
+        } else {
+            self
+        }
     }
 
     pub fn get_function(&self, name: &str) -> Option<&CFunction> {
@@ -3868,6 +3892,9 @@ mod retained_declaration_tests {
         assert_eq!(declared.functions, changed.functions);
         assert!(!declared.same_function_declarations(&changed));
         assert!(!changed.same_function_declarations(&declared));
+        let removed = declared.clone().without_external_function_rule("copy");
+        assert!(!declared.same_function_declarations(&removed));
+        assert!(!removed.same_function_declarations(&declared));
         let scoped = declared
             .clone()
             .with_external_function_rule(CExternalFunctionRule {
@@ -3876,5 +3903,26 @@ mod retained_declaration_tests {
                 representation_copy: None,
             });
         assert!(declared.same_function_declarations(&scoped));
+        let cleaned = scoped.without_scoped_external_function_rule("unselected");
+        assert!(!cleaned.external_function_rules.contains_key("unselected"));
+        let kept = changed
+            .clone()
+            .without_scoped_external_function_rule("copy");
+        assert_eq!(
+            changed.external_function_rules,
+            kept.external_function_rules
+        );
+        let scoped_duplicate = changed
+            .clone()
+            .with_external_function_rule(CExternalFunctionRule {
+                function: changed.get_function("copy").unwrap().clone(),
+                scoped_unselected: true,
+                representation_copy: None,
+            });
+        assert!(changed.same_function_declarations(&scoped_duplicate));
+        assert_eq!(
+            changed.external_function_rules,
+            scoped_duplicate.external_function_rules
+        );
     }
 }

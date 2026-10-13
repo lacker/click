@@ -4091,6 +4091,7 @@ impl AnnotationLowerer<'_> {
                 })
             }
             ClickProposition::ValidPlace {
+                range,
                 expression,
                 pointee_struct,
             } => {
@@ -4110,7 +4111,20 @@ impl AnnotationLowerer<'_> {
                 } else {
                     self.valid_place_type(expression)?
                 };
+                let range = range
+                    .as_ref()
+                    .map(|(start, end)| {
+                        Ok::<_, String>((
+                            self.lower_contract_expression_to_spec(start, environment)?,
+                            self.lower_contract_expression_to_spec(end, environment)?,
+                        ))
+                    })
+                    .transpose()?;
+                if range.is_some() && !matches!(place_type, crate::kernel::CPlaceType::Scalar(_)) {
+                    return Err("valid_place ranges currently require scalar pointers".into());
+                }
                 Ok(SpecProposition::ValidPlace {
+                    range,
                     memory: environment.current_memory.clone(),
                     pointer: self.lower_contract_expression_to_spec(expression, environment)?,
                     place_type,

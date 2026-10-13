@@ -1248,6 +1248,7 @@ fn walk_proposition<S: VariableSubstitution + ?Sized>(
             outcome: walk_c_expression_outcome(outcome, s),
         },
         Proposition::CValidPlace {
+            range,
             memory,
             pointer,
             place_type,
@@ -1257,6 +1258,12 @@ fn walk_proposition<S: VariableSubstitution + ?Sized>(
                 unreachable!("substitution preserves pointer types")
             };
             Proposition::CValidPlace {
+                range: range.as_ref().map(|(start, end)| {
+                    (
+                        s.integer(start.as_ref()).into(),
+                        s.integer(end.as_ref()).into(),
+                    )
+                }),
                 memory: s.memory(memory),
                 pointer,
                 place_type: place_type.clone(),
@@ -2343,10 +2350,17 @@ fn collect_proposition_bound_variables_one(
             collect_expression_outcome_bound_variables(outcome, variables);
         }
         Proposition::CValidPlace {
-            memory, pointer, ..
+            memory,
+            pointer,
+            range,
+            ..
         } => {
             collect_memory_bound_variables(memory, variables);
             collect_c_value_bound_variables(&CValue::Pointer(pointer.clone()), variables);
+            if let Some((start, end)) = range {
+                collect_integer_bound_variables(start.as_ref(), variables);
+                collect_integer_bound_variables(end.as_ref(), variables);
+            }
         }
         Proposition::CMemoryInitialized {
             memory,
@@ -7287,11 +7301,18 @@ fn substitute_pointer_variable_in_spec_proposition(
             element_width: *element_width,
         },
         SpecProposition::ValidPlace {
+            range,
             memory,
             pointer,
             place_type,
             access_policy,
         } => SpecProposition::ValidPlace {
+            range: range.as_ref().map(|(start, end)| {
+                (
+                    substitute_pointer_variable_in_spec_expression(start, from, to),
+                    substitute_pointer_variable_in_spec_expression(end, from, to),
+                )
+            }),
             memory: substitute_pointer_variable_in_spec_memory(memory, from, to),
             pointer: substitute_pointer_variable_in_spec_expression(pointer, from, to),
             place_type: place_type.clone(),

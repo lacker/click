@@ -58,7 +58,13 @@ impl<'a> SpecNode<'a> {
                 }
                 SpecProposition::FloatClassification { expression, .. }
                 | SpecProposition::Defined(expression) => visit(N::Expression(expression)),
-                SpecProposition::ValidPlace { pointer, .. } => visit(N::Expression(pointer)),
+                SpecProposition::ValidPlace { pointer, range, .. } => {
+                    visit(N::Expression(pointer));
+                    if let Some((start, end)) = range {
+                        visit(N::Expression(start));
+                        visit(N::Expression(end));
+                    }
+                }
                 SpecProposition::MemoryInitialized { base, .. } => visit(N::Expression(base)),
                 SpecProposition::And(left, right)
                 | SpecProposition::Or(left, right)

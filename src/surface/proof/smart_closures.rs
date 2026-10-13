@@ -185,10 +185,18 @@ fn collect_signed_surface_proposition_terms<'a>(
                 collect_signed_surface_terms(left, terms);
                 collect_signed_surface_terms(right, terms);
             }
-            ClickProposition::ValidPlace { expression, .. }
-            | ClickProposition::Defined { expression }
+            ClickProposition::Defined { expression }
             | ClickProposition::FloatClassification { expression, .. } => {
                 collect_signed_surface_terms(expression, terms)
+            }
+            ClickProposition::ValidPlace {
+                expression, range, ..
+            } => {
+                collect_signed_surface_terms(expression, terms);
+                if let Some((start, end)) = range {
+                    collect_signed_surface_terms(start, terms);
+                    collect_signed_surface_terms(end, terms);
+                }
             }
             ClickProposition::At { proposition, .. }
             | ClickProposition::Not(proposition)

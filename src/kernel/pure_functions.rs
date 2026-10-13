@@ -262,6 +262,7 @@ fn collect_body_reads(
                 | SpecProposition::SequenceComparison { .. }
                 | SpecProposition::ResourceSeparate { .. }
                 | SpecProposition::ResourceContains { .. }
+                | SpecProposition::ValidPlace { .. }
                 | SpecProposition::MemoryLoadable { .. },
             ) => Err(UninspectedForm(
                 "a proposition form the closedness check does not inspect",

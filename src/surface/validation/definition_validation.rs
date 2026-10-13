@@ -1877,8 +1877,7 @@ fn collect_resource_fact_reads_from_proposition(
                 resource_name,
             )
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::Defined { expression } => {
             collect_resource_fact_reads_from_contract_expression(
                 expression,
                 predicate_definitions,
@@ -1888,6 +1887,24 @@ fn collect_resource_fact_reads_from_proposition(
                 reads,
                 resource_name,
             )
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            for expression in std::iter::once(expression)
+                .chain(range.iter().flat_map(|(start, end)| [start, end]))
+            {
+                collect_resource_fact_reads_from_contract_expression(
+                    expression,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            Ok(())
         }
         ClickProposition::At { proposition, .. } => collect_resource_fact_reads_from_proposition(
             proposition,

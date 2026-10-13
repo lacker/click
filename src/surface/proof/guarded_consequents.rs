@@ -322,9 +322,14 @@ fn collect_goal_field_accesses(
                 pending_expressions.push(left);
                 pending_expressions.push(right);
             }
-            ClickProposition::Defined { expression }
-            | ClickProposition::ValidPlace { expression, .. } => {
-                pending_expressions.push(expression)
+            ClickProposition::Defined { expression } => pending_expressions.push(expression),
+            ClickProposition::ValidPlace {
+                expression, range, ..
+            } => {
+                pending_expressions.push(expression);
+                if let Some((start, end)) = range {
+                    pending_expressions.extend([start, end]);
+                }
             }
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)

@@ -13610,18 +13610,13 @@ fn source_expander_derives_separation_from_call_postconditions() {
         .expect("bounded call ranges should verify before expansion");
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("call postconditions should expand into an explicit separation derivation");
-    // The call postconditions are written against the snapshots where they were read:
-    // anchored rewrites, not unanchored equalities that would re-read the
-    // fields in the proof's current state.
+    // The scalar postcondition needs an anchored rewrite, rather than
+    // re-reading the field in the proof's current state. The checked pointer
+    // store effect already transports the complete data carrier, so its
+    // equality need not appear as a redundant numeric rewrite.
     assert!(
         expanded.contains(
             "rewrite(at(statement(2).entry, left->len) == at(statement(2).entry, length));"
-        ),
-        "{expanded}"
-    );
-    assert!(
-        expanded.contains(
-            "rewrite(at(statement(2).entry, left->data) == at(statement(2).entry, data));"
         ),
         "{expanded}"
     );

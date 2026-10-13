@@ -134,7 +134,23 @@ fn validate_proposition_expression_types_one(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_expression_types(segment, variables, click_functions, context)
         }
-        ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            if let Some((start, end)) = range {
+                for bound in [start, end] {
+                    let ty =
+                        infer_contract_expression_type(bound, variables, click_functions, context)?;
+                    if !matches!(
+                        ty,
+                        Some(C0Type::Int32 | C0Type::UInt32 | C0Type::Int64 | C0Type::UInt64)
+                    ) {
+                        return Err(ClickError::new(
+                            "valid_place ranges require native integer bounds",
+                        ));
+                    }
+                }
+            }
             let actual =
                 infer_contract_expression_type(expression, variables, click_functions, context)?;
             if !actual.is_some_and(C0Type::is_object_pointer) {
@@ -3573,9 +3589,18 @@ fn validate_predicate_calls_in_proposition_one(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::Defined { expression } => {
             validate_contract_expression_calls(expression, click_functions, context)
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            validate_contract_expression_calls(expression, click_functions, context)?;
+            if let Some((start, end)) = range {
+                validate_contract_expression_calls(start, click_functions, context)?;
+                validate_contract_expression_calls(end, click_functions, context)?;
+            }
+            Ok(())
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -3889,9 +3914,18 @@ fn validate_if_condition_proposition(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
-        ClickProposition::Defined { expression }
-        | ClickProposition::ValidPlace { expression, .. } => {
+        ClickProposition::Defined { expression } => {
             validate_contract_expression_calls(expression, click_functions, context)
+        }
+        ClickProposition::ValidPlace {
+            expression, range, ..
+        } => {
+            validate_contract_expression_calls(expression, click_functions, context)?;
+            if let Some((start, end)) = range {
+                validate_contract_expression_calls(start, click_functions, context)?;
+                validate_contract_expression_calls(end, click_functions, context)?;
+            }
+            Ok(())
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)

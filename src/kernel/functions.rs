@@ -5974,6 +5974,33 @@ fn execute_verified_function_applications_with_suspension(
                     )
                     .map(CValue::Pointer)
                 });
+            let field_result = field_result.or_else(|| {
+                application
+                    .pointer_result_effects
+                    .iter()
+                    .find_map(|effect| {
+                        let CPointerResultEffect::FromPointerField { source } = effect else {
+                            return None;
+                        };
+                        let input = pointer_store_effects::field_source(
+                            &entry_state,
+                            interface,
+                            &argument_values,
+                            source,
+                            interface.return_type(),
+                            &effective_assumptions,
+                        );
+
+                        let input = input?;
+
+                        let CValue::Pointer(result) =
+                            symbolic_contract_result(interface, result_identity)
+                        else {
+                            return None;
+                        };
+                        Some(CValue::Pointer(result.with_designation_of(&input)))
+                    })
+            });
             field_result.unwrap_or_else(|| {
                 instantiate_pointer_result_effect(
                     symbolic_contract_result(interface, result_identity),
@@ -7542,6 +7569,7 @@ fn execute_verified_function_applications_with_suspension(
         }
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
+
         let outcome = CFunctionOutcome::Return {
             value: result,
             state: Box::new(return_state),
@@ -8529,6 +8557,15 @@ fn prepare_verified_function_call<'a>(
                     // Range bounds are the definition of this atomic source
                     // clause. User-written logical structure still needs its
                     // ordinary explicit proof rather than this unpacking.
+                    if matches!(
+                        requirement,
+                        SpecProposition::ValidPlace { range: Some(_), .. }
+                    ) {
+                        return validity_requirement_parts_are_established(
+                            requirement_assumptions,
+                            &requirement_path.proposition,
+                        );
+                    }
                     if matches!(requirement, SpecProposition::ResourceSeparate { .. }) {
                         return separation_requirement_parts_are_established(
                             &path_assumptions,
@@ -8566,6 +8603,7 @@ fn prepare_verified_function_call<'a>(
                     &requirement_path.proposition,
                 );
             }
+
             // The guards this wrap inserts, then the head chain the
             // requirement's own lowering recorded. The record comes from the
             // lowering that produced the obligation, so an introduction on
@@ -9137,6 +9175,25 @@ fn separation_requirement_parts_are_established(
                     )
         }
         _ => assumptions.proves_exact(proposition),
+    }
+}
+
+// Unpack only the kernel-generated definition of an atomic range-validity
+// clause. Every numeric bound and the exact carrier's geometry must already
+// hold; this does not discharge an arbitrary user-written conjunction.
+fn validity_requirement_parts_are_established(
+    assumptions: &PureFactContext,
+    proposition: &Proposition,
+) -> bool {
+    match proposition {
+        Proposition::And(left, right) => {
+            validity_requirement_parts_are_established(assumptions, left)
+                && validity_requirement_parts_are_established(assumptions, right)
+        }
+        Proposition::ConditionIs(_, _) | Proposition::CValidPlace { range: Some(_), .. } => {
+            required_obligation_is_exactly_discharged(assumptions, proposition)
+        }
+        _ => false,
     }
 }
 
@@ -15924,7 +15981,9 @@ fn instantiate_pointer_result_effect(
                 parameter,
                 child_path,
             } => (parameter, child_path, false),
-            CPointerResultEffect::ExactFromPointerField { .. } | CPointerResultEffect::Opaque => {
+            CPointerResultEffect::ExactFromPointerField { .. }
+            | CPointerResultEffect::FromPointerField { .. }
+            | CPointerResultEffect::Opaque => {
                 continue;
             }
         };

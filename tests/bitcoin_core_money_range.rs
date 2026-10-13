@@ -3038,8 +3038,8 @@ fn axiomatic_span_fixture(
 }
 
 // Bitcoin's unchanged `SpanPopBack` verifies against Click's `std::span`
-// contracts: libstdc++'s `size`, `back` and `first` are axioms with no
-// exported body, and every contract states the span through model accessors.
+// contracts: the pinned declarations select checked library models, and
+// every contract states the span through model accessors.
 #[test]
 fn axiomatic_span_pop_back_verifies_against_catalog_contracts() {
     let (root, import) = axiomatic_span_fixture(
@@ -3091,6 +3091,7 @@ int32& {pop_back}(struct span__int__value_unsigned_long_18446744073709551615& sp
     owns std_span_data(span);
     owns std_span_size(span);
     requires 1u64 <= std_span_size(span);
+    requires valid_place(std_span_data(span)[0..std_span_size(span)]);
     ensures std_span_data(span) == old(std_span_data(span));
     ensures std_span_size(span) == old(std_span_size(span)) - 1u64;
     ensures &result == old(std_span_data(span)) + (old(std_span_size(span)) - 1u64);
@@ -3107,6 +3108,7 @@ int32& probe(struct span__int__value_unsigned_long_18446744073709551615& span) {
     owns std_span_data(span);
     owns std_span_size(span);
     requires 1u64 <= std_span_size(span);
+    requires valid_place(std_span_data(span)[0..std_span_size(span)]);
     ensures std_span_size(span) == old(std_span_size(span)) - 1u64;
     ensures &result == old(std_span_data(span)) + (old(std_span_size(span)) - 1u64);
 }} by {{
@@ -3148,7 +3150,12 @@ int32& probe(struct span__int__value_unsigned_long_18446744073709551615& span) {
     // Without a nonempty view the proof has no predecessor bound, and the
     // refusal spells the size through its accessor, as the sidecar does.
     refuse(
-        source.replacen("    requires 1u64 <= std_span_size(span);\n", "", 1),
+        source.replacen(
+            "    requires 1u64 <= std_span_size(span);
+    requires valid_place(std_span_data(span)[0..std_span_size(span)]);\n",
+            "",
+            1,
+        ),
         "apply(uint64_predecessor_below(std_span_size(span)))",
     );
     // `first` keeps the data pointer; a moved one is false.
@@ -3239,6 +3246,7 @@ int32& {pop_back}(struct span__int__value_unsigned_long_18446744073709551615& sp
     owns std_span_data(span);
     owns std_span_size(span);
     requires 1u64 <= std_span_size(span);
+    requires valid_place(std_span_data(span)[0..std_span_size(span)]);
     ensures std_span_data(span) == old(std_span_data(span));
     ensures std_span_size(span) == old(std_span_size(span)) - 1u64;
     ensures &result == old(std_span_data(span)) + (old(std_span_size(span)) - 1u64);
@@ -3256,6 +3264,7 @@ int32 probe(struct span__int__value_unsigned_long_18446744073709551615& span, in
     owns std_span_size(span);
     owns std_span_data(span)[std_span_size(span) - 1u64];
     requires 1u64 <= std_span_size(span);
+    requires valid_place(std_span_data(span)[0..std_span_size(span)]);
     requires separate(memory(std_span_data(span)), memory(std_span_data(span)[std_span_size(span) - 1u64]));
     requires separate(memory(std_span_size(span)), memory(std_span_data(span)[std_span_size(span) - 1u64]));
     ensures result == input;
@@ -3270,6 +3279,16 @@ int32 probe(struct span__int__value_unsigned_long_18446744073709551615& span, in
     let parsed = read_click_project(&sidecar, &source).unwrap();
     verify_program_prepared_project(&parsed, &import)
         .unwrap_or_else(|error| panic!("{}\n{source}", error.message()));
+    check_pinned_byte_proof(&root, &import, &source);
+    let invalid_range = source.replacen(
+        "    requires valid_place(std_span_data(span)[0..std_span_size(span)]);\n",
+        "",
+        1,
+    );
+    let parsed = read_click_project(&sidecar, &invalid_range).unwrap();
+    verify_program_prepared_project(&parsed, &import).expect_err(
+        "the helper needs typed backing geometry independently of descriptor ownership",
+    );
     let unowned = source.replacen(
         "    owns std_span_data(span)[std_span_size(span) - 1u64];\n",
         "",

@@ -1652,7 +1652,8 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             paths
         }
         CExpression::CheckedObjectAddress(target) => {
-            let width = c_expression_lvalue_type(state, target)
+            let value_type = c_expression_lvalue_type(state, target);
+            let width = value_type
                 .map(|ty| ty.byte_width())
                 .filter(|width| *width > 0);
             let mut paths = address_of_lvalue_paths(state, target, assumptions, budget)?;
@@ -1687,6 +1688,26 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                     {
                         path.outcome = CExpressionOutcome::UndefinedBehavior(
                             CUndefinedBehavior::InvalidMemory,
+                        );
+                        continue;
+                    }
+                    if state.typed_access_policy == CTypedAccessPolicy::NativeObjectOnly {
+                        let Some(value_type) = value_type else {
+                            path.outcome =
+                                CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch);
+                            continue;
+                        };
+                        let _ = add_proof_obligation_with_context(
+                            &mut path.obligations,
+                            assumptions,
+                            Proposition::CValidPlace {
+                                range: None,
+                                memory: state.memory().clone(),
+                                pointer: pointer.clone(),
+                                place_type: CPlaceType::Scalar(value_type),
+                                access_policy: state.typed_access_policy,
+                            },
+                            Some("reference binding requires a live typed referent"),
                         );
                         continue;
                     }
