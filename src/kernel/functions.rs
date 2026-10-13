@@ -22445,29 +22445,32 @@ pub(super) fn bind_composite_witnesses_with_held(
                 let [path] = paths.as_slice() else {
                     return None;
                 };
-                match &path.value {
-                    CValue::UInt64(term) | CValue::Int64(term) => Some(term.clone()),
-                    _ => None,
-                }
+                matches!(path.value.c_type(), CType::UInt64 | CType::Int64)
+                    .then(|| crate::kernel::spec::c_value_bitvector_term(&path.value))
+                    .flatten()
             });
-        let origin = word
-            .as_ref()
-            .and_then(|term| {
-                if term.uint64_as_const() == Some(0) {
-                    return Some(Pointer::null());
-                }
-                let mut used = super::eval::pointer_tags::UsedFacts::new();
-                super::eval::pointer_tags::tagged_address_form(term, assumptions, &mut used)
-                    .map(|form| form.pointer)
+        let origin = word.as_ref().and_then(|term| {
+            if term.uint64_as_const() == Some(0) {
+                return Some(Pointer::null());
+            }
+            let mut used = super::eval::pointer_tags::UsedFacts::new();
+            super::eval::pointer_tags::tagged_address_form(term, assumptions, &mut used)
+                .map(|form| form.pointer)
+        });
+        let child = held_child_witness(
+            definition,
+            witness.name(),
+            arguments,
+            held,
+            assumptions,
+            origin.as_ref(),
+        )
+        .filter(|pointer| pointer.c_type() == witness.c_type())
+        .filter(|pointer| {
+            origin.as_ref().is_none_or(|origin| {
+                pointers_proven_equal_for_memory_resolution(pointer.pointer(), origin, assumptions)
             })
-            // A body that contains a composite resource under the witness
-            // names it through the resource context: when exactly one held
-            // fact of that composite exists, its argument is the witness a
-            // fold consumes. This is the fold's own obligation read back,
-            // not a search.
-            .or_else(|| {
-                held_child_witness(definition, witness.name(), arguments, held, assumptions)
-            });
+        });
         // A witness with no recorded origin is named by the content of the
         // instance that introduces it: the definition, the witness position,
         // the argument values, and the word's own value term. The word term
@@ -22489,7 +22492,13 @@ pub(super) fn bind_composite_witnesses_with_held(
                 .hash(&mut hasher);
             Pointer::symbolic(Variable(4_000_000_000 + hasher.finish() % 4_000_000_000))
         });
-        let value = CValue::typed_pointer(pointer, witness.c_type());
+        // A fold may select its existential argument from the exact held
+        // child it must consume. Preserve that complete value; a packed-word
+        // equation supplies only an address and cannot replace its origin.
+        // The ordinary body-fact checks still verify the selected witness.
+        let value = child
+            .map(CValue::Pointer)
+            .unwrap_or_else(|| CValue::typed_pointer(pointer, witness.c_type()));
         state
             .locals
             .set_typed(witness.name().to_string(), value.clone(), witness.c_type());
@@ -22507,12 +22516,13 @@ fn held_child_witness(
     arguments: &[AlgebraicValue],
     resources: &ResourceContext,
     assumptions: &PureFactContext,
-) -> Option<Pointer> {
+    origin: Option<&Pointer>,
+) -> Option<CPointerValue> {
     // The body's own instance is never its own child.
     let own_pointers = arguments
         .iter()
         .filter_map(|argument| match argument {
-            AlgebraicValue::C(CValue::Pointer(pointer)) => Some(pointer.pointer().clone()),
+            AlgebraicValue::C(CValue::Pointer(pointer)) => Some(pointer.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -22522,15 +22532,27 @@ fn held_child_witness(
             && matches!(arguments, [CExpression::Variable(argument)] if argument == witness))
         .then(|| spec.declared_name().expect("composite spec has a name"))
     })?;
-    let mut candidates = resources
-        .facts()
-        .iter()
+    let query = CResourceFact::own_composite(
+        child_name.to_string(),
+        vec![CValue::typed_pointer(
+            origin.cloned().unwrap_or_else(Pointer::null),
+            CType::Int32Pointer,
+        )],
+    );
+    let narrowed = origin.map(|_| resources.direct_match_candidates_for(&query, assumptions));
+    let broad = narrowed
+        .is_none()
+        .then(|| resources.direct_match_candidates(&query));
+    let mut candidates = narrowed
+        .as_ref()
+        .into_iter()
+        .flat_map(|facts| facts.iter().copied())
+        .chain(broad.into_iter().flatten())
+        .inspect(|_| crate::instrumentation::record_deterministic_work(1))
         .filter_map(|fact| match fact.resource() {
             CResource::Composite { name, arguments } if name == child_name => {
                 match arguments.as_ref() {
-                    [AlgebraicValue::C(CValue::Pointer(pointer))] => {
-                        Some(pointer.pointer().clone())
-                    }
+                    [AlgebraicValue::C(CValue::Pointer(pointer))] => Some(pointer.clone()),
                     _ => None,
                 }
             }
@@ -22540,10 +22562,11 @@ fn held_child_witness(
         // proven a different pointer.
         .filter(|pointer| {
             own_pointers.iter().all(|own| {
-                own.block != pointer.block
-                    || assumptions
-                        .decide(&ConditionTerm::pointer_equal(pointer.clone(), own.clone()))
-                        == Some(false)
+                own.block != pointer.pointer().block
+                    || assumptions.decide(&ConditionTerm::pointer_equal(
+                        pointer.pointer().clone(),
+                        own.pointer().clone(),
+                    )) == Some(false)
             })
         });
     let first = candidates.next()?;
@@ -36049,6 +36072,138 @@ mod inline_loop_boundary_tests {
 #[cfg(test)]
 mod composite_pointer_body_fact_tests {
     use super::*;
+
+    #[test]
+    fn numeric_witness_observes_origin_carrying_words_without_issuing_origins() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = CPointerValue::new(Pointer::symbolic(Variable(710_090)), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(Variable(710_091)));
+        for ty in [CType::Int64, CType::UInt64] {
+            let definition = CCompositeResourceDefinition::new(
+                "packed",
+                vec![],
+                None,
+                false,
+                vec![],
+                vec![SpecProposition::Comparison {
+                    left: SpecExpression::CExpression(c_variable("word")),
+                    operator: CComparisonOperator::Equal,
+                    right: SpecExpression::CExpression(c_cast(c_variable("next"), ty)),
+                }],
+            )
+            .with_witnesses(vec![c_parameter("next", CType::Int32Pointer)]);
+            let word = CValue::PointerInteger(Arc::new(
+                CPointerIntegerValue::from_pointer(pointer.clone(), ty).unwrap(),
+            ));
+            let mut state = CState::new().with_local("word", word);
+            let values =
+                bind_composite_witnesses(&definition, &[], &mut state, &PureFactContext::new())
+                    .unwrap();
+            let [CValue::Pointer(witness)] = values.as_slice() else {
+                panic!("pointer witness");
+            };
+            assert_eq!(witness.pointer(), pointer.pointer());
+            assert!(witness.designation().is_none());
+        }
+    }
+
+    #[test]
+    fn held_child_witness_preserves_full_values_and_refuses_ambiguous_origins() {
+        let definition = CCompositeResourceDefinition::new(
+            "parent",
+            vec![],
+            None,
+            false,
+            vec![CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                "child".into(),
+                vec![c_variable("next")],
+                vec![CType::Int32Pointer],
+            )],
+            vec![],
+        );
+        let address = Pointer::symbolic(Variable(710_100));
+        let pointer = CPointerValue::new(address.clone(), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(Variable(710_101)));
+        let held = |pointer| {
+            CResourceFact::own(CResource::Composite {
+                name: "child".into(),
+                arguments: vec![AlgebraicValue::C(CValue::Pointer(pointer))].into(),
+            })
+        };
+        let resources = ResourceContext::new().unchecked_with_fact(held(pointer.clone()));
+        let facts = PureFactContext::new();
+        assert_eq!(
+            held_child_witness(&definition, "next", &[], &resources, &facts, None),
+            Some(pointer)
+        );
+        let other = CPointerValue::new(address, CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(Variable(710_102)));
+        let ambiguous = resources.unchecked_with_fact(held(other));
+        assert!(held_child_witness(&definition, "next", &[], &ambiguous, &facts, None).is_none());
+        assert!(
+            held_child_witness(
+                &definition,
+                "next",
+                &[],
+                &ResourceContext::new(),
+                &facts,
+                None
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn held_child_witness_known_address_does_not_scan_unrelated_resources() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let definition = CCompositeResourceDefinition::new(
+            "parent",
+            vec![],
+            None,
+            false,
+            vec![CResourceSpec::composite(
+                CResourceAccessMode::Own,
+                "child".into(),
+                vec![c_variable("next")],
+                vec![CType::Int32Pointer],
+            )],
+            vec![],
+        );
+        let pointer = CPointerValue::new(Pointer::symbolic(Variable(710_110)), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(Variable(710_111)));
+        let held =
+            |pointer| CResourceFact::own_composite("child".into(), vec![CValue::Pointer(pointer)]);
+        let facts = PureFactContext::new();
+        let mut measurements = Vec::new();
+        for count in [16, 64, 256, 1024] {
+            let mut resources = ResourceContext::new().unchecked_with_fact(held(pointer.clone()));
+            for offset in 0..count {
+                resources = resources.unchecked_with_fact(held(CPointerValue::new(
+                    Pointer::symbolic(Variable(730_000 + offset)),
+                    CType::Int32Pointer,
+                )));
+            }
+            let (selected, work) = crate::instrumentation::measure_deterministic_work(|| {
+                held_child_witness(
+                    &definition,
+                    "next",
+                    &[],
+                    &resources,
+                    &facts,
+                    Some(pointer.pointer()),
+                )
+            });
+            assert_eq!(selected, Some(pointer.clone()));
+            measurements.push(work);
+        }
+        assert!(
+            measurements
+                .iter()
+                .all(|work| *work <= measurements[0] + 32),
+            "{measurements:?}"
+        );
+    }
 
     // A fold's packed-word equation can use a new name for a checked copy.
     // Rewriting that name must remain scoped, full-width, and independent

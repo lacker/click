@@ -108,7 +108,7 @@ tests; constructor expansion and retained verification passed separately. The
 one-word byte fix passed 21 focused representation and native-prefix controls.
 Formatting, Clippy across all targets, book/reference generation, and the
 updated `stdlib_every_symbol` executable fixture also passed.
-These local repairs have not yet been published to PR 646.
+These repairs are part of the PR 646 acceptance checkpoint.
 
 The span boundary needs geometry without read permission: its current
 `back()` catalog axiom states only numerical address equality. A checked
@@ -136,14 +136,29 @@ check refusal in verification and expansion. Their C source and contract
 claims are preserved; positive audit coverage returns with explicit origin
 promises in that issue. No origin predicate is implemented in this checkpoint.
 
-The broader example check also reproduced a separate P1
-[rbtree context-helper refusal](../bugs/rbtree-change-child-refuses-original-context-proof.md),
-which still blocks publishing PR 646 as ready. A mutex-counter unfold failure
-was repaired by keeping unopened population authorities out of the scratch
-readable-carrier footprint; its unchanged frozen regression now passes.
+The broader example check found that plain C record signatures were activating
+native input identities without a native source profile or explicit prefix
+promise. Enrollment now preserves unprofiled C carrier absence while keeping
+C++ nominal inputs and explicit native requirements strict. The unchanged
+rbtree context helper passes fresh verification, expansion, rewritten-proof
+verification and retained rechecking; all three wrong-link mutations reject.
+A mutex-counter unfold failure was repaired by keeping unopened population
+authorities out of the scratch readable-carrier footprint; its unchanged frozen
+regression passes.
 
-Run the complete C/Rust/C++ acceptance matrix after these repairs, then remove
-resolved bug documents and publish the coherent update to PR 646.
+The marked-list constructors also verify: numeric witness observation handles
+origin-carrying integer values and folding retains the complete argument of its
+existing child resource. The unchanged full project is an active rejection
+control at `list_next`, whose numeric-only resource contract cannot justify
+pointer reconstruction. Its positive modular traversal remains part of the P2
+origin-contract issue, rather than a quarantined verifier failure.
+
+The follow-up focused matrix passes all 361 tests, including the original C++
+span helper/write caller, rbtree expansion and mutations, marked-list construction
+and origin refusal, and the mutex regression. The rbtree bug document is removed
+because its original reproduction and acceptance checks now pass. Integration
+with current upstream and the normal PR/merge-queue checks remain required
+before this checkpoint lands.
 
 **Approved contract design:** use shared `requires valid_place(p);` for typed
 validity alone. It grants neither ownership nor initialization and uses the

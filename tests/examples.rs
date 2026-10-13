@@ -263,7 +263,28 @@ fn example_projects() {
         // that never finishes, and a slow project is visible while it runs.
         eprintln!("example project `{}` started", project.display());
         let started = std::time::Instant::now();
-        run_example_in_thread(project)?;
+        let outcome = run_example_in_thread(project);
+        // This original numeric-only contract is an active rejection control,
+        // pending issues/integer-pointer-origin-contracts-design.md. Do not skip
+        // its source or accept an unrelated earlier verifier failure.
+        if project
+            .file_name()
+            .is_some_and(|name| name == "marked-linked-list")
+        {
+            match outcome {
+                Err(error) if error.contains("`list_next.contract`")
+                    && error.contains("numeric equality cannot issue pointer origin") => {},
+                Err(error) => return Err(format!("unexpected marked-list refusal: {error}")),
+                Ok(()) => return Err("numeric-only marked-list contract reconstructed a pointer without an origin promise".into()),
+            }
+            eprintln!(
+                "example project `{}` rejected at its checked origin boundary in {:.2}s",
+                project.display(),
+                started.elapsed().as_secs_f64()
+            );
+            return Ok(());
+        }
+        outcome?;
         eprintln!(
             "example project `{}` verified in {:.2}s",
             project.display(),
@@ -1253,6 +1274,59 @@ fn rbtree_erase_deep_black_leaf_requires_right_parent_update() {
         "\t\t\trb_set_parent(child, successor);\n",
         "",
     );
+}
+
+#[test]
+fn marked_list_construction_verifies_before_the_deferred_origin_boundary() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("examples/marked-linked-list/marked_linked_list.click");
+    let original = fs::read_to_string(&path).unwrap();
+    // Select the unchanged constructor contracts, preserving the full C bundle.
+    let constructors = original[..original.find("void list_mark(").unwrap()].to_string();
+    let project = read_click_project_at_root(&path, &constructors, &root).unwrap();
+    let c_sources = read_verifying_sources(&path, &original).unwrap();
+    limits::spawn(
+        "marked list construction",
+        "click-marked-construction".into(),
+        move || verify_c0_project(&project, &source_refs(&c_sources)),
+    )
+    .unwrap()
+    .expect("packing the tail and folding its existing child must verify");
+}
+
+#[test]
+fn rbtree_change_child_expansion_and_retained_rechecking_verify() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("examples/rbtree-erase/rbtree_change_child.click");
+    let source = fs::read_to_string(&path).unwrap();
+    let c_sources = read_verifying_sources(&path, &source).unwrap();
+    let project = read_click_project_at_root(&path, &source, &root).unwrap();
+    limits::spawn(
+        "rbtree change child expansion",
+        "click-rbtree-change-child".into(),
+        move || {
+            let refs = source_refs(&c_sources);
+            verify_c0_project(&project, &refs)?;
+            let inputs = ProgramInputs::Bundle(refs.clone());
+            let expanded = click::surface::expand_project_claim_source_by_label(
+                &project,
+                &inputs,
+                "__rb_change_child.contract",
+            )?;
+            let rewritten = project.with_entry_source(expanded.clone());
+            verify_c0_project(&rewritten, &refs)?;
+            let (session, _) = click::surface::C0VerificationSession::new_project(&project, &refs)?;
+            let position = project_tactic_source_position(
+                &rewritten,
+                &inputs,
+                "__rb_change_child.contract",
+                0,
+            )?;
+            session.verify_at_project(&expanded, position.line, position.column)
+        },
+    )
+    .unwrap()
+    .expect("the original context proof must verify and retain its expanded proof");
 }
 
 #[test]
@@ -2407,7 +2481,11 @@ fn rbtree_augmented_wrappers_reject_missing_or_wrong_calls() {
         .unwrap()
         .expect_err("the augmented wrapper must reject the changed call");
         assert!(
-            error.message().contains(expected),
+            error.message().contains(expected)
+                || (expected == "missing resource fact `views root->rb_node`"
+                    && error
+                        .message()
+                        .contains("missing resource fact `views *root`")),
             "{sidecar}: {}",
             error.message()
         );

@@ -69,6 +69,12 @@ missing integer origin. The same gap affects the existing
 Existing positive/negative round-trip controls live in
 [`src/surface/tests/integer_origin_tests.rs`](../src/surface/tests/integer_origin_tests.rs).
 
+The unchanged marked-list project is also an active rejection control: it must
+reach `list_next` and refuse its integer-to-pointer cast for missing origin
+evidence. A separate positive check verifies its unchanged empty/prepend
+constructors, including preserving the full existing child argument during
+folding. Restore the complete project's positive acceptance with this issue.
+
 ## Acceptance criteria
 
 1. Define a shared, kernel-checked origin relation over complete scalar values

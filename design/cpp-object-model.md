@@ -413,7 +413,7 @@ and an explicit root/path/base/element/stride/count term. Counts and array path
 selections are mathematical integers. Value identity, snapshot identity, alpha
 keys, dependency collection, full-value substitution and resource matching retain
 these terms; address-only substitution cannot replace them. Raw pointer comparison
-and storage keys remain address-based. Resource semantics version 75 invalidates
+and storage keys remain address-based. Resource semantics version 77 invalidates
 older retained artifacts.
 
 Native input spans are minimum guarantees, not declarations of the complete
@@ -459,9 +459,12 @@ has no span requirement. The marker is part of the checked function interface;
 it grants no object extent, permission, or initialization. A typed input promise
 can justify traversal; the absence of a promise must not select legacy pointer
 arithmetic. Existing unprofiled C and Rust parameters and unknown pointer
-loads retain legacy absence. C records containing unions remain outside automatic
-native record enrollment, including records holding modeled opaque pthread
-objects. This compatibility boundary does not admit C++ union operations or
+loads retain legacy absence. A plain C record-pointer signature and automatic
+layout metadata attached to a C ownership clause do not select a native profile.
+Explicit native source profiles, record/scalar prefixes and `valid_place`
+requirements select and check their exact input identities. This also keeps
+legacy C records containing modeled opaque pthread objects on their existing
+path. This compatibility boundary does not admit C++ union operations or
 weaken explicit native input requirements. Exact known pointer stores and reloads preserve the
 complete carrier. An immutable loaded-value origin can transport a designated
 value through its own checked complete cell and memory history, but a registry

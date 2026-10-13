@@ -1,5 +1,18 @@
 use super::*;
 
+// Automatic source layout metadata does not activate the native profile for
+// an otherwise legacy C carrier. Explicit valid_place checks use
+// check_record_place directly and never take this compatibility path.
+fn legacy_record_carrier(
+    state: &CState,
+    pointer: &CPointerValue,
+    layout: &CAggregateLayout,
+) -> bool {
+    pointer.designation().is_none()
+        && state.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed
+        && layout.declaration_identity().is_none()
+}
+
 fn requirement_pointer(
     state: &CState,
     requirement: &CNativeRecordPlaceRequirement,
@@ -160,6 +173,10 @@ pub(crate) fn check_native_record_specs(
                 }
                 continue;
             }
+            let pointer = requirement_pointer(state, requirement, assumptions, false)?;
+            if legacy_record_carrier(state, &pointer, &requirement.layout) {
+                continue;
+            }
             check_record_place(state, requirement, assumptions)?;
         }
     }
@@ -238,6 +255,9 @@ fn assume_native_record_specs_in(
                 continue;
             }
             let pointer = requirement_pointer(&next, requirement, assumptions, source_entry)?;
+            if legacy_record_carrier(&next, &pointer, &requirement.layout) {
+                continue;
+            }
             next.set_memory(
                 next.memory()
                     .clone()
@@ -727,6 +747,44 @@ pub(crate) fn c_state_with_assumed_native_record_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_record_metadata_preserves_legacy_absence_but_never_native_validity() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            4,
+            4,
+            vec![CAggregateField::new("value", 0, CType::Int32)],
+        ));
+        let pointer = CPointerValue::new(Pointer::symbolic(Variable(988_230)), CType::Int32Pointer);
+        let requirement = CNativeRecordPlaceRequirement {
+            carrier: c_variable("p"),
+            layout: layout.clone(),
+            prefix_count: None,
+        };
+        let specs = [CResourceSpec::owned_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))
+        .with_native_record_places(vec![requirement.clone()])];
+        let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
+        let facts = PureFactContext::new();
+        let admitted = assume_native_record_specs(&state, &specs, &facts).unwrap();
+        assert_eq!(admitted.memory(), state.memory());
+        check_native_record_specs(&state, &specs, &facts).unwrap();
+        assert!(check_record_place(&state, &requirement, &facts).is_err());
+        assert!(!super::valid_places::holds(
+            state.memory(),
+            &pointer,
+            &CPlaceType::Record(layout),
+            CTypedAccessPolicy::CAllocatedAccessAllowed,
+            &facts
+        ));
+        let native = state.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+        assert!(assume_native_record_specs(&native, &specs, &facts).is_err());
+        assert!(check_native_record_specs(&native, &specs, &facts).is_err());
+    }
 
     #[test]
     fn source_entry_carrier_observation_does_not_relax_checked_call_reads() {

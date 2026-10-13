@@ -1017,7 +1017,6 @@ fn native_span_input_parameters(
         definitions,
     )
     .into_iter()
-    .filter(|index| parameters[*index].struct_name().is_none())
     .collect()
 }
 
@@ -1407,13 +1406,11 @@ pub(in crate::surface) fn initial_call_state(
         function.resource_requires(),
         function.contract_requires(),
     );
-    // Native symbolic record pointers and explicitly selected scalar-prefix
-    // inputs have an unresolved semantic domain. Known union-containing C
-    // records retain their legacy path: overlapping storage is outside this
-    // bounded profile, including opaque modeled pthread mutex fields.
-    // Their type establishes no object. Exact interface requirements below
-    // may authenticate them; unsupported crossings must not enter the legacy
-    // address-only evaluator path used by raw kernel states.
+    // Explicit native source inputs, nominal C++ record inputs and selected
+    // prefix/model requirements retain unresolved semantic identities. A C
+    // record type alone leaves an unprofiled input on its legacy path.
+    // None of these markers establishes an object; exact requirements below
+    // must authenticate every executable native selection.
     for (index, parameter) in parameters.iter().enumerate() {
         if (parameter.is_native_pointer_input()
             || function
@@ -4857,7 +4854,7 @@ mod input_identity_tests {
         let overlapping = syntax::parse_function(
             "union bits { int value; long wide; }; struct holder { union bits payload; int other; }; int probe(struct holder *p) { return p->other; }",
         ).unwrap();
-        for (parsed, unresolved) in [(&ordinary, true), (&overlapping, false)] {
+        for (parsed, unresolved) in [(&ordinary, false), (&overlapping, false)] {
             let (state, arguments) =
                 initial_call_state(&[], parsed.parameters(), &parsed.to_kernel_function(), &[])
                     .unwrap();

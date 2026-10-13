@@ -4652,10 +4652,6 @@ impl C0StructLayout {
         self.declaration_identity.is_some()
     }
 
-    pub(crate) fn has_union_storage(&self) -> bool {
-        !self.aggregate_unions.is_empty()
-    }
-
     fn aggregate_fields(&self) -> &[C0AggregateField] {
         &self.aggregate_fields
     }
@@ -4894,16 +4890,16 @@ impl C0Parameter {
 
     pub(crate) fn is_native_pointer_input(&self) -> bool {
         self.native_pointer_input
-            || (self.struct_name.is_some()
-                && self.c_type.is_pointer()
+            || (self.c_type.is_pointer()
                 && !self.is_struct_value()
-                && !self.pointee_struct_layout.as_ref().is_some_and(|layout| {
-                    layout.has_union_storage() && !layout.has_cpp_declaration_identity()
-                }))
+                && self
+                    .pointee_struct_layout
+                    .as_ref()
+                    .is_some_and(|layout| layout.has_cpp_declaration_identity()))
     }
 
-    /// Source-native pointer semantics are distinct from automatic enrollment
-    /// of ordinary C record pointers for checked member selection.
+    /// An explicit native source profile is separate from C++ nominal record
+    /// identity and from contract-selected native prefix identities.
     pub(crate) fn has_explicit_native_pointer_input(&self) -> bool {
         self.native_pointer_input
     }

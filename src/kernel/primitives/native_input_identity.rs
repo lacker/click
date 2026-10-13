@@ -104,6 +104,17 @@ fn add_specs(
                 edges.direct.insert(index);
             }
         }
+        for requirement in spec.native_record_places() {
+            crate::instrumentation::record_deterministic_work(1);
+            if requirement.prefix_count.is_some()
+                && let CExpression::Variable(name) = &requirement.carrier
+                && !shadowed.contains(name.as_str())
+                && let Some(&(index, c_type)) = source.get(name.as_str())
+                && c_type.is_object_pointer()
+            {
+                edges.direct.insert(index);
+            }
+        }
         let Some((name, arguments, types)) = composite(spec.term()) else {
             continue;
         };
@@ -321,6 +332,37 @@ mod tests {
             &[head("A")],
             definitions,
         )
+    }
+
+    #[test]
+    fn declared_record_prefix_selects_only_its_exact_formal_through_a_child() {
+        let place = CResourceSpec::owned_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))
+        .with_native_record_places(vec![CNativeRecordPlaceRequirement {
+            carrier: c_variable("p"),
+            layout: Arc::new(CAggregateLayout::new(
+                4,
+                4,
+                vec![CAggregateField::new("value", 0, CType::Int32)],
+            )),
+            prefix_count: Some(c_int32_literal(1)),
+        }]);
+        let definitions = [definition("A", vec![place], vec![])];
+        let parameters = [
+            c_parameter("p", CType::Int32Pointer),
+            c_parameter("other", CType::Int32Pointer),
+        ];
+        assert_eq!(
+            CFunctionContractInterface::declared_span_identity_parameters(
+                &parameters,
+                &[head("A")],
+                &definitions,
+            ),
+            BTreeSet::from([0])
+        );
     }
 
     #[test]

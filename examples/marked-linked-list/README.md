@@ -10,12 +10,19 @@ The `marked_list(node)` resource owns each node and its allocation, records
 that the node is 8-byte aligned, and binds the tail as an existential witness:
 `let next: struct node* where aligned(next, 8) and node->word == address(next)
 + (node->word & 1)`. The word is the tail's address plus its own low bit, so
-every tag operation the implementation performs is a checked rewrite on that
-address form. `list_mark` sets the bit and refolds; `list_is_marked` reads it
-through a mask; `list_next` clears the mask and casts back, recovering the
-witness pointer and its provenance; `list_count_live` walks the list through
-that cast; and `list_destroy` frees postorder. `list_prepend` stores a plain
-tail address, and the fold infers the witness from that stored word.
+the model currently records only numeric relationships. `list_prepend` stores
+a plain tail address and its checked fold preserves the existing child resource;
+the empty-list and prepend constructors verify.
+
+The original full project is an active rejection control for
+[`integer-pointer-origin-contracts-design.md`](../../issues/integer-pointer-origin-contracts-design.md).
+`list_next` clears the mask and casts back, but a numeric witness equation does
+not promise the retained pointer origin required by that cast. The project must
+refuse at that operation, rather than fail in construction or silently restore
+provenance from equal bits. Positive modular traversal and destruction coverage
+returns when the shared origin-contract mechanism is implemented. `list_mark`
+sets the bit and refolds, and `list_is_marked` observes the bit; neither operation
+alone supplies the missing origin promise.
 
 Alignment is evidence, never an assumption from the pointee type. Fresh nodes
 are aligned because the allocator says so, and the list interface states that

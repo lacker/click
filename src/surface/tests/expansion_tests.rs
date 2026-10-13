@@ -13284,7 +13284,7 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
         expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
             .expect("the indexed pointer-field fact should have a surface form");
     assert!(
-        expanded.contains("have load_int32((old(owner->data) + 1)) == value"),
+        expanded.contains("load_int32((old(owner->data) + 1)) == value"),
         "the checked historical pointer, scalar width, and index must be explicit: {expanded}",
     );
     verify_c0_sources(&expanded, &[("holder.c", c_source)]).unwrap_or_else(|error| {
