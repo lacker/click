@@ -88,6 +88,16 @@ fn name_direct_input(
     fact: &CResourceFact,
     assumptions: &PureFactContext,
 ) -> Option<CState> {
+    name_direct_input_from_source(state, spec, fact, assumptions, None)
+}
+
+fn name_direct_input_from_source(
+    state: &CState,
+    spec: &CResourceSpec,
+    fact: &CResourceFact,
+    assumptions: &PureFactContext,
+    source: Option<SharedCMemory>,
+) -> Option<CState> {
     let CResourceTerm::Memory(segment) = spec.term() else {
         return Some(state.clone());
     };
@@ -110,7 +120,7 @@ fn name_direct_input(
         });
     let element = selected_element.or_else(|| base.c_type().pointee_type())?;
     let mut memory = state.memory().clone();
-    let source = crate::kernel::intern_c_memory(memory.clone());
+    let source = source.unwrap_or_else(|| crate::kernel::intern_c_memory(memory.clone()));
     if selected_element.is_some() && LoadKind::of_type(element).is_some() {
         let width = element.byte_width();
         let first_byte = start.checked_mul(range.element_width())?;
@@ -544,6 +554,38 @@ pub(crate) fn construct(
         .try_compose_with_facts(state.resources().facts().iter().cloned(), &empty)
         .ok()?;
     state = state.with_resource_context(resources);
+    // Source entry names inputs beside raw construction outputs only after
+    // the kernel has checked the whole declared clause partition. Reconstruct
+    // that same stage, using its own premises and one immutable source image.
+    // No caller facts or cached caller cells are imported.
+    if state.memory().has_uninitialized_object_footprints() {
+        let assumptions = crate::kernel::c_function_contract_entry(&state, function, &canonical)
+            .ok()?
+            .into_assumptions();
+        let source = crate::kernel::intern_c_memory(state.memory().clone());
+        for spec in interface.resource_requires() {
+            if !matches!(spec.term(), CResourceTerm::Memory(_)) {
+                continue;
+            }
+            let bound = declaration_scope(&state, function, &canonical)?;
+            let Ok(Ok(fact)) =
+                evaluate_function_resource_spec(&bound, spec, &assumptions, &mut budget)
+            else {
+                return None;
+            };
+            state.set_memory(
+                name_direct_input_from_source(
+                    &bound,
+                    spec,
+                    &fact,
+                    &assumptions,
+                    Some(source.clone()),
+                )?
+                .memory()
+                .clone(),
+            );
+        }
+    }
     // Geometry can depend on the function's own declared preconditions (for
     // example a span's count is one). Derive those premises through the same
     // checked entry builder used for certification before validating geometry.
@@ -585,23 +627,25 @@ pub(crate) fn matches(
         return refusal("contract");
     };
     let mut premises = contract.into_assumptions();
-    let expected_actual_premises = if let Some(case) = checked_case {
-        let Some(entry_assumptions) =
-            case.entry_assumptions(function, arguments, actual, actual_premises)
-        else {
-            return refusal("case provenance");
+    if function.contract_interface().aggregate_return_mode() == CAggregateReturnMode::Construction {
+        // The source producer evaluates the complete declared clause list in
+        // order, including its trailing implicit destination requirement.
+        let Some(bound) = declaration_scope(&expected.caller, function, arguments) else {
+            return refusal("construction scope");
         };
-        for guard in case.guards() {
-            premises = premises.assume_proposition(guard.clone());
-        }
-        entry_assumptions
-    } else {
-        actual_premises
-    };
-    if &premises != expected_actual_premises {
-        return refusal("premises");
+        let mut budget = ExecutionBudget::beside_live_state();
+        let Ok(Ok((resources, _))) = evaluate_function_resource_context_with_metadata(
+            &bound,
+            function.resource_requires(),
+            function.composite_resource_definitions(),
+            &premises,
+            &mut budget,
+        ) else {
+            return refusal("construction partition");
+        };
+        expected.caller = expected.caller.with_resource_context(resources);
     }
-    // Supported producers share canonical names. Refuse alternate-cell
+    // Supported producers share canonical forms. Refuse alternate-cell
     // recipes instead of invoking the general source-by-target cell search.
     // Exact equality includes all physical and native authority metadata.
     if expected.caller.memory() != actual.memory() {
@@ -622,6 +666,9 @@ pub(crate) fn matches(
         }
         Arc::make_mut(&mut expected.caller.population_effects).creation = Some(events.clone());
     }
+    // Source certification observes the entry after its declared read views
+    // have been rooted. Rebuild that producer from independent input authority
+    // before comparing the exact premise context, including loan metadata.
     if actual.loan_ledger().is_some() {
         let Ok(rooted) = crate::kernel::c_state_with_borrowed_contract_inputs(
             expected.caller,
@@ -631,7 +678,29 @@ pub(crate) fn matches(
         ) else {
             return refusal("loans");
         };
+        let Ok(contract) =
+            crate::kernel::c_function_contract_entry(&rooted, function, &expected.arguments)
+        else {
+            return refusal("rooted contract");
+        };
+        premises = contract.into_assumptions();
         expected.caller = rooted;
+    }
+    let expected_actual_premises = if let Some(case) = checked_case {
+        let Some(entry_assumptions) =
+            case.entry_assumptions(function, arguments, actual, actual_premises)
+        else {
+            return refusal("case provenance");
+        };
+        for guard in case.guards() {
+            premises = premises.assume_proposition(guard.clone());
+        }
+        entry_assumptions
+    } else {
+        actual_premises
+    };
+    if &premises != expected_actual_premises {
+        return refusal("premises");
     }
     expected.caller.equal_up_to_unused_creation_ledgers(actual) || refusal("state")
 }

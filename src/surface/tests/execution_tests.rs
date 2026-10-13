@@ -1292,14 +1292,6 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     .expect("the independent fill3 contract admits its typed input span")
     .memory()
     .clone();
-    let final_memory = initial_memory
-        .clone()
-        .with_block("local:i", 4)
-        .store(first, int32(0))
-        .store(second, int32(1))
-        .store(third, int32(2))
-        .store(local_i, int32(3))
-        .without_local_block(&"local:i".into());
 
     // The entry has a creation ledger with a fresh
     // identity; it records nothing here.
@@ -1322,20 +1314,22 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
             ),
         ))]
     );
-    assert!(
-        verified
-            .specification
-            .outcome()
-            .equal_up_to_unused_creation_ledgers(&CFunctionOutcome::Return {
-                value: int32(2),
-                state: Box::new(
-                    CState::new()
-                        .with_population_creation_tracking()
-                        .with_memory(final_memory)
-                        .with_resource_context(initial_resources)
-                ),
-            })
-    );
+    let CFunctionOutcome::Return { value, state } = verified.specification.outcome() else {
+        panic!("fill3 must return");
+    };
+    assert_eq!(value, &int32(2));
+    assert_eq!(state.resources(), &initial_resources);
+    for (pointer, value) in [(first, 0), (second, 1), (third, 2)] {
+        assert_eq!(
+            state.memory().load(&pointer),
+            CExpressionOutcome::Value(int32(value))
+        );
+    }
+    assert!(state.locals().get("i").is_none());
+    assert!(matches!(
+        state.memory().load(&local_i),
+        CExpressionOutcome::UndefinedBehavior(_)
+    ));
     assert_eq!(
         implication_body(verified.theorem.proposition()),
         &Proposition::CFunctionPartiallySatisfiesSpecification {

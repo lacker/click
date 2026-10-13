@@ -39,7 +39,9 @@ The complete acceptance matrix still needs to pass before this checkpoint can
 be published.
 
 The integration checkpoint is not green and has not been published or merged.
-An earlier focused selection passed 116 of 121 tests. It covered
+Focused selections have passed constructor and backing-reference tests, the
+field-reference write-through test, and the unchanged decoder with expansion
+and independent rechecking. The broader selections also cover
 constructor and embedded self-pointers, nested qualified pointer fields,
 aggregate return claims, row-copy modular forwarding, by-value byte-output
 initialization, pointer-field setters and wrappers through expansion/rechecking,
@@ -78,12 +80,45 @@ independently checkable nested `have` and rewrite. Historical spellings are
 re-lowered and checked; an earlier recorded source pair is not proof authority.
 Nested proposition scopes borrowing an immutable execution frontier use the
 same checked fact transport as their enclosing scope.
-The remaining integration blocker is excessive work during scalar-frame proof
-expansion. The range-membership
-repair now accepts an index pinned to zero while retaining that exact equality
-and the complete access width; withdrawing the equality or extending the access
-outside the range rejects the certificate.
-Temporary investigation probes have been removed.
+The first full unit/import run on this integration branch reported 6,507 passes,
+39 failures and one decoder timeout. Focused repairs have since fixed the decoder timeout (the
+unchanged proof and expansions complete in about 23 seconds under the existing
+30-second limit), constructor entry matching, historical theorem-argument
+spellings, selected expansion dependencies, and several outdated fixture
+expectations. These results are not a new full green-tree verdict.
+
+Focused repairs now also pass by-value descriptor carrier observation,
+loop-exit expansion/rechecking, and population-count expansion (including all
+81 population-ledger unit controls). The unchanged constructor-assignment
+proof also passes after reconstructing the complete source-order clause
+partition and rooting borrowed views before comparing its entry premises.
+The original raw-pointer byte write also passes with a checked one-element
+uint32 prefix. Its four-byte representation range preserves the original
+carrier and admits no multiword prefix, ownership, or initialization.
+Remaining reproduced failures involve the legacy axiomatic span
+reference-return boundary and two C tagged-word
+audit contracts that state address bits without retained integer origin.
+Diagnose these against the approved designation and byte-access boundaries
+before changing implementation or contracts. The range-membership repair
+accepts an index pinned to zero while retaining that exact equality and complete access width; withdrawing the equality or extending
+the access outside the range rejects the certificate. Remove temporary
+investigation probes before publication.
+The constructor/by-value/population/pointer-effect repair run passed 161 focused
+tests; constructor expansion and retained verification passed separately. The
+one-word byte fix passed 21 focused representation and native-prefix controls.
+Formatting, Clippy across all targets, book/reference generation, and the
+updated `stdlib_every_symbol` executable fixture also passed.
+These local repairs have not yet been published to PR 646.
+
+The span boundary needs geometry without read permission: its current
+`back()` catalog axiom states only numerical address equality. A checked
+pinned-library body must retain the data field's full pointer carrier, while
+its contract must state that the backing range is valid. Extending
+`valid_place` to typed ranges is proposed for that prerequisite; do not
+silently substitute backing `views` or recover origins from address equality.
+The scalar `valid_place` implementation alone does not settle this range
+contract choice.
+
 Run the complete C/Rust/C++ acceptance matrix after these repairs, then remove
 resolved bug documents and publish the coherent update to PR 646.
 

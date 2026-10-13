@@ -3473,3 +3473,30 @@ theorem int32_remainder_to_integer(left: int32, right: int32) {
 ```
 
 Connects a defined signed machine remainder to mathematical truncation. Native definedness excludes both a zero divisor and `INT32_MIN % -1`; a nonzero mathematical divisor alone does not establish that the C operation is defined.
+
+### `uint32_nonzero_implies_positive`
+
+```click
+theorem uint32_nonzero_implies_positive(value: uint32) {
+    requires value != 0u32;
+    ensures 0u32 < value by {
+        have 0u32 % value < value by {
+            apply(uint32_remainder_less_than_divisor(0u32, value)) using { value != 0u32; }
+        }
+        have 0u32 <= 0u32 % value by {
+            apply(uint32_to_integer_bounds(0u32 % value));
+            apply(uint32_to_integer_less_equal_implies_less_equal(0u32, 0u32 % value)) using {
+                0 <= to_integer(0u32 % value);
+            }
+        }
+        apply(uint32_less_equal_less_than_transitive(0u32, 0u32 % value, value)) using {
+            0u32 <= 0u32 % value;
+            0u32 % value < value;
+        }
+    }
+}
+```
+
+A nonzero unsigned 32-bit value is strictly positive. The theorem is proved from the existing native remainder and order laws.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).

@@ -2966,7 +2966,29 @@ fn opaque_numeric_count_observation_uses_exact_magnitude_and_overflow_guard() {
 
 #[test]
 fn count_alias_uses_only_a_checked_owned_authority_anchor() {
-    let description = member_description(PointerBlock::ExternalArgument);
+    check_count_alias_owned_anchor(false);
+    check_count_alias_owned_anchor(true);
+}
+
+fn check_count_alias_owned_anchor(retain_designation: bool) {
+    let mut description = member_description(PointerBlock::ExternalArgument);
+    if retain_designation {
+        description = description.map_values(|value| match value {
+            AlgebraicValue::C(CValue::Pointer(pointer)) => {
+                AlgebraicValue::C(CValue::Pointer(pointer.clone().with_designation(
+                    PointerDesignation::Object {
+                        root: pointer.pointer().clone(),
+                        path: Arc::from([]),
+                        base: pointer.pointer().clone(),
+                        element_type: CType::Int32,
+                        stride: 4,
+                        count: IntegerTerm::constant_i64(1).into(),
+                    },
+                )))
+            }
+            value => value.clone(),
+        });
+    }
     let [AlgebraicValue::C(CValue::Pointer(anchor))] = description.arguments() else {
         panic!("pointer anchor")
     };

@@ -329,8 +329,13 @@ pub(crate) fn assume_checked_native_output_places(
         interface.composite_resource_definitions(),
         assumptions,
     )?;
-    check_native_output_places(&assumed, interface, assumptions)?;
-    Ok(state.clone().with_memory(assumed.memory().clone()))
+    // The selected output heads authorize admission; reading their carrier
+    // expressions can also need a caller's preserved descriptor views. Check
+    // the admitted geometry in the original observation context, without
+    // publishing any scratch output-body resources.
+    let checked = state.clone().with_memory(assumed.memory().clone());
+    check_native_output_places(&checked, interface, assumptions)?;
+    Ok(checked)
 }
 
 fn indexed_native_definition<'a>(

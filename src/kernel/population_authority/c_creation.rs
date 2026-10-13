@@ -314,6 +314,21 @@ impl CheckedPopulationAuthorityExchange {
 #[derive(Clone)]
 pub(in crate::kernel) struct CreationEvents(Arc<Root>);
 
+// An indexed type lookup for a logical population name. Its result carries no
+// authority; consumers separately authenticate the held head and ledger.
+fn population_type_pattern(pattern: &ResourceDescription) -> ResourceDescription {
+    pattern.map_values(|value| match value {
+        AlgebraicValue::C(CValue::Pointer(pointer)) => {
+            let address =
+                crate::kernel::CPointerValue::new(pointer.pointer().clone(), pointer.c_type());
+            AlgebraicValue::C(CValue::Pointer(
+                pointer.clone().with_designation_of(&address),
+            ))
+        }
+        value => value.clone(),
+    })
+}
+
 impl std::fmt::Debug for CreationEvents {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CreationEvents")
@@ -883,12 +898,12 @@ impl CreationEvents {
                 .with_population_arity(arity)
                 .map_err(|_| CreationRefusal::InvalidMember)?;
         }
-        if named_authority
-            && self
-                .0
-                .opaque_types
-                .get(&pattern)
-                .is_some_and(|existing| existing != description)
+        let pattern = population_type_pattern(&pattern);
+        if self
+            .0
+            .opaque_types
+            .get(&pattern)
+            .is_some_and(|existing| existing != description)
         {
             return Err(CreationRefusal::OpaqueImportConflict);
         }
@@ -930,13 +945,10 @@ impl CreationEvents {
                     + 1
                     + u32::from(owned_members > 0 || symbolic_members.is_some()),
             ),
-            opaque_types: if named_authority {
-                self.0
-                    .opaque_types
-                    .with_inserted(pattern, description.clone())
-            } else {
-                self.0.opaque_types.clone()
-            },
+            opaque_types: self
+                .0
+                .opaque_types
+                .with_inserted(pattern, description.clone()),
             opaque_imports,
             ..self.successor()
         })))
@@ -1577,7 +1589,7 @@ impl CreationEvents {
         &self,
         pattern: &ResourceDescription,
     ) -> ResourceDescription {
-        if let Some(description) = self.0.opaque_types.get(pattern) {
+        if let Some(description) = self.0.opaque_types.get(&population_type_pattern(pattern)) {
             return description.clone();
         }
         let Some(AlgebraicValue::C(CValue::Pointer(pointer))) = pattern.arguments().first() else {
@@ -1587,8 +1599,20 @@ impl CreationEvents {
             .scopes
             .get(&(pointer.pointer().block.clone(), pattern.family().to_owned()))
             .filter(|scope| {
-                scope.arguments() == pattern.arguments()
-                    && scope.population_arity() == pattern.population_arity()
+                // Population names identify logical custody at an exact
+                // anchor. A pure predicate can observe that same address
+                // without retaining its executable pointer designation.
+                // Recover only this declared type; count evaluation still
+                // requires the matching held authority and checked ledger.
+                let same_anchor = scope.arguments() == pattern.arguments()
+                    || matches!((scope.arguments(), pattern.arguments()),
+                        ([AlgebraicValue::C(CValue::Pointer(held))],
+                         [AlgebraicValue::C(CValue::Pointer(observed))])
+                        if held.pointer() == observed.pointer()
+                            && held.c_type() == observed.c_type()
+                            && held.pointee_constant() == observed.pointee_constant()
+                            && held.pointee_volatile() == observed.pointee_volatile());
+                same_anchor && scope.population_arity() == pattern.population_arity()
             })
             .cloned()
             .unwrap_or_else(|| pattern.clone())

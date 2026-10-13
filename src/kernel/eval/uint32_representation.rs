@@ -162,7 +162,7 @@ impl UInt32PackingEvidence {
                     return None;
                 }
                 // Program reads may retain the live load while logical byte
-                // observations name its assumption-free canonical variable.
+                // observations name its assumption-free load variable.
                 // Preserve the live snapshot for declaration and initialization.
                 let observation_word = canonical_term(word);
                 let mut bytes = Vec::with_capacity(4);
@@ -172,7 +172,7 @@ impl UInt32PackingEvidence {
                     let value = (result >> (8 * byte)) as u8;
                     crate::instrumentation::record_deterministic_work(1);
                     // Exact premises can retain a named load application or
-                    // its canonical variable. Select only spellings of this
+                    // its load variable. Select only spellings of this
                     // word; canonicalization is assumption-free and does not
                     // transport an observation across an intervening write.
                     let mut words = vec![observation_word.clone()];

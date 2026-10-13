@@ -15593,11 +15593,21 @@ fn with_contract_interface_argument_views(
             // A contract observes the already-evaluated aggregate value image,
             // as contract certification does. The private callee copy belongs
             // to execution and may have retired before output checks run.
-            state.locals.set_aggregate_object_at(
-                parameter.name().to_string(),
-                layout.clone(),
-                image.pointer().clone(),
-            );
+            if state.memory().has_block(&image.pointer().block) {
+                state.locals.set_aggregate_object_at(
+                    parameter.name().to_string(),
+                    layout.clone(),
+                    image.pointer().clone(),
+                );
+            } else {
+                // An incoming reference-backed image can have an authenticated
+                // native record domain without a private automatic block. Keep
+                // its full carrier; pretending it is a private aggregate local
+                // would require nonexistent stack storage when reading a field.
+                state
+                    .locals
+                    .set_typed(parameter.name().to_string(), value.clone(), value.c_type());
+            }
             continue;
         }
         // Keep the contract view identical to the typed parameter binding.
@@ -33320,6 +33330,16 @@ mod stable_view_call_tests {
         })
     }
 
+    // These controls check the contract's conservative allowed writes. An
+    // external assumption supplies no body evidence that can refine them away.
+    fn footprint_environment(function: &CFunction) -> CExecutionEnvironment {
+        CExecutionEnvironment::new().with_external_function_rule(CExternalFunctionRule {
+            function: function.clone(),
+            scoped_unselected: false,
+            representation_copy: None,
+        })
+    }
+
     #[test]
     fn independent_verification_uses_the_call_transfer_boundary() {
         let pointer = pointer();
@@ -35124,7 +35144,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            CExecutionContext::apply_verified_rules(&environment(&function)),
+            CExecutionContext::apply_verified_rules(&footprint_environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate mutable call should execute")
@@ -35160,7 +35180,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            CExecutionContext::apply_verified_rules(&environment(&function)),
+            CExecutionContext::apply_verified_rules(&footprint_environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate symbolic overlap should execute to a diagnostic path");
@@ -35217,7 +35237,7 @@ mod stable_view_call_tests {
                 CExpression::Value(CValue::pointer(mutated)),
             ],
             &PureFactContext::new(),
-            CExecutionContext::apply_verified_rules(&environment(&function)),
+            CExecutionContext::apply_verified_rules(&footprint_environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate unknown separation should execute to a diagnostic path");
@@ -35441,7 +35461,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            CExecutionContext::apply_verified_rules(&environment(&function)),
+            CExecutionContext::apply_verified_rules(&footprint_environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate composite mutable call should execute")
@@ -35495,7 +35515,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            CExecutionContext::apply_verified_rules(&environment(&function)),
+            CExecutionContext::apply_verified_rules(&footprint_environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate intrinsic view effect call should execute");

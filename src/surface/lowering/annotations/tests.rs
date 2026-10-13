@@ -303,7 +303,7 @@ fn captured_fold_identity_does_not_exhaust_the_surface_quantifier_stream() {
 }
 
 #[test]
-fn old_record_steps_replay_both_operands_and_preserve_int_min_subtraction() {
+fn old_record_steps_recheck_both_operands_and_preserve_int_min_subtraction() {
     let declaration = crate::languages::c::syntax::parse_function(
         "struct item { int value; int other; }; struct item *offset(struct item *p, int i) { return p + i; }",
     ).unwrap();
@@ -395,7 +395,7 @@ fn old_record_steps_replay_both_operands_and_preserve_int_min_subtraction() {
 }
 
 #[test]
-fn old_member_address_replays_the_original_record_carrier() {
+fn old_member_address_rechecks_the_original_record_carrier() {
     let declaration = crate::languages::c::syntax::parse_function(
         "struct item { int value; int other; }; int read(struct item *p) { return p->other; }",
     )

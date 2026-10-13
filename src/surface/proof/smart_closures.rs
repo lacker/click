@@ -4189,11 +4189,11 @@ impl<'a> Proof<'a> {
     }
 
     /// A rewrite citation must survive ordinary lowering when its source is
-    /// replayed. Historical presentation records can instead name an earlier
+    /// rechecked. Historical presentation records can instead name an earlier
     /// nested pointer read. Transport just the selected fact explicitly before
     /// using its new spelling; the simple transport and rewrite checkers remain
     /// the only operations that publish and consume the resulting equality.
-    fn replayable_equality_surface(
+    fn recheckable_equality_surface(
         &self,
         surface_facts: &SurfacePropositionMap,
         premise_anchor: Option<&ProgramPointRef>,
@@ -4201,7 +4201,7 @@ impl<'a> Proof<'a> {
     ) -> Option<(Self, ClickProposition)> {
         let candidate = self.available_surface_fact(surface_facts, premise_anchor, kernel);
         if let Some(surface) = &candidate
-            && let Some(published) = self.publish_replayed_equality(surface)
+            && let Some(published) = self.publish_rechecked_equality(surface)
         {
             return Some((published, surface.clone()));
         }
@@ -4213,7 +4213,7 @@ impl<'a> Proof<'a> {
             let Some(surface) = surface_with_entry_pointer_reads(source) else {
                 continue;
             };
-            if let Some(published) = self.publish_replayed_equality(&surface) {
+            if let Some(published) = self.publish_rechecked_equality(&surface) {
                 return Some((published, surface));
             }
         }
@@ -4244,13 +4244,13 @@ impl<'a> Proof<'a> {
             for target in candidate.iter().chain(anchored.iter()) {
                 let Ok(lowered) = self.lower_surface_proposition_direct(
                     target,
-                    "replayed transported rewrite premise",
+                    "rechecked transported rewrite premise",
                 ) else {
                     continue;
                 };
                 if &lowered == kernel || self.facts().materialization_available(&lowered) {
-                    // A directly replayable form requires no transport.
-                    if let Some(published) = self.publish_replayed_equality(target) {
+                    // A directly recheckable form requires no transport.
+                    if let Some(published) = self.publish_rechecked_equality(target) {
                         return Some((published, target.clone()));
                     }
                     continue;
@@ -4262,7 +4262,7 @@ impl<'a> Proof<'a> {
                 }) else {
                     continue;
                 };
-                if let Some(published) = transported.publish_replayed_equality(target) {
+                if let Some(published) = transported.publish_rechecked_equality(target) {
                     return Some((published, target.clone()));
                 }
             }
@@ -4270,10 +4270,10 @@ impl<'a> Proof<'a> {
         None
     }
 
-    /// Publish the citation that replay actually lowers, using only checked
+    /// Publish the citation that recheck actually lowers, using only checked
     /// proof operations. Availability through a frame or congruence is not an
     /// excuse to omit the explicit step that later strict rewrite consumes.
-    fn publish_replayed_equality(&self, surface: &ClickProposition) -> Option<Self> {
+    fn publish_rechecked_equality(&self, surface: &ClickProposition) -> Option<Self> {
         let lowered = self
             .lower_surface_proposition_direct(surface, "published rewrite premise")
             .ok()?;
@@ -4302,13 +4302,9 @@ impl<'a> Proof<'a> {
         }
         let _qualified_sources =
             super::surface_synthesis::QualifiedSynthesisScope::enter(surface_facts);
-        // A refold moves a constructor equation: a proof `match` arm's case
-        // fact states the scrutinee's constructor at unchanged function entry,
-        // and once the arm has refolded its instance, `c.model == C(..)` reads
-        // the refolded field. Like a snapshot selector recorded again in a
-        // loop, that spelling may stop denoting its old checked fact.
-        // Re-lower those movable forms below; other live recorded pairs keep
-        // their indexed lookup without repeating proposition lowering.
+        // A spelling returned here can become a theorem argument, not just
+        // a citation. Even an available recorded fact must lower to the same
+        // value at this frontier; otherwise a past p[0] becomes today's p[0].
         let constructor_equation = matches!(
             kernel,
             Proposition::Equal(
@@ -4327,58 +4323,6 @@ impl<'a> Proof<'a> {
                 self.lower_surface_proposition_direct(candidate, "typed simp premise form")
                     .ok()
             };
-            if self.focused_outcome_data().is_some()
-                && surface_facts
-                    .available_kernel_matching(candidate, |fact| self.facts().contains(fact))
-                    .is_some_and(|lowered| {
-                        lowered == kernel || condition_polarity_equivalent(lowered, kernel)
-                    })
-            {
-                // A terminal path can retain a fact spelled through an
-                // automatic local that has since left scope. Its recorded
-                // pair remains a valid kernel fact, but the unanchored
-                // spelling cannot be used as a source `rewrite`.
-                // A local at a historical snapshot must retain that explicit
-                // selector; its old presence cannot make a current name live.
-                // Only names in this candidate are queried. An outcome's
-                // recorded pair cannot make an out-of-scope temporary legal
-                // source, even when no call-outcome route was selected.
-                let names_a_dead_local = self.premise_fixed_state_view().is_some_and(|view| {
-                    let mut current_names = BTreeSet::new();
-                    crate::surface::collect_current_proposition_variables(
-                        candidate,
-                        &mut current_names,
-                    );
-                    current_names.iter().any(|name| {
-                        !(name == "result" && view.fixed_state.result.is_some())
-                            && !view.fixed_state.state.locals().contains_name(name)
-                            && !view.fixed_state.pre_state.locals().contains_name(name)
-                            && self.local_binding(name).is_none()
-                            && self.local_integer_values().get(name).is_none()
-                            && self.local_algebraic_values().get(name).is_none()
-                    })
-                });
-                // A statement selector can be recorded again on a later
-                // loop iteration. Its old pair remains a checked fact, but
-                // an explicit snapshot spelling must still denote it now.
-                let snapshot_spelling = proposition_contains_at_expression(candidate);
-                if !constructor_equation && !names_a_dead_local && !snapshot_spelling {
-                    // The recorded pair is authoritative for this shape.
-                    return Some(());
-                }
-                // A constructor equation's written spelling can have stopped
-                // lowering at all: the arm's instance was consumed and
-                // unfolded and never refolded under its name, so `t.model`
-                // names nothing here and the rechecked certificate would
-                // fail on it. Only the entry-anchored form below still
-                // denotes the fact.
-                let lowered = lower(candidate)?;
-                // The spelling lowers to some other fact, so it has stopped
-                // denoting this one: citing it would hand the rechecked proof
-                // the fact it now names instead.
-                return (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
-                    .then_some(());
-            }
             let lowered = lower(candidate)?;
             (lowered == *kernel
                 || condition_polarity_equivalent(&lowered, kernel)
@@ -4483,7 +4427,7 @@ impl<'a> Proof<'a> {
         {
             return Some(anchored);
         }
-        // Directly replay-checked recorded/current forms precede speculative
+        // Directly recheck-checked recorded/current forms precede speculative
         // history synthesis. The final fallback below searches that same
         // selected premise and anchor exactly once, after these cheap forms.
         if crate::instrumentation::deadline_exceeded() {
@@ -4910,7 +4854,7 @@ impl<'a> Proof<'a> {
                     continue;
                 }
                 let Some((rewrite_base, surface)) =
-                    proof.replayable_equality_surface(surface_facts, premise_anchor, &equality)
+                    proof.recheckable_equality_surface(surface_facts, premise_anchor, &equality)
                 else {
                     continue;
                 };
@@ -9582,7 +9526,7 @@ mod synthesized_literal_tests {
             let surface = surface.expect("the current local names the selected premise");
             assert_eq!(
                 proof
-                    .lower_surface_proposition_direct(&surface, "replayed current premise")
+                    .lower_surface_proposition_direct(&surface, "rechecked current premise")
                     .unwrap(),
                 kernel,
             );
@@ -9669,7 +9613,7 @@ mod synthesized_literal_tests {
             });
             assert!(
                 resolved.unwrap().is_empty(),
-                "an unnamed scalar has no replayable source"
+                "an unnamed scalar has no recheckable source"
             );
             let count = events
                 .iter()
@@ -9729,7 +9673,7 @@ mod synthesized_literal_tests {
     #[test]
     fn selected_pointer_read_prerequisite_checks_mutation_and_scales_with_unrelated_facts() {
         let _session = crate::kernel::VerificationSession::enter();
-        let function = syntax::parse_function("int32 noop() { return 0; }").unwrap();
+        let function = syntax::parse_function("int32 noop(uint8* owner) { return 0; }").unwrap();
         let pointer = |block: &str| Pointer {
             block: block.into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -9759,6 +9703,9 @@ mod synthesized_literal_tests {
             )
             .with_memory(memory.clone())
             .with_resource_context(resources);
+        let arguments = vec![CExpression::Value(
+            entry.locals().get("owner").unwrap().clone(),
+        )];
         let field = ContractExpression::Field {
             base: Box::new(ContractExpression::CBinding("owner".into())),
             field: "data".into(),
@@ -9781,7 +9728,8 @@ mod synthesized_literal_tests {
             true,
         );
         let snapshots = RecordedSnapshots::new();
-        let surfaces = SurfacePropositionMap::default();
+        let mut surfaces = SurfacePropositionMap::default();
+        surfaces.record_lowering(&surface, &goal).unwrap();
         let predicates = PredicateEnvironment::new(&[]);
         let functions = ClickFunctionEnvironment::new(&[]);
         let theorems = TheoremEnvironment::new(&[]);
@@ -9795,13 +9743,36 @@ mod synthesized_literal_tests {
                 .clone()
                 .with_memory(memory.clone().store(owner.clone(), field_value(second))),
             // A partial write invalidates the complete pointer-cell observation.
-            entry.clone().with_memory(memory.clone().store(
-                Pointer {
+            entry.clone().with_memory({
+                let partial = Pointer {
                     block: owner.block.clone(),
                     offset: PointerOffsetTerm::Constant(4),
-                },
-                int32(0),
-            )),
+                };
+                let execution = crate::kernel::prove_symbolic_c_execution_paths(
+                    entry.clone(),
+                    crate::kernel::c_typed_store(
+                        CExpression::Value(CValue::typed_pointer(partial, CType::Int32Pointer)),
+                        CExpression::Value(int32(0x12345678)),
+                        CType::Int32,
+                    ),
+                    PureFactContext::new(),
+                );
+                assert!(execution.limit().is_none());
+                assert_eq!(execution.paths().len(), 1);
+                assert!(execution.paths()[0].obligations().is_empty());
+                let mut proposition = execution.paths()[0].theorem().proposition();
+                while let Proposition::Implies(_, body) = proposition {
+                    proposition = body;
+                }
+                let Proposition::CStatementExecutes {
+                    outcome: crate::kernel::CStatementOutcome::Normal(state),
+                    ..
+                } = proposition
+                else {
+                    panic!("partial store must execute: {proposition:?}")
+                };
+                state.memory().clone()
+            }),
             // Equal pointee contents do not justify preserving the pointer
             // field itself after changing its complete value.
             entry.clone().with_memory(
@@ -9813,7 +9784,7 @@ mod synthesized_literal_tests {
                     .store(pointer("pointer-prerequisite-second"), int32(scalar)),
             ),
         ];
-        // Replaying a retained scalar premise can need the entry pointer but
+        // Rechecking a retained scalar premise can need the entry pointer but
         // the current scalar cell. A whole-expression entry anchor instead
         // reads the old scalar cell, and the current source follows the changed
         // pointer. Only the nested historical form denotes this exact premise.
@@ -9844,7 +9815,7 @@ mod synthesized_literal_tests {
             std::slice::from_ref(&selected_goal),
             selected_goal.clone(),
             selected_surface.clone(),
-            ParameterBinding::new(function.parameters(), &[]),
+            ParameterBinding::new(function.parameters(), &arguments),
             &entry,
             &mixed,
             &snapshots,
@@ -9858,13 +9829,13 @@ mod synthesized_literal_tests {
             .expect("selected scalar source has a pointer field");
         assert_eq!(
             proof
-                .lower_surface_proposition_direct(&nested, "mixed snapshot replay")
+                .lower_surface_proposition_direct(&nested, "mixed snapshot recheck")
                 .unwrap(),
             selected_goal
         );
         assert_ne!(
             proof
-                .lower_surface_proposition_direct(&selected_surface, "current pointer replay")
+                .lower_surface_proposition_direct(&selected_surface, "current pointer recheck")
                 .unwrap(),
             selected_goal
         );
@@ -9878,7 +9849,7 @@ mod synthesized_literal_tests {
         .unwrap();
         assert_ne!(
             proof
-                .lower_surface_proposition_direct(&anchored, "whole entry replay")
+                .lower_surface_proposition_direct(&anchored, "whole entry recheck")
                 .unwrap(),
             selected_goal
         );
@@ -9907,10 +9878,10 @@ mod synthesized_literal_tests {
                 let proof = Proof::for_fixed_state_surface_goal(
                     "selected pointer prerequisite",
                     0,
-                    &unrelated,
+                    &[],
                     goal.clone(),
                     surface.clone(),
-                    ParameterBinding::new(function.parameters(), &[]),
+                    ParameterBinding::new(function.parameters(), &arguments),
                     &entry,
                     state,
                     &snapshots,
@@ -9961,7 +9932,7 @@ mod synthesized_literal_tests {
                     &unrelated,
                     actual_goal,
                     surface.clone(),
-                    ParameterBinding::new(function.parameters(), &[]),
+                    ParameterBinding::new(function.parameters(), &arguments),
                     &entry,
                     state,
                     &snapshots,

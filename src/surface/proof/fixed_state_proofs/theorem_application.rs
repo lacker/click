@@ -382,7 +382,7 @@ pub(in crate::surface::proof) fn checked_surface_fact_at_outcome(
                 .surface_propositions
                 .available_kernel(surface, available)
                 .is_some_and(&matches_kernel)
-            // A historical recorded pair cannot stand in for replay: nested
+            // A historical recorded pair cannot stand in for recheck: nested
             // pointer reads may have different defining snapshots even when
             // the written selector is unchanged.
             && check(surface).is_ok_and(|lowered| matches_kernel(&lowered))

@@ -7717,7 +7717,7 @@ fn unrelated_call_work_stays_flat_with_kept_pointer_aliases() {
             "struct box {{ int32 v; }}; void touch(int32* flags, int32* data, int32 k) {{ return; }} int32 caller(int32* flags, int32* data, int32 k, struct box* b{parameters}) {{ int32 total; b->v = 1; touch(flags, data, k); total = {sum}; return total; }}"
         );
         let requirements = (0..size)
-            .map(|i| format!("requires q{i} == b;"))
+            .map(|i| format!("requires q{i} == b; requires valid_place(q{i});"))
             .collect::<String>();
         let source = format!(
             "verifying \"aliases.c\"; void touch(int32* flags, int32* data, int32 k) {{ owns flags[0..k]; owns data[0..k]; }} by {{ execute(); simp(); }} int32 caller(int32* flags, int32* data, int32 k, struct box* b{parameters}) {{ owns flags[0..k]; owns data[0..k]; owns *b; {requirements} ensures result == {size}; }} by {{ step(); step(); step(); step(); step(); simp(); }}"

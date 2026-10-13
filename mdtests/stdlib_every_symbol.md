@@ -1202,6 +1202,13 @@ theorem use_int32_remainder_to_integer(left: int32, right: int32) {
     }
 }
 
+theorem docs_use_uint32_nonzero_implies_positive(value: uint32) {
+    requires value != 0u32;
+    ensures 0u32 < value by {
+        apply(uint32_nonzero_implies_positive(value));
+    }
+}
+
 ```
 
 ```expect

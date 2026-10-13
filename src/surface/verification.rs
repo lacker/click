@@ -1237,16 +1237,11 @@ pub(in crate::surface) fn verify_c0_sources_with_expansion_capture(
     c_sources: &[(&str, &str)],
     expansion_capture: &mut ExpansionCapture,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    instrumentation::with_default_tactic_limits(|| {
-        verify_c0_sources_with_environment(
-            click_source,
-            c_sources,
-            None,
-            None,
-            Some(expansion_capture),
-        )
-        .map(|(verified, _)| verified)
-    })
+    verify_c0_sources_with_expansion_capture_context(
+        click_source,
+        &CSourceContext::bundle(c_sources),
+        expansion_capture,
+    )
 }
 
 pub(in crate::surface) fn verify_c0_sources_with_expansion_capture_context(
@@ -1255,13 +1250,20 @@ pub(in crate::surface) fn verify_c0_sources_with_expansion_capture_context(
     expansion_capture: &mut ExpansionCapture,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
+        let file = parse_c0_click_file_context(click_source, c_sources)?;
+        let dependencies = tactic_expansion_checked_dependencies(
+            click_source,
+            c_sources,
+            &file,
+            &expansion_capture.site,
+        )?;
         verify_c0_sources_with_context(
             click_source,
             c_sources,
             None,
-            None,
+            dependencies,
             Some(expansion_capture),
-            None,
+            Some(file),
         )
         .map(|(verified, _)| verified)
     })
@@ -1275,11 +1277,17 @@ pub(in crate::surface) fn verify_project_with_expansion_capture(
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::of(inputs)?.with_click_project(project);
         let file = resolve_click_project_context(project, &sources)?;
+        let dependencies = tactic_expansion_checked_dependencies(
+            project.entry_source().expect("resolved entry source"),
+            &sources,
+            &file,
+            &expansion_capture.site,
+        )?;
         verify_c0_sources_with_context(
             project.entry_source().expect("resolved entry source"),
             &sources,
             None,
-            None,
+            dependencies,
             Some(expansion_capture),
             Some(file),
         )
@@ -2060,6 +2068,28 @@ pub(in crate::surface) fn verify_c0_sources_with_context(
     expansion_capture: Option<&mut ExpansionCapture>,
     resolved_file: Option<ClickFile>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
+    // A selected function still needs checked carrier-producing dependencies,
+    // including when rechecking a certificate rather than capturing it.
+    let (initial_function_environment, resolved_file) = if initial_function_environment.is_none()
+        && let Some(VerificationTarget::Function(function_name)) = &verification_target
+    {
+        let file = match resolved_file {
+            Some(file) => file,
+            None => parse_c0_click_file_context(click_source, c_sources)?,
+        };
+        let dependencies = tactic_expansion_checked_dependencies(
+            click_source,
+            c_sources,
+            &file,
+            &ProofSite::FunctionClaim {
+                function_name: function_name.clone(),
+                claim: CProofClaim::Grouped,
+            },
+        )?;
+        (dependencies, Some(file))
+    } else {
+        (initial_function_environment, resolved_file)
+    };
     crate::surface::clear_ambient_proof_source();
     verify_c0_sources_in_context(
         click_source,
@@ -3886,9 +3916,9 @@ pub(in crate::surface) fn tactic_expansion_dependency_context(
         .then(|| format!("required dependency paths: {}", rendered.join(", "))))
 }
 
-/// Expansion replays one proof unit, but semantic carrier effects belong to
+/// Expansion rechecks one proof unit, but semantic carrier effects belong to
 /// independently checked callees. Obtain those certificates from the written
-/// proofs of its reachable source dependencies before replaying the unit.
+/// proofs of its reachable source dependencies before rechecking the unit.
 pub(in crate::surface) fn tactic_expansion_checked_dependencies(
     source: &str,
     inputs: &CSourceContext<'_>,
@@ -3898,6 +3928,16 @@ pub(in crate::surface) fn tactic_expansion_checked_dependencies(
     let ProofSite::FunctionClaim { function_name, .. } = site else {
         return Ok(None);
     };
+    // User tactics are synthetic empty procedures, introduced by
+    // with_tactic_procedures during verification. They have no source-body
+    // carrier producers to certify before expanding their checked proof.
+    if file
+        .tactic_definitions()
+        .iter()
+        .any(|tactic| tactic.name() == function_name)
+    {
+        return Ok(None);
+    }
     let parsed = parse_verified_sources_context(file, inputs)?;
     let mut required = verification_required_functions(file, &parsed, function_name)?;
     let mut pending = required.iter().cloned().collect::<Vec<_>>();

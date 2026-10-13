@@ -1034,7 +1034,26 @@ fn native_loaded_prefix_normalization_has_linear_selected_history_work() {
         let _session = crate::kernel::VerificationSession::enter();
         let cell = Pointer::symbolic(Variable(989_260));
         let before = CMemory::new().with_block(cell.block.clone(), (count + 1) * 8);
-        let origin = loaded(&before, &cell).with_type(CType::Int32Pointer);
+        let Bitvector32Term::Variable(variable) =
+            crate::kernel::eval::canonical_form_of_typed_load(
+                intern_c_memory_ref(&before),
+                cell.clone(),
+                CType::Int32Pointer,
+            )
+            .expect("complete pointer read")
+        else {
+            panic!("registered source")
+        };
+        let Some(Bitvector32Term::MemoryLoad(defining_memory, defining_cell, LoadKind::Pointer)) =
+            crate::kernel::registered_load_term_for_variable(&variable)
+        else {
+            panic!("immutable producer read")
+        };
+        let origin = CPointerValue::new(Pointer::symbolic(variable), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+                defining_memory,
+                *defining_cell,
+            )));
         let mut memory = before
             .with_native_input_span(
                 origin.clone(),

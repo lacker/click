@@ -2822,6 +2822,13 @@ pub(crate) fn canonical_form_of_typed_load(
     value_type: CType,
 ) -> Option<Bitvector32Term> {
     let kind = LoadKind::of_type(value_type)?;
+    if kind == LoadKind::Int8 {
+        return Some(Bitvector32Term::signed_byte(canonical_form_of_typed_load(
+            memory,
+            pointer,
+            CType::UInt8,
+        )?));
+    }
     record_load_access_width(&memory, &pointer, value_type.byte_width());
     let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer), kind);
     Some(

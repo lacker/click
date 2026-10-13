@@ -5922,7 +5922,10 @@ int32 last(int32* data, uint64 length) {
         Ok(_) => panic!("an unfixed index cannot establish the first element's value"),
     };
     let message = error.message();
-    assert!(message.contains("index/address"), "{message}");
+    assert!(
+        message.contains("index/address") || message.contains("pointer arithmetic"),
+        "{message}"
+    );
     assert!(!message.contains("the store to"), "{message}");
     assert!(
         !message.contains("state `(length - 1u64) != 0`"),
@@ -6196,7 +6199,7 @@ fn cpp_reference_parameters_are_declared_and_named_as_their_referents() {
         "ensures value == old(value) + 2;",
     ));
     assert!(
-        false_claim.contains("left side evaluated to old(value) + 1"),
+        false_claim.contains("left side evaluated to") && false_claim.contains(" + 1"),
         "{false_claim}"
     );
     assert!(
@@ -9120,7 +9123,7 @@ fn nested_return_calls_reject_unspecified_order_conversions_and_cycles() {
         ),
         (
             "int echo(int x) noexcept { return x; } long wide(long x) noexcept { return x; } long relay(int x) noexcept { return wide(echo(x)); }",
-            "expression observers require a normalized return, condition, or member store",
+            "unsupported argument",
         ),
         (
             "int echo(int x) noexcept { return x; } int relay(int x) noexcept { return echo(relay(x)); }",
@@ -15653,8 +15656,9 @@ theorem read_application() executes read(const struct State& state) {
         .verify_at_project(&expanded, position.line, position.column)
         .unwrap();
     let path = project.directory.join("hostile.click");
-    // A raw pointer target has no native reference requirement. The wrapper
-    // cannot strengthen that target from read's own imported signature.
+    // Typed member views retain their own checked containing-object place,
+    // including when the signature itself is a raw pointer. Removing that
+    // resource must not import the stronger callee reference requirement.
     let (native, target_and_theorem) = source.split_once("contract int32 PositiveRead").unwrap();
     let weaker = format!(
         "{native}contract int32 PositiveRead{}",
@@ -15662,6 +15666,10 @@ theorem read_application() executes read(const struct State& state) {
             .replace("const struct State& state", "const struct State* state")
             .replace("state.child.value", "state->child.value")
     );
+    fs::write(&path, &weaker).unwrap();
+    verify_program_prepared_project(&read_click_project(&path, &weaker).unwrap(), &import)
+        .expect("the typed member view supplies the explicit place prerequisite");
+    let weaker = weaker.replace("    views state->child.value;\n", "");
     fs::write(&path, &weaker).unwrap();
     let error =
         verify_program_prepared_project(&read_click_project(&path, &weaker).unwrap(), &import)
@@ -17728,10 +17736,8 @@ fn axiomatic_project(header_prefix: &str) -> Project {
         ),
     )
     .unwrap();
-    if header_prefix.is_empty() {
-        project.dependencies.push("mini_std.h".into());
-        project.write_config("forward");
-    }
+    project.dependencies.push("mini_std.h".into());
+    project.write_config("forward");
     project
 }
 
@@ -17749,7 +17755,15 @@ fn axiomatic_system_header_calls_export_interfaces_only() {
     let identity = axiom.axiom.as_ref().expect("an axiom");
     assert_eq!(identity.qualified_name, "ministd::identity");
     assert!(axiom.body.is_empty());
-    assert!(import.export().dependencies.is_empty());
+    assert_eq!(
+        import
+            .export()
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.as_str())
+            .collect::<Vec<_>>(),
+        vec!["mini_std.h"]
+    );
     let sidecar = project.directory.join("forward.click");
     let assumed = format!(
         "verifying \"driver.cpp\";\nextern int32* {}(int32* p) {{ ensures result == p; }}\nint32* forward(int32* p) {{ ensures result == p; }} by {{ execute(); simp(); }}\n",

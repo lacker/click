@@ -3539,3 +3539,7 @@ path = "reference/language/c.md#supported-expressions-and-statements"
 [[item]]
 id = "c0.declaration.static-assert"
 path = "reference/language/c.md#supported-expressions-and-statements"
+
+[[item]]
+id = "stdlib.theorem.uint32_nonzero_implies_positive"
+path = "reference/library/index.md#uint32_nonzero_implies_positive"

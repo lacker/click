@@ -524,7 +524,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 .is_some_and(&matches_kernel)
             // Recorded syntax is only a candidate: resolving the same
             // selector can now construct different nested pointer reads. Check
-            // the proposition replay actually lowers, not merely the old
+            // the proposition recheck actually lowers, not merely the old
             // Surface-to-kernel pair. A transport needs its own checked step.
             && lower_surface_candidate_in_state_with_assumptions(
                 view,

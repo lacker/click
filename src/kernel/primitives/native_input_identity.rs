@@ -378,19 +378,9 @@ mod tests {
             operator: CComparisonOperator::Equal,
             right: SpecExpression::Value(int32(1)),
         });
-        b.matched = Some(CResourceMatchBody {
-            field_index: 0,
-            algebraic_type: AlgebraicType::parameter("Choice".into()),
-            arms: vec![CResourceMatchArm {
-                variant: "Inactive".into(),
-                bindings: Vec::new(),
-                binding_types: Vec::new(),
-                binding_variables: Vec::new(),
-                contains: vec![prefix()],
-                facts: Vec::new(),
-                children: Vec::new(),
-            }],
-        });
+        // The child promises a prefix only under its false guard. Identity
+        // selection sees that declaration without assuming the guarded extent.
+        b.contains = vec![prefix()];
         let definitions = vec![a, b];
         assert_eq!(selected(&definitions), BTreeSet::from([0]));
         let function = c_function(

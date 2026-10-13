@@ -39,7 +39,7 @@ pub(super) fn byte_premises_at_snapshot(
 ) -> Option<Vec<(Proposition, ClickProposition)>> {
     let (word, premises) = derivation.uint32_representation_premises()?;
     // The retained word keeps its live snapshot and source address. Its
-    // canonical load variable may instead name a projection before initialization.
+    // load variable may instead name a projection before initialization.
     let raw = super::surface_synthesis::synthesize_surface_machine_expression(
         word,
         parameter_binding,

@@ -1729,7 +1729,7 @@ fn stored_pointer_read_equality(
     None
 }
 
-/// Select a finite, replayable equality witness for the observed load terms.
+/// Select a finite, recheckable equality witness for the observed load terms.
 pub(crate) fn checked_origin_load_equality(
     left: &Bitvector32Term,
     right: &Bitvector32Term,

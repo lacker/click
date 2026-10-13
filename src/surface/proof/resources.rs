@@ -1702,7 +1702,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             ))
         })?;
     // Reconstruct validity only from this exact held head and its decided body
-    // arm. Keep the original state above for checked observation replay.
+    // arm. Keep the original state above for checked observation recheck.
     let state = crate::kernel::assume_checked_native_composite_places(
         &state,
         &abstract_resource,

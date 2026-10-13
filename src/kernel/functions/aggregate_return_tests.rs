@@ -731,7 +731,7 @@ fn aggregate_declaration_survives_value_changes_without_initializing_padding() {
 }
 
 #[test]
-fn aggregate_copy_allocations_retain_their_complete_declarations() {
+fn aggregate_copy_producers_declare_storage_but_result_binding_does_not() {
     let _session = crate::kernel::VerificationSession::enter();
     let layout = node_layout();
     let caller = allocate_destination(&CState::new().with_population_creation_tracking(), "node");
@@ -792,7 +792,12 @@ fn aggregate_copy_allocations_retain_their_complete_declarations() {
     let summary_result =
         symbolic_contract_result(copy_function().contract_interface(), Variable(874_006));
     set_function_result(&mut result_state, &copy_function(), summary_result.clone());
-    assert_declared_aggregate(&result_state.memory, &pointer(&summary_result), &layout);
+    assert!(
+        !result_state
+            .memory
+            .blocks
+            .contains_key(&pointer(&summary_result).block)
+    );
 
     let synthetic = CValue::typed_pointer(Pointer::symbolic(Variable(874_007)), CType::VoidPointer);
     set_function_result(&mut result_state, &copy_function(), synthetic.clone());
@@ -801,9 +806,7 @@ fn aggregate_copy_allocations_retain_their_complete_declarations() {
             .memory
             .blocks
             .get(&pointer(&synthetic).block)
-            .unwrap()
-            .declared_object
-            .is_none()
+            .is_none_or(|block| block.declared_object.is_none())
     );
 }
 

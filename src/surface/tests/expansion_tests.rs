@@ -17666,6 +17666,7 @@ int32 f(struct cell* root) {
     owns root->value;
     requires root->base.left != 0;
     requires root->base.left != (struct base*)(void*)root;
+    requires valid_place((struct cell*)(void*)root->base.left);
     ensures result == old(child.number);
     ensures child.number == old(child.number);
     ensures root->value == old(child.number);
@@ -17675,6 +17676,11 @@ int32 f(struct cell* root) {
     fold(child);
     simp();
 }"#;
+    let insufficient = guarded.replace(
+        "    requires valid_place((struct cell*)(void*)root->base.left);\n",
+        "",
+    );
+    assert!(verify_c0_sources(&insufficient, &[("guarded.c", c)]).is_err());
     let control = guarded
         .replace("    if p != 0 {\n", "")
         .replace("    }\n}\nint32 f", "}\nint32 f");

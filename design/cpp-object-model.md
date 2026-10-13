@@ -675,7 +675,7 @@ The explicit initialized-range effect supplies that independent evidence.
 The shared load/representation layer uses `canonical_form_of_load` with an
 explicit four-byte observation width. Immutable automatic declaration metadata
 pins the checked uint32 type and little-endian target profile. The selected live
-load retains its initialization snapshot even when its canonical variable names
+load retains its initialization snapshot even when its load variable names
 an earlier memory projection. The checked `declared_uint32_from_bytes` application
 connects its four byte observations to a constant word; source expansion retains
 the exact byte premises at a recorded snapshot where the local remains in scope.
@@ -849,8 +849,10 @@ them and the configured supported marker. The approved marker is the default
 of this bounded import profile, and an explicitly different marker is refused.
 
 The contract permits reading and writing a live declared uint32 object's four
-representation bytes through the admitted byte view, including checked byte
-pointer formation within that extent and its one-past endpoint. Dereferencing
+representation bytes through the admitted byte view. An authenticated native
+uint32 prefix with exactly one element supplies that same selected live word;
+it does not identify the enclosing array's end or admit a multiword byte array.
+This includes checked byte pointer formation within that extent and its one-past endpoint. Dereferencing
 the endpoint remains invalid. Each byte at offset `i` denotes bits `8*i` through
 `8*i+7` of the same selected uint32 snapshot. Four initialized byte values
 therefore determine the word under the shared packing law. Partial writes do

@@ -686,6 +686,17 @@ fn advance_execution_proof_statement(
             verified_loop_rules.push(loop_rule.with_loop_index(loop_index));
         }
         for mut transition in transitions {
+            // The false loop condition is read before the for-loop's scoped
+            // locals retire. Keep that checked exit for historical observation;
+            // the continuing transition below still performs lifetime cleanup.
+            let loop_exit_state = if matches!(statement, CStatement::While { .. }) {
+                match &transition.outcome {
+                    CStatementOutcome::Normal(state) => Some(state.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             let ended = environment.source_layout.automatic_exits(
                 statement_index,
                 !matches!(transition.outcome, CStatementOutcome::Normal(_)),
@@ -777,7 +788,7 @@ fn advance_execution_proof_statement(
                         context.state.clone(),
                     );
                 }
-                if let CStatementOutcome::Normal(exit_state) = &transition.outcome {
+                if let Some(exit_state) = &loop_exit_state {
                     let exit_point = ProgramPointRef {
                         region: CodeRegionRef::Loop(loop_index),
                         kind: ProgramPointKind::Exit,

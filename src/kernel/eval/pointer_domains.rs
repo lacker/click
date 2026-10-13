@@ -774,7 +774,17 @@ fn position_guards(
         && view == PointerDomainView::ObjectRepresentationBytes
         && domain.element_type != CType::UInt8
     {
-        return Err(PointerDomainRefusal::IncompatibleType);
+        // A checked single-word prefix supplies a live uint32 object, even
+        // when it does not identify the enclosing array's complete extent.
+        // The bounded byte profile observes only that object's four bytes.
+        // It never turns a multiword prefix into one representation array.
+        if domain.element_type != CType::UInt32 {
+            return Err(PointerDomainRefusal::IncompatibleType);
+        }
+        append_guard(
+            guards,
+            domain_equal(domain.count.as_ref().clone(), IntegerTerm::constant_i64(1)),
+        );
     }
     let (stride, count) = match view {
         PointerDomainView::Typed => (domain.stride, domain.count.as_ref().clone()),
@@ -1491,6 +1501,69 @@ mod tests {
                 if guards.is_empty()),
                 policy == CTypedAccessPolicy::NativeObjectOnly
             );
+        }
+    }
+
+    #[test]
+    fn native_word_prefix_representation_is_bounded_to_one_live_word() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let assumptions = PureFactContext::new();
+        for (element, pointer_type, count, admitted) in [
+            (CType::UInt32, CType::UInt32Pointer, 1, true),
+            (CType::UInt32, CType::UInt32Pointer, 2, false),
+            (CType::Int32, CType::Int32Pointer, 1, false),
+            (CType::UInt64, CType::UInt64Pointer, 1, false),
+        ] {
+            let pointer = CPointerValue::new(Pointer::symbolic(Variable(989_798)), pointer_type)
+                .with_designation(PointerDesignation::Unresolved(Variable(989_798)));
+            let memory = CMemory::new()
+                .with_native_input_span(
+                    pointer.clone(),
+                    element,
+                    IntegerTerm::constant_i64(count).into(),
+                )
+                .unwrap();
+            let state = CState::new()
+                .with_memory(memory)
+                .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+            let bytes = pointer.clone().with_type(CType::UInt8Pointer);
+            let accepts = |result| match result {
+                Ok(PointerDomainCheck::Checked(guards)) => guards
+                    .iter()
+                    .all(|guard| assumptions.decide(guard) == Some(true)),
+                _ => false,
+            };
+            assert_eq!(
+                accepts(checked_native_byte_pointer_span(
+                    &state,
+                    &bytes,
+                    0.into(),
+                    4.into(),
+                    &assumptions,
+                )),
+                admitted
+            );
+            assert!(!accepts(checked_native_byte_pointer_span(
+                &state,
+                &bytes,
+                0.into(),
+                5.into(),
+                &assumptions,
+            )));
+            let forged = CPointerValue::new(bytes.pointer().clone(), CType::UInt8Pointer);
+            assert!(!accepts(checked_native_byte_pointer_span(
+                &state,
+                &forged,
+                0.into(),
+                4.into(),
+                &assumptions,
+            )));
+            assert!(state.resources().facts().is_empty());
+            assert!(!state.memory().has_initialized_bytes_under(
+                pointer.pointer(),
+                4,
+                &assumptions
+            ));
         }
     }
 

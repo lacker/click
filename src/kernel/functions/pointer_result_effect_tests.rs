@@ -908,7 +908,10 @@ fn aggregate_contract_views_bind_incoming_images_even_with_a_caller_name_collisi
             function.contract_interface(),
             &arguments,
         );
-        assert_eq!(view.locals().aggregate_object_pointer("copy"), Some(&image));
+        // An externally backed image has no private automatic declaration.
+        // Observation retains the incoming carrier even if the caller has a
+        // same-named aggregate binding; it does not invent local storage.
+        assert_eq!(view.locals().get("copy"), Some(&arguments[0]));
         assert_eq!(view.resources(), caller.resources());
     }
 }

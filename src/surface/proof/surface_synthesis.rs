@@ -77,7 +77,7 @@ pub(in crate::surface) fn with_synthesis_binder_names<T>(
 pub(in crate::surface) struct SynthesisStructOwners {
     // Selected parameter declarations are converted once for the function's
     // synthesis scope. Repeated field spellings share the immutable indexed
-    // kernel layout; a candidate still needs ordinary checked replay.
+    // kernel layout; a candidate still needs ordinary checked recheck.
     parameter_layouts: BTreeMap<String, std::sync::Arc<crate::kernel::CAggregateLayout>>,
     locals: BTreeMap<String, syntax::C0StructLayout>,
     cast_parameters: BTreeMap<String, (String, syntax::C0StructLayout)>,
