@@ -1,6 +1,6 @@
 # sizeof supports scalar and pointer types
 
-The C0 frontend lowers `sizeof` through the configured LP64 ABI for every
+The C front end lowers `sizeof` through the configured LP64 ABI for every
 currently supported scalar and pointer type, not only struct tags.
 
 ```c filename=sizeof_supported_types.c

@@ -1,6 +1,6 @@
 # C shifts
 
-This checks the first C0 signed `int32` shift slice: `<<`, arithmetic `>>`,
+This checks the first signed `int32` shift slice: `<<`, arithmetic `>>`,
 C-like precedence, and pure Click functions using the same operators.
 
 ```c filename=shift_left_const.c

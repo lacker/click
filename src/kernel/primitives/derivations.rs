@@ -52,30 +52,11 @@ impl PropositionDerivation {
         )
     }
 
-    /// Return the checked child derivations when this proof concludes a
-    /// conjunction. Certificate lowering can preserve this structure instead
-    /// of rediscovering it from a flattened premise set.
-    pub fn conjunction_parts(&self) -> Option<(&Self, &Self)> {
-        match &self.rule {
-            PropositionDerivationRule::And { left, right } => Some((left, right)),
-            _ => None,
-        }
-    }
-
     /// Return the checked selected disjunct and whether it is the left one.
     pub fn disjunction_choice(&self) -> Option<(bool, &Self)> {
         match &self.rule {
             PropositionDerivationRule::OrLeft(proof) => Some((true, proof)),
             PropositionDerivationRule::OrRight(proof) => Some((false, proof)),
-            _ => None,
-        }
-    }
-
-    /// Return the checked proof of a false antecedent when this derivation
-    /// concludes an implication by contradiction.
-    pub fn false_antecedent_proof(&self) -> Option<&Self> {
-        match &self.rule {
-            PropositionDerivationRule::ImpliesFalseAntecedent(proof) => Some(proof),
             _ => None,
         }
     }

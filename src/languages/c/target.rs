@@ -1,23 +1,72 @@
 //! Concrete implementation choices for the supported C subset.
 //!
 //! These are target assumptions, not properties of ISO C or LP64 in general.
-//! The Linux kernel builds with `-funsigned-char`; we initially model its
-//! x86-64 data layout. This does not claim support for every kernel compiler
-//! option, extension, or execution behavior.
+//! The Linux kernel builds with `-funsigned-char`, so its plain `char` is
+//! unsigned; x86-64 user space follows the System V ABI, where plain `char`
+//! is signed. We model both targets' x86-64 data layout. This does not claim
+//! support for every kernel compiler option, extension, or execution
+//! behavior.
 
-use super::syntax::CAbi;
+use super::syntax::{C0Type, CAbi};
 use crate::kernel::ByteOrder;
+
+/// The signedness a target gives plain `char`.
+///
+/// Plain `char` stays a type of its own in C compatibility, distinct from
+/// both `signed char` and `unsigned char` (C11 6.2.5p15), so the C frontend
+/// carries this choice inside its `char` types rather than resolving `char`
+/// to one of the other two. Only its values and its kernel representation
+/// follow [`PlainChar::byte_type`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum PlainChar {
+    Unsigned,
+    Signed,
+}
+
+impl PlainChar {
+    /// The character type whose range and representation plain `char` has:
+    /// `unsigned char` (`uint8`) or `signed char` (`int8`).
+    pub const fn byte_type(self) -> C0Type {
+        match self {
+            Self::Unsigned => C0Type::UInt8,
+            Self::Signed => C0Type::Int8,
+        }
+    }
+
+    pub const fn is_signed(self) -> bool {
+        matches!(self, Self::Signed)
+    }
+
+    /// `CHAR_MIN` and `CHAR_MAX`.
+    pub const fn range(self) -> (i64, i64) {
+        match self {
+            Self::Unsigned => (0, u8::MAX as i64),
+            Self::Signed => (i8::MIN as i64, i8::MAX as i64),
+        }
+    }
+
+    /// The value of a character constant whose execution character is the
+    /// byte `byte`: C11 6.4.4.4p10 converts the byte to plain `char` first,
+    /// so a byte of 0x80 or more is negative where plain `char` is signed.
+    pub const fn character_value(self, byte: u8) -> i64 {
+        match self {
+            Self::Unsigned => byte as i64,
+            Self::Signed => byte as i8 as i64,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CTarget {
     X86_64LinuxKernel,
-    /// C11/POSIX user space with the same LP64 and unsigned-char layout, but
-    /// without the Linux kernel's `__KERNEL__` predefine.
+    /// C11/POSIX user space under the x86-64 System V ABI: the same LP64
+    /// layout, but plain `char` is signed, as GCC and Clang build it by
+    /// default, and there is no `__KERNEL__` predefine.
     X86_64LinuxUserspace,
 }
 
 impl CTarget {
-    pub const SUPPORTED: Self = Self::X86_64LinuxKernel;
+    pub const SUPPORTED: Self = Self::X86_64LinuxUserspace;
 
     /// Every selectable target, in the order a diagnostic lists them.
     pub const ALL: &'static [Self] = &[Self::X86_64LinuxKernel, Self::X86_64LinuxUserspace];
@@ -67,22 +116,18 @@ impl CTarget {
         }
     }
 
-    /// Whether some supported target gives plain `char` signed semantics.
-    pub const fn any_plain_char_is_signed() -> bool {
-        let mut index = 0;
-        while index < Self::ALL.len() {
-            if Self::ALL[index].plain_char_is_signed() {
-                return true;
-            }
-            index += 1;
+    /// The signedness of plain `char`: unsigned for the kernel, which builds
+    /// with `-funsigned-char`, and signed for user space, as the x86-64
+    /// System V ABI specifies.
+    pub const fn plain_char(self) -> PlainChar {
+        match self {
+            Self::X86_64LinuxKernel => PlainChar::Unsigned,
+            Self::X86_64LinuxUserspace => PlainChar::Signed,
         }
-        false
     }
 
     pub const fn plain_char_is_signed(self) -> bool {
-        match self {
-            Self::X86_64LinuxKernel | Self::X86_64LinuxUserspace => false,
-        }
+        self.plain_char().is_signed()
     }
 
     /// Modeled target/build predefines, independent of compiler version.
@@ -115,7 +160,6 @@ impl CTarget {
                 ("__ORDER_BIG_ENDIAN__", "4321"),
             ],
             Self::X86_64LinuxUserspace => &[
-                ("__CHAR_UNSIGNED__", "1"),
                 ("__CHAR_BIT__", "8"),
                 ("__SIZEOF_POINTER__", "8"),
                 ("__SIZEOF_LONG__", "8"),
@@ -147,12 +191,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_target_matches_kernel_char_and_data_model() {
+    fn default_target_is_userspace_with_signed_char() {
         let target = CTarget::SUPPORTED;
-        assert_eq!(target.name(), "x86_64-linux-kernel");
+        assert_eq!(target.name(), "x86_64-linux-userspace");
         assert_eq!(target.abi(), CAbi::SUPPORTED);
         assert_eq!(target.char_bits(), 8);
-        assert!(!target.plain_char_is_signed());
+        assert!(target.plain_char_is_signed());
+        assert!(!CTarget::X86_64LinuxKernel.plain_char_is_signed());
+    }
+
+    #[test]
+    fn every_target_predefines_char_unsigned_exactly_when_plain_char_is_unsigned() {
+        for target in CTarget::ALL {
+            let predefined = target
+                .predefined_macros()
+                .iter()
+                .any(|(name, _)| *name == "__CHAR_UNSIGNED__");
+            assert_eq!(
+                predefined,
+                target.plain_char() == PlainChar::Unsigned,
+                "{}",
+                target.name()
+            );
+        }
+        assert_eq!(CTarget::X86_64LinuxKernel.plain_char(), PlainChar::Unsigned);
+    }
+
+    #[test]
+    fn plain_char_ranges_and_character_values_follow_signedness() {
+        assert_eq!(PlainChar::Unsigned.range(), (0, 255));
+        assert_eq!(PlainChar::Signed.range(), (-128, 127));
+        assert_eq!(PlainChar::Unsigned.character_value(0xC8), 200);
+        assert_eq!(PlainChar::Signed.character_value(0xC8), -56);
+        assert_eq!(PlainChar::Signed.character_value(b'a'), 97);
+        assert_eq!(PlainChar::Unsigned.byte_type(), C0Type::UInt8);
+        assert_eq!(PlainChar::Signed.byte_type(), C0Type::Int8);
     }
 
     #[test]
@@ -176,7 +249,8 @@ mod tests {
         let target = CTarget::X86_64LinuxUserspace;
         assert_eq!(target.abi(), CAbi::Lp64);
         assert_eq!(target.char_bits(), 8);
-        assert!(!target.plain_char_is_signed());
+        assert!(target.plain_char_is_signed());
+        assert_eq!(target.plain_char(), PlainChar::Signed);
         assert!(
             !target
                 .predefined_macros()

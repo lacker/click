@@ -5,6 +5,7 @@ uses pinned, unmodified [Charon](https://github.com/AeneasVerif/charon) after ru
 type and borrow checking. Every imported body follows the native ULLBC control
 flow path into Click's shared execution, memory, and certificate rules.
 Verification uses the same sidecars, tactics, and bounded engine as C and C++.
+[Language coverage](coverage.md) compares the Rust subset with C and C++.
 
 Charon is the default and sole extraction backend. All 16 canonical examples
 use native `.ullbc` artifacts, and the original compiler-backed regressions run
@@ -147,10 +148,9 @@ The unchanged adler2 trial proves `Adler32::default` and `Adler32::new` return
 by-value record operands through the checked call interface. Selecting the
 complete checksum loop now produces a locked, prepared import, and its
 `MOD` and `CHUNK_SIZE` initializer contracts verify. Its unchanged whole body
-has a bounds and termination proof for canonical seeds and input lengths
-through 2,147,483,647 bytes, including full batches and both remainders.
-The checksum
-postcondition remains unproved. General trait dispatch and arbitrary Rust
+proves bounds, termination, and both final checksum fields against the common
+specification for canonical seeds and lengths through 2,147,483,647 bytes,
+including full batches and both remainders. General trait dispatch and arbitrary Rust
 crates remain outside the supported subset.
 
 ## Signatures in Rust syntax
@@ -180,8 +180,9 @@ fn reduce(value: u32) -> u32 {
 A Rust source's function contracts require this form. A C-shaped signature
 is refused with a suggestion of the `fn` spelling. A field through a
 reference is `p.f`; `p->f` is refused. The
-parameter and return types are the integer and float types, `bool`, `()`,
-and a struct by name; `usize` and `isize` are 64 bits. `expr as T` takes a
+sidecar parser accepts every Rust integer and float type name, `bool`, `()`,
+and a struct by name, but the importer admits only the types in
+[Supported semantics](#supported-semantics); `usize` and `isize` are 64 bits. `expr as T` takes a
 scalar type and binds as in Rust, tighter than a binary operator.
 
 A parameter may be a reference, `&T` or `&mut T`, to a scalar or a struct.
@@ -362,7 +363,8 @@ interpretation. Record
 size, alignment, and field offsets come from rustc for the selected target;
 Rust's default field order is not assumed.
 
-The fixed profile is Rust 2024, compiler commit
+Single-file imports (schema 3) use Rust 2024; crate imports (schema 4) select
+2021 or 2024. The rest of the fixed profile is compiler commit
 `923c95cdf5ba65cea505aa2ea829f578e1506ed8`, target
 `x86_64-unknown-linux-gnu`, overflow checks enabled, panic abort, and MIR optimization level zero. Click must
 prove that arithmetic overflow does not occur. Compiler acceptance alone does
@@ -383,8 +385,14 @@ modular reduction, shifts, packing, truncation, and unsigned comparison. Its
 [sidecar](https://github.com/clicklang/click/blob/master/examples/rust-unsigned/arithmetic.click)
 uses ordinary Click contracts and tactics. Expansion can use the shared
 `unsigned_sum_bound` arithmetic-certificate step for widened word bounds.
-It does not establish checksum-library support;
-whole-checksum adaptation and verification remain outstanding.
+The [unchanged Adler2 computation](https://github.com/clicklang/click/blob/master/design/charon-trial/adler2/README.md)
+is verified separately against the common checksum specification for lengths
+zero through 2,147,483,647 bytes from canonical initial states. The unchanged
+`write_slice` and `adler32_slice` wrappers compose checked bodies over the same
+range, preserve input bytes, and prove field and packed checksum correctness.
+A locked client also proves that two actual updates equal the full-input
+checksum for every valid split over that range. Saved-checksum restoration
+and resumed updates remain pending.
 
 ```sh
 cargo run --bin click -- import lock examples/rust-unsigned/arithmetic.click

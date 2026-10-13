@@ -4036,144 +4036,6 @@ impl<'a> TermRewrite<'a> {
                 Box::new(self.algebraic(a)),
                 Box::new(self.algebraic(b)),
             ),
-            ConditionTerm::Bitvector32SignedLessThan(a, b) => {
-                ConditionTerm::Bitvector32SignedLessThan(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedLessEqual(a, b) => {
-                ConditionTerm::Bitvector32SignedLessEqual(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedGreaterThan(a, b) => {
-                ConditionTerm::Bitvector32SignedGreaterThan(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedGreaterEqual(a, b) => {
-                ConditionTerm::Bitvector32SignedGreaterEqual(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32Equal(a, b) => {
-                ConditionTerm::Bitvector32Equal(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            ConditionTerm::Bitvector32SignedAddOverflows(a, b) => {
-                ConditionTerm::Bitvector32SignedAddOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedSubtractOverflows(a, b) => {
-                ConditionTerm::Bitvector32SignedSubtractOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedMultiplyOverflows(a, b) => {
-                ConditionTerm::Bitvector32SignedMultiplyOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedDivideOverflows(a, b) => {
-                ConditionTerm::Bitvector32SignedDivideOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector32SignedShiftLeftOverflows(a, b) => {
-                ConditionTerm::Bitvector32SignedShiftLeftOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedLessThan(a, b) => {
-                ConditionTerm::Bitvector64SignedLessThan(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedLessEqual(a, b) => {
-                ConditionTerm::Bitvector64SignedLessEqual(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedGreaterThan(a, b) => {
-                ConditionTerm::Bitvector64SignedGreaterThan(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedGreaterEqual(a, b) => {
-                ConditionTerm::Bitvector64SignedGreaterEqual(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64UnsignedLessThan(a, b) => {
-                ConditionTerm::Bitvector64UnsignedLessThan(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64UnsignedLessEqual(a, b) => {
-                ConditionTerm::Bitvector64UnsignedLessEqual(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64UnsignedGreaterThan(a, b) => {
-                ConditionTerm::Bitvector64UnsignedGreaterThan(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64UnsignedGreaterEqual(a, b) => {
-                ConditionTerm::Bitvector64UnsignedGreaterEqual(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64Equal(a, b) => {
-                ConditionTerm::Bitvector64Equal(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            ConditionTerm::Bitvector64SignedAddOverflows(a, b) => {
-                ConditionTerm::Bitvector64SignedAddOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedSubtractOverflows(a, b) => {
-                ConditionTerm::Bitvector64SignedSubtractOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedMultiplyOverflows(a, b) => {
-                ConditionTerm::Bitvector64SignedMultiplyOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedDivideOverflows(a, b) => {
-                ConditionTerm::Bitvector64SignedDivideOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            ConditionTerm::Bitvector64SignedShiftLeftOverflows(a, b) => {
-                ConditionTerm::Bitvector64SignedShiftLeftOverflows(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
             ConditionTerm::Float32(c) => {
                 ConditionTerm::Float32(c.map_bitvector_terms(|b| self.bits(b)))
             }
@@ -4234,6 +4096,12 @@ impl<'a> TermRewrite<'a> {
                 } else {
                     ConditionTerm::integer_not_equal(self.integer(a), self.integer(b))
                 }
+            }
+            v => {
+                let (op, left, right) = v
+                    .as_bitvector_comparison()
+                    .expect("every other condition has its own arm");
+                op.build_raw(self.bits(left), self.bits(right))
             }
         };
         if let Some(guard) = result.pointer_offset_association_guard() {
@@ -4395,117 +4263,6 @@ impl<'a> TermRewrite<'a> {
             | Bitvector32Term::UInt64Constant(_)
             | Bitvector32Term::MachineIntegerConstant(_)
             | Bitvector32Term::Variable(_) => v.clone(),
-            Bitvector32Term::Add(a, b) => {
-                Bitvector32Term::Add(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Subtract(a, b) => {
-                Bitvector32Term::Subtract(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Multiply(a, b) => {
-                Bitvector32Term::Multiply(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Divide(a, b) => {
-                Bitvector32Term::Divide(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UnsignedDivide(a, b) => {
-                Bitvector32Term::UnsignedDivide(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Remainder(a, b) => {
-                Bitvector32Term::Remainder(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UnsignedRemainder(a, b) => {
-                Bitvector32Term::UnsignedRemainder(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::ShiftLeft(a, b) => {
-                Bitvector32Term::ShiftLeft(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::ArithmeticShiftRight(a, b) => Bitvector32Term::ArithmeticShiftRight(
-                Box::new(self.bits(a)),
-                Box::new(self.bits(b)),
-            ),
-            Bitvector32Term::LogicalShiftRight(a, b) => {
-                Bitvector32Term::LogicalShiftRight(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::BitwiseAnd(a, b) => {
-                Bitvector32Term::BitwiseAnd(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::BitwiseOr(a, b) => {
-                Bitvector32Term::BitwiseOr(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::BitwiseXor(a, b) => {
-                Bitvector32Term::BitwiseXor(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64Add(a, b) => {
-                Bitvector32Term::Int64Add(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64Subtract(a, b) => {
-                Bitvector32Term::Int64Subtract(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64Multiply(a, b) => {
-                Bitvector32Term::Int64Multiply(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64Divide(a, b) => {
-                Bitvector32Term::Int64Divide(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64Remainder(a, b) => {
-                Bitvector32Term::Int64Remainder(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64ShiftLeft(a, b) => {
-                Bitvector32Term::Int64ShiftLeft(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64ArithmeticShiftRight(a, b) => {
-                Bitvector32Term::Int64ArithmeticShiftRight(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            Bitvector32Term::Int64BitwiseAnd(a, b) => {
-                Bitvector32Term::Int64BitwiseAnd(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64BitwiseOr(a, b) => {
-                Bitvector32Term::Int64BitwiseOr(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::Int64BitwiseXor(a, b) => {
-                Bitvector32Term::Int64BitwiseXor(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64Add(a, b) => {
-                Bitvector32Term::UInt64Add(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64Subtract(a, b) => {
-                Bitvector32Term::UInt64Subtract(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64Multiply(a, b) => {
-                Bitvector32Term::UInt64Multiply(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64Divide(a, b) => {
-                Bitvector32Term::UInt64Divide(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64Remainder(a, b) => {
-                Bitvector32Term::UInt64Remainder(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64ShiftLeft(a, b) => {
-                Bitvector32Term::UInt64ShiftLeft(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64LogicalShiftRight(a, b) => {
-                Bitvector32Term::UInt64LogicalShiftRight(
-                    Box::new(self.bits(a)),
-                    Box::new(self.bits(b)),
-                )
-            }
-            Bitvector32Term::UInt64BitwiseAnd(a, b) => {
-                Bitvector32Term::UInt64BitwiseAnd(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64BitwiseOr(a, b) => {
-                Bitvector32Term::UInt64BitwiseOr(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::UInt64BitwiseXor(a, b) => {
-                Bitvector32Term::UInt64BitwiseXor(Box::new(self.bits(a)), Box::new(self.bits(b)))
-            }
-            Bitvector32Term::BitwiseNot(v) => Bitvector32Term::BitwiseNot(Box::new(self.bits(v))),
-            Bitvector32Term::Int64From32(v) => Bitvector32Term::Int64From32(Box::new(self.bits(v))),
-            Bitvector32Term::UInt64From32(v) => {
-                Bitvector32Term::UInt64From32(Box::new(self.bits(v)))
-            }
             Bitvector32Term::UInt32From64(v) => {
                 let value = self.bits(v);
                 if self.integer_exact.is_some() {
@@ -4513,27 +4270,6 @@ impl<'a> TermRewrite<'a> {
                 } else {
                     Bitvector32Term::uint32_from_64(value)
                 }
-            }
-            Bitvector32Term::Int64FromUInt32(v) => {
-                Bitvector32Term::Int64FromUInt32(Box::new(self.bits(v)))
-            }
-            Bitvector32Term::UInt64FromInt32(v) => {
-                Bitvector32Term::UInt64FromInt32(Box::new(self.bits(v)))
-            }
-            Bitvector32Term::UInt64FromInt64(v) => {
-                Bitvector32Term::UInt64FromInt64(Box::new(self.bits(v)))
-            }
-            Bitvector32Term::Int64BitwiseNot(v) => {
-                Bitvector32Term::Int64BitwiseNot(Box::new(self.bits(v)))
-            }
-            Bitvector32Term::UInt64BitwiseNot(v) => {
-                Bitvector32Term::UInt64BitwiseNot(Box::new(self.bits(v)))
-            }
-            Bitvector32Term::Float32Negate(v) => {
-                Bitvector32Term::Float32Negate(Box::new(self.bits(v)))
-            }
-            Bitvector32Term::Float64Negate(v) => {
-                Bitvector32Term::Float64Negate(Box::new(self.bits(v)))
             }
             Bitvector32Term::If {
                 condition,
@@ -4704,23 +4440,10 @@ impl<'a> TermRewrite<'a> {
                     destination: *destination,
                 }
             }
-            Bitvector32Term::Float32Binary {
-                operator,
-                left,
-                right,
-            } => Bitvector32Term::Float32Binary {
-                operator: *operator,
-                left: Box::new(self.bits(left)),
-                right: Box::new(self.bits(right)),
-            },
-            Bitvector32Term::Float64Binary {
-                operator,
-                left,
-                right,
-            } => Bitvector32Term::Float64Binary {
-                operator: *operator,
-                left: Box::new(self.bits(left)),
-                right: Box::new(self.bits(right)),
+            term => match (term.as_binary(), term.as_unary()) {
+                (Some((op, left, right)), _) => op.build_raw(self.bits(left), self.bits(right)),
+                (_, Some((op, value))) => op.build_raw(self.bits(value)),
+                _ => unreachable!("every other variant has its own arm"),
             },
         };
         if let Some((guards, replacement)) = result.guarded_remainder_rewrite() {

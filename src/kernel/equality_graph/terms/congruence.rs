@@ -20,6 +20,7 @@ pub(in crate::kernel::equality_graph) enum ConditionKind {
     Int32Le,
     Int32Gt,
     Int32Ge,
+    Int32AddOverflow,
     UInt64Eq,
     Int64Lt,
     Int64Le,
@@ -221,6 +222,9 @@ impl TermClasses {
         use ConditionKind::*;
         let (kind, left, right) = match condition {
             C::Bitvector32Equal(a, b) => (Int32Eq, self.intern_int32(a), self.intern_int32(b)),
+            C::Bitvector32SignedAddOverflows(a, b) => {
+                (Int32AddOverflow, self.intern_int32(a), self.intern_int32(b))
+            }
             C::Bitvector32SignedLessThan(a, b) => {
                 (Int32Lt, self.intern_int32(a), self.intern_int32(b))
             }
@@ -272,6 +276,7 @@ impl TermClasses {
     fn condition_kind(condition: &C) -> Option<ConditionKind> {
         Some(match condition {
             C::Bitvector32Equal(..) => ConditionKind::Int32Eq,
+            C::Bitvector32SignedAddOverflows(..) => ConditionKind::Int32AddOverflow,
             C::Bitvector64Equal(..) => ConditionKind::UInt64Eq,
             C::PointerEqual(..) => ConditionKind::PointerEq,
             C::PointerOffsetEqual(..) => ConditionKind::OffsetEq,
@@ -371,6 +376,7 @@ impl C {
     ) -> Option<(&T, &T)> {
         match self {
             Self::Bitvector32Equal(a, b)
+            | Self::Bitvector32SignedAddOverflows(a, b)
             | Self::Bitvector32SignedLessThan(a, b)
             | Self::Bitvector32SignedLessEqual(a, b)
             | Self::Bitvector32SignedGreaterThan(a, b)

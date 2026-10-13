@@ -1,9 +1,17 @@
 //! Shared normalization of contiguous standard C integer specifiers.
 
-use super::syntax::C0Type;
+use super::syntax::{C0Type, PlainChar};
 
+/// The refusal when plain `char` is spelled where no C target fixes its
+/// signedness.
+pub(crate) const PLAIN_CHAR_NEEDS_TARGET: &str = "plain `char` is signed or unsigned depending on the C target, and no C target is selected here; spell `signed char` or `unsigned char`, or verify against a C source so the sidecar's target applies";
+
+/// Normalizes the specifier words starting a type. `plain_char` is the
+/// signedness the C target gives plain `char`; `None` means no target is
+/// selected, and spelling plain `char` is then refused.
 pub(crate) fn parse<'a>(
     words: impl Iterator<Item = &'a str>,
+    plain_char: Option<PlainChar>,
 ) -> Result<Option<(C0Type, usize)>, &'static str> {
     let (mut chars, mut shorts, mut ints, mut longs, mut signs, mut unsigned) =
         (0, 0, 0, 0, 0, false);
@@ -20,7 +28,7 @@ pub(crate) fn parse<'a>(
             }
             "double" if longs > 0 => {
                 return Err(
-                    "unsupported C type `long double`: extended-precision floating-point values are not modeled in C0",
+                    "unsupported C type `long double`: extended-precision floating-point values are not modeled by Click",
                 );
             }
             _ => break,
@@ -49,7 +57,7 @@ pub(crate) fn parse<'a>(
         } else if signs > 0 {
             C0Type::Int8
         } else {
-            C0Type::Char
+            C0Type::Char(plain_char.ok_or(PLAIN_CHAR_NEEDS_TARGET)?)
         }
     } else if shorts > 0 {
         if unsigned {
@@ -80,7 +88,7 @@ mod tests {
         fn permutations(words: &mut [&str], index: usize, expected: C0Type) {
             if index == words.len() {
                 assert_eq!(
-                    parse(words.iter().copied()),
+                    parse(words.iter().copied(), Some(PlainChar::Unsigned)),
                     Ok(Some((expected, words.len()))),
                     "{words:?}"
                 );
@@ -93,7 +101,7 @@ mod tests {
             }
         }
         for (spelling, expected) in [
-            ("char", C0Type::Char),
+            ("char", C0Type::Char(PlainChar::Unsigned)),
             ("signed char", C0Type::Int8),
             ("unsigned char", C0Type::UInt8),
             ("short int", C0Type::Int16),
@@ -131,12 +139,46 @@ mod tests {
             "char char",
             "unsigned unsigned",
         ] {
-            assert!(parse(spelling.split_whitespace()).is_err(), "{spelling}");
+            assert!(
+                parse(spelling.split_whitespace(), Some(PlainChar::Unsigned)).is_err(),
+                "{spelling}"
+            );
         }
-        assert_eq!(parse(["uint64", "int"].into_iter()), Ok(None));
         assert_eq!(
-            parse(["long", "value"].into_iter()),
+            parse(["uint64", "int"].into_iter(), Some(PlainChar::Unsigned)),
+            Ok(None)
+        );
+        assert_eq!(
+            parse(["long", "value"].into_iter(), Some(PlainChar::Unsigned)),
             Ok(Some((C0Type::Int64, 1)))
+        );
+    }
+
+    #[test]
+    fn plain_char_takes_the_targets_signedness_and_stays_distinct() {
+        for plain in [PlainChar::Unsigned, PlainChar::Signed] {
+            assert_eq!(
+                parse(["char"].into_iter(), Some(plain)),
+                Ok(Some((C0Type::Char(plain), 1)))
+            );
+            assert_eq!(
+                parse(["signed", "char"].into_iter(), Some(plain)),
+                Ok(Some((C0Type::Int8, 2)))
+            );
+            assert_eq!(
+                parse(["unsigned", "char"].into_iter(), Some(plain)),
+                Ok(Some((C0Type::UInt8, 2)))
+            );
+        }
+        assert_ne!(C0Type::Char(PlainChar::Signed), C0Type::Int8);
+        assert_ne!(C0Type::Char(PlainChar::Unsigned), C0Type::UInt8);
+        assert_eq!(
+            parse(["char"].into_iter(), None),
+            Err(PLAIN_CHAR_NEEDS_TARGET)
+        );
+        assert_eq!(
+            parse(["signed", "char"].into_iter(), None),
+            Ok(Some((C0Type::Int8, 2)))
         );
     }
 }

@@ -1,5 +1,10 @@
 # Complete general-purpose algebraic data type support
 
+Priority: P2.
+
+Soundness: incomplete. Each listed generalization is refused today, and the
+listed regressions keep those refusals. No false acceptance is known.
+
 P2: general completeness, not a blanket MVR dependency. The core ADT feature
 set already supports ownership-backed tree models and a verified left rotation.
 MVR algorithm proofs and the specific integration gaps they expose belong in

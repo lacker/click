@@ -1,5 +1,11 @@
 # Make `step` simple across a call precondition
 
+Priority: P2.
+
+Soundness: not soundness. This is the tactic architecture. Every derivation
+that `step()` performs is already kernel-checked. The change is which
+derivations are visible and retained.
+
 ## Objective
 
 `step()` is a simple tactic, not a smart tactic. Remove unretained prerequisite
@@ -78,7 +84,7 @@ The next checkpoint is deliberately narrower than the rest of Phase 2: build
 an immutable per-function source-load plan. Given a `LoadSourceId`, it must
 return exactly one source field spelling, position, containing statement, and
 validation record for the source-side pointer/type/offset. It must be built
-alongside C0 lowering, shared between proof branches, and queried without an
+alongside C lowering, shared between proof branches, and queried without an
 AST walk or ambient scan. The current event identity contains only source unit,
 function, and occurrence, so no load-equation consumer should land before this
 plan supplies and validates the missing region and spelling data.

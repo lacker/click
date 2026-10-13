@@ -362,10 +362,6 @@ fn symbolic_base_aliases_a_held_cell(
     })
 }
 
-pub fn c_loadability_obligation_impossible(obligation: &Proposition) -> bool {
-    c_loadability_obligation_impossible_with_assumptions(obligation, &PureFactContext::new())
-}
-
 /// Reject a read of freed memory unless a checked path fact proves that the
 /// guard containing the read is false. The guarded obligation itself remains
 /// subject to ordinary certification.
@@ -1928,8 +1924,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths(
                 &function,
                 &arguments,
                 &assumptions,
-                &environment,
-                execution_semantics,
+                CExecutionContext::new(&environment, execution_semantics),
                 &mut budget,
                 &mut variables,
                 prepare_contract_resources,
@@ -2858,41 +2853,17 @@ fn match_quantified_int32_term(
             }
         };
     }
-    let binary = |pattern_left: &Bitvector32Term,
-                  pattern_right: &Bitvector32Term,
-                  target_left: &Bitvector32Term,
-                  target_right: &Bitvector32Term,
-                  substitutions: &mut BTreeMap<Variable, Bitvector32Term>| {
-        match_quantified_int32_term(pattern_left, target_left, binders, substitutions)
-            && match_quantified_int32_term(pattern_right, target_right, binders, substitutions)
-    };
+    if let (Some((operator, pattern_left, pattern_right)), Some((other, target_left, target_right))) =
+        (pattern.as_binary(), target.as_binary())
+        && operator == other
+        && operator.is_bitvector32()
+    {
+        return match_quantified_int32_term(pattern_left, target_left, binders, substitutions)
+            && match_quantified_int32_term(pattern_right, target_right, binders, substitutions);
+    }
     match (pattern, target) {
         (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => left == right,
         (Bitvector32Term::Variable(left), Bitvector32Term::Variable(right)) => left == right,
-        (Bitvector32Term::Add(pl, pr), Bitvector32Term::Add(tl, tr))
-        | (Bitvector32Term::Subtract(pl, pr), Bitvector32Term::Subtract(tl, tr))
-        | (Bitvector32Term::Multiply(pl, pr), Bitvector32Term::Multiply(tl, tr))
-        | (Bitvector32Term::Divide(pl, pr), Bitvector32Term::Divide(tl, tr))
-        | (Bitvector32Term::Remainder(pl, pr), Bitvector32Term::Remainder(tl, tr))
-        | (Bitvector32Term::UnsignedDivide(pl, pr), Bitvector32Term::UnsignedDivide(tl, tr))
-        | (
-            Bitvector32Term::UnsignedRemainder(pl, pr),
-            Bitvector32Term::UnsignedRemainder(tl, tr),
-        )
-        | (Bitvector32Term::ShiftLeft(pl, pr), Bitvector32Term::ShiftLeft(tl, tr))
-        | (
-            Bitvector32Term::ArithmeticShiftRight(pl, pr),
-            Bitvector32Term::ArithmeticShiftRight(tl, tr),
-        )
-        | (
-            Bitvector32Term::LogicalShiftRight(pl, pr),
-            Bitvector32Term::LogicalShiftRight(tl, tr),
-        )
-        | (Bitvector32Term::BitwiseAnd(pl, pr), Bitvector32Term::BitwiseAnd(tl, tr))
-        | (Bitvector32Term::BitwiseOr(pl, pr), Bitvector32Term::BitwiseOr(tl, tr))
-        | (Bitvector32Term::BitwiseXor(pl, pr), Bitvector32Term::BitwiseXor(tl, tr)) => {
-            binary(pl, pr, tl, tr, substitutions)
-        }
         (Bitvector32Term::BitwiseNot(pattern), Bitvector32Term::BitwiseNot(target)) => {
             match_quantified_int32_term(pattern, target, binders, substitutions)
         }

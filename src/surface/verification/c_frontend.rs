@@ -704,7 +704,10 @@ pub(super) fn c_layouts(
             )));
         }
     }
-    let mut tables = parser::ProgramLayouts::default();
+    let mut tables = parser::ProgramLayouts {
+        plain_char: Some(target.plain_char()),
+        ..Default::default()
+    };
     for source_path in verifying_paths {
         let unit = parse_c_source_unit(&source_path, c_sources, target)?;
         tables
@@ -774,15 +777,17 @@ pub(super) fn parse_c_source_unit(
             let header_line_map = header
                 .line_map()
                 .in_containers(&c_sources.c_source_containers);
-            syntax::validate_header(header.source(), &header_line_map).map_err(|error| {
-                ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
-                    .with_kind(ClickErrorKind::Syntax)
-            })?;
+            syntax::validate_header_for_target(header.source(), &header_line_map, target).map_err(
+                |error| {
+                    ClickError::new(format!("failed to parse C header `{header_path}`: {error}"))
+                        .with_kind(ClickErrorKind::Syntax)
+                },
+            )?;
         }
         let line_map = expanded
             .line_map()
             .in_containers(&c_sources.c_source_containers);
-        syntax::parse_translation_unit_for_source(expanded.source(), source_path, &line_map)
+        syntax::parse_translation_unit_for_target(expanded.source(), source_path, &line_map, target)
             .map_err(|error| {
                 ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
                     .with_kind(ClickErrorKind::Syntax)
@@ -797,11 +802,12 @@ pub(super) fn parse_c_source_unit(
                     "import configuration has no prepared translation unit for verifying source `{source_path}`"
                 ))
             })?;
-        syntax::parse_translation_unit_for_import(
+        syntax::parse_translation_unit_for_import_target(
             import.source(),
             import.logical_source(),
             import.source_map(),
             import.promise_attributes(),
+            target,
         )
         .map_err(|error| {
             ClickError::new(format!(
@@ -1040,6 +1046,85 @@ pub(super) fn record_function_tables(
     tables: &mut parser::ProgramLayouts,
     function: syntax::C0Function,
 ) {
+    let mut names: BTreeSet<String> = function
+        .globals()
+        .keys()
+        .chain(function.global_arrays().keys())
+        .chain(function.global_aggregates().keys())
+        .chain(function.global_aggregate_arrays().keys())
+        .cloned()
+        .chain(
+            function
+                .static_locals()
+                .values()
+                .map(|object| object.name().to_string()),
+        )
+        .chain(
+            function
+                .static_arrays()
+                .values()
+                .map(|object| object.name().to_string()),
+        )
+        .chain(
+            function
+                .static_aggregates()
+                .values()
+                .map(|object| object.name().to_string()),
+        )
+        .chain(
+            function
+                .static_aggregate_arrays()
+                .values()
+                .map(|object| object.name().to_string()),
+        )
+        .collect();
+    // Statement snapshots can name locals at the recorded boundary. Index
+    // their declarations once, alongside the function's ambient objects;
+    // snapshot lowering still checks whether each local is available there.
+    let mut pending = vec![function.body()];
+    while let Some(statement) = pending.pop() {
+        match statement {
+            syntax::C0Statement::Declare { name, .. }
+            | syntax::C0Statement::DeclareStructValue { name, .. } => {
+                names.insert(name.clone());
+            }
+            syntax::C0Statement::Seq(first, second) => {
+                pending.push(second);
+                pending.push(first);
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                pending.push(else_branch);
+                pending.push(then_branch);
+            }
+            syntax::C0Statement::While { body, .. }
+            | syntax::C0Statement::DoWhile { body, .. }
+            | syntax::C0Statement::Label {
+                statement: body, ..
+            } => pending.push(body),
+            syntax::C0Statement::For {
+                initializer,
+                body,
+                step,
+                ..
+            } => {
+                pending.push(step);
+                pending.push(body);
+                pending.push(initializer);
+            }
+            syntax::C0Statement::Switch { cases, .. } => {
+                pending.extend(cases.iter().map(syntax::C0SwitchCase::body));
+            }
+            _ => {}
+        }
+    }
+    tables.c_object_names.insert(
+        function.source_name().to_string(),
+        std::sync::Arc::new(names),
+    );
     let mut function_aggregate_objects = BTreeMap::new();
     for aggregate in function.global_aggregates().values() {
         function_aggregate_objects.insert(
@@ -1151,10 +1236,11 @@ pub(super) fn validate_modeled_pthread_binding(
         ClickError::new(format!("invalid built-in pthread model: {error}"))
             .with_kind(ClickErrorKind::Internal)
     })?;
-    let reference = syntax::parse_translation_unit_for_source(
+    let reference = syntax::parse_translation_unit_for_target(
         reference.source(),
         "__click_modeled_pthread_reference.c",
         reference.line_map(),
+        CTarget::X86_64LinuxUserspace,
     )
     .map_err(|error| {
         ClickError::new(format!("invalid built-in pthread model: {error}"))

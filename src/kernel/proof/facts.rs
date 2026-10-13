@@ -2265,15 +2265,7 @@ fn collect_pointer_offset_bitvector_atoms(
     offset: &PointerOffsetTerm,
     atoms: &mut BTreeSet<BitvectorEqualityAtomKey>,
 ) {
-    match offset {
-        PointerOffsetTerm::Add(left, right) => {
-            collect_pointer_offset_bitvector_atoms(left, atoms);
-            collect_pointer_offset_bitvector_atoms(right, atoms);
-        }
-        PointerOffsetTerm::Int32Scaled { value, .. }
-        | PointerOffsetTerm::Int64Scaled { value, .. } => collect_bitvector_atoms(value, atoms),
-        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
-    }
+    offset.for_each_scaled_value(|value| collect_bitvector_atoms(value, atoms));
 }
 
 fn index_quantified_fact(

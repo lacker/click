@@ -132,10 +132,16 @@ pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0T
         (CValue::PointerInteger(value), c_type) => {
             c_value_matches_click_type(&value.numeric_value(), c_type)
         }
-        (CValue::Int8(_), C0Type::Int8) => true,
+        (
+            CValue::Int8(_),
+            C0Type::Int8 | C0Type::Char(crate::languages::c::syntax::PlainChar::Signed),
+        ) => true,
         (CValue::Int16(_), C0Type::Int16)
         | (CValue::Int32(_), C0Type::Int32)
-        | (CValue::UInt8(_), C0Type::Char | C0Type::UInt8)
+        | (
+            CValue::UInt8(_),
+            C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned) | C0Type::UInt8,
+        )
         | (CValue::UInt16(_), C0Type::UInt16)
         | (CValue::UInt32(_), C0Type::UInt32)
         | (CValue::Int64(_), C0Type::Int64)

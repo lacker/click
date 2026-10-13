@@ -7241,20 +7241,52 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
             assumptions,
             budget,
         )?,
-        SpecExpression::Add(left, right) => evaluate_spec_add_paths_in(
-            SpecScope::new(state, loop_entry_state, algebraic_bindings),
-            left,
-            right,
-            assumptions,
-            budget,
-        )?,
-        SpecExpression::Subtract(left, right) => evaluate_spec_subtract_paths_in(
-            SpecScope::new(state, loop_entry_state, algebraic_bindings),
-            left,
-            right,
-            assumptions,
-            budget,
-        )?,
+        SpecExpression::Add(left, right) => {
+            let left_step_width = spec_expression_pointer_step_width(state, left);
+            let right_step_width = spec_expression_pointer_step_width(state, right);
+            evaluate_spec_scalar_binary_paths_in(
+                SpecScope::new(state, loop_entry_state, algebraic_bindings),
+                left,
+                right,
+                assumptions,
+                budget,
+                |left, right, facts, obligations| {
+                    apply_c_add(
+                        state,
+                        left,
+                        right,
+                        left_step_width,
+                        right_step_width,
+                        facts,
+                        obligations,
+                        assumptions,
+                    )
+                },
+            )?
+        }
+        SpecExpression::Subtract(left, right) => {
+            let left_step_width = spec_expression_pointer_step_width(state, left);
+            let right_step_width = spec_expression_pointer_step_width(state, right);
+            evaluate_spec_scalar_binary_paths_in(
+                SpecScope::new(state, loop_entry_state, algebraic_bindings),
+                left,
+                right,
+                assumptions,
+                budget,
+                |left, right, facts, obligations| {
+                    apply_c_subtract(
+                        state,
+                        left,
+                        right,
+                        left_step_width,
+                        right_step_width,
+                        facts,
+                        obligations,
+                        assumptions,
+                    )
+                },
+            )?
+        }
         SpecExpression::Multiply(left, right) => evaluate_spec_scalar_binary_paths_in(
             SpecScope::new(state, loop_entry_state, algebraic_bindings),
             left,
@@ -7915,106 +7947,6 @@ fn spec_value_paths_in(
         budget.dropped_runtime_error.get_or_insert(error);
     }
     values
-}
-
-fn evaluate_spec_add_paths_in(
-    scope: SpecScope<'_>,
-    left: &SpecExpression,
-    right: &SpecExpression,
-    assumptions: &PureFactContext,
-    budget: &mut SpecEvaluation<'_>,
-) -> ExecutionResult<Vec<SpecExpressionPath>> {
-    let state = scope.state;
-    let mut paths = Vec::new();
-    let left_step_width = spec_expression_pointer_step_width(state, left);
-    let right_step_width = spec_expression_pointer_step_width(state, right);
-    for left_path in
-        evaluate_spec_expression_paths_with_algebraic_bindings_in(scope, left, assumptions, budget)?
-    {
-        let right_assumptions =
-            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in evaluate_spec_expression_paths_with_algebraic_bindings_in(
-            scope,
-            right,
-            &right_assumptions,
-            budget,
-        )? {
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations_under(
-                &left_path.facts,
-                &left_path.obligations,
-                &right_path.facts,
-                &right_path.obligations,
-                assumptions,
-                &right_assumptions,
-            ) else {
-                continue;
-            };
-            paths.extend(spec_value_paths_in(
-                apply_c_add(
-                    state,
-                    left_path.value.clone(),
-                    right_path.value,
-                    left_step_width,
-                    right_step_width,
-                    facts,
-                    obligations,
-                    assumptions,
-                ),
-                budget,
-            ));
-        }
-    }
-    Ok(paths)
-}
-
-fn evaluate_spec_subtract_paths_in(
-    scope: SpecScope<'_>,
-    left: &SpecExpression,
-    right: &SpecExpression,
-    assumptions: &PureFactContext,
-    budget: &mut SpecEvaluation<'_>,
-) -> ExecutionResult<Vec<SpecExpressionPath>> {
-    let state = scope.state;
-    let mut paths = Vec::new();
-    let left_step_width = spec_expression_pointer_step_width(state, left);
-    let right_step_width = spec_expression_pointer_step_width(state, right);
-    for left_path in
-        evaluate_spec_expression_paths_with_algebraic_bindings_in(scope, left, assumptions, budget)?
-    {
-        let right_assumptions =
-            assumptions_with_path_context(assumptions, &left_path.facts, &left_path.obligations);
-        for right_path in evaluate_spec_expression_paths_with_algebraic_bindings_in(
-            scope,
-            right,
-            &right_assumptions,
-            budget,
-        )? {
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations_under(
-                &left_path.facts,
-                &left_path.obligations,
-                &right_path.facts,
-                &right_path.obligations,
-                assumptions,
-                &right_assumptions,
-            ) else {
-                continue;
-            };
-            paths.extend(spec_value_paths_in(
-                apply_c_subtract(
-                    state,
-                    left_path.value.clone(),
-                    right_path.value,
-                    left_step_width,
-                    right_step_width,
-                    facts,
-                    obligations,
-                    assumptions,
-                ),
-                budget,
-            ));
-        }
-    }
-    Ok(paths)
 }
 
 fn spec_expression_pointer_step_width(state: &CState, expression: &SpecExpression) -> Option<u32> {

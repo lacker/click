@@ -87,8 +87,7 @@ fn pointer_result_effect_is_inferred_from_checked_body_and_instantiated_modularl
         &rule.function,
         &[CExpression::Value(argument.clone())],
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .expect("modular identity call");
@@ -422,8 +421,7 @@ fn no_argument_global_pointer_result_remains_opaque_modularly() {
         &rule.function,
         &[],
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .expect("opaque global result call");

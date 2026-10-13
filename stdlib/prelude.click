@@ -922,7 +922,7 @@ extern int32 __click_constant_p_unknown() {
 }
 
 // The C library's byte functions, with C's `size_t` counts. C converts
-// `memset`'s `int` fill value to `unsigned char`; C0 models that narrowing
+// `memset`'s `int` fill value to `unsigned char`; Click models that narrowing
 // only for a representable value, so the value is required to be one.
 extern uint8* memcpy(uint8 destination[], uint8 source[], uint64 bytes) {
     requires viewable(source[0..bytes]);
@@ -1033,6 +1033,19 @@ theorem uint32_pack_uint16_high_first_to_integer(low: uint32, high: uint32) {
     requires low <= 65535u32;
     requires high <= 65535u32;
     ensures to_integer((high << 16) | low) == to_integer(low) + 65536 * to_integer(high);
+}
+
+# Exact round trips of two bounded fields packed with the high field first.
+theorem uint32_unpack_uint16_low(low: uint32, high: uint32) {
+    requires low <= 65535u32;
+    requires high <= 65535u32;
+    ensures (((high << 16) | low) & 65535u32) == low;
+}
+
+theorem uint32_unpack_uint16_high(low: uint32, high: uint32) {
+    requires low <= 65535u32;
+    requires high <= 65535u32;
+    ensures ((((high << 16) | low) >> 16) & 65535u32) == high;
 }
 
 theorem uint64_pack_uint16_to_integer(low: uint64, high: uint64) {
@@ -1182,6 +1195,17 @@ theorem int32_less_equal_to_integer(left: int32, right: int32) {
     ensures to_integer(left) <= to_integer(right);
 }
 
+theorem int32_to_integer_bounds(value: int32) {
+    ensures -2147483648 <= to_integer(value) by {
+        have -2147483648 <= value;
+        apply(int32_less_equal_to_integer(-2147483648, value)) using { -2147483648 <= value; }
+    }
+    ensures to_integer(value) <= 2147483647 by {
+        have value <= 2147483647;
+        apply(int32_less_equal_to_integer(value, 2147483647)) using { value <= 2147483647; }
+    }
+}
+
 theorem int32_to_integer_equal_implies_equal(left: int32, right: int32) {
     requires to_integer(left) == to_integer(right);
     ensures left == right;
@@ -1207,6 +1231,17 @@ theorem int32_less_than_to_integer(left: int32, right: int32) {
 theorem int64_less_equal_to_integer(left: int64, right: int64) {
     requires left <= right;
     ensures to_integer(left) <= to_integer(right);
+}
+
+theorem int64_to_integer_bounds(value: int64) {
+    ensures -9223372036854775808 <= to_integer(value) by {
+        have -9223372036854775808i64 <= value;
+        apply(int64_less_equal_to_integer(-9223372036854775808i64, value)) using { -9223372036854775808i64 <= value; }
+    }
+    ensures to_integer(value) <= 9223372036854775807 by {
+        have value <= 9223372036854775807i64;
+        apply(int64_less_equal_to_integer(value, 9223372036854775807i64)) using { value <= 9223372036854775807i64; }
+    }
 }
 
 theorem int64_less_than_to_integer(left: int64, right: int64) {

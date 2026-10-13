@@ -2,7 +2,7 @@
 
 Click supports `#if 0`, `#if 1`, `#if NAME` for a known 0/1 macro, `#ifdef`,
 `#ifndef`, `#elif`, `#else`, and `#endif`. Inactive branches are removed before
-the C0 parser sees the translation unit, so unsupported code and missing
+the C parser sees the translation unit, so unsupported code and missing
 includes in those branches do not affect verification.
 
 ```c filename=include/config.h

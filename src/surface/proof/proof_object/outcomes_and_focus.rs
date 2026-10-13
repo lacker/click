@@ -844,14 +844,7 @@ impl<'a> Proof<'a> {
             // A structural marker records the derivation; the certificate
             // step vocabulary for consuming outcome goals arrives with the
             // drain migration.
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: Vec::new(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), Vec::new()),
         };
         Ok((successor, outcome_ids))
     }

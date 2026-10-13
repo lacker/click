@@ -3,9 +3,9 @@
   "config_sha256": "0e958c24b027d6113900967435039e861a22c2019f2bb4d24f5b168ff11f85a1",
   "target": "x86_64-linux-userspace",
   "compiler_path": "/usr/bin/x86_64-linux-gnu-gcc-13",
-  "working_directory": "/home/user/click/tests/fixtures/cross-host-c-import/.",
-  "config_directory": "/home/user/click/tests/fixtures/cross-host-c-import",
-  "invocation_sha256": "e348e51cd06c87370579fcbbccdafb1002a5ea99131ebb65eca4a46f80076c06",
+  "working_directory": "/home/user/click-char/tests/fixtures/cross-host-c-import/.",
+  "config_directory": "/home/user/click-char/tests/fixtures/cross-host-c-import",
+  "invocation_sha256": "72f8bbaf5649e59829a51cff715227d9caf211b120a86962c032d3f7fdd4db03",
   "toolchain": {
     "driver_sha256": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
     "cc1_path": "/usr/libexec/gcc/x86_64-linux-gnu/13/cc1",
@@ -157,7 +157,7 @@
     },
     "specs_path": null,
     "specs_sha256": null,
-    "abi_probe_sha256": "7cccd3458897977336b959cefbc144239c6c2db4fc29d405c62b95093427e849"
+    "abi_probe_sha256": "5e7789053c4ff4b5cc64e011d8b266f733d5db1ed80e79d65713ab53b39571ed"
   },
   "sources": [
     {
@@ -169,14 +169,14 @@
       "artifact_sha256": "2cbb6c3a850babf82686b7f9b91a4471d5e3971d21a5cc39d1433aa2ff928881",
       "artifact_bytes": 162,
       "dependencies": {
-        "/home/user/click/tests/fixtures/cross-host-c-import/bits.h": "e407af23fc10c5000afa7f7c712697b080d37ddbcf8ca0e979a46439388bd374",
-        "/home/user/click/tests/fixtures/cross-host-c-import/local.h": "afd7473f8201458ca657e5c17efb468cf809139b9f8ca2256ee77d9ec5efa52a"
+        "/home/user/click-char/tests/fixtures/cross-host-c-import/bits.h": "e407af23fc10c5000afa7f7c712697b080d37ddbcf8ca0e979a46439388bd374",
+        "/home/user/click-char/tests/fixtures/cross-host-c-import/local.h": "afd7473f8201458ca657e5c17efb468cf809139b9f8ca2256ee77d9ec5efa52a"
       },
       "local_dependencies": {
         "bits.h": "e407af23fc10c5000afa7f7c712697b080d37ddbcf8ca0e979a46439388bd374",
         "local.h": "afd7473f8201458ca657e5c17efb468cf809139b9f8ca2256ee77d9ec5efa52a"
       },
-      "identity": "b4479867f49d6554308a2416e170f1d74be69e183bf34282895db17303802666"
+      "identity": "8f08542c813c868e48da3eb7b303436709138641ec93511af5ac339df8f9c96b"
     }
   ]
 }

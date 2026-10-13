@@ -104,7 +104,7 @@ fn scalar_or_pointer(c_type: C0Type) -> bool {
     match c_type {
         C0Type::Int128 | C0Type::UInt128 => false,
         C0Type::Int8 | C0Type::Int8Pointer | C0Type::Int8PointerPointer => true,
-        C0Type::Char
+        C0Type::Char(_)
         | C0Type::Bool
         | C0Type::Int16
         | C0Type::Int32
@@ -117,8 +117,8 @@ fn scalar_or_pointer(c_type: C0Type) -> bool {
         | C0Type::Float64
         | C0Type::VoidPointer
         | C0Type::VoidPointerPointer
-        | C0Type::CharPointer
-        | C0Type::CharPointerPointer
+        | C0Type::CharPointer(_)
+        | C0Type::CharPointerPointer(_)
         | C0Type::Int16Pointer
         | C0Type::UInt16Pointer
         | C0Type::Int32Pointer
@@ -145,7 +145,7 @@ fn scalar_or_pointer(c_type: C0Type) -> bool {
         C0Type::Int8Array(_) => false,
         C0Type::PointerArray(_, _) => false,
         C0Type::Void
-        | C0Type::CharArray(_)
+        | C0Type::CharArray(_, _)
         | C0Type::Int32Array(_)
         | C0Type::UInt8Array(_)
         | C0Type::Int16Array(_)

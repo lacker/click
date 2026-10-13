@@ -77,7 +77,7 @@ int32 increment(int32 x) {
 ```
 
 The `requires` clause is needed because signed overflow is undefined behavior.
-Click proves C0 code only when the requirements rule out undefined behavior and
+Click proves C code only when the requirements rule out undefined behavior and
 the postcondition follows on every execution path.
 
 ## Common workflow
@@ -92,7 +92,7 @@ the postcondition follows on every execution path.
 
 ## Where to look in source
 
-- `src/languages/c/syntax.rs`: C0 parser and lowering.
+- `src/languages/c/syntax.rs`: C parser and lowering.
 - `src/surface.rs`: `.click` parser, validation, lowering, tactics, mdtest
   proof orchestration.
 - `src/kernel/`: C semantic terms, propositions, assumptions, symbolic

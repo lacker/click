@@ -250,6 +250,14 @@ expressions are not separately interned for support tracking: that would allow
 cross-arena snapshot comparisons to traverse unrelated memory. This is an
 additive consumer migration.
 
+Checked signed int32 addition-overflow facts use the same predicate classes.
+Overflow checking consults this retained truth before reconstructing operand
+intervals, including the reversed operand order of this symmetric predicate.
+Thus an established `defined(x + z)` follows checked aliases of `x` and `z`;
+equality alone never establishes definedness. Withdrawal and snapshots retain
+the ordinary typed graph scope, and this predicate does not match subtraction
+or a 64-bit overflow condition.
+
 Constant endpoints of checked signed int32 order facts annotate their value
 class with an interval. A class union intersects these intervals, so overflow
 checking can use bounds supplied on an equal variable or a same-snapshot read.
@@ -977,6 +985,17 @@ completed-read and borrowed-buffer proofs whose temporary contexts had no
 complete attachment, even when the graph knew their base equality; it is not
 part of the implementation. Stored-value
 and initialization-evidence spelling lookups remain separate migrations.
+
+Checked additive producers retain one spelling per index width in both address
+classes and offset classes. Same-block pointer comparisons can enter as offset
+equalities; those spellings are applied only in the queried pointer's own block
+and cannot identify unrelated blocks. A wide-view requirement selects a checked
+uint64 displacement instead of losing its window bounds in an equal signed or
+mixed-index expression. Payload lookup and class merging use a constant number
+of indexed entries. The original extent and permission checks still decide
+whether the selected supplier covers the requirement. Regressions cover missing
+aliases, short extents, mixed prefixes, block isolation, and increasing numbers
+of aliases.
 
 Read, write, and fold consumers are integration examples. A lookup must not
 enumerate every spelling in a class. Equality indexing narrows candidates;

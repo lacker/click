@@ -75,6 +75,10 @@ rather than checking their proofs.
 | `-h`, `--help` | Print command help and exit successfully. |
 | `--` | Stop option parsing; the remaining argument is the target path. |
 
+A `simp` work-budget failure retains its already-checked prefix, including
+accepted steps inside nested `have` blocks and loop bodies. An unfinished
+claim contributes no accepted fact to that trace.
+
 `--explain` without `--changed-since` is an error. A missing or invalid
 baseline marker forces a full rebuild rather than trusting an unattested
 result. A marker records the C target, the verifier binary, the commit, the sidecar, and
@@ -105,7 +109,7 @@ The command does not print the default C implementation target on every run.
 Successful verification is relative to the target the sidecar selected, not a
 portability claim. There is no target-selection flag: a sidecar selects its
 target with the `target` directive described in
-[Supported C0](../language/c0.md#selecting-a-target), and that selection also
+[Supported C](../language/c.md#selecting-a-target), and that selection also
 separates incremental verification markers.
 
 Successful file or location verification prints one `external assumptions:`
@@ -150,7 +154,10 @@ errors and traces. `goal:` shows the checked proposition after rewrites;
 `adds:` uses that same format for each admitted fact. Readable expressions are
 used only when they preserve checked identities. Typed memory operands include
 their read width, snapshot, and address, with shared labels and a construction
-legend. A source spelling is not printed in place of a snapshot-dependent fact.
+legend. Constants in `int32` comparisons use signed decimal values. The
+checked return type distinguishes signed and unsigned 32-bit equality facts
+even when the returned value has no source name.
+A source spelling is not printed in place of a snapshot-dependent fact.
 An `assumption()` failure on an existential goal suggests the
 `witness { name: value }` tactic. A trace reports facts introduced into the
 focused proof context and changes to exact resource representations, using

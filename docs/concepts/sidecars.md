@@ -1,6 +1,6 @@
 # Files and sidecars
 
-Click specs live beside C0 source files. The C file contains executable code.
+Click specs live beside C source files. The C file contains executable code.
 The `.click` file names the C file and gives contracts for functions in it.
 
 A tiny project might look like this:

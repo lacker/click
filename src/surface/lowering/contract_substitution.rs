@@ -2975,6 +2975,119 @@ pub(in crate::surface) fn pure_function_parameter_argument(
     }
 }
 
+/// The explicit byte view `(uint8*)name` of a C pointer named `name`, in
+/// exactly the form the parser gives a written contract cast.
+///
+/// This is how the C-string bridge is elaborated. A predicate or theorem
+/// parameter of `uint8` bytes may be passed a plain `char` pointer; where the
+/// target's plain `char` is signed, that pointer's bytes are `int8` reads,
+/// so the implicit conversion is made explicit as this byte view rather than
+/// left to textual substitution, which would read the bytes signed.
+pub(in crate::surface) fn character_byte_view(name: &str) -> ContractExpression {
+    ContractExpression::CUnary {
+        operand: Box::new(ContractExpression::CFragment(CExpression::Variable(
+            name.to_string(),
+        ))),
+        lowered: CExpression::Cast {
+            expression: Box::new(CExpression::Variable(name.to_string())),
+            target_type: crate::kernel::CType::UInt8Pointer,
+            integer_mode: crate::kernel::CIntegerCastMode::Standard,
+            pointee_struct: None,
+            pointee_volatile: false,
+            pointee_constant: false,
+            explicit_qualification: false,
+        },
+    }
+}
+
+/// The pointer a [`character_byte_view`] views, if `expression` is one.
+pub(in crate::surface) fn character_byte_view_name(
+    expression: &ContractExpression,
+) -> Option<&str> {
+    let ContractExpression::CUnary { operand, lowered } = expression else {
+        return None;
+    };
+    let (
+        ContractExpression::CFragment(CExpression::Variable(name)),
+        CExpression::Cast {
+            expression,
+            target_type: crate::kernel::CType::UInt8Pointer,
+            pointee_struct: None,
+            pointee_volatile: false,
+            ..
+        },
+    ) = (operand.as_ref(), lowered)
+    else {
+        return None;
+    };
+    matches!(expression.as_ref(), CExpression::Variable(inner) if inner == name)
+        .then_some(name.as_str())
+}
+
+/// Whether a value of C type `actual` passed where kernel type `expected`
+/// is read needs the explicit [`character_byte_view`]: `expected` is
+/// `uint8` bytes and `actual` is a signed plain `char` pointer or array.
+pub(in crate::surface) fn needs_character_byte_view(
+    actual: C0Type,
+    expected: crate::kernel::CType,
+) -> bool {
+    use crate::languages::c::syntax::PlainChar;
+    matches!(
+        expected,
+        crate::kernel::CType::UInt8Pointer | crate::kernel::CType::UInt8Array(_)
+    ) && matches!(
+        actual,
+        C0Type::CharPointer(PlainChar::Signed) | C0Type::CharArray(PlainChar::Signed, _)
+    )
+}
+
+/// Elaborates the C-string bridge in the top-level predicate calls of a
+/// proposition: an argument that directly names a C value of signed plain
+/// `char` pointer type, passed to a parameter of `uint8` bytes, becomes the
+/// explicit [`character_byte_view`] of that value. `type_of` gives the C type
+/// of a name in scope. Calls under a binder are left alone, since a binder may
+/// shadow the name; their arguments still lower through the same view.
+pub(in crate::surface) fn elaborate_character_byte_views(
+    proposition: &ClickProposition,
+    predicates: &PredicateEnvironment,
+    type_of: &dyn Fn(&str) -> Option<C0Type>,
+) -> Option<ClickProposition> {
+    match proposition {
+        ClickProposition::PredicateCall { name, arguments } => {
+            let definition = predicates.get(name)?;
+            let mut changed = false;
+            let arguments = arguments
+                .iter()
+                .zip(definition.parameters())
+                .map(|(argument, parameter)| {
+                    let named = match argument {
+                        ContractExpression::CFragment(CExpression::Variable(name))
+                        | ContractExpression::Binding(name)
+                        | ContractExpression::CBinding(name) => Some(name),
+                        _ => None,
+                    };
+                    match (named, parameter.click_type()) {
+                        (Some(named), ClickType::C(expected))
+                            if type_of(named).is_some_and(|actual| {
+                                needs_character_byte_view(actual, expected.to_kernel_type())
+                            }) =>
+                        {
+                            changed = true;
+                            character_byte_view(named)
+                        }
+                        _ => argument.clone(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            changed.then(|| ClickProposition::PredicateCall {
+                name: name.clone(),
+                arguments,
+            })
+        }
+        _ => None,
+    }
+}
+
 pub(in crate::surface) fn contract_c_unary(
     operand: ContractExpression,
     lowered: CExpression,

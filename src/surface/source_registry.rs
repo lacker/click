@@ -113,6 +113,7 @@ impl CallerRequirementIndex {
     /// propositions looking for a plausible match.  Requirements that are
     /// not top-level predicate calls, or whose selected argument is not a
     /// direct caller parameter, are intentionally omitted.
+    #[cfg(test)]
     pub(in crate::surface) fn from_entry_facts(
         owner: CallerSourceOwnerId,
         function_block: &FunctionBlock,
@@ -120,6 +121,30 @@ impl CallerRequirementIndex {
         entry_facts: &[Proposition],
         entry_fact_origins: &[EntryFactOrigin],
         entry_snapshot: crate::kernel::CMemorySnapshotIdentity,
+    ) -> Self {
+        Self::from_entry_facts_elaborated(
+            owner,
+            function_block,
+            parameters,
+            entry_facts,
+            entry_fact_origins,
+            entry_snapshot,
+            None,
+        )
+    }
+
+    /// [`Self::from_entry_facts`], recording each requirement in its
+    /// elaborated form: a C-string argument passed to `uint8` bytes is its
+    /// explicit byte view ([`crate::surface::lowering::elaborate_character_byte_views`]),
+    /// which is the form a callee's requirement takes at the call.
+    pub(in crate::surface) fn from_entry_facts_elaborated(
+        owner: CallerSourceOwnerId,
+        function_block: &FunctionBlock,
+        parameters: &[syntax::C0Parameter],
+        entry_facts: &[Proposition],
+        entry_fact_origins: &[EntryFactOrigin],
+        entry_snapshot: crate::kernel::CMemorySnapshotIdentity,
+        predicates: Option<&PredicateEnvironment>,
     ) -> Self {
         if entry_facts.len() != entry_fact_origins.len() {
             return Self::default();
@@ -169,6 +194,19 @@ impl CallerRequirementIndex {
             let Requirement::Proposition(source_proposition) = requirement else {
                 continue;
             };
+            let elaborated = predicates.and_then(|predicates| {
+                crate::surface::lowering::elaborate_character_byte_views(
+                    source_proposition,
+                    predicates,
+                    &|name| {
+                        parameters
+                            .iter()
+                            .find(|parameter| parameter.name() == name)
+                            .map(syntax::C0Parameter::c_type)
+                    },
+                )
+            });
+            let source_proposition = elaborated.as_ref().unwrap_or(source_proposition);
             let source_arguments = match source_proposition {
                 ClickProposition::PredicateCall { arguments, .. } => arguments.clone(),
                 _ => Vec::new(),
@@ -325,7 +363,8 @@ impl CallerRequirementIndex {
 fn direct_parameter_name(expression: &ContractExpression) -> Option<&str> {
     match expression {
         ContractExpression::CFragment(CExpression::Variable(name)) => Some(name),
-        _ => None,
+        // The elaborated C-string bridge names its parameter's storage.
+        expression => crate::surface::lowering::character_byte_view_name(expression),
     }
 }
 
@@ -508,6 +547,7 @@ mod tests {
         parameter_names: &[&str],
     ) -> FunctionBlock {
         FunctionBlock {
+            c_object_names: Default::default(),
             signature: FunctionSignature {
                 return_type: C0Type::Int32,
                 return_pointee_constant: false,

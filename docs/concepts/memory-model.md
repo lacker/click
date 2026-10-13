@@ -13,10 +13,10 @@ Pointer { block, offset }
 ```
 
 The pointer block carries provenance. Pointer offsets are separate terms, not
-raw integers. C0 pointer arithmetic is scaled by the pointee type: `int32*`
+raw integers. C pointer arithmetic is scaled by the pointee type: `int32*`
 adds four bytes per element, while `uint8*` adds one byte per element.
 
-C0's integer constant `0` converts to a single canonical null pointer in
+Click's integer constant `0` converts to a single canonical null pointer in
 pointer-valued return, initialization, assignment, argument, and comparison
 contexts. This narrow conversion does not identify pointers with integers:
 nonzero integers still cannot be used as pointers.
@@ -120,6 +120,12 @@ value `v` is `(v >> 8k) & 0xFF`:
 - A one-byte load reads that byte. An `unsigned char` load reads it as is;
   a `signed char` load reads its sign extension when the byte is a constant
   and is refused when it is symbolic.
+- A one-byte cell of one character type reads through the other as the same
+  eight bits: a byte has one name, its unsigned value, and a `signed char`
+  read is its two's-complement reinterpretation. Plain `char` is one of the
+  two, unsigned on the kernel target and signed on the user-space target.
+  A constant fact about either read decides the other: `u[0] == 200` gives
+  `s[0] == -56`, and `s[0] == 7` gives `u[0] == 7`.
 - A one-byte store updates the wider cell in place,
   `(v & ~(0xFF << 8k)) | (b << 8k)`, keeping its type and address. No
   separate one-byte cell is added, so the storage keeps a single description.
@@ -209,9 +215,10 @@ free edge for the old block, allocates a fresh block, copies the initialized
 cells whose complete byte ranges fit in the new extent, and transfers the
 complete allocation and memory resources to the fresh block. The old and new
 resources use typed logical units when the extents are exactly divisible by
-the pointer's element width and byte units otherwise. This applies to the
-supported `int32*`, `uint8*`, `int32**`, `uint8**`, and matching struct-pointer
-layouts, including raw byte extents. A partial cell is conservatively not
+the pointer's element width and byte units otherwise. This applies to every
+pointer type `realloc` accepts, listed in
+[Heap allocation](../reference/language/c.md#heap-allocation), including raw
+byte extents. A partial cell is conservatively not
 reintroduced as initialized. For a bounded zeroed `calloc`
 source, the successful result also records the preserved zeroed prefix; any
 grown tail is uninitialized and is not treated as zero.
@@ -305,6 +312,16 @@ Segment forms are half-open `int32` element ranges. For `int32 p[]`,
 `viewable(p[0..n])` means cells `p[0]` through `p[n - 1]` are available for
 four-byte `int32` access. For `uint8 p[]`, the same spelling covers `n`
 one-byte elements.
+
+Native `uint64` element ranges preserve their full counts. A same-base prefix
+can be proved from a held view and an explicitly selected unsigned coverage
+bound. For byte elements, `requested <= held` covers the prefix; for wider
+elements, compare the complete nonwrapping byte extents as well. The source
+view must remain live in the destination memory snapshot. A low-word bound
+supplies no full-width coverage.
+
+See [the native prefix fixtures](https://github.com/clicklang/click/blob/master/mdtests/native_view_prefix_narrowing.md)
+for explicit proofs with `simp() using { ... }`.
 
 Symbolic memory access usually needs:
 

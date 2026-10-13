@@ -1,7 +1,7 @@
 # a store at byte 4 of an eight-byte cell is not framed
 
 The word-boundary companion of `a_byte_store_inside_a_wide_cell_is_not_framed.md`,
-which carries the explanation and the note on the byte view's place in the C0
+which carries the explanation and the note on the byte view's place in the C
 frontier. The store lands exactly four bytes in, where the cell's upper half
 begins: the classic case where the address arithmetic looks like a clean
 neighbouring word and the write is squarely inside an eight-byte read.

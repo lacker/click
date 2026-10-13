@@ -1,5 +1,10 @@
 # P1: Support safe Rust and verify a shared C/Rust checksum specification
 
+Priority: P1.
+
+Soundness: incomplete. Language coverage. Unsupported Rust is refused. The
+pinned Charon front end is a documented trusted dependency.
+
 ## Goal and scope
 
 Deliver a useful, explicitly bounded safe-Rust verification path through Click
@@ -32,97 +37,52 @@ lock roots, edition, features, target, qualified declarations, and the complete
 compiler-observed source closure. Concrete constructors, record returns and
 parameters, and selected resolved operators execute verified imported bodies.
 
-The unchanged pinned adler2 2.0.1 selection imports successfully. Constructors,
-constants, lane helper bodies, numeric ceilings, and lane preservation verify.
-The general, small-batch, and four-byte sidecars check full-width native iterator
-state with explicitly bounded signed observations. The original computation has
-a terminating whole-body bounds proof for every
-length from zero through 2,147,483,647 bytes from any canonical initial state.
-It carries all eight lane ceilings, scalar-tail ceilings, the shared input view,
-and actual vector and scalar iterator state through reductions, recombination,
-scalar sums, short tails, and final 16-bit stores.
-Both output fields remain below 65,521. Checked partition lemmas relate full-width
-lengths, signed indices, four-byte prefixes, and zero-to-three-byte tails.
-General signed-range partition lemmas establish aligned full-batch remainders
-and decreasing actual outer-iterator remaining counts, without truncating usize
-metadata. Full outer-batch induction, lane reduction/reset, and the final vector and scalar
-remainders are checked in the whole-body proof. Checksum correctness remains
-incomplete.
-The shared mathematical specification proves byte-sum and weighted-sum
-concatenation and incremental equality for A, B, and the packed checksum under
-explicit signed-range split bounds and canonical A seeds. These are independent
-mathematical proofs; implementation-level incremental correctness still depends
-on the general computation proofs.
-The shared mathematical specification has checked one- and four-byte append
-recurrences, including the ordered weights 4, 3, 2, 1 for a vector step,
-weight shifts, nonnegative sums, residue addition, output and packing bounds,
-residue congruence with signed quotient witnesses, and preservation of canonical
-seeds on empty input. The original remainder helper also supplies exact Integer
-remainders for all four lanes under its native nonzero-divisor precondition.
-Checked Integer lane-state lemmas establish the optimized four-byte recurrence,
-including the original recombination offset and weights, and preservation of
-both residues through lane reductions. The constructor exports each lane’s
-exact mathematical entry-byte value. The small-count cursor bridge also proves
-equal byte addresses for the full native count and its checked signed index,
-using equality of exact values rather than low-bit truncation. Source-proved
-read bridges connect the native count and all four positions in its chunk to
-the signed byte observations used by the common spec, with checked signed-index
-guards. The original small-batch vector loop checks each constructor lane’s
-native and Integer value against its shared subslice and its position in the
-original input. That position is derived from the actual remaining count after
-`Next`, with checked native and signed subtraction bounds. One- and four-byte prefix
-lemmas preserve both A and B residues against the common specification,
-including the ordered weighted update under explicit index and nonnegative
-representative bounds. A scalar read bridge derives the last returned byte
-from the actual post-`Next` remaining count and checks its exact signed-index
-observation. A joint native vector-prefix bridge now connects the
-checked word additions and exact constructor byte observations to both common
-prefix residues. Its iterator adapter derives the prefix from stored remaining
-state and checks the four-byte advance and remaining-length bounds. The original
-small-batch vector loop carries both residues against the common
-specification at every actual remaining count and establishes their relations
-for the completed four-byte prefix, from any canonical A and B seeds. The B
-representative includes the deferred prefix-length times A-seed contribution,
-the original four lane weights and the `6*MOD` offset, and stays nonnegative.
-Initialization, native lane additions, exact input-byte observations, signed
-prefix subtraction safety and exact Integer prefix advances are checked.
-A now passes through the original lane reductions and four scalar additions
-into its prefix residue before the tail. The native B seed product and
-addition prove the exact deferred prefix-length times seed contribution,
-including the exact length-cast observation. B also passes through the scalar
-and lane reductions, ordered weighted corrections and four scalar additions,
-with checked native subtraction, multiplication, addition and store bridges.
-Both prefix residues pass through the original scalar tail: each actual
-post-`Next` remaining count identifies the returned byte and the next common
-prefix, and both checked native additions preserve their residues. The B step
-uses the newly updated A value. Signed subtraction definedness and the exact
-native-to-Integer byte and assignment observations are checked explicitly.
-The loop-exit bridge and final checksum postconditions remain pending, as do
-the arbitrary-length computation’s nested loops. Full original-computation smart audits
-currently exhaust the standard ten-minute run bound before completing a site,
-while ordinary verification succeeds. This is an audit-tool limitation, not a
-reported proof failure; continue checksum proof work with ordinary verification
-and retain audit coverage where it completes. The standalone native-count and
-chunk-position observation claims pass complete audits. The loop bridge uses
-scoped native byte equalities and explicit Integer premises.
-The unchanged Rust one- through four-byte computations prove both fields equal
-the shared specification on the entry byte snapshot, starting from A = 1 and
-B = 0. The four-byte bridge checks the native unsigned recombination and its
-ordered B weights. The unchanged shared checksum getter proves the exact packed
-value for any two u16 fields, preserves both fields under shared views, and has
-a checked conditional bridge from the field specification to the packed
-specification. The unchanged `adler32_slice` entry point composes the constructor,
-mutable computation, and shared getter for every input length zero through
-four, proves the common packed specification from A = 1 and B = 0, and preserves
-every input byte. The empty call needs no input-byte authority. The serial-tail
-bridges check unsigned prefix sums, the ordered B weights, and removal of the
-native modulus offset before connecting both fields to the common specification.
-General-length correctness, broader public-entry-point composition, and
-implementation incremental correctness remain pending.
+The unchanged pinned adler2 2.0.1 selection imports successfully. Its original
+`Adler32::compute` body now proves both final fields equal the common checksum
+specification on the entry input snapshot, for every length zero through
+2,147,483,647 bytes from any canonical initial state. It terminates, preserves
+input bytes, checks every native access and arithmetic guard, and stores both
+fields below 65,521. The proof follows actual full-width cursor and remaining
+state through full batches, the aligned remainder, scalar accumulation and the
+final tail. Checked signed observations impose the explicit proof range limit;
+no generated processed counter or assumed checksum summary supplies the result.
+
+Checked helper bodies and lane-state lemmas connect the actual constructor
+bytes, four-byte recurrences, deferred B seed contributions, reductions and
+ordered recombination to the shared mathematical specification. Full-range
+native-count and byte-position bridges preserve exact values and addresses.
+The specification independently proves concatenation and incremental equality
+for A, B and the packed checksum under explicit signed-range split bounds and
+canonical A seeds. A locked real Rust client now performs two unchanged
+`write_slice` calls at every split of every supported input, including empty
+prefixes and suffixes, proves the full-input packed specification, and preserves
+all bytes. Its proof connects actual updated fields and suffix byte addresses
+to the checked concatenation theorem. A second locked client saves the prefix
+checksum, restores a fresh receiver through unchanged `from_checksum`, and
+proves the same full-input result and byte preservation after the suffix update.
+Bounded unpacking rules recover exactly the canonical fields produced by the
+first update; arbitrary saved words are not assumed canonical.
+
+Constructors, one- through four-byte computations, and the shared checksum
+getter verify. The getter proves exact packing for any two u16 fields and has a
+checked bridge from field specifications to the packed specification. The
+unchanged `adler32_slice` entry point composes the checked constructor, general
+computation and getter for every length zero through 2,147,483,647, returns the
+common packed checksum, and preserves every input byte. `write_slice` accepts
+any canonical initial state and returns canonical fields satisfying the common
+A/B specification. Logical byte-index guards are bridged explicitly to native
+64-bit range membership. The specialized empty call needs no byte authority.
+
 The independently locked, unchanged zlib one-byte path proves its packed result
 equal the same specification and preserves its input byte; its empty path also
-verifies. General-length C correctness and C/Rust result equality remain pending. The specification is not yet connected
-to either implementation’s general computation.
+verifies. General-length C correctness and C/Rust result equality remain pending.
+
+Full original-computation smart audits exhaust the standard ten-minute run
+bound before completing a site, while ordinary verification succeeds. Continue
+with ordinary verification and retain audits where they complete; the audit
+timeout supplies no proof verdict. Standalone native-count and chunk-position
+claims pass complete audits. Whole-body correctness, false final A/B claims,
+and larger proof-tool checks run nightly.
 
 Composition regressions cover record and scalar-array storage starts, shared
 chunk-view transport, and all four returned/copied vector lanes across local
@@ -137,26 +97,7 @@ current roadmap: replace status when work lands rather than append checkpoints.
 
 ## Remaining work, in delivery order
 
-### 1. Verify Rust against the common checksum specification
-
-Use the [shared Adler-32 specification](../design/adler32-spec.click), following
-[the checksum assessment](../design/rust-checksum-assessment.md). Relate the
-original optimized lane state and reductions to that definition, then compose
-the checked constructor, computation, and checksum getter at the public
-entry point.
-Prove arbitrary finite input correctness under the explicit supported memory
-range and API preconditions, including compatible initial states.
-
-Acceptance:
-
-- The unchanged selected Rust computation terminates, preserves input bytes,
-  cannot panic, and returns the specified checksum.
-- Incremental processing equals processing concatenated input, including
-  empty and chunk/remainder boundaries.
-- A false checksum postcondition fails. No assumed library summary supplies
-  the checksum computation's postcondition.
-
-### 2. Verify C and publish the shared demonstration
+### 1. Verify C and publish the shared demonstration
 
 Pin the selected configuration and revision of
 [zlib's Adler-32](https://github.com/madler/zlib/blob/develop/adler32.c), verify
@@ -169,6 +110,14 @@ offline; the one-byte result satisfies the shared specification and preserves
 the byte. Its null reset path verifies for any seed and nonunit length.
 Expression updates preserve consumed values, loop exit-side effects, native
 unsigned wrap, and checked pointer strides; nested `DO16` blocks also import.
+Ordinary loop memory footprints are captured before modified counters and
+cursors are havocked. Ranked reductions now cover a moving-cursor byte sum
+and `while (n--)`, including its wrapping zero exit, without a processed
+counter. Checked native 64-bit same-base prefixes now retain full-width
+coverage bounds and lifetime evidence; symbolic prefixes have explicit
+selected-premise proofs. Complete checked alias and moving-base subrange
+transport, then integrate these reductions into the unchanged short-input loop.
+
 Connect the original nonempty computation to the common specification, then
 prove compatible seed/reset/null-buffer behavior and incremental processing.
 
@@ -182,7 +131,7 @@ Acceptance:
 - Publish reproducible locked fixtures and a scoped demonstration. Keep slow
   whole-proof checks nightly and bounded regressions in the normal gate.
 
-### 3. Close experimental-support architecture requirements
+### 2. Close experimental-support architecture requirements
 
 Resolve these requirements alongside the library proof; do not postpone them
 behind new language coverage:

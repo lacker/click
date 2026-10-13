@@ -1261,7 +1261,7 @@ pub(in crate::surface) fn initial_call_state(
             C0Type::Int16Pointer
             | C0Type::UInt16Pointer
             | C0Type::Int32Pointer
-            | C0Type::CharPointer
+            | C0Type::CharPointer(_)
             | C0Type::UInt8Pointer
             | C0Type::UInt32Pointer
             | C0Type::Int128Pointer
@@ -1271,7 +1271,7 @@ pub(in crate::surface) fn initial_call_state(
             | C0Type::Int16PointerPointer
             | C0Type::UInt16PointerPointer
             | C0Type::Int32PointerPointer
-            | C0Type::CharPointerPointer
+            | C0Type::CharPointerPointer(_)
             | C0Type::UInt8PointerPointer
             | C0Type::UInt32PointerPointer
             | C0Type::Int128PointerPointer
@@ -1325,7 +1325,12 @@ pub(in crate::surface) fn initial_call_state(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
             }
-            C0Type::Char | C0Type::UInt8 => {
+            C0Type::Char(crate::languages::c::syntax::PlainChar::Signed) => {
+                arguments.push(CExpression::Value(CValue::Int8(Bitvector32Term::Variable(
+                    Variable(arguments.len() as u64),
+                ))));
+            }
+            C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned) | C0Type::UInt8 => {
                 arguments.push(CExpression::Value(CValue::UInt8(
                     Bitvector32Term::Variable(Variable(arguments.len() as u64)),
                 )));
@@ -1367,7 +1372,7 @@ pub(in crate::surface) fn initial_call_state(
                 )));
             }
             C0Type::Int32Array(_)
-            | C0Type::CharArray(_)
+            | C0Type::CharArray(_, _)
             | C0Type::UInt8Array(_)
             | C0Type::Int16Array(_)
             | C0Type::UInt16Array(_)
@@ -2103,8 +2108,7 @@ fn check_segment_base_loadability(
     let Ok(CValue::Pointer(cell)) = crate::surface::proof::evaluate_c_fragment_through_kernel(
         pointer,
         assumptions,
-        &values,
-        &array_refs,
+        ContractEnvironment::new(&values, &array_refs),
         state,
         None,
     ) else {
@@ -3082,8 +3086,7 @@ fn lower_resource_clause_with_values_mode_at_entry(
                 &quantity,
                 quantity_snapshot,
                 &assumptions,
-                values,
-                &array_refs,
+                ContractEnvironment::new(values, &array_refs),
                 entry_state,
                 state,
                 result,
@@ -3119,8 +3122,10 @@ fn lower_resource_clause_with_values_mode_at_entry(
             let range = lower_resource_segment_with_values(
                 "read",
                 segment,
-                values,
-                &array_refs_for_parameters(parameters, values, state.memory()),
+                ContractEnvironment::new(
+                    values,
+                    &array_refs_for_parameters(parameters, values, state.memory()),
+                ),
                 state,
                 result,
                 contract_segment_element_width_for_result_type(
@@ -3138,8 +3143,10 @@ fn lower_resource_clause_with_values_mode_at_entry(
             let range = lower_resource_segment_with_values(
                 "write",
                 segment,
-                values,
-                &array_refs_for_parameters(parameters, values, state.memory()),
+                ContractEnvironment::new(
+                    values,
+                    &array_refs_for_parameters(parameters, values, state.memory()),
+                ),
                 state,
                 result,
                 contract_segment_element_width_for_result_type(
@@ -3200,8 +3207,7 @@ fn lower_resource_clause_with_values_mode_at_entry(
                     &argument,
                     argument_snapshot,
                     &assumptions,
-                    values,
-                    &array_refs,
+                    ContractEnvironment::new(values, &array_refs),
                     entry_state,
                     state,
                     result,
@@ -3451,8 +3457,7 @@ fn evaluate_resource_argument_with_snapshot(
     lowered: &CExpression,
     snapshot: crate::kernel::CResourceSnapshot,
     assumptions: &PureFactContext,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     entry_state: &CState,
     state: &CState,
     result: Option<&CValue>,
@@ -3461,8 +3466,7 @@ fn evaluate_resource_argument_with_snapshot(
         let direct = crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
             original,
             assumptions,
-            values,
-            array_refs,
+            contract_environment,
             FixedStateFrame::new(entry_state, state, result, &RecordedSnapshots::new()),
             SpecDefinitions::new(
                 &PredicateEnvironment::new(&[]),
@@ -3488,8 +3492,7 @@ fn evaluate_resource_argument_with_snapshot(
             crate::surface::proof::evaluate_resource_fragment_through_kernel(
                 pointer_expression,
                 assumptions,
-                values,
-                array_refs,
+                contract_environment,
                 entry_state,
                 result,
             )?
@@ -3509,8 +3512,7 @@ fn evaluate_resource_argument_with_snapshot(
             let value = crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
                 original,
                 assumptions,
-                values,
-                array_refs,
+                contract_environment,
                 FixedStateFrame::new(&candidate_entry, state, result, &RecordedSnapshots::new()),
                 SpecDefinitions::new(
                     &PredicateEnvironment::new(&[]),
@@ -3532,8 +3534,7 @@ fn evaluate_resource_argument_with_snapshot(
         original,
         lowered,
         assumptions,
-        values,
-        array_refs,
+        contract_environment,
         state,
         result,
     )
@@ -3621,8 +3622,7 @@ fn lower_resource_clause_facts_with_values_mode_at_entry(
                 &quantity,
                 quantity_snapshot,
                 &assumptions,
-                values,
-                &array_refs,
+                ContractEnvironment::new(values, &array_refs),
                 entry_state,
                 state,
                 result,
@@ -3852,8 +3852,7 @@ pub(in crate::surface) fn resource_argument_to_c_expression(
 fn lower_resource_segment_with_values(
     resource_name: &str,
     segment: &ContractSegment,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     state: &CState,
     result: Option<&CValue>,
     element_width: u32,
@@ -3882,16 +3881,14 @@ fn lower_resource_segment_with_values(
             original,
             expression,
             &assumptions,
-            values,
-            array_refs,
+            contract_environment,
             state,
             result,
         ),
         None => crate::surface::proof::evaluate_resource_fragment_through_kernel(
             expression,
             &assumptions,
-            values,
-            array_refs,
+            contract_environment,
             state,
             result,
         ),
@@ -3973,8 +3970,10 @@ fn loadable_requirement_props(
         let range = lower_resource_segment_with_values(
             "viewable",
             segment,
-            &values,
-            &array_refs_for_parameters(parameter_binding.parameters, &values, memory),
+            ContractEnvironment::new(
+                &values,
+                &array_refs_for_parameters(parameter_binding.parameters, &values, memory),
+            ),
             &state,
             None,
             contract_segment_element_width(parameter_binding.parameters, segment),
@@ -4534,6 +4533,12 @@ fn contract_expression_element_type(
 ) -> Option<CType> {
     match expression {
         CExpression::MemberAddress { selection, .. } => Some(selection.value_type),
+        // An indexed place becomes `&base[index]` when used as ownership.
+        // Its address still points to the base's element type.
+        CExpression::AddressOf(place) => match place.as_ref() {
+            CExpression::Index(base, _) => contract_expression_element_type(parameters, base),
+            _ => None,
+        },
         CExpression::Value(value) => value.c_type().pointee_type(),
         CExpression::Cast { target_type, .. } => target_type.pointee_type(),
         CExpression::Variable(name) => parameters
@@ -4567,6 +4572,10 @@ pub(in crate::surface) fn contract_expression_element_width(
 ) -> Option<u32> {
     match expression {
         CExpression::MemberAddress { selection, .. } => Some(selection.value_type.byte_width()),
+        CExpression::AddressOf(place) => match place.as_ref() {
+            CExpression::Index(base, _) => contract_expression_element_width(parameters, base),
+            _ => None,
+        },
         CExpression::Value(value) => value.c_type().pointee_type().map(CType::byte_width),
         CExpression::Cast { target_type, .. } => target_type.pointee_type().map(CType::byte_width),
         CExpression::Variable(name) => parameters
@@ -4584,7 +4593,7 @@ pub(in crate::surface) fn contract_expression_element_width(
                                 .map(C0Type::to_kernel_type)
                                 .map(CType::byte_width),
                             C0Type::Int32Array(_) => Some(4),
-                            C0Type::CharArray(_) => Some(1),
+                            C0Type::CharArray(_, _) => Some(1),
                             C0Type::UInt8Array(_) => Some(1),
                             C0Type::Int8Array(_) => Some(1),
                             C0Type::Int16Array(_) | C0Type::UInt16Array(_) => Some(2),

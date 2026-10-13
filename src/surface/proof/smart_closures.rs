@@ -255,77 +255,32 @@ fn signed_surface_terms_equal(
                 crate::kernel::Bitvector32Term::Variable(right),
             ) if left == right => {}
             (
-                crate::kernel::Bitvector32Term::Add(left, right),
-                crate::kernel::Bitvector32Term::Add(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::Subtract(left, right),
-                crate::kernel::Bitvector32Term::Subtract(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::Multiply(left, right),
-                crate::kernel::Bitvector32Term::Multiply(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::Divide(left, right),
-                crate::kernel::Bitvector32Term::Divide(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::Remainder(left, right),
-                crate::kernel::Bitvector32Term::Remainder(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::ShiftLeft(left, right),
-                crate::kernel::Bitvector32Term::ShiftLeft(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::ArithmeticShiftRight(left, right),
-                crate::kernel::Bitvector32Term::ArithmeticShiftRight(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::LogicalShiftRight(left, right),
-                crate::kernel::Bitvector32Term::LogicalShiftRight(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::BitwiseAnd(left, right),
-                crate::kernel::Bitvector32Term::BitwiseAnd(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::BitwiseOr(left, right),
-                crate::kernel::Bitvector32Term::BitwiseOr(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::BitwiseXor(left, right),
-                crate::kernel::Bitvector32Term::BitwiseXor(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::UInt64Add(left, right),
-                crate::kernel::Bitvector32Term::UInt64Add(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::UInt64Subtract(left, right),
-                crate::kernel::Bitvector32Term::UInt64Subtract(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::UInt64Multiply(left, right),
-                crate::kernel::Bitvector32Term::UInt64Multiply(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::UInt64Divide(left, right),
-                crate::kernel::Bitvector32Term::UInt64Divide(other_left, other_right),
-            )
-            | (
-                crate::kernel::Bitvector32Term::UInt64Remainder(left, right),
-                crate::kernel::Bitvector32Term::UInt64Remainder(other_left, other_right),
-            ) => {
-                pending.push((left, other_left));
-                pending.push((right, other_right));
-            }
-            (
                 crate::kernel::Bitvector32Term::UInt32From64(left),
                 crate::kernel::Bitvector32Term::UInt32From64(right),
             ) => pending.push((left, right)),
-            _ => return false,
+            _ => {
+                use crate::kernel::BitvectorBinaryOp as Op;
+                let (Some((operator, left, right)), Some((other, other_left, other_right))) =
+                    (left.as_binary(), right.as_binary())
+                else {
+                    return false;
+                };
+                let signed_or_native = (operator.is_bitvector32()
+                    && !matches!(operator, Op::UnsignedDivide | Op::UnsignedRemainder))
+                    || matches!(
+                        operator,
+                        Op::UInt64Add
+                            | Op::UInt64Subtract
+                            | Op::UInt64Multiply
+                            | Op::UInt64Divide
+                            | Op::UInt64Remainder
+                    );
+                if operator != other || !signed_or_native {
+                    return false;
+                }
+                pending.push((left, other_left));
+                pending.push((right, other_right));
+            }
         }
     }
     true
@@ -1847,12 +1802,40 @@ impl<'a> Proof<'a> {
         // its strategies and candidates; one closure attempt answers each
         // exact failed question once (`with_closure_failure_memo`).
         crate::kernel::with_closure_failure_memo(|| self.try_simp_closure_strategies())
+            .map_err(|error| self.attach_step_diagnostic(error))
     }
 
     /// Close a mathematical `Integer` bound goal with the solver behind
     /// `auto`: refute the goal's negation from the facts connected to it and
     /// apply the resulting certificate as one ordinary checked step. Any
     /// miss leaves the proof unchanged.
+    /// The searches `auto` runs besides `simp`: the solver and its bridges,
+    /// then a bounded chain of rewrites. A closer that has already tried
+    /// `simp` on this goal runs these when it misses.
+    pub(in crate::surface::proof) fn try_auto_closure_after_simp(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        if let Some(closed) = self.try_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_bridged_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_machine_goal_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_solver_equality_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_definedness_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_auto_conjunction_closure()? {
+            return Ok(Some(closed));
+        }
+        self.try_auto_equality_chain_closure()
+    }
+
     pub(in crate::surface::proof) fn try_solver_closure(&self) -> Result<Option<Self>, ClickError> {
         let (Some(goal), Some(surface_goal)) = (self.goal(), self.surface_goal()) else {
             return Ok(None);
@@ -3334,17 +3317,25 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        let entry = ProgramPointRef {
+        // A goal about `result` exists only once the function has returned,
+        // so its first source is function exit rather than entry, and no
+        // recorded point before the return is offered.
+        let names_result = crate::surface::proposition_names_result(surface_goal);
+        let first = ProgramPointRef {
             region: CodeRegionRef::Function,
-            kind: ProgramPointKind::Entry,
+            kind: if names_result {
+                ProgramPointKind::Exit
+            } else {
+                ProgramPointKind::Entry
+            },
         };
-        // The source points are function entry and the most recently
+        // The source points are that function point and the most recently
         // recorded ones, newest first. A path records a point per statement
         // it ran, so offering every one made this search linear in the
         // path's length for each goal, and quadratic over a function's
         // early-return paths. An older point is still reachable by an
         // explicit `transport`.
-        let selectors = std::iter::once(SnapshotSelector::ProgramPoint(entry)).chain(
+        let selectors = std::iter::once(SnapshotSelector::ProgramPoint(first)).chain(
             view.fixed_state
                 .recorded_snapshots
                 .recent(MAX_TRANSPORT_SOURCE_POINTS)
@@ -3353,7 +3344,9 @@ impl<'a> Proof<'a> {
         );
         let mut tried = BTreeSet::new();
         for selector in selectors {
-            if !tried.insert(selector.clone()) {
+            if (names_result && !crate::surface::snapshot_can_name_result(Some(&selector)))
+                || !tried.insert(selector.clone())
+            {
                 continue;
             }
             let source = ClickProposition::At {
@@ -3991,6 +3984,11 @@ impl<'a> Proof<'a> {
                 return None;
             }
             if let Some(surface) = self.available_surface_fact(surface_facts, anchor, premise) {
+                return Some((premise.clone(), surface));
+            }
+            if let Some(surface) =
+                self.available_surface_fact(self.local_surface_facts(), anchor, premise)
+            {
                 return Some((premise.clone(), surface));
             }
             if crate::instrumentation::deadline_exceeded() {
@@ -8747,64 +8745,73 @@ fn source_backed_call_requirement_surface(
     // their interface name. Both paths index directly by the checked source
     // ordinal; resources, generated clauses, and out-of-range entries fail
     // closed without consulting ambient/project facts.
-    let (source_parameter_names, source_proposition) = if use_named_interface {
-        let definition = context
-            .spec_definitions
-            .predicates
-            .contract_definition(source.interface.as_ref());
-        let definition = definition?;
-        let requirement = definition.function_block().requires().get(source_ordinal)?;
-        (
-            definition
-                .function_block()
-                .signature()
-                .parameters()
-                .iter()
-                .map(|parameter| parameter.name().to_string())
-                .collect::<Vec<_>>(),
-            requirement.proposition()?.clone(),
-        )
-    } else {
-        let source = ordinary_source?.get(source_ordinal)?;
-        let proposition = match source {
-            FunctionRequirementSource::Proposition(proposition) => proposition.clone(),
-            FunctionRequirementSource::LoadableSegment(_) => return None,
+    let (source_parameter_names, source_parameter_types, source_proposition) =
+        if use_named_interface {
+            let definition = context
+                .spec_definitions
+                .predicates
+                .contract_definition(source.interface.as_ref());
+            let definition = definition?;
+            let requirement = definition.function_block().requires().get(source_ordinal)?;
+            let parameters = definition.function_block().signature().parameters();
+            (
+                parameters
+                    .iter()
+                    .map(|parameter| parameter.name().to_string())
+                    .collect::<Vec<_>>(),
+                parameters
+                    .iter()
+                    .map(|parameter| parameter.click_type().c_type().map(C0Type::to_kernel_type))
+                    .collect::<Vec<_>>(),
+                requirement.proposition()?.clone(),
+            )
+        } else {
+            let source = ordinary_source?.get(source_ordinal)?;
+            let proposition = match source {
+                FunctionRequirementSource::Proposition(proposition) => proposition.clone(),
+                FunctionRequirementSource::LoadableSegment(_) => return None,
+            };
+            let function = context
+                .function_environment
+                .get_function(site.callee.as_ref())?;
+            (
+                function
+                    .parameters()
+                    .iter()
+                    .map(|parameter| parameter.name().to_string())
+                    .collect::<Vec<_>>(),
+                function
+                    .parameters()
+                    .iter()
+                    .map(|parameter| Some(parameter.c_type()))
+                    .collect::<Vec<_>>(),
+                proposition,
+            )
         };
-        let function = context
-            .function_environment
-            .get_function(site.callee.as_ref())?;
-        (
-            function
-                .parameters()
-                .iter()
-                .map(|parameter| parameter.name().to_string())
-                .collect::<Vec<_>>(),
-            proposition,
-        )
-    };
 
     if source_parameter_names.len() != site.source_arguments.len() {
         return None;
     }
     let substitutions = source_parameter_names
         .iter()
+        .zip(&source_parameter_types)
         .zip(site.source_arguments.iter())
-        .map(|(parameter, argument)| {
+        .map(|((parameter, parameter_type), argument)| {
             // An identity cast of a caller parameter is that parameter: the
-            // surface names it as the caller's own requirement does.
+            // surface names it as the caller's own requirement does, with the
+            // C-string bridge elaborated as its explicit byte view.
             let argument = match caller_parameter_through_identity_cast(
                 argument,
                 context.parsed_function.parameters(),
                 &execution.core.state,
             ) {
-                Some(slot) => CExpression::Variable(
-                    context.parsed_function.parameters()[slot]
-                        .name()
-                        .to_string(),
+                Some(slot) => caller_parameter_as_argument(
+                    &context.parsed_function.parameters()[slot],
+                    *parameter_type,
                 ),
-                None => argument.clone(),
+                None => ContractExpression::CFragment(argument.clone()),
             };
-            (parameter.clone(), ContractExpression::CFragment(argument))
+            (parameter.clone(), argument)
         })
         .collect::<BTreeMap<_, _>>();
     let proposition = substitute_click_proposition(&source_proposition, &substitutions).ok()?;
@@ -8869,10 +8876,19 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
         return None;
     };
     // The caller's requirement names its parameter; an identity cast of it
-    // is the same pointer, so the registry is consulted with the bare name.
+    // is the same pointer, so the registry is consulted with the bare name,
+    // or with its byte view where the predicate reads `uint8` bytes of a
+    // signed plain `char` pointer (the elaborated C-string bridge).
     let caller_parameter = &context.parsed_function.parameters()[*caller_parameter_slot];
+    let predicate_parameter_type = context
+        .spec_definitions
+        .predicates
+        .get(&predicate_name)
+        .and_then(|definition| definition.parameters().get(*predicate_argument_slot))
+        .and_then(|parameter| parameter.click_type().c_type())
+        .map(C0Type::to_kernel_type);
     *substituted_arguments.get_mut(*predicate_argument_slot)? =
-        ContractExpression::CFragment(CExpression::Variable(caller_parameter.name().to_string()));
+        caller_parameter_as_argument(caller_parameter, predicate_parameter_type);
     let entry_state = context.constants.function_entry_state.as_ref()?;
     let entry_snapshot = crate::kernel::CMemorySnapshotIdentity::of(entry_state.memory());
     // Phase 1 projects entry requirements only across an effect-free prefix.
@@ -8895,6 +8911,26 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
             entry_snapshot,
         )?;
     Some((predicate_name, selection))
+}
+
+/// A caller parameter passed where a value of kernel type `expected` is read:
+/// the parameter itself, or, for a signed plain `char` pointer read as
+/// `uint8` bytes, its explicit byte view.
+fn caller_parameter_as_argument(
+    parameter: &syntax::C0Parameter,
+    expected: Option<crate::kernel::CType>,
+) -> ContractExpression {
+    match expected {
+        Some(expected)
+            if crate::surface::lowering::needs_character_byte_view(
+                parameter.c_type(),
+                expected,
+            ) =>
+        {
+            crate::surface::lowering::character_byte_view(parameter.name())
+        }
+        _ => ContractExpression::CFragment(CExpression::Variable(parameter.name().to_string())),
+    }
 }
 
 /// The caller parameter a call argument names, directly or through a cast
@@ -8937,8 +8973,19 @@ fn caller_parameter_through_identity_cast(
                 _ => None,
             }
         })?;
+    // A cast between character pointer types also names the same storage:
+    // one byte has one value, read through either signedness.
     match cast_type {
-        Some(target_type) if target_type != parameters[slot].c_type().to_kernel_type() => None,
+        Some(target_type)
+            if target_type != parameters[slot].c_type().to_kernel_type()
+                && !(target_type.is_character_pointer()
+                    && parameters[slot]
+                        .c_type()
+                        .to_kernel_type()
+                        .is_character_pointer()) =>
+        {
+            None
+        }
         _ => Some(slot),
     }
 }

@@ -1,7 +1,7 @@
 # Hosted library headers need the user-space target
 
-`<string.h>` and `<stdlib.h>` are hosted C library headers. The default Linux
-kernel target refuses them, as it refuses `<stddef.h>` and `<pthread.h>`.
+`<string.h>` and `<stdlib.h>` are hosted C library headers. The Linux kernel
+target refuses them, as it refuses `<stddef.h>` and `<pthread.h>`.
 
 ```c filename=kernel_stdlib.c
 #include <stdlib.h>
@@ -12,6 +12,7 @@ int f(void) {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "kernel_stdlib.c";
 
 int f() {

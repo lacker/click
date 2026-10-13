@@ -746,6 +746,55 @@ theorem adler_outer_remaining_step_divisible(remaining: int32) {
 
 # Compose a batch start and the actual inner cursor displacement in the
 # original input coordinates. Every native sum has a checked Integer bridge.
+theorem adler_defined_byte_pointer_add(base: const uint8*, left: int32, right: int32) {
+ requires defined(left + right);
+ ensures (base + left) + right == base + (left + right) by normalize() using { defined(left + right); };
+}
+
+theorem adler_absolute_chunk_pointer(base: const uint8*, start: int32, pos: int32) {
+ requires 0 <= start;
+ requires start <= 2147461439;
+ requires 0 <= pos;
+ requires pos <= 22204;
+ ensures defined(start + pos) by simp() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+ ensures (base + start) + pos == base + (start + pos) by {
+  have defined(start + pos) by simp() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+  apply(adler_defined_byte_pointer_add(base, start, pos)) using { defined(start + pos); }
+  assumption();
+ }
+}
+
+theorem adler_absolute_chunk_byte_observation(bytes: uint8[], start: int32, pos: int32, lane: int32) {
+ requires 0 <= start;
+ requires start <= 2147461439;
+ requires 0 <= pos;
+ requires pos <= 22204;
+ requires 0 <= lane;
+ requires lane <= 3;
+ ensures to_integer((int32)((bytes + start) + pos)[lane]) == to_integer((int32)bytes[(start + pos) + lane]) by {
+  have defined(start + pos) by simp() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+  have 0 <= start + pos by arithmetic() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+  have start + pos <= 2147483643 by arithmetic() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+  apply(int32_less_equal_to_integer(0, start + pos)) using { 0 <= start + pos; }
+  apply(int32_less_equal_to_integer(start + pos, 2147483643)) using { start + pos <= 2147483643; }
+  apply(int32_less_equal_to_integer(0, lane)) using { 0 <= lane; }
+  apply(int32_less_equal_to_integer(lane, 3)) using { lane <= 3; }
+  have to_integer(start + pos) + to_integer(lane) >= -2147483648 by arithmetic() using { 0 <= to_integer(start + pos); 0 <= to_integer(lane); };
+  have to_integer(start + pos) + to_integer(lane) <= 2147483647 by arithmetic() using { to_integer(start + pos) <= 2147483643; to_integer(lane) <= 3; };
+  apply(int32_add_defined_by_integer_bounds(start + pos, lane)) using { to_integer(start + pos) + to_integer(lane) >= -2147483648; to_integer(start + pos) + to_integer(lane) <= 2147483647; }
+  have defined((start + pos) + lane) by { both { assumption(); } and { assumption(); } }
+  apply(adler_defined_byte_pointer_add(bytes, start, pos)) using { defined(start + pos); }
+  apply(adler_defined_byte_pointer_add(bytes, start + pos, lane)) using { defined((start + pos) + lane); }
+  have ((bytes + start) + pos) + lane == bytes + ((start + pos) + lane) by {
+   rewrite((bytes + start) + pos == bytes + (start + pos));
+   assumption();
+  }
+  have ((bytes + start) + pos)[lane] == bytes[(start + pos) + lane] by simp() using { ((bytes + start) + pos) + lane == bytes + ((start + pos) + lane); };
+  rewrite(((bytes + start) + pos)[lane] == bytes[(start + pos) + lane]);
+  normalize();
+ }
+}
+
 theorem adler_absolute_chunk_access(t: int32, pos: int32, n: int32) {
  requires 0 <= t;
  requires t <= 2147461439;
@@ -980,5 +1029,64 @@ theorem adler_current_window(total: int32, remaining: int32) {
   }
   apply(int32_to_integer_less_equal_implies_less_equal((total - remaining - 4) + 4, total)) using { to_integer((total - remaining - 4) + 4) <= to_integer(total); }
   both { both { assumption(); } and { assumption(); } } and { assumption(); }
+ }
+}
+
+# Global prefix arithmetic for an actual four-byte batch position.
+theorem adler_signed_prefix_successors(n: int32) {
+ requires 0 <= n;
+ requires n <= 2147483643;
+ ensures defined(n + 1) by arithmetic() using { 0 <= n; n <= 2147483643; };
+ ensures defined(n + 2) by arithmetic() using { 0 <= n; n <= 2147483643; };
+ ensures defined(n + 3) by arithmetic() using { 0 <= n; n <= 2147483643; };
+ ensures defined(n + 4) by arithmetic() using { 0 <= n; n <= 2147483643; };
+
+}
+
+theorem adler_full_batch_prefix_window(start: int32, pos: int32) {
+ requires 0 <= start;
+ requires start <= 2147461439;
+ requires 0 <= pos;
+ requires pos <= 22204;
+ ensures defined(start + pos) by simp() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+ ensures 0 <= start + pos by arithmetic() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+ ensures start + pos <= 2147483643 by arithmetic() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+}
+
+theorem adler_defined_add_zero(value: int32) {
+ ensures defined(value + 0) by normalize();
+}
+
+theorem adler_full_batch_prefix_advance(start: int32, pos: int32) {
+ requires 0 <= start;
+ requires start <= 2147461439;
+ requires 0 <= pos;
+ requires pos <= 22204;
+ ensures (start + pos) + 4 == start + (pos + 4) by arithmetic() using { 0 <= start; start <= 2147461439; 0 <= pos; pos <= 22204; };
+}
+
+theorem adler_full_batch_within_advance(remaining: int32) {
+ requires 0 <= remaining;
+ requires remaining <= 22204;
+ ensures (22208 - remaining - 4) + 4 == 22208 - remaining by arithmetic() using { 0 <= remaining; remaining <= 22204; };
+}
+theorem adler_full_batch_end_sum(start: int32, within: int32) {
+ requires 0 <= start;
+ requires start <= 2147461439;
+ requires 0 <= within;
+ requires within <= 22208;
+ ensures defined(start + within) by simp() using { 0 <= start; start <= 2147461439; 0 <= within; within <= 22208; };
+}
+theorem adler_full_batch_end_guard(start: int32, remaining: int32) {
+ requires 0 <= start;
+ requires start <= 2147461439;
+ requires 0 <= remaining;
+ requires remaining <= 22208;
+ ensures defined(start + (22208 - remaining)) by {
+  have defined(22208 - remaining) by arithmetic() using { 0 <= remaining; remaining <= 22208; };
+  have 0 <= 22208 - remaining by arithmetic() using { 0 <= remaining; remaining <= 22208; };
+  have 22208 - remaining <= 22208 by arithmetic() using { 0 <= remaining; remaining <= 22208; };
+  apply(adler_full_batch_end_sum(start, 22208 - remaining)) using { 0 <= start; start <= 2147461439; 0 <= 22208 - remaining; 22208 - remaining <= 22208; }
+  both { assumption(); } and { assumption(); }
  }
 }

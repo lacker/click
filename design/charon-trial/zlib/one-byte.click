@@ -93,7 +93,7 @@ uint64 adler32_z(uint64 adler, const uint8* buf, uint64 len) {
  requires len == 1u64;
  requires buf != 0;
  views buf[0u64..1u64];
- ensures result == old(1u64 + buf[0]) | (old(1u64 + buf[0]) << 16i64);
+ ensures result == (old(1u64 + buf[0]) | (old(1u64 + buf[0]) << 16i64));
  ensures buf[0] == old(buf[0]);
  ensures to_integer(result) == adler_spec_checksum(old(buf), 1, 1, 0);
 } by {

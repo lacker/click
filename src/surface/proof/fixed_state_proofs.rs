@@ -19,8 +19,6 @@ pub(super) use have_proofs::{
     capture_fixed_state_algebraic_expression_with_values, capture_fixed_state_algebraic_value,
     capture_fixed_state_integer_expression, capture_fixed_state_integer_expression_with_guards,
     capture_resource_field_initializer, finish_ordered_proof_units, lower_fixed_state_proposition,
-    lower_fixed_state_proposition_through_kernel_with_bound_array_memories,
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_algebraic_values,
     lower_fixed_state_proposition_with_algebraic_values,
     lower_fixed_state_proposition_with_assumptions,
     lower_fixed_state_proposition_with_assumptions_recording_introductions,
@@ -28,14 +26,13 @@ pub(super) use have_proofs::{
     reverse_surface_equality,
 };
 pub(in crate::surface) use have_proofs::{
-    evaluate_c_fragment_through_kernel, evaluate_fixed_state_array_ref_through_kernel,
-    evaluate_fixed_state_expression_through_kernel,
+    FixedStateLoweringOptions, evaluate_c_fragment_through_kernel,
+    evaluate_fixed_state_array_ref_through_kernel, evaluate_fixed_state_expression_through_kernel,
     evaluate_fixed_state_expression_through_kernel_with_algebraic_values,
     evaluate_resource_argument_through_kernel, evaluate_resource_fragment_through_kernel,
     lower_fixed_state_proposition_through_kernel,
-    lower_fixed_state_proposition_through_kernel_recording_introductions,
-    lower_fixed_state_proposition_through_kernel_recording_introductions_with_bound_array_memories_and_facts,
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls,
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths,
+    lower_fixed_state_proposition_through_kernel_with,
+    lower_fixed_state_proposition_through_kernel_with_facts,
+    lower_fixed_state_proposition_through_kernel_with_introductions,
 };
 pub(super) use theorem_application::*;

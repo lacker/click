@@ -133,10 +133,24 @@ fn plan_affine_with_checked_premises(
     // Keep the original opaque claims while proving every operation's
     // definedness. No premise may justify its own decomposition circularly.
     let (left, right, _) = comparison_terms(goal)?;
-    if !is_affine_planning_atom(left) || !is_affine_planning_atom(right) {
-        return None;
-    }
+    let compound_goal = !is_affine_planning_atom(left) || !is_affine_planning_atom(right);
     let mut evidence = Planner::new(premises, claims, int32_range_fallback);
+    // Goal operations must be defined from the original facts too. A
+    // converted affine premise is not its own definedness evidence.
+    let (expected, goal_evidence) = if compound_goal {
+        let (left, right) = affine_operation_terms(goal)?;
+        let left = match left {
+            Some(term) => Some(evidence.build_interval_for_affine(term)?),
+            None => None,
+        };
+        let right = match right {
+            Some(term) => Some(evidence.build_interval_for_affine(term)?),
+            None => None,
+        };
+        (decomposed_signed_claim(goal)?, Some((left, right)))
+    } else {
+        (expected.clone(), None)
+    };
     let mut decomposed = Vec::with_capacity(claims.len());
     let mut converted = false;
     let mut converted_nodes = Vec::new();
@@ -185,7 +199,11 @@ fn plan_affine_with_checked_premises(
     for (index, node) in converted_nodes {
         planner.premise_cache.insert(index, node);
     }
-    let conclusion = planner.affine_claim(expected, allow_weakening)?;
+    let source = planner.affine_claim(&expected, allow_weakening)?;
+    let conclusion = match goal_evidence {
+        Some((left, right)) => affine_conclusion(&mut planner, goal, source, left, right)?,
+        None => source,
+    };
     Some(certificate(planner.nodes, conclusion))
 }
 
@@ -636,25 +654,35 @@ fn plan_machine_affine_goal(
         })?
     });
     let source = source?;
-    let conclusion = match (left_evidence, right_evidence) {
+    let conclusion = affine_conclusion(&mut planner, goal, source, left_evidence, right_evidence)?;
+    Some(certificate(planner.nodes, conclusion))
+}
+
+fn affine_conclusion(
+    planner: &mut Planner<'_>,
+    goal: &Proposition,
+    source: usize,
+    left_evidence: Option<usize>,
+    right_evidence: Option<usize>,
+) -> Option<usize> {
+    match (left_evidence, right_evidence) {
         (Some(left_evidence), Some(right_evidence)) => {
             planner.push(SignedArithmeticNode::AffineConclusionWithEvidence {
                 source,
                 left_evidence,
                 right_evidence,
                 result: goal.clone(),
-            })?
+            })
         }
         (Some(evidence), None) | (None, Some(evidence)) => {
             planner.push(SignedArithmeticNode::AffineConclusion {
                 source,
                 evidence,
                 result: goal.clone(),
-            })?
+            })
         }
-        (None, None) => return None,
-    };
-    Some(certificate(planner.nodes, conclusion))
+        (None, None) => None,
+    }
 }
 
 fn affine_operation_terms(
@@ -2646,6 +2674,95 @@ mod tests {
         let overflowing_sum = Bitvector32Term::Add(Box::new(var(1)), Box::new(var(2)));
         let premises = [le(overflowing_sum, constant(1000)), le(constant(1), var(2))];
         assert!(plan_signed_arithmetic_certificate(&goal, &premises).is_none());
+    }
+
+    #[test]
+    fn compound_premises_and_goal_share_checked_affine_evidence() {
+        let cap = constant(i32::MAX - 1);
+        let difference = Bitvector32Term::Subtract(Box::new(cap.clone()), Box::new(var(2)));
+        let goal = le(
+            Bitvector32Term::add(constant(1), var(1)),
+            Bitvector32Term::Subtract(Box::new(constant(i32::MAX)), Box::new(var(2))),
+        );
+        let premises = [
+            le(constant(0), var(1)),
+            le(var(1), cap.clone()),
+            le(constant(0), var(2)),
+            le(var(2), cap),
+            le(var(1), difference),
+        ];
+        let plan = check_plan(&goal, &premises);
+        assert!(
+            plan.nodes
+                .iter()
+                .any(|node| matches!(node, SignedArithmeticNode::AffinePremise { .. }))
+        );
+        assert!(matches!(
+            plan.nodes[plan.conclusion],
+            SignedArithmeticNode::AffineConclusionWithEvidence { .. }
+        ));
+        // A valid affine consequence cannot supply its own missing machine
+        // definedness. The same certificate must reject changed bounds.
+        let mut unsafe_goal = premises.clone();
+        unsafe_goal[1] = le(var(1), constant(i32::MAX));
+        unsafe_goal[4] = le(
+            var(1),
+            Bitvector32Term::Subtract(Box::new(constant(i32::MAX)), Box::new(var(2))),
+        );
+        assert!(plan_signed_arithmetic_certificate(&goal, &unsafe_goal).is_none());
+        assert!(plan.check(&goal, &unsafe_goal).is_err());
+
+        let unsafe_premise_goal = le(
+            Bitvector32Term::add(constant(1), var(1)),
+            Bitvector32Term::Subtract(Box::new(constant(i32::MIN + 1)), Box::new(var(2))),
+        );
+        let unsafe_premise = [
+            le(constant(0), var(1)),
+            le(var(1), constant(i32::MAX - 1)),
+            le(constant(0), var(2)),
+            le(var(2), constant(1)),
+            le(
+                var(1),
+                Bitvector32Term::Subtract(Box::new(constant(i32::MIN)), Box::new(var(2))),
+            ),
+        ];
+        // At x=0, y=1 the wrapped premise is true and the goal false.
+        assert!(
+            plan_signed_arithmetic_certificate(&unsafe_premise_goal, &unsafe_premise).is_none()
+        );
+    }
+
+    #[test]
+    fn compound_premise_and_goal_evidence_scales_with_expression_size() {
+        let mut work = Vec::new();
+        for depth in [2usize, 4, 8, 16] {
+            let mut a = var(1);
+            let mut b = var(2);
+            for _ in 0..depth {
+                a = Bitvector32Term::Add(Box::new(a), Box::new(constant(0)));
+                b = Bitvector32Term::Add(Box::new(b), Box::new(constant(0)));
+            }
+            let premises = [
+                le(
+                    Bitvector32Term::add(a.clone(), b.clone()),
+                    Bitvector32Term::add(constant(1000), b),
+                ),
+                le(constant(0), var(1)),
+                le(var(1), constant(2000)),
+                le(constant(1), var(2)),
+                le(var(2), constant(1000)),
+            ];
+            let goal = le(Bitvector32Term::add(a, constant(1)), constant(1001));
+            let (plan, measured) =
+                crate::instrumentation::measure_deterministic_work(|| check_plan(&goal, &premises));
+            assert!(plan.nodes.len() <= 20 * depth + 64);
+            work.push(measured);
+        }
+        assert!(work.windows(2).all(|pair| pair[1] > pair[0]), "{work:?}");
+        assert!(
+            work.windows(2).all(|pair| pair[1] <= 3 * pair[0] + 128),
+            "{work:?}"
+        );
     }
 
     #[test]

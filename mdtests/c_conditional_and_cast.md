@@ -1,6 +1,6 @@
 # C conditional expressions and scalar casts
 
-This checks C0's scalar conditional operator, including short-circuit branch
+This checks Click's scalar conditional operator, including short-circuit branch
 selection, and explicit int32/uint8 casts with the existing byte-range proof
 obligations.
 

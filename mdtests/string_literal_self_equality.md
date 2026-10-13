@@ -14,6 +14,7 @@ int32 string_literal_self_equality() {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "string_literal_self_equality.c";
 
 int32 string_literal_self_equality() {

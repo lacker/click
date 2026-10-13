@@ -593,6 +593,7 @@ fn c0_wide_static_initializers_use_checked_wide_values() {
         static unsigned int shifted = 0xffffffffU << 1;
         static unsigned long zero;
         static long promoted = 4294967295U;
+        static long converted = 9223372036854775808UL;
     "#,
         "wide.c",
         &source::ExpandedLineMap::empty(),
@@ -625,29 +626,30 @@ fn c0_wide_static_initializers_use_checked_wide_values() {
             "promoted",
             CValue::Int64(Bitvector32Term::Int64Constant(i64::from(u32::MAX))),
         ),
+        // GCC converts an out-of-range constant modulo 2^64.
+        (
+            "converted",
+            CValue::Int64(Bitvector32Term::Int64Constant(i64::MIN)),
+        ),
     ] {
         let global = unit.globals[name].to_kernel_global().unwrap();
         assert_eq!(global.initial_value(), &expected, "{name}");
     }
-    for source in [
-        "static long bad = 9223372036854775808UL;",
-        "static long bad = 9223372036854775807L + 1;",
-    ] {
-        assert!(
-            syntax::parse_translation_unit_for_source(
-                source,
-                "bad.c",
-                &source::ExpandedLineMap::empty()
-            )
-            .is_err()
-        );
-    }
+    // Signed overflow inside the expression is undefined, not a conversion.
+    assert!(
+        syntax::parse_translation_unit_for_source(
+            "static long bad = 9223372036854775807L + 1;",
+            "bad.c",
+            &source::ExpandedLineMap::empty()
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn c0_plain_char_retains_source_types_and_unsigned_byte_lowering() {
     use syntax::C0Type;
-    let functions = syntax::parse_functions(
+    let functions = syntax::parse_functions_for_target(
         r#"
         typedef char byte;
         struct packet { byte tag; byte data[2]; byte *next; };
@@ -661,27 +663,43 @@ fn c0_plain_char_retains_source_types_and_unsigned_byte_lowering() {
         int fields(struct packet *p) { return p->data[0] + p->tag; }
         char *literal() { return "ok"; }
     "#,
+        crate::languages::c::target::CTarget::X86_64LinuxKernel,
     )
     .expect("plain char declarations and expressions should parse");
     let function = &functions[0];
-    assert_eq!(function.return_type(), C0Type::Char);
-    assert_eq!(function.parameters()[0].c_type(), C0Type::Char);
+    assert_eq!(
+        function.return_type(),
+        C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned)
+    );
+    assert_eq!(
+        function.parameters()[0].c_type(),
+        C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned)
+    );
     assert_eq!(function.parameters()[1].c_type(), C0Type::UInt8);
-    assert_eq!(function.parameters()[2].c_type(), C0Type::CharPointer);
+    assert_eq!(
+        function.parameters()[2].c_type(),
+        C0Type::CharPointer(crate::languages::c::syntax::PlainChar::Unsigned)
+    );
     assert_eq!(
         function.parameters()[3].c_type(),
-        C0Type::CharPointerPointer
+        C0Type::CharPointerPointer(crate::languages::c::syntax::PlainChar::Unsigned)
     );
     assert_eq!(
         function.global_arrays()["global"].element_type(),
-        C0Type::Char
+        C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned)
     );
-    assert_eq!(C0Type::Char.to_kernel_type(), crate::kernel::CType::UInt8);
     assert_eq!(
-        C0Type::CharArray(2).to_kernel_type(),
+        C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned).to_kernel_type(),
+        crate::kernel::CType::UInt8
+    );
+    assert_eq!(
+        C0Type::CharArray(crate::languages::c::syntax::PlainChar::Unsigned, 2).to_kernel_type(),
         crate::kernel::CType::UInt8Array(2)
     );
-    assert_ne!(C0Type::CharPointer, C0Type::UInt8Pointer);
+    assert_ne!(
+        C0Type::CharPointer(crate::languages::c::syntax::PlainChar::Unsigned),
+        C0Type::UInt8Pointer
+    );
     assert_eq!(
         functions[2].to_kernel_function().string_literals()[0].bytes(),
         b"ok\0"
@@ -690,25 +708,19 @@ fn c0_plain_char_retains_source_types_and_unsigned_byte_lowering() {
 
 #[test]
 fn c0_plain_char_rejects_unsigned_char_pointer_aliasing() {
+    // GCC and Clang refuse these by default: pointers to character pointers,
+    // a retyping pointer-to-pointer cast, `?:` arms whose common type would
+    // be `void *`, a subtraction of distinct pointer types, and a character
+    // pointer converted from a wider integer pointer.
     for source in [
-        "void f(char *p, unsigned char *q) { p = q; }",
-        "void f(char *p, unsigned char *q) { unsigned char *r = p; }",
         "void f(char **p, unsigned char **q) { p = q; }",
-        "void f(char **p, unsigned char *q) { *p = q; }",
-        "void f(unsigned char **p, char *q) { p[0] = q; }",
-        "char *f(unsigned char *q) { return q; }",
-        "void g(char *p); void f(unsigned char *q) { g(q); }",
-        "char *g(); void f(unsigned char *q) { q = g(); }",
-        "void f(unsigned char *q) { q = (char *)q; }",
+        "unsigned char **f(char **p) { return p; }",
+        "void g(unsigned char **p); void f(char **q) { g(q); }",
         "void f(char **p, unsigned char **q) { p = (char **)q; }",
         "void f(char *p, unsigned char *q) { p = 1 ? p : q; }",
         "void f(char *p, unsigned char *q) { char a[2]; p = 1 ? a : q; }",
-        "int f(char *p, unsigned char *q) { return p == q; }",
         "long f(char *p, unsigned char *q) { return p - q; }",
-        "int f(char *p, unsigned char *q) { return p < q; }",
-        "struct s { char *p; }; void f(struct s *s, unsigned char *q) { s->p = q; }",
-        "void g(unsigned char *p); void f() { char a[2]; g(a); }",
-        "void g(char *p); void f() { unsigned char a[2]; g(a); }",
+        "char *f(int *p) { return p; }",
     ] {
         let error = syntax::parse_functions(source).expect_err(source);
         assert!(
@@ -717,6 +729,90 @@ fn c0_plain_char_rejects_unsigned_char_pointer_aliasing() {
             error.message()
         );
     }
+}
+
+#[test]
+fn c0_character_pointer_conversions_lower_as_explicit_casts() {
+    use crate::languages::c::target::CTarget;
+    use syntax::{C0Expression, C0Type, PlainChar};
+    // GCC and Clang accept each of these with only a `-Wpointer-sign` (or,
+    // for a comparison, `-Wcompare-distinct-pointer-types`) warning.
+    for source in [
+        "void f(char *p, unsigned char *q) { p = q; }",
+        "void f(char *p, unsigned char *q) { unsigned char *r = p; }",
+        "void f(char **p, unsigned char *q) { *p = q; }",
+        "void f(unsigned char **p, char *q) { p[0] = q; }",
+        "char *f(unsigned char *q) { return q; }",
+        "void g(char *p); void f(unsigned char *q) { g(q); }",
+        "void g(const char *p); void f(unsigned char *q) { g(q); }",
+        "void g(unsigned char *p); void f(signed char *q) { g(q); }",
+        "char *g(); void f(unsigned char *q) { q = g(); }",
+        "char *g(); void f() { unsigned char *q = g(); }",
+        "void f(unsigned char *q) { q = (char *)q; }",
+        "void f(char *p, signed char *q) { p = q; }",
+        "int f(char *p, unsigned char *q) { return p == q; }",
+        "int f(char *p, unsigned char *q) { return p < q; }",
+        "struct s { char *p; }; void f(struct s *s, unsigned char *q) { s->p = q; }",
+        "void g(unsigned char *p); void f() { char a[2]; g(a); }",
+        "void g(char *p); void f() { unsigned char a[2]; g(a); }",
+        "const unsigned char *f(const char *p) { return p; }",
+    ] {
+        for target in [CTarget::X86_64LinuxUserspace, CTarget::X86_64LinuxKernel] {
+            syntax::parse_functions_for_target(source, target)
+                .unwrap_or_else(|error| panic!("{source}: {}", error.message()));
+        }
+    }
+    // The conversion is the cast to the destination type, which keeps the
+    // source's const view.
+    for (source, target, c_type, pointee_constant) in [
+        (
+            "char *f(unsigned char *q) { return q; }",
+            CTarget::X86_64LinuxUserspace,
+            C0Type::CharPointer(PlainChar::Signed),
+            false,
+        ),
+        (
+            "char *f(unsigned char *q) { return q; }",
+            CTarget::X86_64LinuxKernel,
+            C0Type::CharPointer(PlainChar::Unsigned),
+            false,
+        ),
+        (
+            "uint8 *f() { return \"ok\"; }",
+            CTarget::X86_64LinuxUserspace,
+            C0Type::UInt8Pointer,
+            false,
+        ),
+        (
+            "const signed char *f(const unsigned char *q) { return q; }",
+            CTarget::X86_64LinuxUserspace,
+            C0Type::Int8Pointer,
+            true,
+        ),
+    ] {
+        let functions = syntax::parse_functions_for_target(source, target)
+            .unwrap_or_else(|error| panic!("{source}: {}", error.message()));
+        let returned = returned_expression(functions[0].body())
+            .unwrap_or_else(|| panic!("{source}: no return"));
+        assert!(
+            matches!(
+                returned,
+                C0Expression::Cast {
+                    c_type: actual,
+                    struct_name: None,
+                    pointee_volatile: false,
+                    pointee_constant: actual_constant,
+                    explicit_qualification: false,
+                    ..
+                } if *actual == c_type && *actual_constant == pointee_constant
+            ),
+            "{source}: {returned:?}"
+        );
+    }
+    // Discarding `const` is still refused.
+    let error = syntax::parse_functions("unsigned char *f(const char *p) { return p; }")
+        .expect_err("a converted pointer keeps its const view");
+    assert!(error.message().contains("const"), "{}", error.message());
 }
 
 #[test]
@@ -734,6 +830,8 @@ fn c0_plain_char_declaration_signatures_remain_distinct() {
 
 #[test]
 fn c0_plain_char_inline_call_assignments_preserve_source_compatibility() {
+    // A mangled inline call keeps its source return type, so assigning its
+    // `char *` result to an `unsigned char *` converts it as by a cast.
     for body in [
         "unsigned char *q = identity(p);",
         "unsigned char *q; q = identity(p);",
@@ -741,14 +839,19 @@ fn c0_plain_char_inline_call_assignments_preserve_source_compatibility() {
         let source = format!(
             "static inline char *identity(char *p) {{ return p; }} void use(char *p) {{ {body} }}"
         );
-        let error = syntax::parse_functions_for_source(&source, "inline.c")
-            .expect_err("mangled inline calls must retain source return types");
-        assert!(
-            error.message().contains("incompatible C pointer types"),
-            "{}",
-            error.message()
-        );
+        syntax::parse_functions_for_source(&source, "inline.c")
+            .unwrap_or_else(|error| panic!("{body}: {}", error.message()));
     }
+    let error = syntax::parse_functions_for_source(
+        "static inline char **identity(char **p) { return p; } void use(char **p) { unsigned char **q = identity(p); }",
+        "inline.c",
+    )
+    .expect_err("mangled inline calls must retain source return types");
+    assert!(
+        error.message().contains("incompatible C pointer types"),
+        "{}",
+        error.message()
+    );
     let functions = syntax::parse_functions_for_source(
         "static inline char *identity(char *p) { return p; } char *use(char *p) { char *q = identity(p); q = identity(p); return q; }",
         "inline.c",
@@ -759,14 +862,16 @@ fn c0_plain_char_inline_call_assignments_preserve_source_compatibility() {
 #[test]
 fn c0_plain_char_qualified_pointee_casts_preserve_read_only_views() {
     use syntax::{C0Expression, C0Statement, C0Type};
-    let functions =
-        syntax::parse_functions("const char *view(char *p) { return (const char *)p; }")
-            .expect("a const-qualified pointee cast should parse");
+    let functions = syntax::parse_functions_for_target(
+        "const char *view(char *p) { return (const char *)p; }",
+        crate::languages::c::target::CTarget::X86_64LinuxKernel,
+    )
+    .expect("a const-qualified pointee cast should parse");
     assert!(matches!(
         functions[0].body(),
         C0Statement::Return(
             C0Expression::Cast {
-                c_type: C0Type::CharPointer,
+                c_type: C0Type::CharPointer(crate::languages::c::syntax::PlainChar::Unsigned),
                 pointee_constant: true,
                 ..
             },
@@ -776,6 +881,7 @@ fn c0_plain_char_qualified_pointee_casts_preserve_read_only_views() {
 
     crate::surface::verify_c0_sources(
         r#"
+        target "x86_64-linux-kernel";
         verifying "cast.c";
         const char *view(char *p) { ensures result == p; }
         int read(char *p) {
@@ -840,6 +946,7 @@ fn c0_function_declarations_reject_conflicting_pointee_const_parameters() {
 fn c0_plain_char_unsigned_promotion_verifies() {
     crate::surface::verify_c0_sources(
         r#"
+        target "x86_64-linux-kernel";
         verifying "char.c";
         int promote() { ensures result == 256 by auto; }
         int compare() { ensures result == 1 by auto; }
@@ -851,19 +958,21 @@ fn c0_plain_char_unsigned_promotion_verifies() {
 #[test]
 fn c0_plain_char_explicit_byte_pointer_casts_preserve_source_identity() {
     use syntax::{C0Expression, C0Statement, C0Type};
-    let functions = syntax::parse_functions(
+    let functions = syntax::parse_functions_for_target(
         "char *to_char(unsigned char *q) { return (char *)q; } unsigned char *to_byte(char *p) { return (unsigned char *)p; }",
+        crate::languages::c::target::CTarget::X86_64LinuxKernel,
     ).expect("explicit casts between one-level byte pointers are valid C");
-    for (function, expected) in functions
-        .iter()
-        .zip([C0Type::CharPointer, C0Type::UInt8Pointer])
-    {
+    for (function, expected) in functions.iter().zip([
+        C0Type::CharPointer(crate::languages::c::syntax::PlainChar::Unsigned),
+        C0Type::UInt8Pointer,
+    ]) {
         assert!(
             matches!(function.body(), C0Statement::Return(C0Expression::Cast { c_type, .. }, _) if *c_type == expected)
         );
     }
     crate::surface::verify_c0_sources(
         r#"
+        target "x86_64-linux-kernel";
         verifying "cast.c";
         int to_char() { ensures result == 255 by auto; }
         int to_byte() { ensures result == 255 by auto; }
@@ -3271,10 +3380,6 @@ fn c0_rejects_invalid_static_integer_constant_initializers() {
         (
             "int32 value = 2147483647 + 1; int32 read() { return value; }",
             "overflows",
-        ),
-        (
-            "int32 value = (uint8) 256; int32 read() { return value; }",
-            "out of range",
         ),
     ] {
         let error = syntax::parse_functions(source)
@@ -12115,7 +12220,7 @@ fn c0_floating_point_literals_use_declared_binary_formats() {
         .expect_err("hexadecimal floating-point literals must remain unsupported");
     assert!(
         hex.to_string()
-            .contains("hexadecimal floating-point literals are not supported in C0")
+            .contains("hexadecimal floating-point literals are not supported by Click")
     );
 
     let suffix = syntax::parse_function("double extended() { return 1.0L; }")
@@ -12123,7 +12228,7 @@ fn c0_floating_point_literals_use_declared_binary_formats() {
     assert!(
         suffix
             .to_string()
-            .contains("long double literals are not modeled in C0")
+            .contains("long double literals are not modeled by Click")
     );
 }
 
@@ -12916,16 +13021,76 @@ fn signed_byte_storage_and_pointer_identity() {
     assert_eq!(layout.field("b").unwrap().offset_bytes(), 1);
     assert_eq!(layout.field("tail").unwrap().offset_bytes(), 4);
     assert_eq!(C0Type::Int8.to_kernel_type().byte_width(), 1);
+    // An uncast conversion between character pointers is accepted, as by
+    // its cast; see `c0_character_pointer_conversions_lower_as_explicit_casts`.
     for source in [
         "void f(signed char *p, unsigned char *q) { p = q; }",
         "void f(signed char *p, char *q) { p = q; }",
+    ] {
+        syntax::parse_functions(source).unwrap_or_else(|error| panic!("{source}: {error:?}"));
+    }
+    for source in [
+        "void f(signed char **p, unsigned char **q) { p = q; }",
         "void f(signed char *p); void f(unsigned char *p);",
         "void f(int (*cb)(signed char)); void f(int (*cb)(unsigned char));",
-        "signed char invalid = 128; int f(void) { return invalid; }",
-        "signed char invalid = -129; int f(void) { return invalid; }",
     ] {
         assert!(syntax::parse_functions(source).is_err(), "{source}");
     }
+}
+
+/// An integer constant converted to an integer type that cannot represent
+/// it takes the value GCC and Clang give it, modulo 2^N, in a static or
+/// automatic initializer, an assignment, a cast, a return, and an argument.
+#[test]
+fn c0_out_of_range_integer_constants_convert_modulo_the_destination_width() {
+    use crate::kernel::{Bitvector32Term, CValue};
+    let unit = syntax::parse_translation_unit_for_source(
+        "signed char high = 128; signed char low = -129; unsigned char negative = -56;\n\
+         unsigned char wide = 300; short big = 40000; int value = (unsigned char) 256;",
+        "convert.c",
+        &source::ExpandedLineMap::empty(),
+    )
+    .unwrap();
+    for (name, expected) in [
+        (
+            "high",
+            CValue::Int8(Bitvector32Term::Constant(-128i32 as u32)),
+        ),
+        ("low", CValue::Int8(Bitvector32Term::Constant(127))),
+        ("negative", CValue::UInt8(Bitvector32Term::Constant(200))),
+        ("wide", CValue::UInt8(Bitvector32Term::Constant(44))),
+        (
+            "big",
+            CValue::Int16(Bitvector32Term::Constant(-25536i32 as u32)),
+        ),
+        ("value", CValue::Int32(Bitvector32Term::Constant(0))),
+    ] {
+        let global = unit.globals[name].to_kernel_global().unwrap();
+        assert_eq!(global.initial_value(), &expected, "{name}");
+    }
+
+    let functions = syntax::parse_functions(
+        "unsigned char take(unsigned char c) { return c; }\n\
+         unsigned char f(signed char *p) {\n\
+             unsigned char c = -56;\n\
+             c = 300;\n\
+             *p = 200;\n\
+             take(-1);\n\
+             return (unsigned char) -2;\n\
+         }",
+    )
+    .unwrap();
+    let body = format!("{:?}", functions[1].body());
+    for literal in [
+        "UInt32Literal(200)",
+        "UInt32Literal(44)",
+        "Int32Literal(4294967240)",
+        "UInt32Literal(255)",
+        "UInt32Literal(254)",
+    ] {
+        assert!(body.contains(literal), "{literal} in {body}");
+    }
+    assert!(!body.contains("Int32Literal(300)"), "{body}");
 }
 
 #[test]
@@ -14548,5 +14713,16 @@ fn c0_builtin_offsetof_uses_layout_and_refuses_unsupported_designators() {
             "struct A {{ char c; long x; int tail[3]; }}; unsigned long run() {{ return __builtin_offsetof({operands}); }}"
         );
         assert!(syntax::parse_functions(&source).is_err(), "{operands}");
+    }
+}
+
+/// The expression the last `return` sequenced in `statement` returns.
+fn returned_expression(statement: &syntax::C0Statement) -> Option<&syntax::C0Expression> {
+    match statement {
+        syntax::C0Statement::Seq(first, second) => {
+            returned_expression(second).or_else(|| returned_expression(first))
+        }
+        syntax::C0Statement::Return(expression, _) => Some(expression),
+        _ => None,
     }
 }

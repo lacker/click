@@ -78,14 +78,17 @@ pub use iterated::{CIteratedGuard, CIteratedMemory};
 mod memory_equality_index;
 mod resource_algebra;
 mod term_operations;
+mod term_shape;
 pub(super) use derivations::*;
 pub(crate) use memory_state::resource_context_has_symbolic_range_read;
 pub use memory_state::value_independent_click_memory;
 pub(super) use resource_algebra::*;
+pub(in crate::kernel) use term_operations::round_right_to_even;
 pub(in crate::kernel) use term_operations::{
     int64_add_interval_fits, int64_subtract_interval_fits,
 };
 pub(crate) use term_operations::{listed_premise_holds, proposition_holds_without_facts};
+pub(crate) use term_shape::{BitvectorBinaryOp, BitvectorComparisonOp, BitvectorUnaryOp};
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;
 
@@ -334,6 +337,21 @@ impl LoadKind {
         Self::of_value(value) == Some(self)
     }
 
+    /// The value a read of this kind returns from a cell holding `value`:
+    /// the value itself when the read is of its kind, or, for a one-byte
+    /// character read of a one-byte cell of the other signedness, the same
+    /// eight bits reinterpreted ([`CType::read_cell`]).
+    pub(crate) fn read_cell(self, value: &CValue) -> Option<CValue> {
+        if self.reads_value(value) {
+            return Some(value.clone());
+        }
+        match self {
+            Self::Int8 => CType::Int8.read_cell(value),
+            Self::UInt8 => CType::UInt8.read_cell(value),
+            _ => None,
+        }
+    }
+
     /// Width when the kind is known but no typed producer recorded an access.
     /// The read kind preserves its intrinsic storage width.
     #[cfg(test)]
@@ -520,6 +538,31 @@ impl PointerOffsetTerm {
             }
         }
         values
+    }
+
+    /// Visits each scaled index of this offset, left to right.
+    pub(crate) fn for_each_scaled_value(&self, mut visit: impl FnMut(&Bitvector32Term)) {
+        self.any_scaled_value(|value| {
+            visit(value);
+            false
+        });
+    }
+
+    /// Whether some scaled index of this offset satisfies `test`, asked left to
+    /// right and stopping at the first that does.
+    pub(crate) fn any_scaled_value(&self, mut test: impl FnMut(&Bitvector32Term) -> bool) -> bool {
+        fn walk(
+            offset: &PointerOffsetTerm,
+            test: &mut impl FnMut(&Bitvector32Term) -> bool,
+        ) -> bool {
+            match offset {
+                PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+                PointerOffsetTerm::Add(left, right) => walk(left, test) || walk(right, test),
+                PointerOffsetTerm::Int32Scaled { value, .. }
+                | PointerOffsetTerm::Int64Scaled { value, .. } => test(value),
+            }
+        }
+        walk(self, &mut test)
     }
 }
 
@@ -1768,7 +1811,13 @@ pub enum CType {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CPointerArrayElement {
     Void,
-    Char,
+    /// Plain `char` under a target where it is unsigned. Kept apart from
+    /// `UInt8` only so the C frontend recovers `char *` from the element;
+    /// its cells are `uint8*` pointers.
+    UnsignedPlainChar,
+    /// Plain `char` under a target where it is signed; its cells are
+    /// `int8*` pointers.
+    SignedPlainChar,
     Int8,
     Int16,
     Int32,
@@ -1806,7 +1855,8 @@ impl CPointerArrayElement {
     pub fn pointer_type(self) -> CType {
         match self {
             Self::Void => CType::VoidPointer,
-            Self::Char => CType::UInt8Pointer,
+            Self::UnsignedPlainChar => CType::UInt8Pointer,
+            Self::SignedPlainChar => CType::Int8Pointer,
             Self::Int8 => CType::Int8Pointer,
             Self::Int16 => CType::Int16Pointer,
             Self::Int32 => CType::Int32Pointer,
@@ -1825,8 +1875,8 @@ impl CPointerArrayElement {
     pub fn decayed_type_spelling(self) -> &'static str {
         match self {
             Self::Void => "void**",
-            Self::Char | Self::UInt8 => "uint8**",
-            Self::Int8 => "int8**",
+            Self::UnsignedPlainChar | Self::UInt8 => "uint8**",
+            Self::SignedPlainChar | Self::Int8 => "int8**",
             Self::Int16 => "int16**",
             Self::Int32 => "int32**",
             Self::UInt16 => "uint16**",
@@ -4075,6 +4125,10 @@ pub(super) struct CFunctionStaticStorage {
 pub struct CStringLiteral {
     pub(super) name: String,
     pub(super) bytes: Vec<u8>,
+    /// The character type of the literal's elements: `UInt8` where plain
+    /// `char` is unsigned and `Int8` where it is signed. Each byte is stored
+    /// as a cell of this type, holding the byte's value under it.
+    pub(super) element_type: CType,
 }
 
 /// Check only the selected declaration's compact dimensions. This is object
@@ -5355,6 +5409,37 @@ impl CExecutionSemantics {
     };
 }
 
+/// The environment a C execution runs in and the semantics it runs under,
+/// which kernel execution threads through every statement and call
+/// together.
+#[derive(Clone, Copy)]
+pub(crate) struct CExecutionContext<'a> {
+    pub(crate) environment: &'a CExecutionEnvironment,
+    pub(crate) semantics: CExecutionSemantics,
+}
+
+impl<'a> CExecutionContext<'a> {
+    pub(crate) fn new(
+        environment: &'a CExecutionEnvironment,
+        semantics: CExecutionSemantics,
+    ) -> Self {
+        Self {
+            environment,
+            semantics,
+        }
+    }
+
+    /// Runs callee bodies and verifies loops.
+    pub(crate) fn execute_bodies(environment: &'a CExecutionEnvironment) -> Self {
+        Self::new(environment, CExecutionSemantics::EXECUTE_BODIES)
+    }
+
+    /// Applies verified call and loop rules.
+    pub(crate) fn apply_verified_rules(environment: &'a CExecutionEnvironment) -> Self {
+        Self::new(environment, CExecutionSemantics::APPLY_VERIFIED_RULES)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
     pub(super) function: CFunction,
@@ -5929,6 +6014,11 @@ pub enum CInvalidFree {
     NonHeapPointer,
     DoubleFree,
 }
+
+/// How a [`CRuntimeError::FunctionContract`] message ends when a function
+/// returned a value its declared return type does not admit; the message
+/// starts with the function's name.
+pub const RETURN_TYPE_MISMATCH: &str = "returned a value that does not match its declared type";
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CRuntimeError {
@@ -8185,6 +8275,9 @@ pub struct ResourceContext {
     /// Derived trusted-kernel index. It never supplies ownership evidence.
     memory_equalities: std::sync::Mutex<memory_equality_index::MemoryPairings>,
     pub(super) storage: std::sync::Arc<ResourceContextStorage>,
+    /// Disposable projection, never ownership evidence or semantic identity.
+    /// Immutable forks share even the cold cache; producers detach it before
+    /// advancing only their own delta.
     pub(super) observable_projection:
         std::sync::Arc<std::sync::Mutex<Option<ObservableResourceProjection>>>,
     /// Checked dependency bundles for resource occurrences that are views of
@@ -8305,15 +8398,37 @@ impl ResourceContext {
     pub(crate) fn live_loan_dependencies(
         &self,
     ) -> impl Iterator<Item = (ResourceOccurrenceId, &crate::kernel::loans::LoanViewBinding)> {
+        // A filtered observation shares the current loan state, which may
+        // also contain excluded occurrences. Query the smaller side of the
+        // intersection; never walk all excluded loans for a small frame.
+        let by_entries = self.storage.facts.len() < self.loan_dependencies.map.len();
+        let mut selected = Vec::new();
+        if by_entries {
+            for (_, occurrence) in self.storage.occurrence_by_entry.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                if let Some(binding) = self.loan_dependencies.map.get(occurrence) {
+                    selected.push((*occurrence, binding));
+                }
+            }
+            // Preserve the original occurrence ordering for every caller.
+            selected.sort_unstable_by_key(|(occurrence, _)| *occurrence);
+        }
         self.loan_dependencies
             .map
             .iter()
+            .take(if by_entries {
+                0
+            } else {
+                self.loan_dependencies.map.len()
+            })
             .filter_map(|(occurrence, binding)| {
+                crate::instrumentation::record_deterministic_work(1);
                 self.storage
                     .entry_by_occurrence
                     .contains_key(occurrence)
                     .then_some((*occurrence, binding))
             })
+            .chain(selected)
     }
 }
 
@@ -8344,9 +8459,11 @@ pub(super) struct ResourceMemoryIntervalNode {
 
 #[derive(Clone)]
 pub(super) struct ObservableResourceProjection {
-    registry: std::sync::Arc<()>,
-    source: std::sync::Arc<ResourceContextStorage>,
-    projected: std::sync::Arc<ResourceContextStorage>,
+    classification: u64,
+    /// A weak checkpoint detects any producer that replaces storage without
+    /// advancing the view, without retaining the unfiltered context.
+    source: std::sync::Weak<ResourceContextStorage>,
+    storage: std::sync::Arc<ResourceContextStorage>,
 }
 
 #[derive(Clone, Default)]
@@ -8428,14 +8545,14 @@ pub(super) struct ResourceContextChange {
     pub(super) depth: usize,
     /// Exact occurrence delta for derived indexes; metadata changes use None.
     pub(super) entry_delta: Option<(ResourceEntryId, bool)>,
-    /// An expansion-cache edit preserves entry ordinals and authority.
-    pub(super) metadata_only: bool,
     pub(super) fact: CResourceFact,
     pub(super) parent: Option<std::sync::Arc<ResourceContextChange>>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResourceContextIndex {
+    owned_count: usize,
+    owned_composite_count: usize,
     pub(super) instances: PersistentMap<Variable, ResourceEntryIds>,
     /// Only duplicated or malformed mutex authority atoms need a validity check.
     pub(super) suspect_mutex_authorities: PersistentMap<CResource, ()>,
@@ -9189,12 +9306,6 @@ pub(super) trait ResourceFamilyAlgebra {
     ) -> Option<CResourceFact>;
 
     fn core(&self, fact: &CResourceFact) -> Option<CResourceFact>;
-
-    fn observable_facts(
-        &self,
-        facts: &[&CResourceFact],
-        assumptions: &PureFactContext,
-    ) -> Vec<Proposition>;
 }
 
 struct MemoryResourceAlgebra;
@@ -9836,6 +9947,13 @@ impl CResourceSpec {
 
     pub fn term(&self) -> &CResourceTerm {
         &self.term
+    }
+
+    pub(in crate::kernel) fn with_captured_memory_segment(&self, segment: CMemorySegment) -> Self {
+        debug_assert!(matches!(self.term, CResourceTerm::Memory(_)));
+        let mut captured = self.clone();
+        captured.term = CResourceTerm::Memory(segment);
+        captured
     }
 
     pub fn with_mutex_authority_binding(
@@ -10605,13 +10723,200 @@ impl Hash for Proposition {
                 }
                 atomic => {
                     // Atomic proposition variants contain no Proposition
-                    // children. Their derived debug form gives this
-                    // traversal a stable payload while keeping the deep
-                    // connective topology iterative.
+                    // children, so their fields hash directly while the deep
+                    // connective topology above stays iterative.
                     6u8.hash(state);
-                    format!("{atomic:?}").hash(state);
+                    hash_atomic_proposition(atomic, state);
                 }
             }
+        }
+    }
+}
+
+/// Hashes one atomic proposition by its fields, consistently with the derived
+/// equality. Every field hashes structurally; a memory snapshot hashes by its
+/// cached content hash in O(1). Hashing an atom's debug text instead printed
+/// every snapshot it names, so inserting or looking up a call's effect summary
+/// cost the size of the whole memory, and each later call in a long function
+/// paid more than the last.
+fn hash_atomic_proposition<H: Hasher>(atomic: &Proposition, state: &mut H) {
+    std::mem::discriminant(atomic).hash(state);
+    match atomic {
+        Proposition::Equal(left, right) => {
+            left.hash(state);
+            right.hash(state);
+        }
+        Proposition::ConditionIs(condition, value) => {
+            condition.hash(state);
+            value.hash(state);
+        }
+        Proposition::Predicate { name, arguments } => {
+            name.hash(state);
+            arguments.hash(state);
+        }
+        Proposition::CExpressionEvaluates {
+            state: c_state,
+            expression,
+            outcome,
+        } => {
+            c_state.hash(state);
+            expression.hash(state);
+            outcome.hash(state);
+        }
+        Proposition::CConditionEvaluates {
+            state: c_state,
+            condition,
+            outcome,
+        } => {
+            c_state.hash(state);
+            condition.hash(state);
+            outcome.hash(state);
+        }
+        Proposition::CStatementExecutes {
+            state: c_state,
+            statement,
+            outcome,
+        }
+        | Proposition::CStatementVerifies {
+            state: c_state,
+            statement,
+            outcome,
+        } => {
+            c_state.hash(state);
+            statement.hash(state);
+            outcome.hash(state);
+        }
+        Proposition::CFunctionExecutes {
+            state: c_state,
+            function,
+            arguments,
+            outcome,
+        }
+        | Proposition::CFunctionVerifies {
+            state: c_state,
+            function,
+            arguments,
+            outcome,
+        } => {
+            c_state.hash(state);
+            function.hash(state);
+            arguments.hash(state);
+            outcome.hash(state);
+        }
+        Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        }
+        | Proposition::CFunctionPartiallySatisfiesSpecification {
+            function,
+            specification,
+        } => {
+            function.hash(state);
+            specification.hash(state);
+        }
+        Proposition::CMemoryLoads {
+            memory,
+            pointer,
+            outcome,
+        } => {
+            memory.hash(state);
+            pointer.hash(state);
+            outcome.hash(state);
+        }
+        Proposition::CMemoryCanStore {
+            memory,
+            pointer,
+            byte_width,
+        } => {
+            memory.hash(state);
+            pointer.hash(state);
+            byte_width.hash(state);
+        }
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+            wide,
+        } => {
+            memory.hash(state);
+            base.hash(state);
+            bytes.hash(state);
+            wide.hash(state);
+        }
+        Proposition::CMemoryInitialized {
+            memory,
+            base,
+            bytes,
+        } => {
+            memory.hash(state);
+            base.hash(state);
+            bytes.hash(state);
+        }
+        Proposition::CValidPlace {
+            memory,
+            pointer,
+            place_type,
+            access_policy,
+        } => {
+            memory.hash(state);
+            pointer.hash(state);
+            place_type.hash(state);
+            access_policy.hash(state);
+        }
+        Proposition::CMemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => {
+            memory.hash(state);
+            pointer.hash(state);
+            value_type.hash(state);
+        }
+        Proposition::CResourceSeparate { left, right } => {
+            left.hash(state);
+            right.hash(state);
+        }
+        Proposition::CResourceComposition(resources) => resources.hash(state),
+        Proposition::CResourceContains { parent, child } => {
+            parent.hash(state);
+            child.hash(state);
+        }
+        Proposition::CMemoryMutatesOnly {
+            before,
+            after,
+            writes,
+        } => {
+            before.hash(state);
+            after.hash(state);
+            writes.hash(state);
+        }
+        Proposition::CMemoryEffectSummary {
+            before,
+            after,
+            mutable_ranges,
+        } => {
+            before.hash(state);
+            after.hash(state);
+            mutable_ranges.hash(state);
+        }
+        Proposition::CHeapAllocationFreed {
+            before,
+            after,
+            allocation_base,
+            bytes,
+        } => {
+            before.hash(state);
+            after.hash(state);
+            allocation_base.hash(state);
+            bytes.hash(state);
+        }
+        Proposition::And(..)
+        | Proposition::Or(..)
+        | Proposition::Not(..)
+        | Proposition::Implies(..)
+        | Proposition::ForAll { .. }
+        | Proposition::Exists { .. } => {
+            unreachable!("connectives are hashed iteratively by `Hash for Proposition`")
         }
     }
 }
@@ -11587,6 +11892,7 @@ pub struct PureFactContext {
         crate::persistent::PersistentMap<Bitvector32Term, ConditionTerm>,
     >,
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
+    pub(super) signed_variable_chains: super::assumptions::variable_chains::VariableChains,
     /// Incremental adjacency for conditions whose variables can be read
     /// without inspecting a snapshot.
     pub(super) condition_facts_by_variable: crate::persistent::PersistentMap<

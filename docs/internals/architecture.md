@@ -10,7 +10,7 @@ language's role.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/languages.rs`, `src/languages/c.rs`, `src/languages/c/` | Parse, represent, and lower the currently supported C0 program language. Future program languages get sibling modules here. |
+| `src/languages.rs`, `src/languages/c.rs`, `src/languages/c/` | Parse, represent, and lower supported C. The C++ and Rust importers live in the sibling `src/languages/cpp/` and `src/languages/rust/` modules. |
 | `src/surface.rs` | Define Surface Click forms and connect its checking, lowering, proof, and presentation modules. |
 | `src/surface/parser.rs` | Tokenize and parse Surface Click. |
 | `src/surface/validation/` | Resolve declarations and enforce source-level type and form rules. |

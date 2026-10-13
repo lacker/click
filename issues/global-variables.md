@@ -9,6 +9,11 @@ and [stable views](../docs/internals/stable-views.md); the resource and
 callback transport it also waited on landed on 2026-09-15.
 It is not closed by this audit or demoted with the language-coverage remainder.
 
+Soundness: incomplete. The five caller fixtures listed below fail closed
+(`fail: run.contract`). Ordinary function entry no longer restores
+initializers, and regressions protect that boundary. The remaining work is
+broader initializer and literal coverage.
+
 ## Delivered scope
 
 The original audit was at `cb034b21` on 2026-09-01. Current code and tests have
@@ -141,7 +146,7 @@ across calls. Preserve duplicate-definition, incompatible-shape, unknown-name,
 const-write, ownership and stale-initializer rejection tests. Keep syntax-only
 coverage distinct from passing program proofs and from known negative caller
 fixtures. Run focused tests and the full unpiped `scripts/check.sh`; update
-[Supported C0](../docs/reference/language/c0.md) as each supported boundary grows.
+[Supported C](../docs/reference/language/c.md) as each supported boundary grows.
 
 The original completion history remains in Git.
 

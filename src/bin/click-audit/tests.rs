@@ -1864,3 +1864,24 @@ fn inventory_obeys_the_work_and_whole_run_bounds() {
     assert!(error.contains(RUN_LIMIT_EXHAUSTED), "{error}");
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+#[ignore = "nightly: expanded loop audit checking work"]
+fn expanded_loop_claims_stay_within_checking_work_bounds() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (fixture, claim) in [
+        ("c_decreases_recursive_in_loop", "recursive_loop.contract"),
+        ("later_loop_preserve", "later_loop_preserve.contract"),
+        ("loop_exit_snapshot", "count_from_to.contract"),
+        ("nested_loop_preserve", "nested_loop_preserve.contract"),
+    ] {
+        let path = root.join("mdtests").join(format!("{fixture}.md"));
+        let arguments = parse_arguments([
+            "--claim".to_string(),
+            claim.to_string(),
+            path.display().to_string(),
+        ])
+        .unwrap();
+        run_audit(arguments).unwrap_or_else(|error| panic!("{fixture}: {error}"));
+    }
+}

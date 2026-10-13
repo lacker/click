@@ -115,7 +115,7 @@ repairs that
 
 ## The ascent
 
-C0 lowers `while ((parent = rb_parent(node)) && node == parent->rb_right)` into
+Click lowers `while ((parent = rb_parent(node)) && node == parent->rb_right)` into
 a `while (1)` whose body starts with the assignment and an `if (!(..)) break;`.
 The guard is therefore ordinary body statements, and the proof stands between
 them: it unfolds the focused node, steps the masked load and the assignment,

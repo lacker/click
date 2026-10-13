@@ -1,5 +1,13 @@
 # Extend the C++ standard-library contract catalog
 
+Priority: P2.
+
+Soundness: incomplete. A call with no catalog contract is refused by name.
+A library whose layout does not match binds no model accessor
+(`model_accessors` in `src/languages/cpp/standard_library.rs`), so libc++
+fails closed instead of being misbound. Catalog contracts are trusted axioms,
+documented in `docs/concepts/trust.md`.
+
 P2, by user request. The axiomatic standard-library boundary is in place: a
 function declared in a system header is an opaque call checked against the
 contract Click supplies for it (see

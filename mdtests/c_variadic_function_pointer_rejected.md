@@ -17,5 +17,5 @@ int32 run(int32 (*callback)(int32 code), int32 value) {
 ```
 
 ```expect
-fail:c_variadic_function_pointer_rejected.c:1: variadic function-pointer signatures (`...`) are not supported in C0
+fail:c_variadic_function_pointer_rejected.c:1: variadic function-pointer signatures (`...`) are not supported by Click
 ```

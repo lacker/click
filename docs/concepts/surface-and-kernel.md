@@ -13,7 +13,7 @@ Click has three layers:
 2. **Surface Click**: user-written `.click` syntax such as `requires`,
    `ensures`, `invariant`, `old`, pure functions, predicates, quantifiers,
    and folds.
-3. **C fragments**: pieces of C0 syntax inside Surface Click, such as `p[k]`,
+3. **C fragments**: pieces of C syntax inside Surface Click, such as `p[k]`,
    `x + 1`, or `result == n`.
 
 Surface Click is convenience syntax. It may contain C fragments, but Surface

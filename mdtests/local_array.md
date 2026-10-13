@@ -1,6 +1,6 @@
 # local array verifies stack array storage
 
-This checks that C0 local arrays are modeled as stack memory objects. The array
+This checks that Click local arrays are modeled as stack memory objects. The array
 name decays to a pointer for indexing, while the array itself is not a scalar
 pointer variable.
 

@@ -1,6 +1,6 @@
 # C null pointer conversion
 
-The C0 integer constant `0` converts to the canonical null pointer in pointer
+The Click's C integer constant `0` converts to the canonical null pointer in pointer
 returns, initialization, assignment, and call arguments. Returning an already
 typed pointer follows the same independently certified path.
 

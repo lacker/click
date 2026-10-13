@@ -258,13 +258,63 @@ fn parser_deep_const_preserves_supported_pointer_qualifier_levels() {
 }
 
 #[test]
+fn plain_char_needs_a_c_target_and_takes_its_signedness() {
+    use crate::languages::c::syntax::PlainChar;
+    let source = "int is_negative(char c) { ensures result == 0; }";
+    let error = match parser::parse_with_layouts_and_aggregate_objects(
+        source,
+        parser::ProgramLayouts::default(),
+    ) {
+        Ok(_) => panic!("plain char without a C target must be refused"),
+        Err(error) => error,
+    };
+    assert!(
+        error.message().contains("no C target is selected"),
+        "{}",
+        error.message()
+    );
+    for (target, plain) in [
+        (
+            crate::languages::c::target::CTarget::X86_64LinuxKernel,
+            PlainChar::Unsigned,
+        ),
+        (
+            crate::languages::c::target::CTarget::X86_64LinuxUserspace,
+            PlainChar::Signed,
+        ),
+    ] {
+        let file = parser::parse_with_layouts_and_aggregate_objects(
+            source,
+            parser::ProgramLayouts {
+                plain_char: Some(target.plain_char()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            file.function_blocks()[0].signature().parameters()[0].c_type(),
+            C0Type::Char(plain)
+        );
+    }
+    // A character constant at 0x80 or above is the target's plain `char`
+    // value, and is refused where no target fixes it.
+    let high = "int f() { ensures result == '\\xc8'; }";
+    assert!(
+        parser::parse_with_layouts_and_aggregate_objects(high, parser::ProgramLayouts::default())
+            .is_err()
+    );
+}
+
+#[test]
 fn parser_plain_char_sidecars_preserve_source_compatibility() {
     use crate::surface::validation::click_types_compatible;
     let file = parser::parse_file_items(
         "char *identity(char *p, unsigned char *q, char bytes[], char **pp) { ensures result == p; }",
     ).expect("plain char sidecar types should parse");
     let signature = file.function_blocks()[0].signature();
-    assert_eq!(signature.return_type(), C0Type::CharPointer);
+    // A sidecar's plain `char` takes the default target's signedness.
+    let plain = crate::languages::c::target::CTarget::SUPPORTED.plain_char();
+    assert_eq!(signature.return_type(), C0Type::CharPointer(plain));
     assert_eq!(
         signature
             .parameters()
@@ -272,23 +322,23 @@ fn parser_plain_char_sidecars_preserve_source_compatibility() {
             .map(FunctionParameter::c_type)
             .collect::<Vec<_>>(),
         vec![
-            C0Type::CharPointer,
+            C0Type::CharPointer(plain),
             C0Type::UInt8Pointer,
-            C0Type::CharPointer,
-            C0Type::CharPointerPointer
+            C0Type::CharPointer(plain),
+            C0Type::CharPointerPointer(plain)
         ]
     );
     assert!(!click_types_compatible(
-        C0Type::CharPointer,
+        C0Type::CharPointer(plain),
         C0Type::UInt8Pointer
     ));
     assert!(!click_types_compatible(
-        C0Type::CharPointerPointer,
+        C0Type::CharPointerPointer(plain),
         C0Type::UInt8PointerPointer
     ));
     assert!(click_types_compatible(
-        C0Type::CharArray(2),
-        C0Type::CharPointer
+        C0Type::CharArray(plain, 2),
+        C0Type::CharPointer(plain)
     ));
 }
 
@@ -2401,8 +2451,7 @@ fn records_checked_surface_forms_for_lowered_propositions() {
     let kernel = crate::surface::proof::lower_fixed_state_proposition_through_kernel(
         &surface,
         &PureFactContext::new(),
-        &values,
-        &BTreeMap::new(),
+        ContractEnvironment::new(&values, &BTreeMap::new()),
         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         SpecDefinitions::new(&predicates, &functions),
     )
@@ -4663,6 +4712,32 @@ fn a_hidden_record_needs_its_child_declared_first() {
 }
 
 /// A Rust sidecar states a signature as Rust does. It declares the same
+/// Rust, like Click and unlike C, binds `^`, `&` and `|` tighter than a
+/// comparison, so a Rust sidecar needs no parentheses around a bitwise
+/// comparison operand; a C sidecar still does.
+#[test]
+fn a_rust_sidecar_compares_a_bitwise_operand_without_parentheses() {
+    let bare =
+        "verifying \"flip.rs\"; fn flip(b: u32) -> u32 { ensures result == b ^ 1u32; } by simp();";
+    let parenthesized = "verifying \"flip.rs\"; fn flip(b: u32) -> u32 { ensures result == (b ^ 1u32); } by simp();";
+    assert_eq!(
+        parser::parse(bare)
+            .expect("a Rust sidecar groups `b ^ 1u32` as Rust does")
+            .function_blocks(),
+        parser::parse(parenthesized)
+            .expect("the parenthesized spelling parses")
+            .function_blocks(),
+    );
+    let c =
+        "verifying \"flip.c\"; uint32 flip(uint32 b) { ensures result == b ^ 1u32; } by simp();";
+    let error = parser::parse(c).expect_err("a C sidecar must parenthesize the operand");
+    assert!(
+        error.message().contains("parenthesize a `^` operand"),
+        "{}",
+        error.message()
+    );
+}
+
 /// contract representation as a C signature, and `expr as T` is the scalar cast.
 #[test]
 fn a_rust_sidecar_states_its_signature_in_rust_syntax() {

@@ -1,4 +1,4 @@
-# A wide retyping cast is outside the supported C0 memory model
+# A wide retyping cast is outside the supported C memory model
 
 ```c filename=wide_store_escapes_footprint_rejected.c
 int32 wide_store(uint8* b) {

@@ -22,6 +22,6 @@ replacement, and freeing the old allocation in the verified
 grows by exactly one slot (`new_cap = old_cap + 1`) rather than claiming a
 general allocation or geometric-growth policy.
 
-The current C0 boundary remains narrow: zero-sized allocation, arbitrary byte
+The current C boundary remains narrow: zero-sized allocation, arbitrary byte
 layouts, `size_t`, `void *` conversions, custom allocators, `calloc`, and
 `realloc` are not supported.

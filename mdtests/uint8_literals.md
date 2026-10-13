@@ -1,6 +1,6 @@
 # uint8 character literals
 
-This checks that C0 and Click contracts can use ASCII character literals as
+This checks that C code and Click contracts can use ASCII character literals as
 `uint8` values.
 
 ```c filename=uint8_literals.c

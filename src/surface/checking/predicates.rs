@@ -269,8 +269,7 @@ pub(in crate::surface) fn instantiate_predicate_definition(
     crate::surface::proof::lower_fixed_state_proposition_through_kernel(
         definition.body(),
         assumptions,
-        &values,
-        &array_refs,
+        ContractEnvironment::new(&values, &array_refs),
         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         spec_definitions,
     )

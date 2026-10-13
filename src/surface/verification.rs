@@ -622,8 +622,12 @@ fn selected_theorem_definitions(
         .collect()
 }
 
+/// Parses a sidecar under the C target it selects, or the default target.
 pub fn parse(source: &str) -> Result<ClickFile, ClickError> {
-    parser::parse(source)
+    parser::parse_for_target(
+        source,
+        crate::surface::expansion::selected_c_target(source)?,
+    )
 }
 
 pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
@@ -8056,8 +8060,8 @@ int32 answer() {
     /// own target.
     #[test]
     fn a_target_directive_changes_the_verified_artifact_identity() {
-        const USERSPACE_CLICK: &str = r#"
-target "x86_64-linux-userspace";
+        const KERNEL_CLICK: &str = r#"
+target "x86_64-linux-kernel";
 verifying "answer.c";
 int32 answer() {
     ensures result == 1;
@@ -8067,9 +8071,8 @@ int32 answer() {
 }
 "#;
         let sources = [("answer.c", C_SOURCE)];
-        let kernel = verify_c0_sources(CLICK, &sources).expect("default target verification");
-        let userspace =
-            verify_c0_sources(USERSPACE_CLICK, &sources).expect("user-space target verification");
+        let userspace = verify_c0_sources(CLICK, &sources).expect("default target verification");
+        let kernel = verify_c0_sources(KERNEL_CLICK, &sources).expect("kernel target verification");
         assert_eq!(kernel.len(), userspace.len());
         assert_ne!(kernel[0].artifact_identity, userspace[0].artifact_identity);
         assert_eq!(kernel[0].target(), CTarget::X86_64LinuxKernel);

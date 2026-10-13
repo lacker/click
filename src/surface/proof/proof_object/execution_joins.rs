@@ -3108,14 +3108,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(parent_node.clone()),
-                step: Some(Arc::new(parts.step)),
-                focused_branch: parent_goal,
-                depth: parent_node.depth + 1,
-                split_branches: Vec::new(),
-            }),
+            node: ProofNode::step_child(&parent_node, parent_goal, Arc::new(parts.step)),
         };
         if crate::surface::proof_trace::enabled_for(self.claim_label()) {
             let (trace_added_facts, more_facts) =
@@ -3263,6 +3256,15 @@ impl<'a> Proof<'a> {
         let mut enclosing = enclosing;
         loop {
             while proof.is_at_region_boundary() {
+                // A break/continue has completed the bounded iteration's
+                // evidence. Decline this function-exit strategy rather than
+                // resuming the enclosing branch's tail on that terminal path.
+                if proof
+                    .execution()
+                    .is_some_and(|execution| execution.core.evidence_completed)
+                {
+                    return Ok(None);
+                }
                 let Some(record) = enclosing.pop() else {
                     return Ok(None);
                 };
@@ -4096,14 +4098,11 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: arm_ids.iter().flatten().copied().collect(),
-            }),
+            node: ProofNode::marker(
+                &self.node,
+                self.focused_branch_id(),
+                arm_ids.iter().flatten().copied().collect(),
+            ),
         };
         successor.record_trace_c_branch(&successor.node, arm_ids, &path_facts);
         let record = ExecutionSplit {
@@ -4215,14 +4214,11 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: arm_ids.iter().flatten().copied().collect(),
-            }),
+            node: ProofNode::marker(
+                &self.node,
+                self.focused_branch_id(),
+                arm_ids.iter().flatten().copied().collect(),
+            ),
         };
         let checked_split = CheckedCallOutcomeSplit::from_certified_transitions(
             prepared.current_state.clone(),

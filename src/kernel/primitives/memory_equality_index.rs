@@ -1041,10 +1041,15 @@ impl MemoryFactCandidates {
     ) -> Option<CResourceFact> {
         let range = fact.memory_range()?;
         let available = self.index.resources.facts.get(&entry)?.memory_range()?;
-        let base = self
-            .index
-            .graph
-            .pointer_at_base(range.base(), available.base())?;
+        let base = if available.wide_bounds().is_some() {
+            self.index
+                .graph
+                .pointer_at_base_with_wide_index(range.base(), available.base())?
+        } else {
+            self.index
+                .graph
+                .pointer_at_base(range.base(), available.base())?
+        };
         let mut range = range.clone();
         range.base = base;
         Some(match fact {

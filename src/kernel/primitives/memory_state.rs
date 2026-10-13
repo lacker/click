@@ -1384,16 +1384,6 @@ impl CLocalEnvironment {
         self
     }
 
-    pub fn with_typed(mut self, name: impl Into<String>, value: CValue, c_type: CType) -> Self {
-        self.set_typed(name, value, c_type);
-        self
-    }
-
-    pub fn with_int32_array(mut self, name: impl Into<String>, length: u32) -> Self {
-        self.set_int32_array(name, length);
-        self
-    }
-
     pub fn set(&mut self, name: impl Into<String>, value: CValue) {
         let c_type = value.c_type();
         self.set_typed(name, value, c_type);
@@ -1556,53 +1546,6 @@ impl CLocalEnvironment {
                 constant,
                 pointee_constant,
             },
-        );
-    }
-
-    pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::Int32, length);
-    }
-
-    pub fn set_uint8_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::UInt8, length);
-    }
-
-    pub fn set_int8_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::Int8, length);
-    }
-
-    pub fn set_int16_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::Int16, length);
-    }
-
-    pub fn set_uint16_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::UInt16, length);
-    }
-
-    pub fn set_uint32_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::UInt32, length);
-    }
-
-    pub fn set_int64_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::Int64, length);
-    }
-
-    pub fn set_uint64_array(&mut self, name: impl Into<String>, length: u32) {
-        self.set_array_object(name, CType::UInt64, length);
-    }
-
-    pub(in crate::kernel) fn set_array_object(
-        &mut self,
-        name: impl Into<String>,
-        element_type: CType,
-        length: u32,
-    ) {
-        let name = name.into();
-        self.set_array_object_at(
-            name.clone(),
-            element_type,
-            length,
-            CMemory::local_pointer(&name),
         );
     }
 
@@ -7948,6 +7891,15 @@ impl CMemory {
             let cells = std::sync::Arc::make_mut(&mut self.cells);
             dropped_run_slots = match scope {
                 ForgetScope::Everywhere => cells.retain_by(&mut keep_cell, run_rule),
+                ForgetScope::Ordered {
+                    candidates,
+                    selected,
+                } => cells.retain_selected_concrete_by(
+                    selected,
+                    candidates,
+                    &mut keep_cell,
+                    run_rule,
+                ),
                 ForgetScope::Candidates {
                     candidates,
                     cells_kept,
@@ -7980,7 +7932,8 @@ impl CMemory {
                 // A union view is never skipped by `cells_kept`: those ranges
                 // are what the caller showed its *cell* rule keeps, and a
                 // view is asked by its own width.
-                ForgetScope::Candidates { candidates, .. } => {
+                ForgetScope::Candidates { candidates, .. }
+                | ForgetScope::Ordered { candidates, .. } => {
                     candidates.retain_map(union_cells, &mut keep_view)
                 }
             }
@@ -8358,11 +8311,24 @@ impl CMemory {
                 );
             });
         }
-        let forgot_values = memory.forget_cached_values(
-            ForgetScope::Candidates {
+        let ordered = memory.cells.ordered_store_candidates(
+            &normalized_pointer,
+            bytes,
+            &candidates,
+            assumptions,
+        );
+        let scope = match ordered.as_deref() {
+            Some(selected) => ForgetScope::Ordered {
+                candidates: &candidates,
+                selected,
+            },
+            None => ForgetScope::Candidates {
                 candidates: &candidates,
                 cells_kept: &gap_kept,
             },
+        };
+        let forgot_values = memory.forget_cached_values(
+            scope,
             |pointer, value| match value {
                 CachedValue::Cell(value) => cell_fate(pointer, value),
                 CachedValue::UnionView(c_type, _) => view_fate(pointer, c_type),
@@ -8641,10 +8607,12 @@ impl CMemory {
         ))
     }
 
+    /// A signed byte read: the two's-complement conversion of the byte's
+    /// one unsigned read ([`Bitvector32Term::memory_read`]).
     pub(in crate::kernel) fn symbolic_int8_load(&self, pointer: &Pointer) -> CValue {
-        int8(Bitvector32Term::MemoryLoad(
+        int8(Bitvector32Term::memory_read(
             crate::kernel::intern_c_memory(self.clone()),
-            Box::new(pointer.clone()),
+            pointer.clone(),
             LoadKind::Int8,
         ))
     }
@@ -10317,11 +10285,6 @@ impl CState {
         self
     }
 
-    pub fn with_int32_array_local(mut self, name: impl Into<String>, length: u32) -> Self {
-        self.locals.set_int32_array(name, length);
-        self
-    }
-
     pub fn with_memory(mut self, memory: CMemory) -> Self {
         self.set_memory(memory);
         self
@@ -10790,6 +10753,7 @@ pub(crate) fn restore_block_registries(state: &BlockRegistriesState) {
     BLOCK_ALIGNMENT_REGISTRY.with(|registry| *registry.borrow_mut() = state.alignment.clone());
     NEVER_ADDRESS_TAKEN_LOCALS
         .with(|registry| *registry.borrow_mut() = state.never_address_taken.clone());
+    advance_never_address_taken_generation();
 }
 
 pub(crate) fn clear_block_alignment_registry() {
@@ -10797,6 +10761,7 @@ pub(crate) fn clear_block_alignment_registry() {
 }
 
 thread_local! {
+    static NEVER_ADDRESS_TAKEN_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The names of automatic objects — locals and parameters — whose address
     /// no function in this session's C sources ever takes, and which are
     /// declared everywhere with a scalar or pointer type.
@@ -10820,6 +10785,23 @@ thread_local! {
         const { std::cell::RefCell::new(BTreeSet::new()) };
 }
 
+/// Globally unique revisions also distinguish registries on different threads.
+fn advance_never_address_taken_generation() {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let revision = NEXT
+        .fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |value| value.checked_add(1),
+        )
+        .expect("addressability revision space exhausted");
+    NEVER_ADDRESS_TAKEN_GENERATION.with(|generation| generation.set(revision));
+}
+
+pub(super) fn never_address_taken_generation() -> u64 {
+    NEVER_ADDRESS_TAKEN_GENERATION.with(std::cell::Cell::get)
+}
+
 /// Records the program-wide never-address-taken names for this session. The
 /// surface computes them from every function body it parsed; see
 /// `never_address_taken_local_names`.
@@ -10830,6 +10812,7 @@ pub(crate) fn never_address_taken_locals_key() -> std::sync::Arc<()> {
 pub(crate) fn set_never_address_taken_locals(names: BTreeSet<String>) {
     NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
     NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| *registry.borrow_mut() = names);
+    advance_never_address_taken_generation();
 }
 
 /// Withdraws names a later source bundle shows to be address-taken, for a
@@ -10840,16 +10823,17 @@ pub(crate) fn set_never_address_taken_locals(names: BTreeSet<String>) {
 /// in the registry. Today no caller joins a session with different sources,
 /// and this keeps that from becoming a silent staleness bug if one appears.
 pub(crate) fn withdraw_never_address_taken_locals(taken: &BTreeSet<String>) -> bool {
-    NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| {
+    let changed = NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| {
         let mut registry = registry.borrow_mut();
         let before = registry.len();
         registry.retain(|name| !taken.contains(name));
-        let changed = registry.len() != before;
-        if changed {
-            NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
-        }
-        changed
-    })
+        registry.len() != before
+    });
+    if changed {
+        NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
+        advance_never_address_taken_generation();
+    }
+    changed
 }
 
 /// The automatic object a `local:` block holds, as the program names it, or
@@ -10904,6 +10888,7 @@ pub(crate) fn block_is_never_address_taken_local(block: &PointerBlock) -> bool {
 pub(crate) fn clear_never_address_taken_locals() {
     NEVER_ADDRESS_TAKEN_LOCALS_KEY.with(|key| *key.borrow_mut() = std::sync::Arc::new(()));
     NEVER_ADDRESS_TAKEN_LOCALS.with(|registry| registry.borrow_mut().clear());
+    advance_never_address_taken_generation();
 }
 
 #[cfg(test)]
@@ -11219,6 +11204,10 @@ pub(super) enum CachedValueFate {
 /// is kept unasked.
 #[derive(Clone, Copy)]
 pub(super) enum ForgetScope<'a> {
+    Ordered {
+        candidates: &'a AliasCandidates,
+        selected: &'a [Pointer],
+    },
     /// Every cached value, for a transition that may have written anywhere.
     Everywhere,
     /// The values in `candidates`' blocks, except the cells inside the key

@@ -760,8 +760,7 @@ fn both_surface_conjunction_is_positional_even_for_duplicate_or_reversed_childre
         lower_pure_theorem_proposition(
             "positional both presentation",
             surface,
-            &context.values,
-            &context.array_refs,
+            ContractEnvironment::new(&context.values, &context.array_refs),
             &context.memory,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
@@ -988,8 +987,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     let kernel_disjunction = lower_pure_theorem_proposition(
         "focused cases",
         &disjunction,
-        &theorem_context.values,
-        &theorem_context.array_refs,
+        ContractEnvironment::new(&theorem_context.values, &theorem_context.array_refs),
         &theorem_context.memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -1338,8 +1336,7 @@ fn have_scope_publishes_only_a_completed_checked_body() {
     let kernel = lower_pure_theorem_proposition(
         "have",
         &proposition,
-        &theorem_context.values,
-        &theorem_context.array_refs,
+        ContractEnvironment::new(&theorem_context.values, &theorem_context.array_refs),
         &theorem_context.memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -1431,8 +1428,7 @@ fn pure_have_presentation_root(surface: ClickProposition) -> Proof<'static> {
     let kernel = lower_pure_theorem_proposition(
         "reported have",
         &surface,
-        &theorem_context.values,
-        &theorem_context.array_refs,
+        ContractEnvironment::new(&theorem_context.values, &theorem_context.array_refs),
         &theorem_context.memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -1765,8 +1761,7 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
     let kernel = lower_pure_theorem_proposition(
         "smart have scaling",
         &proposition,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -2274,8 +2269,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
         lower_pure_theorem_proposition(
             "persistent proposition unfold",
             surface,
-            &base_context.values,
-            &base_context.array_refs,
+            ContractEnvironment::new(&base_context.values, &base_context.array_refs),
             &base_context.memory,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
@@ -2887,8 +2881,7 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
         let goal = lower_pure_theorem_proposition(
             "branch scaling",
             &surface_goal,
-            &theorem_context.values,
-            &theorem_context.array_refs,
+            ContractEnvironment::new(&theorem_context.values, &theorem_context.array_refs),
             &theorem_context.memory,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
@@ -3417,8 +3410,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
     let kernel_equality = lower_pure_theorem_proposition(
         "persistent rewrite",
         &equality,
-        &base_context.values,
-        &base_context.array_refs,
+        ContractEnvironment::new(&base_context.values, &base_context.array_refs),
         &base_context.memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -3564,8 +3556,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
         lower_pure_theorem_proposition(
             "persistent structural rewrite",
             surface,
-            &base_context.values,
-            &base_context.array_refs,
+            ContractEnvironment::new(&base_context.values, &base_context.array_refs),
             &base_context.memory,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
@@ -3759,8 +3750,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
     let target = lower_pure_theorem_proposition(
         "indexed implication extract",
         &target_surface,
-        &theorem_context.values,
-        &theorem_context.array_refs,
+        ContractEnvironment::new(&theorem_context.values, &theorem_context.array_refs),
         &theorem_context.memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -5829,8 +5819,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
         lower_pure_theorem_proposition(
             "persistent signed-order simp",
             surface,
-            &BTreeMap::new(),
-            &BTreeMap::new(),
+            ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
             &memory,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
@@ -5968,8 +5957,7 @@ fn pure_equality_refinement_simp_applies_one_rewrite_with_logarithmic_local_upda
         lower_pure_theorem_proposition(
             "persistent equality-refinement simp",
             surface,
-            &BTreeMap::new(),
-            &BTreeMap::new(),
+            ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
             &memory,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
@@ -7567,8 +7555,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
                 lower_pure_theorem_proposition(
                     "persistent restricted <=/not-< equality simp",
                     surface,
-                    &BTreeMap::new(),
-                    &BTreeMap::new(),
+                    ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
                     state.memory(),
                     SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 )
@@ -8642,8 +8629,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
     let kernel_premise = lower_pure_theorem_proposition(
         "persistent pure theorem search",
         &premise,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8651,8 +8637,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
     let kernel_conclusion = lower_pure_theorem_proposition(
         "persistent pure theorem search",
         &conclusion,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8776,8 +8761,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
     let kernel_premise = lower_pure_theorem_proposition(
         "checked conjunct theorem application",
         &premise,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8785,8 +8769,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
     let kernel_selected = lower_pure_theorem_proposition(
         "checked conjunct theorem application",
         &selected,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8794,8 +8777,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
     let kernel_disjunction = lower_pure_theorem_proposition(
         "checked conjunct theorem application",
         &disjunction,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8803,8 +8785,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
     let kernel_wrong_conjunction = lower_pure_theorem_proposition(
         "checked conjunct theorem application",
         &wrong_conjunction,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8812,8 +8793,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
     let kernel_implication = lower_pure_theorem_proposition(
         "checked conjunct theorem application",
         &implication,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -8843,8 +8823,7 @@ fn pure_apply_using_selects_a_checked_conjunct_without_accepting_disjunctions() 
     let kernel_conclusion = lower_pure_theorem_proposition(
         "checked conjunct theorem application",
         &conclusion,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        ContractEnvironment::new(&BTreeMap::new(), &BTreeMap::new()),
         &memory,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
@@ -13858,8 +13837,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
         let goal = lower_pure_theorem_proposition(
             "retained",
             &surface,
-            &context.values,
-            &context.array_refs,
+            ContractEnvironment::new(&context.values, &context.array_refs),
             &context.memory,
             SpecDefinitions::new(&predicates, &functions),
         )

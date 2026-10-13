@@ -70,8 +70,7 @@ fn statement_outcome_reconstruction_preserves_holder_identity() {
         &state,
         &c_assign("x", c_int32_literal(1)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("assignment should execute");

@@ -1,7 +1,7 @@
 # C scalar compound assignments
 
 The remaining arithmetic, shift, and bitwise compound assignments lower to
-the corresponding existing C0 expressions. They remain statement-only updates
+the corresponding existing expressions. They remain statement-only updates
 on plain scalar locals.
 
 ```c filename=scalar_compound_assignments.c

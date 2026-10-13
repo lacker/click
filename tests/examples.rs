@@ -17,7 +17,7 @@ use click::instrumentation::{self, ArtifactReuseRejection};
 use click::languages::refresh_compiler_import;
 use click::surface::{
     c0_tactic_source_position, project_tactic_source_position, verify_c0_prepared_project,
-    verify_c0_project, verify_c0_sources, verify_program_prepared_project,
+    verify_c0_project, verify_c0_sources, verify_c0_sources_at, verify_program_prepared_project,
 };
 
 #[path = "support/limits.rs"]
@@ -528,6 +528,47 @@ fn erase_sidecar_refuses_mutation(sidecar: &str, before: &str, after: &str) {
 
 fn erase_source_refuses_mutation(sidecar: &str, file: &str, before: &str, after: &str) {
     erase_source_refuses_replacement(sidecar, file, before, after, 1);
+}
+
+/// `auto` at this `arena` site once deadlocked: the equality graph held its
+/// lock while canonicalizing a cell read, and canonicalization consulted the
+/// same graph's read generation. It must now answer promptly. The original
+/// proof stays in the example; only this test proves the fact by `auto`.
+#[test]
+#[ignore = "nightly: about 16 s in a debug build, most of it loading the whole arena sidecar"]
+fn auto_on_an_arena_cell_read_answers_instead_of_deadlocking() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("examples/arena/arena_cells.click");
+    let source = fs::read_to_string(&path).expect("the arena sidecar exists");
+    let written = "have first->arena->occupied[k] == at(f1, first->arena->occupied[k]) by {";
+    let start = source
+        .find(written)
+        .expect("the arena proof states the cell read");
+    let block_end = start
+        + source[start..]
+            .find("\n                }\n")
+            .expect("the written proof closes")
+        + "\n                }".len();
+    let edited = format!(
+        "{}have first->arena->occupied[k] == at(f1, first->arena->occupied[k]) by auto;{}",
+        &source[..start],
+        &source[block_end..]
+    );
+    let line = edited[..start].matches('\n').count() + 1;
+    let column = start - edited[..start].rfind('\n').map_or(0, |newline| newline + 1) + 1;
+    let c_sources = read_verifying_sources(&path, &edited).expect("the arena C bundle loads");
+    let started = std::time::Instant::now();
+    let _ = limits::spawn(
+        "arena auto verifier",
+        "click-arena-auto".to_string(),
+        move || verify_c0_sources_at(&edited, &source_refs(&c_sources), line, column),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(120),
+        "`auto` at the arena cell read took {:?}",
+        started.elapsed()
+    );
 }
 
 fn erase_source_replacement_error(
@@ -2359,11 +2400,22 @@ fn rbtree_augmented_wrappers_reject_missing_or_wrong_calls() {
     }
 }
 
-/// Reruns a documented `click verify` session: each `c` or `click` block
-/// with a `filename=` is written to a scratch directory in page order, and
-/// each `console` block starting with `$ click verify FILE` must show exactly
-/// what that command prints there, stdout then stderr.
+/// Reruns a documented Click session: each fenced block with a `filename=`
+/// (C, Click, JSON, a Makefile, ...) is written to a scratch directory in page
+/// order, creating its parent directories, and each `console` block starting
+/// with `$ click verify ARGS` or `$ click import lock ARGS` must show exactly
+/// what that command prints there, stdout then stderr. Returns the last
+/// version of each file.
 fn run_documented_session(page: &str) -> BTreeMap<String, String> {
+    run_documented_session_versions(page)
+        .into_iter()
+        .map(|(name, mut versions)| (name, versions.pop().unwrap()))
+        .collect()
+}
+
+/// Like [`run_documented_session`], returning every version of each file the
+/// page writes, in page order.
+fn run_documented_session_versions(page: &str) -> BTreeMap<String, Vec<String>> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join(page)).unwrap();
     let directory = std::env::temp_dir().join(format!(
@@ -2373,7 +2425,7 @@ fn run_documented_session(page: &str) -> BTreeMap<String, String> {
     ));
     let _ = fs::remove_dir_all(&directory);
     fs::create_dir_all(&directory).unwrap();
-    let mut files = BTreeMap::new();
+    let mut files: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut sessions = 0;
     let mut lines = source.lines();
     while let Some(line) = lines.next() {
@@ -2385,19 +2437,23 @@ fn run_documented_session(page: &str) -> BTreeMap<String, String> {
             .take_while(|line| *line != "```")
             .map(|line| format!("{line}\n"))
             .collect::<String>();
-        if let Some(name) = info
-            .strip_prefix("c filename=")
-            .or_else(|| info.strip_prefix("click filename="))
-        {
-            fs::write(directory.join(name), &body).unwrap();
-            files.insert(name.to_string(), body);
+        if let Some((_, name)) = info.split_once(" filename=") {
+            assert!(
+                !name.starts_with('/') && !name.split('/').any(|part| part == ".."),
+                "{page}: documented file `{name}` must stay in the session directory"
+            );
+            let path = directory.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, &body).unwrap();
+            files.entry(name.to_string()).or_default().push(body);
         } else if info == "console" {
-            let (command, expected) = body.split_once('\n').unwrap();
-            let sidecar = command
-                .strip_prefix("$ click verify ")
+            let (command, expected) = body.split_once('\n').unwrap_or((&body, ""));
+            let arguments = command
+                .strip_prefix("$ click ")
+                .filter(|rest| rest.starts_with("verify ") || rest.starts_with("import lock "))
                 .unwrap_or_else(|| panic!("{page}: unexpected console command `{command}`"));
             let output = Command::new(env!("CARGO_BIN_EXE_click"))
-                .args(["verify", sidecar])
+                .args(arguments.split_whitespace())
                 .current_dir(&directory)
                 .output()
                 .unwrap();
@@ -2430,6 +2486,33 @@ fn readme_quick_start_is_the_clamp_example() {
             files[name],
             fs::read_to_string(example.join(name)).unwrap(),
             "README `{name}` differs from examples/clamp"
+        );
+    }
+}
+
+/// The own-project guide's commands print what it shows, and the files it
+/// builds up are those of `examples/label-build-flags`, which the examples
+/// gate verifies.
+#[test]
+fn own_project_guide_sessions_match_the_label_example() {
+    let files = run_documented_session_versions("docs/concepts/own-project.md");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/label-build-flags");
+    for name in [
+        "Makefile",
+        "include/label_config.h",
+        "label.h",
+        "label_fit.c",
+        "label_copy.c",
+        "label_fit.click",
+        "label_fit.click.import.json",
+        "label_copy.click",
+    ] {
+        let checked_in = fs::read_to_string(example.join(name)).unwrap();
+        assert!(
+            files
+                .get(name)
+                .is_some_and(|versions| versions.contains(&checked_in)),
+            "the guide never shows examples/label-build-flags/{name} as checked in"
         );
     }
 }

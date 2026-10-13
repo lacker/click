@@ -4886,14 +4886,61 @@ fn c0_tactic_source_position_file(
     claim_label: &str,
     source_index: usize,
 ) -> Result<SourcePosition, ClickError> {
-    c0_tactic_source_positions_file(file, click_source, claim_label)?
+    let tokens = scan_source_tokens(click_source)?;
+    let offsets = c0_tactic_source_offsets_with_tokens(file, claim_label, &tokens)?;
+    offsets
         .get(source_index)
-        .cloned()
+        .map(|offset| positions_at_offsets(click_source, [*offset])[0].clone())
         .ok_or_else(|| {
             ClickError::new(format!(
                 "`{claim_label}` has no source tactic occurrence {source_index}"
             ))
         })
+}
+
+#[cfg(test)]
+mod selected_source_position_tests {
+    use super::*;
+
+    #[test]
+    fn one_position_does_not_convert_unrequested_tactic_positions() {
+        let mut overhead = Vec::new();
+        for size in [8, 32, 128] {
+            let source = format!(
+                "# Unicode: λ\ntheorem locations() {{ ensures 0 == 0 by {{\n simp();\n // {}\n have 0 == 0 by {{ simp(); }}\n simp();\n}} }}\n",
+                "unrelated λ ".repeat(size),
+            );
+            let file = parse_source_with_c_layouts(&source, &[]).unwrap();
+            let (_, scan_work) = crate::instrumentation::measure_deterministic_work(|| {
+                scan_source_tokens(&source).unwrap()
+            });
+            let (first, first_work) = crate::instrumentation::measure_deterministic_work(|| {
+                c0_tactic_source_position_file(&file, &source, "locations.ensures_0", 0).unwrap()
+            });
+            assert_eq!(first, SourcePosition::new(3, 2));
+            overhead.push(first_work - scan_work);
+            let positions =
+                c0_tactic_source_positions_file(&file, &source, "locations.ensures_0").unwrap();
+            assert_eq!(positions.len(), 3);
+            for (index, position) in positions.iter().enumerate() {
+                assert_eq!(
+                    &c0_tactic_source_position_file(&file, &source, "locations.ensures_0", index,)
+                        .unwrap(),
+                    position,
+                );
+            }
+            assert!(
+                c0_tactic_source_position_file(&file, &source, "locations.ensures_0", 3)
+                    .unwrap_err()
+                    .message()
+                    .contains("no source tactic occurrence 3")
+            );
+        }
+        assert!(
+            overhead.iter().all(|work| *work == overhead[0]),
+            "converting one early location must not walk later source: {overhead:?}"
+        );
+    }
 }
 
 /// Resolve many byte offsets with one source walk, preserving request order.
@@ -4954,7 +5001,8 @@ fn c0_tactic_source_positions_file(
     claim_label: &str,
 ) -> Result<Vec<SourcePosition>, ClickError> {
     let tokens = scan_source_tokens(click_source)?;
-    c0_tactic_source_positions_with_tokens(file, click_source, claim_label, &tokens)
+    let offsets = c0_tactic_source_offsets_with_tokens(file, claim_label, &tokens)?;
+    Ok(positions_at_offsets(click_source, offsets))
 }
 
 fn c0_tactic_source_positions_with_tokens(
@@ -4963,6 +5011,15 @@ fn c0_tactic_source_positions_with_tokens(
     claim_label: &str,
     tokens: &[SourceToken],
 ) -> Result<Vec<SourcePosition>, ClickError> {
+    let offsets = c0_tactic_source_offsets_with_tokens(file, claim_label, tokens)?;
+    Ok(positions_at_offsets(click_source, offsets))
+}
+
+fn c0_tactic_source_offsets_with_tokens(
+    file: &ClickFile,
+    claim_label: &str,
+    tokens: &[SourceToken],
+) -> Result<Vec<usize>, ClickError> {
     let claim_label = &*resolve_rust_claim_label(file, claim_label);
     for theorem in file.theorem_definitions() {
         if !file.theorem_is_selected(theorem.name()) {
@@ -4978,8 +5035,7 @@ fn c0_tactic_source_positions_with_tokens(
             }
             let edit =
                 find_ensure_proof_edit(tokens, source.body_open, source.body_close, ensure_index)?;
-            return proof_source_positions(
-                click_source,
+            return proof_source_offsets(
                 tokens,
                 match &edit {
                     ProofSourceEdit::Explicit(span) => Some(span),
@@ -5000,8 +5056,7 @@ fn c0_tactic_source_positions_with_tokens(
             continue;
         }
         let function = find_tactic(tokens, tactic.name())?;
-        return proof_source_positions(
-            click_source,
+        return proof_source_offsets(
             tokens,
             Some(&find_grouped_proof_span(tokens, &function)?),
             tactic.function_block().grouped_proof(),
@@ -5046,8 +5101,7 @@ fn c0_tactic_source_positions_with_tokens(
                 find_claim_proof_span(tokens, &function, function_block, claim).ok()
             }
         };
-        return proof_source_positions(
-            click_source,
+        return proof_source_offsets(
             tokens,
             proof_span.as_ref(),
             Some(proof),
@@ -5060,14 +5114,13 @@ fn c0_tactic_source_positions_with_tokens(
     )))
 }
 
-fn proof_source_positions(
-    click_source: &str,
+fn proof_source_offsets(
     tokens: &[SourceToken],
     proof_span: Option<&Range<usize>>,
     proof: Option<&SourceProof>,
     fallback: usize,
     claim_label: &str,
-) -> Result<Vec<SourcePosition>, ClickError> {
+) -> Result<Vec<usize>, ClickError> {
     if let Some(tactics) = proof.and_then(SourceProof::tactics) {
         let proof_span = proof_span.ok_or_else(|| {
             ClickError::new(format!(
@@ -5075,10 +5128,7 @@ fn proof_source_positions(
             ))
         })?;
         let spans = collect_source_tactic_spans(tokens, proof_span, tactics)?;
-        return Ok(positions_at_offsets(
-            click_source,
-            spans.iter().map(|span| span.start),
-        ));
+        return Ok(spans.iter().map(|span| span.start).collect());
     }
     if let Some(proof_span) = proof_span {
         let by = tokens
@@ -5087,10 +5137,10 @@ fn proof_source_positions(
             .filter(|index| tokens[*index].text == "by")
             .ok_or_else(|| ClickError::new("could not locate source `by` clause"))?;
         if let Some(tactic) = tokens.get(by + 1) {
-            return Ok(vec![position_at_offset(click_source, tactic.span.start)]);
+            return Ok(vec![tactic.span.start]);
         }
     }
-    Ok(vec![position_at_offset(click_source, fallback)])
+    Ok(vec![fallback])
 }
 
 fn find_claim_clause_offset(

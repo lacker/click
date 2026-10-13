@@ -1,0 +1,22 @@
+{
+  "schema": 4,
+  "language": "rust",
+  "target": "x86_64-unknown-linux-gnu",
+  "source": "src/lib.rs",
+  "exporter": "../../../target/charon/debug/charon",
+  "artifact": "restoration.ullbc",
+  "crate": {
+    "name": "adler2",
+    "edition": "2021",
+    "features": [
+      "std"
+    ],
+    "roots": [
+      "adler2::Adler32::from_checksum"
+    ],
+    "files": [
+      "src/lib.rs",
+      "src/algo.rs"
+    ]
+  }
+}

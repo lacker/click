@@ -320,8 +320,10 @@ large composite resources belongs behind an explicit bounded tactic or
 future summary mechanism, not in default `auto` behavior.
 
 `ResourceContext::observable_facts(...)` implements the pure-fact side of this
-interface. It validates the concrete resource state, asks each family for its
-observations, and adds separation between owned facts from different families.
+interface. It validates the concrete resource state and exposes a compact
+composition for ownership-derived separation queries. Its persistent projection
+omits never-address-taken private owners and their support descendants; resource
+mutations advance that projection without rebuilding the unrelated frame.
 Composite-resource `fact` clauses join the same explicit observation path.
 Their lowering lives in the Click proof layer because it depends on resource
 definitions, substitution, and memory materialization. Merely transporting a
@@ -444,7 +446,7 @@ The code maps onto this model as follows:
   normalization, and then applies family normalization rules.
 - `ResourceFamilyAlgebra` is the internal family contract. It supplies
   same-family validity, entailment, consumption and residual ownership,
-  pair normalization, core, and observable facts.
+  pair normalization, and the owner observation core.
 - `MemoryResourceAlgebra` implements range coverage, splitting, joining,
   exclusive writes, and the viewed descriptions a lend records.
 - `src/kernel/loans.rs` is the loan ledger. It holds the scopes, escrows,
@@ -454,9 +456,9 @@ The code maps onto this model as follows:
 - `CompositeResourceAlgebra` implements the folded fact's exact-match algebra.
   Source declarations add separate definition laws connecting that folded fact
   to its body.
-- `ResourceContext::observable_facts` combines family observations with the
-  generic theorem that distinct owned facts in a valid composition are
-  separate.
+- `ResourceContext::observable_facts` exposes a retained composition whose
+  owned members support separation queries. It does not eagerly emit pairwise
+  family facts.
 - Raw `unchecked_with_fact(s)` construction is limited to tests and
   assumption-free materialization paths that produce provisional states.
 

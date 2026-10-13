@@ -1,5 +1,11 @@
 # Add modules and imports for Click specifications
 
+Priority: P2.
+
+Soundness: not soundness. The remaining work is features and tooling.
+`--changed-since` uses a conservative rebuild for entries with imports, so a
+changed import cannot leave a stale verdict marked current.
+
 P2: the former P1/MVR import slice is complete. The rbtree insert fixture now
 uses `examples/rbtree-model` as its shared source of truth, and imports no
 longer recursively run library proofs. The remaining work—imported named

@@ -25,6 +25,7 @@ int32 second_byte(void) {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "c_numeric_character_escapes.c";
 
 int32 soh() {

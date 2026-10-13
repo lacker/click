@@ -304,18 +304,19 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
     let bound_array_memories =
         theorem_application_bound_array_memories(&theorem, application, &array_refs);
     let lower = |proposition: &ClickProposition| {
-        lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
+        lower_fixed_state_proposition_through_kernel_with(
             proposition,
             lowering_assumptions,
-            &values,
-            &array_refs,
-            &algebraic_values,
-            &integer_values,
-            &bound_array_memories,
+            ContractEnvironment::new(&values, &array_refs),
             FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
             spec_definitions,
-            &BTreeSet::new(),
-            pointer_element_widths.clone(),
+            FixedStateLoweringOptions {
+                algebraic_values: Some(&algebraic_values),
+                integer_values: Some(&integer_values),
+                bound_array_memories: Some(&bound_array_memories),
+                pointer_element_widths: pointer_element_widths.clone(),
+                ..Default::default()
+            },
         )
     };
 
@@ -561,8 +562,7 @@ fn instantiate_integer_range_fold_theorem_application(
         &application.arguments[0],
         context.integer_values,
         assumptions,
-        context.values,
-        context.array_refs,
+        ContractEnvironment::new(context.values, context.array_refs),
         FixedStateFrame::new(
             context.pre_state,
             context.post_state,
@@ -754,8 +754,7 @@ fn theorem_application_argument_type(
 
     if let Ok(value) = capture_fixed_state_algebraic_expression(
         argument,
-        context.values,
-        context.array_refs,
+        ContractEnvironment::new(context.values, context.array_refs),
         FixedStateFrame::new(
             context.pre_state,
             context.post_state,
@@ -821,8 +820,7 @@ pub(super) fn theorem_application_bindings(
                         argument,
                         context.integer_values,
                         assumptions,
-                        context.values,
-                        context.array_refs,
+                        ContractEnvironment::new(context.values, context.array_refs),
                         FixedStateFrame::new(
                             context.pre_state,
                             context.post_state,
@@ -857,8 +855,7 @@ pub(super) fn theorem_application_bindings(
                 .collect();
             let value = capture_fixed_state_algebraic_expression_with_values(
                 argument,
-                context.values,
-                context.array_refs,
+                ContractEnvironment::new(context.values, context.array_refs),
                 algebraic_bindings,
                 FixedStateFrame::new(
                     context.pre_state,
@@ -946,8 +943,7 @@ pub(super) fn theorem_application_bindings(
             let array_ref = evaluate_fixed_state_array_ref_through_kernel(
                 argument,
                 assumptions,
-                context.values,
-                context.array_refs,
+                ContractEnvironment::new(context.values, context.array_refs),
                 FixedStateFrame::new(
                     context.pre_state,
                     context.post_state,
@@ -964,7 +960,10 @@ pub(super) fn theorem_application_bindings(
                         parameter.name()
                     )
                 })?;
-            if array_ref.element_type != expected_element_type {
+            if !crate::surface::validation::array_ref_elements_compatible(
+                array_ref.element_type,
+                expected_element_type,
+            ) {
                 return Err(format!(
                     "theorem `{}` parameter `{}` expects {:?} array elements, got {:?}",
                     theorem.name(),

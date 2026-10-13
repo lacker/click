@@ -1,4 +1,4 @@
-# C0 rejects unsupported volatile pointer depth
+# Click rejects unsupported volatile pointer depth
 
 ```c filename=c_volatile_rejected.c
 int32 c_volatile_rejected() {

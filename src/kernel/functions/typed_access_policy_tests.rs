@@ -43,8 +43,7 @@ fn nested_c_body_restores_native_source_policy_and_c_only_rows_remain_c_only() {
             function,
             &arguments,
             &PureFactContext::new(),
-            &CExecutionEnvironment::new(),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
             &mut ExecutionBudget::new(),
         )
         .unwrap()

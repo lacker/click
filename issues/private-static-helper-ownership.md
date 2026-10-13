@@ -1,5 +1,27 @@
 # Private static storage passed to pointer-taking helpers needs ownership
 
+Priority: P2.
+
+Soundness: incomplete. "Sound" in this issue's history names the required
+design of a checked mechanism. It does not report an accepted false claim.
+On 2026-10-12, with the release binary, each hazard in the acceptance list
+was refused:
+- A helper owning both `p->value` and a private static is refused at
+  `set(&state)` with "overlapping owned memory resource facts".
+- A helper owning only `p->value` that reads the static after `*p = 5`
+  case-splits on aliasing. It does not assume separation, so a false
+  `result == 5` fails on the non-aliased path.
+- A helper that owns `*p` while viewing the static is refused at the store
+  ("could not prove the requested ranges separate").
+- A function writing a static without ownership fails `implicit_effect`.
+- Passing a cast `&const_static` to a writing helper is refused ("mutable
+  footprint covers read-only storage"). A direct write through the cast is
+  reported as undefined behavior.
+- `main`'s startup contract is not callable.
+
+What remains is completeness: verifying the unchanged PCG wrappers and client.
+These probes should become the negative regressions the acceptance list asks for.
+
 ## Invariant
 
 A public C wrapper should be verifiable when it passes its private static

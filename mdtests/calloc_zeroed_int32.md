@@ -1,6 +1,6 @@
 # calloc supports zeroed int32 allocation authority
 
-The C0 allocation builtin accepts the ordinary two-argument spelling while
+The C allocation builtin accepts the ordinary two-argument spelling while
 retaining the existing symbolic allocation resource and null outcome.
 
 ```c filename=calloc_zeroed_int32.c

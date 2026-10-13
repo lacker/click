@@ -34,13 +34,13 @@ claim `result == 18 or result == 0` from `f`'s guarantee.
 
 | Boundary | Assumption |
 | --- | --- |
-| Target | The default kernel target, x86-64 Linux, LP64, eight-bit bytes, little-endian. There is no `target` override and no separate compiler import record; big-endian targets are out of scope. |
+| Target | The default target, `x86_64-linux-userspace`: x86-64 Linux, LP64, eight-bit bytes, little-endian. There is no `target` override and no separate compiler import record; big-endian targets are out of scope. |
 | Layout | `struct record` is `sizeof == 16`, `tag` at offset 0, `target` at offset 8, with four padding bytes at offsets 4 to 7. Click computes this layout from the struct declaration; nothing in the proof names an offset. |
 | Copy primitive | `memcpy` as the standard-library declaration `void *memcpy(void *dest, const void *src, unsigned long n)`. Click binds its checked standard-library contract to that exact declaration, not to the spelling, and the call carries the kernel's representation-copy effect. It is a trusted specification of the client's view of `memcpy`, not a proof of libc, and each sidecar that relies on it reports `external assumptions: ... -> memcpy`. |
 | Buffer bound | The buffer is `malloc(16)`, a literal fixed with the source; both copy lengths are `sizeof(struct record)`, so the round trip also relies on `16 == sizeof(struct record)` under this layout. |
 
 The `(unsigned char *)(void *)` casts carry an object pointer through a
-type-erased interface, the documented C0 spelling; a direct object-pointer to
+type-erased interface, the documented C spelling; a direct object-pointer to
 byte-pointer cast is refused by the frontend.
 
 ## What the copy does and does not establish

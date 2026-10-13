@@ -1,5 +1,10 @@
 # Linked initializers must resolve private names in their defining file
 
+Priority: P2.
+
+Soundness: incomplete. The initializer is refused while `main.c` is parsed.
+Nothing is accepted with the wrong storage identity.
+
 ## Invariant
 
 An external pointer initialized to private storage retains that object's

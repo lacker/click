@@ -6,7 +6,7 @@ the same call-and-check sequence before returning to the shell head. That
 check ends a failing iteration with `break`, which a `switch` captures as its
 own exit: the rest of the body would run and the loop would not end.
 
-C0 has no spelling for "leave the loop" from inside a `switch`, so the shape
+Click has no spelling for "leave the loop" from inside a `switch`, so the shape
 is rejected rather than lowered into different control flow. In C this
 function returns 0: the `continue` skips `tail++` and reaches the post-test,
 which is false.

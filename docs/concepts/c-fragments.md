@@ -1,17 +1,15 @@
-# C0 and C fragments
+# C fragments
 
-Click verifies C0, the repository's current C subset.
+Click verifies existing C, C++, and Rust. Its coverage of each language is
+incomplete: some constructs are not modeled yet and are refused with a
+diagnostic rather than approximated. [Supported C](../reference/language/c.md)
+lists what C Click models.
 
-C0 is not intended to be a new production language. It is the precise target
-Click can reason about while it grows toward more realistic C.
+## The program being verified
 
-## C0 source
-
-C0 source is the implementation language. It currently includes scalar integer
-code, pointer code, arrays, loops, function calls, byte buffers, and a pilot
-slice of struct support.
-
-For the full list, see the C0 subset reference.
+The program is ordinary source in its own language. For C it currently
+includes scalar integer code, pointer code, arrays, loops, function calls,
+byte buffers, and a subset of structs.
 
 ## C fragments in Click
 
@@ -29,8 +27,9 @@ they appear inside Surface Click.
 
 The distinction matters:
 
-- `x + 1` follows C0 integer rules, including signed-overflow obligations.
-- `p[k]` follows C0 pointer and memory rules.
+- `x + 1` follows Click's C integer rules, including signed-overflow
+  obligations.
+- `p[k]` follows Click's C pointer and memory rules.
 - `and`, `or`, `not`, `forall`, and `exists` are Click proposition syntax, not
   C operators.
 
@@ -38,7 +37,7 @@ The distinction matters:
 
 Click has three layers:
 
-- **C0**: the C-like code being verified.
+- **The program**: the C, C++, or Rust code being verified.
 - **Surface Click**: the user-written sidecar language.
 - **Kernel Click**: the explicit internal proof representation. It has no
   user-facing textual syntax.

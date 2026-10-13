@@ -11,7 +11,7 @@ The C body is Linux `lib/rbtree.c`'s `rb_prev`, identical to the pinned copy
 in `integrations/linux-rbtree/input-closure.tar.gz` apart from the parameter's
 qualifier, with the same `rb_parent` and `RB_EMPTY_NODE` macros as
 `rb_next.md`. As there, the parameter is declared
-`struct rb_node *node` rather than `const struct rb_node *node`, because C0
+`struct rb_node *node` rather than `const struct rb_node *node`, because Click
 does not yet let the explicit cast in `return (struct rb_node *)node;` drop
 `const` ([`rb_next_const_signature.md`](rb_next_const_signature.md)).
 

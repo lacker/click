@@ -1,7 +1,7 @@
 # Separate calls still have separate results
 
 Two interfaces constrain each call, but do not promise determinism across calls.
-The empty callback parameter list uses C0's `()` spelling of C's `(void)`.
+The empty callback parameter list uses Click's `()` spelling of C's `(void)`.
 
 ```c filename=joint.c
 int32 twice(int32 (*callback)()) {

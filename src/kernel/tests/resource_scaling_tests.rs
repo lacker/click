@@ -120,8 +120,7 @@ fn private_local_copy_ignores_unrelated_resources() {
                         state,
                         &c_declare(name, c_type),
                         &PureFactContext::new(),
-                        &CExecutionEnvironment::new(),
-                        CExecutionSemantics::EXECUTE_BODIES,
+                        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
                         &mut ExecutionBudget::default(),
                     )
                     .expect("the private local declares");
@@ -156,8 +155,7 @@ fn private_local_copy_ignores_unrelated_resources() {
                         &state,
                         &c_assign("target", expression.clone()),
                         &PureFactContext::new(),
-                        &CExecutionEnvironment::new(),
-                        CExecutionSemantics::EXECUTE_BODIES,
+                        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
                         &mut ExecutionBudget::default(),
                     )
                     .expect("the scalar assignment executes")
@@ -231,9 +229,8 @@ fn private_owner_projection_does_not_republish_discarded_pairings() {
         );
         samples.push((size, work));
     }
-    // Filtering charges visits/removals, never equality-input publication.
-    // The prepared old implementation charged 27 units per private owner;
-    // the scratch projection charges 3 at every measured size.
+    // The retained projection never republishes discarded private pairings;
+    // source insertions already advanced its private-owner deltas.
     assert_at_most_linear_growth("private owner projection", &samples, 8);
 }
 
@@ -1800,6 +1797,158 @@ fn shared_view_offset_alias_lookup_is_indexed_and_preserves_occurrences() {
         samples.push((size, work));
     }
     assert_constant_plus_log_growth("shared view offset alias", &samples, 64.0);
+}
+
+#[test]
+fn observable_projection_reuses_private_local_deltas_and_unchanged_queries() {
+    for size in [4, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        crate::kernel::set_never_address_taken_locals(
+            (0..size).map(|index| format!("hidden_{index}")).collect(),
+        );
+        let assumptions = PureFactContext::new();
+        let base = ResourceContext::new().unchecked_with_facts([
+            owned_range(heap_base(1), 0, 4),
+            owned_range(heap_base(2), 0, 4),
+        ]);
+        let expected = base.observable_composition();
+        let mut resources = base;
+        let (_, sequence_work) = crate::instrumentation::measure_deterministic_work(|| {
+            for index in 0..size {
+                resources = resources.clone().unchecked_with_fact(owned_range(
+                    CMemory::local_pointer(&format!("hidden_{index}")),
+                    0,
+                    4,
+                ));
+                let observed = resources.observable_composition();
+                assert!(std::sync::Arc::ptr_eq(&observed.storage, &expected.storage));
+            }
+        });
+        assert!(
+            sequence_work <= size * 8 + 16,
+            "private insertion/projection N={size}: {sequence_work}"
+        );
+        let (_, query_work) = crate::instrumentation::measure_deterministic_work(|| {
+            for _ in 0..16 {
+                assert_eq!(
+                    resources.observable_facts_assuming_valid(&assumptions),
+                    vec![Proposition::CResourceComposition(expected.clone())]
+                );
+            }
+        });
+        assert!(query_work <= 32, "unchanged queries N={size}: {query_work}");
+        let (_, addressed_work) = crate::instrumentation::measure_deterministic_work(|| {
+            resources = resources
+                .clone()
+                .unchecked_with_fact(owned_range(heap_base(3), 0, 4));
+            assert_eq!(resources.observable_composition().facts().len(), 3);
+        });
+        assert!(
+            addressed_work <= 32,
+            "addressable delta N={size}: {addressed_work}"
+        );
+        resources = resources
+            .without_exact_representation(&owned_range(heap_base(3), 0, 4))
+            .unwrap();
+        let removal_root = resources.observable_composition();
+        let (_, removal_work) = crate::instrumentation::measure_deterministic_work(|| {
+            for index in 0..size {
+                resources = resources
+                    .clone()
+                    .without_exact_representation(&owned_range(
+                        CMemory::local_pointer(&format!("hidden_{index}")),
+                        0,
+                        4,
+                    ))
+                    .unwrap();
+                assert!(std::sync::Arc::ptr_eq(
+                    &resources.observable_composition().storage,
+                    &removal_root.storage
+                ));
+                assert_eq!(resources.observable_composition(), expected);
+            }
+        });
+        assert!(
+            removal_work <= size * 12 + 16,
+            "private removal/projection N={size}: {removal_work}"
+        );
+        eprintln!(
+            "observable projection N={size}: insert={sequence_work}, queries={query_work}, addressed={addressed_work}, remove={removal_work}"
+        );
+    }
+}
+
+#[test]
+fn observable_projection_queries_do_not_enumerate_retained_owners() {
+    let mut costs = Vec::new();
+    for size in [4, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let context = ResourceContext::new().unchecked_with_facts(
+            (0..size).map(|index| owned_range(heap_base(index as u64 + 1), 0, 4)),
+        );
+        let assumptions = PureFactContext::new();
+        context.synchronize_memory_equalities(&assumptions);
+        let expected = context.observable_composition();
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            for _ in 0..16 {
+                let result = context.observable_facts_assuming_valid(&assumptions);
+                let [Proposition::CResourceComposition(observed)] = result.as_slice() else {
+                    panic!("owned composition is observable");
+                };
+                assert!(std::sync::Arc::ptr_eq(&observed.storage, &expected.storage));
+                observed.synchronize_memory_equalities(&assumptions);
+            }
+        });
+        assert!(work <= 256, "retained owner queries N={size}: {work}");
+        costs.push(work);
+    }
+    assert!(
+        costs.iter().all(|work| *work == costs[0]),
+        "prepared projection costs: {costs:?}"
+    );
+}
+
+#[test]
+fn observable_projection_shares_first_projection_across_cold_forks() {
+    for size in [4, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        crate::kernel::set_never_address_taken_locals(
+            (0..size).map(|index| format!("hidden_{index}")).collect(),
+        );
+        let root =
+            ResourceContext::new().unchecked_with_facts(
+                [
+                    owned_range(heap_base(1), 0, 4),
+                    owned_range(heap_base(2), 0, 4),
+                ]
+                .into_iter()
+                .chain((0..size).map(|index| {
+                    owned_range(CMemory::local_pointer(&format!("hidden_{index}")), 0, 4)
+                })),
+            );
+        let forks = [root.clone(), root.clone(), root.clone()];
+        let expected = root.observable_composition();
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            for fork in &forks {
+                assert!(std::sync::Arc::ptr_eq(
+                    &fork.observable_composition().storage,
+                    &expected.storage
+                ));
+            }
+        });
+        assert!(
+            work <= 8,
+            "cold fork N={size} repeated {work} projection units"
+        );
+        let changed = forks[0]
+            .clone()
+            .unchecked_with_fact(owned_range(heap_base(3), 0, 4));
+        assert_eq!(changed.observable_composition().facts().len(), 3);
+        assert!(std::sync::Arc::ptr_eq(
+            &forks[1].observable_composition().storage,
+            &expected.storage
+        ));
+    }
 }
 
 #[test]

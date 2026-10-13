@@ -1,6 +1,6 @@
 # scalar expression verification
 
-This checks that `auto` can prove a simple scalar result using C0 integer
+This checks that `auto` can prove a simple scalar result using Click's C integer
 arithmetic and comparison semantics.
 
 ```c filename=scalar.c

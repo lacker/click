@@ -259,6 +259,19 @@ fn signed_add_surface_shape(
             return true;
         }
         if let crate::kernel::Bitvector32Term::Add(target_first, target_second) = target {
+            // Lowering may combine two trailing, signed-representable
+            // constants. Recognize that encoding of this same child sum;
+            // the emitted kernel node still uses the children's exact
+            // mathematical claim, not the lowered machine-value claim.
+            if let crate::kernel::Bitvector32Term::Add(base, trailing) = first
+                && let crate::kernel::Bitvector32Term::Constant(trailing) = trailing.as_ref()
+                && let crate::kernel::Bitvector32Term::Constant(second) = second
+                && let Some(offset) = (*trailing as i32).checked_add(*second as i32)
+                && matches!(target_second.as_ref(), crate::kernel::Bitvector32Term::Constant(value) if *value == offset as u32)
+                && signed_atom_matches(target_first, base)
+            {
+                return true;
+            }
             return signed_atom_matches(target_first, first)
                 && (signed_atom_matches(target_second, second)
                     || matches!(
@@ -790,14 +803,11 @@ impl<'a> Proof<'a> {
                 site: self.site.clone(),
                 context: self.context.clone(),
                 state: current.state.clone(),
-                node: Arc::new(ProofNode {
-                    path_memo: Default::default(),
-                    parent: Some(self.node.clone()),
-                    step: Some(Arc::new(step)),
-                    focused_branch: current.focused_branch_id(),
-                    depth: self.node.depth + 1,
-                    split_branches: Vec::new(),
-                }),
+                node: ProofNode::step_child(
+                    &self.node,
+                    current.focused_branch_id(),
+                    Arc::new(step),
+                ),
             });
         }
         if let ProofStep::CloseInvariantsBy(body) = &step {
@@ -887,14 +897,11 @@ impl<'a> Proof<'a> {
                 site: self.site.clone(),
                 context: self.context.clone(),
                 state: successor,
-                node: Arc::new(ProofNode {
-                    path_memo: Default::default(),
-                    parent: Some(self.node.clone()),
-                    step: Some(Arc::new(provenance_step)),
-                    focused_branch: self.focused_branch_id(),
-                    depth: self.node.depth + 1,
-                    split_branches: Vec::new(),
-                }),
+                node: ProofNode::step_child(
+                    &self.node,
+                    self.focused_branch_id(),
+                    Arc::new(provenance_step),
+                ),
             });
         }
 
@@ -990,14 +997,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: Some(Arc::new(step)),
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth + 1,
-                split_branches: Vec::new(),
-            }),
+            node: ProofNode::step_child(&self.node, self.focused_branch_id(), Arc::new(step)),
         })
     }
 
@@ -2507,8 +2507,7 @@ impl<'a> Proof<'a> {
                     context.claim_label,
                     &promoted,
                     self.facts().assumptions(),
-                    &values,
-                    &arrays,
+                    ContractEnvironment::new(&values, &arrays),
                     &algebraic,
                     &integer_values,
                     &context.theorem_context.memory,
@@ -2610,6 +2609,7 @@ impl<'a> Proof<'a> {
             .transpose()?;
         let mut integer_binding = None;
         let mut algebraic_binding = None;
+        let mut antecedent_spelling = None;
         let state = self
             .state
             .apply_intro(|current, introduction, introduced| {
@@ -2724,6 +2724,7 @@ impl<'a> Proof<'a> {
                                     &antecedent,
                                     kernel,
                                 );
+                                antecedent_spelling = Some((antecedent.clone(), kernel.clone()));
                             }
                             Some(Arc::new(consequent))
                         }
@@ -2842,8 +2843,12 @@ impl<'a> Proof<'a> {
                 ),
                 _ => unreachable!("kernel returned an unrelated intro error"),
             })?;
+        if algebraic_binding.is_none() && integer_binding.is_none() && antecedent_spelling.is_none()
+        {
+            return Ok(state);
+        }
+        let mut locals = state.locals().clone();
         if let Some((name, variable, algebraic_type)) = algebraic_binding {
-            let mut locals = state.locals().clone();
             locals.algebraic_values = locals.algebraic_values.with_inserted(
                 name,
                 crate::kernel::SpecAlgebraicExpression {
@@ -2851,19 +2856,25 @@ impl<'a> Proof<'a> {
                     node: crate::kernel::SpecAlgebraicExpressionNode::Variable(variable),
                 },
             );
-            Ok(state.with_locals(locals))
         } else if let Some((name, variable)) = integer_binding {
-            let mut locals = state.locals().clone();
             locals.integer_values = locals.integer_values.with_inserted(
                 name,
                 crate::kernel::SpecIntegerExpression::Term(crate::kernel::IntegerTerm::var(
                     variable,
                 )),
             );
-            Ok(state.with_locals(locals))
-        } else {
-            Ok(state)
         }
+        // The introduced antecedent is spelled for premise lookups, as a
+        // pure `have` is; see `ProofLocals::surface_facts`. A spelling is an
+        // index, not authority: one that does not record is left out rather
+        // than failing the step.
+        if let Some((surface, kernel)) = &antecedent_spelling {
+            let mut spelled = locals.surface_facts.clone();
+            if spelled.record_lowering(surface, kernel).is_ok() {
+                locals.surface_facts = spelled;
+            }
+        }
+        Ok(state.with_locals(locals))
     }
 
     #[inline(never)]

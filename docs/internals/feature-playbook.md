@@ -27,7 +27,7 @@ when the resulting C is valid and the proof becomes green.
 
 Changing C is appropriate when the change is independently part of the
 program's desired behavior, fixes actual C undefined behavior, or performs a
-documented semantics-preserving C0 desugaring. State which exception applies in
+documented semantics-preserving C desugaring. State which exception applies in
 the change description. Otherwise, preserve the C and fix the proof boundary.
 
 ## Where A feature belongs
@@ -67,7 +67,7 @@ Search for all matches on:
 rg -n "ClickProposition|ContractExpression" src/surface.rs
 ```
 
-## Adding C0 syntax
+## Adding C syntax
 
 Checklist:
 
@@ -76,7 +76,7 @@ Checklist:
 - Add new kernel semantic terms only when needed.
 - Add undefined-behavior obligations if C semantics require them.
 - Add C parser unit tests and mdtests.
-- Update [Supported C0](../reference/language/c0.md).
+- Update [Supported C](../reference/language/c.md).
 
 ## Adding proof power
 

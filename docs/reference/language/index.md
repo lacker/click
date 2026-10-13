@@ -1,6 +1,6 @@
 # Click language reference
 
-Click files are sidecar specifications for C0 sources.
+Click files are sidecar specifications for C sources.
 
 They may begin with local specification imports such as
 `import "../models/common.click";`. Imports contribute declarations but do not
@@ -11,7 +11,7 @@ for the module and selection rules.
 Terminology:
 
 - **Surface Click** is the user-written `.click` language described here.
-- **C fragments** are pieces of C0 syntax inside Surface Click, such as
+- **C fragments** are pieces of C syntax inside Surface Click, such as
   `p[k]`, `x + 1`, and `result == n`.
 - **Kernel Click** is the internal, typed proof core produced by elaboration.
   It has no `.click` concrete syntax and is never emitted as proof text.
@@ -34,7 +34,7 @@ int32 function_name(int32 p[], int32 n) {
 ```
 
 `verifying "file.c";` names a C source supplied to the verifier. Function
-signatures in the `.click` file are checked against the parsed C0 source.
+signatures in the `.click` file are checked against the parsed C source.
 Those attached signatures deliberately retain C declaration order. Typed
 binders introduced by Click itself use `name: type`: theorem and resource
 parameters, pure-function and predicate parameters, typed `let` bindings, and
@@ -1259,11 +1259,11 @@ syntax is Click contract syntax, not C fragment syntax.
 for a segment. Use it when the fact needs to appear where Click expects a
 proposition, such as a composite resource `fact`.
 
-`defined(expression)` is a pure proposition stating that evaluating the C0
+`defined(expression)` is a pure proposition stating that evaluating the C
 expression reaches a value rather than undefined behavior. Click elaborates it
 with the kernel's C expression semantics, so signed overflow, division, shifts,
 and memory-load obligations share the same rules as execution. It currently
-accepts C0 expression fragments; `old`, `at`, folds, lets, and Click function
+accepts C expression fragments; `old`, `at`, folds, lets, and Click function
 calls inside `defined(...)` are not yet supported.
 
 For two object pointers, `defined(right - left)` includes both the
@@ -2746,6 +2746,23 @@ together. This matters for propositions such as `viewable(...)`: both the
 address expression and the memory in which it is viewable come from the
 selected state.
 
+The contract `result` exists only once the function returns, so `old(...)` and
+`at(...)` at any program point but `function.exit` cannot name it; both are
+refused where they are written (`mdtests/old_of_result_is_refused.md`,
+`mdtests/an_entry_snapshot_of_result_is_refused.md`). A proof mark can name it,
+since a proof may place the mark after the return. A C binding named `result`
+is still written `c(result)` inside a snapshot.
+
+`at(function.exit, ...)` reads the state the function returns in. It is
+available where `result` is: in a postcondition and in a proof step after
+execution has returned, where it is the current path's state. It is refused
+before the return. Because every returned path has its own `result`, one
+`transport(at(function.exit, P), P) using { }` closes a `result` goal on
+each path that the path's own state proves, and expansion writes that step
+for such goals (`mdtests/a_returned_path_transports_a_result_goal_from_function_exit.md`,
+`mdtests/a_function_exit_snapshot_before_the_return_is_refused.md`,
+`mdtests/a_function_exit_transport_of_a_false_result_claim_is_refused.md`).
+
 The selected snapshot is a complete recorded C state, not only a memory
 snapshot. Inside `at(...)`, reassigned parameters and declared scalar, pointer,
 and array locals resolve to their values in that snapshot. Outside `at(...)`,
@@ -2919,13 +2936,13 @@ The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 are `size_t` (`uint64`) values as C measures them. These are ordinary Click
 functions and predicates, not built-in kernel concepts.
 
-In pointer-valued C0 contexts, the integer constant `0` is the null pointer
+In pointer-valued C contexts, the integer constant `0` is the null pointer
 constant. It may initialize or assign a pointer, be returned from a pointer
 function, be passed to a pointer parameter, or be compared with a pointer.
 Nonzero integers do not implicitly convert to pointers.
 
-C0 accepts a small multi-field struct slice with `int32` and pointer-valued
-fields. The C side lowers chained `obj->child->field` loads and stores at
+Supported C accepts the struct shapes listed in
+[struct subset](c.md#struct-subset). The C side lowers chained `obj->child->field` loads and stores at
 LP64-aligned byte offsets while retaining intermediate struct-pointer types.
 Click contracts can use field places in resources:
 `views obj->field` and `owns obj->field`. The access resource also makes the
@@ -3100,6 +3117,13 @@ loop {
     invariant i <= n;
 }
 ```
+
+An unconditional plain-memory clause evaluates its pointer and bounds at loop
+entry, before modified locals are havocked. For example, `views p[0..n]`
+continues to describe the original physical range when the body advances `p`
+and decrements `n`. An invariant such as `viewable(p[0..n])` separately owes
+the current cursor and remaining range at each head. Named resource binders
+retain their own argument and model rebinding rules.
 
 A declared resource must be one the enclosing function already holds; a loop
 cannot own what its function does not. The loop then has the shape of a callee:

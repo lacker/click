@@ -1895,6 +1895,41 @@ type AtomicPremiseSelection = (
     bool,
 );
 
+/// The equality facts connected to `goal` through shared atoms, condition
+/// equalities and algebraic `==` facts alike. `auto` offers them to its
+/// rewrite chain.
+pub(crate) fn solver_connected_equalities(
+    context: &PureFactContext,
+    goal: &Proposition,
+) -> Option<Vec<Proposition>> {
+    let (conditions, propositions, _, _) =
+        connected_atomic_premises(context, goal, &[], true, true, true)?;
+    let mut equalities = Vec::new();
+    for (condition, value) in conditions {
+        let fact = Proposition::ConditionIs(condition, value);
+        if matches!(
+            fact,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(..)
+                    | ConditionTerm::Bitvector64Equal(..)
+                    | ConditionTerm::PointerEqual(..)
+                    | ConditionTerm::PointerOffsetEqual(..)
+                    | ConditionTerm::IntegerEqual(..)
+                    | ConditionTerm::AlgebraicEqual(..),
+                true
+            )
+        ) {
+            equalities.push(fact);
+        }
+    }
+    equalities.extend(
+        propositions
+            .into_iter()
+            .filter(|fact| matches!(fact, Proposition::Equal(..))),
+    );
+    Some(equalities)
+}
+
 /// Walk syntax adjacency, never rebuilding an index of the ambient context.
 /// A wider smart fallback follows recent havoc bounds and general facts;
 /// its result still has to pass the restricted kernel query.

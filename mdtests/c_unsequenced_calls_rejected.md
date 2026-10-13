@@ -1,6 +1,6 @@
-# C0 rejects multiple unsequenced calls in one expression
+# Click rejects multiple unsequenced calls in one expression
 
-C does not specify which of these calls runs first. C0 rejects the expression
+C does not specify which of these calls runs first. Click rejects the expression
 instead of silently choosing an evaluation order that could change the
 callee-visible state.
 

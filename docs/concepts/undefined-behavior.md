@@ -1,6 +1,6 @@
 # Undefined behavior
 
-Click proves more than postconditions. It also checks that the modeled C0
+Click proves more than postconditions. It also checks that the modeled C
 execution is safe under the function's requirements.
 
 For scalar code, signed overflow is often the first place this appears.
@@ -33,7 +33,8 @@ requires x < 2147483647;
 
 Click currently models obligations for cases such as:
 
-- signed `int32` overflow,
+- signed `int32` and `int64` overflow (narrower types promote to `int32`
+  first),
 - division or remainder by zero,
 - `INT_MIN / -1` and `INT_MIN % -1`,
 - invalid shift counts,
@@ -44,7 +45,8 @@ Click currently models obligations for cases such as:
 - reads of uninitialized automatic storage,
 - loads, stores, and pointer operations through a freed allocation.
 
-The C0 subset reference has the full current list.
+The [runtime-errors table](../reference/coverage.md#runtime-errors-checked)
+lists every checked error for C, C++, and Rust.
 
 ## Pointer arithmetic stays inside the object
 

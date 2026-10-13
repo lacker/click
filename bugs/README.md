@@ -20,6 +20,12 @@ per independent bug, stating:
   original source pattern; and
 - concrete acceptance criteria.
 
+Directly under the title, state `Soundness: <label>.` with a one-paragraph
+argument, using the labels defined in
+[`issues/README.md`](../issues/README.md). A bug that lets a false claim
+verify is `unsound`. Put `Priority: P1.` above its Soundness paragraph: it
+blocks launch.
+
 Write enough for a fresh contributor to act without the originating chat.
 Tell the user what was filed. Delete the file when its fix, regression coverage,
 and relevant documentation land.

@@ -61,5 +61,5 @@ int32 count_up(int32 *a, int32 n) {
 ```
 
 ```expect
-fail: implies 0 <= k and k <= (i + 1) implies k <= 1073741823 }
+fail: implies k <= 1073741823 }
 ```

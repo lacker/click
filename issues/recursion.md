@@ -1,5 +1,10 @@
 # Recursion
 
+Priority: P2.
+
+Soundness: incomplete. The listed hard cases are rejected today with
+diagnostics. None is accepted under a weaker termination argument.
+
 This is the deferred hard-bucket issue for the remaining recursive C proof
 shapes. The ordinary recursive contract rule and the first termination slices
 already work; this issue collects the cases where recursion must compose with

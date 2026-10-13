@@ -1,4 +1,4 @@
-# A byte retyping cast is outside the supported C0 memory model
+# A byte retyping cast is outside the supported C memory model
 
 ```c filename=byte_store_leaves_word_stale_rejected.c
 int32 byte_store_alias() {

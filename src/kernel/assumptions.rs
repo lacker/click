@@ -22,6 +22,7 @@ pub(in crate::kernel) fn count_condition_fact_visit() {
 use std::cell::{Cell, RefCell};
 
 mod condition_reasoning;
+pub(in crate::kernel) mod variable_chains;
 pub(in crate::kernel) use condition_reasoning::cancel_common_offset_addends;
 #[cfg(test)]
 pub(in crate::kernel) use condition_reasoning::with_order_walk_full_scan;
@@ -126,13 +127,38 @@ fn terms_equal_with_load_atoms(
                 _ => false,
             }
         }
-        (Bitvector32Term::Add(ll, lr), Bitvector32Term::Add(rl, rr))
-        | (Bitvector32Term::Subtract(ll, lr), Bitvector32Term::Subtract(rl, rr))
-        | (Bitvector32Term::Multiply(ll, lr), Bitvector32Term::Multiply(rl, rr)) => {
-            terms_equal_with_load_atoms(ll, rl, loads_match)
-                && terms_equal_with_load_atoms(lr, rr, loads_match)
+        (
+            Bitvector32Term::If {
+                condition: left_condition,
+                then_term: left_then,
+                else_term: left_else,
+            },
+            Bitvector32Term::If {
+                condition: right_condition,
+                then_term: right_then,
+                else_term: right_else,
+            },
+        ) => {
+            conditions_equal_with_load_atoms(left_condition, right_condition, loads_match)
+                && terms_equal_with_load_atoms(left_then, right_then, loads_match)
+                && terms_equal_with_load_atoms(left_else, right_else, loads_match)
         }
-        _ => left == right,
+        _ => {
+            if let (Some((left_operator, ll, lr)), Some((right_operator, rl, rr))) =
+                (left.as_binary(), right.as_binary())
+            {
+                left_operator == right_operator
+                    && terms_equal_with_load_atoms(ll, rl, loads_match)
+                    && terms_equal_with_load_atoms(lr, rr, loads_match)
+            } else if let (Some((left_operator, left_value)), Some((right_operator, right_value))) =
+                (left.as_unary(), right.as_unary())
+            {
+                left_operator == right_operator
+                    && terms_equal_with_load_atoms(left_value, right_value, loads_match)
+            } else {
+                left == right
+            }
+        }
     }
 }
 
@@ -152,45 +178,13 @@ pub(in crate::kernel) fn conditions_equal_with_load_atoms(
         terms_equal_with_load_atoms(ll, rl, loads_match)
             && terms_equal_with_load_atoms(lr, rr, loads_match)
     };
+    if let (Some((left_operator, ll, lr)), Some((right_operator, rl, rr))) = (
+        left.as_bitvector_comparison(),
+        right.as_bitvector_comparison(),
+    ) {
+        return left_operator == right_operator && terms(ll, rl, lr, rr);
+    }
     match (left, right) {
-        (
-            ConditionTerm::Bitvector32SignedLessThan(ll, lr),
-            ConditionTerm::Bitvector32SignedLessThan(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedLessEqual(ll, lr),
-            ConditionTerm::Bitvector32SignedLessEqual(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedGreaterThan(ll, lr),
-            ConditionTerm::Bitvector32SignedGreaterThan(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedGreaterEqual(ll, lr),
-            ConditionTerm::Bitvector32SignedGreaterEqual(rl, rr),
-        )
-        | (ConditionTerm::Bitvector32Equal(ll, lr), ConditionTerm::Bitvector32Equal(rl, rr))
-        | (ConditionTerm::Bitvector64Equal(ll, lr), ConditionTerm::Bitvector64Equal(rl, rr))
-        | (
-            ConditionTerm::Bitvector32SignedAddOverflows(ll, lr),
-            ConditionTerm::Bitvector32SignedAddOverflows(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedSubtractOverflows(ll, lr),
-            ConditionTerm::Bitvector32SignedSubtractOverflows(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedMultiplyOverflows(ll, lr),
-            ConditionTerm::Bitvector32SignedMultiplyOverflows(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedDivideOverflows(ll, lr),
-            ConditionTerm::Bitvector32SignedDivideOverflows(rl, rr),
-        )
-        | (
-            ConditionTerm::Bitvector32SignedShiftLeftOverflows(ll, lr),
-            ConditionTerm::Bitvector32SignedShiftLeftOverflows(rl, rr),
-        ) => terms(ll, rl, lr, rr),
         (ConditionTerm::PointerOffsetEqual(ll, lr), ConditionTerm::PointerOffsetEqual(rl, rr)) => {
             offsets_equal_with_load_atoms(ll, rl, loads_match)
                 && offsets_equal_with_load_atoms(lr, rr, loads_match)
@@ -1648,17 +1642,7 @@ fn collect_pointer_offset_memory_load_keys(
     offset: &PointerOffsetTerm,
     keys: &mut BTreeSet<(PointerBlock, u64)>,
 ) {
-    match offset {
-        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
-        PointerOffsetTerm::Add(left, right) => {
-            collect_pointer_offset_memory_load_keys(left, keys);
-            collect_pointer_offset_memory_load_keys(right, keys);
-        }
-        PointerOffsetTerm::Int32Scaled { value, .. }
-        | PointerOffsetTerm::Int64Scaled { value, .. } => {
-            collect_bitvector_memory_load_keys(value, keys)
-        }
-    }
+    offset.for_each_scaled_value(|value| collect_bitvector_memory_load_keys(value, keys));
 }
 
 fn collect_bitvector_memory_load_keys(
@@ -1681,33 +1665,6 @@ fn collect_bitvector_memory_load_keys(
         Bitvector32Term::PointerAddress(pointer) => {
             collect_pointer_offset_memory_load_keys(&pointer.offset, keys);
         }
-        crate::kernel::binary_bitvector32_term!(left, right) => {
-            collect_bitvector_memory_load_keys(left, keys);
-            collect_bitvector_memory_load_keys(right, keys);
-        }
-        Bitvector32Term::Int64From32(value)
-        | Bitvector32Term::MachineIntegerCast { value, .. }
-        | Bitvector32Term::Int64FromUInt32(value)
-        | Bitvector32Term::UInt64From32(value)
-        | Bitvector32Term::UInt32From64(value)
-        | Bitvector32Term::UInt64FromInt32(value)
-        | Bitvector32Term::UInt64FromInt64(value)
-        | Bitvector32Term::Int64BitwiseNot(value)
-        | Bitvector32Term::UInt64BitwiseNot(value) => {
-            collect_bitvector_memory_load_keys(value, keys)
-        }
-        crate::kernel::binary_wide_term!(left, right) => {
-            collect_bitvector_memory_load_keys(left, keys);
-            collect_bitvector_memory_load_keys(right, keys);
-        }
-        Bitvector32Term::Float32Binary { left, right, .. }
-        | Bitvector32Term::Float64Binary { left, right, .. } => {
-            collect_bitvector_memory_load_keys(left, keys);
-            collect_bitvector_memory_load_keys(right, keys);
-        }
-        Bitvector32Term::BitwiseNot(value)
-        | Bitvector32Term::Float32Negate(value)
-        | Bitvector32Term::Float64Negate(value) => collect_bitvector_memory_load_keys(value, keys),
         Bitvector32Term::If {
             condition,
             then_term,
@@ -1737,6 +1694,17 @@ fn collect_bitvector_memory_load_keys(
         Bitvector32Term::ClickFunctionApplication { .. }
         | Bitvector32Term::AlgebraicMatch { .. } => {}
         Bitvector32Term::IntegerToMachine { .. } => {}
+        term => {
+            if let Some((_, left, right)) = term.as_binary() {
+                collect_bitvector_memory_load_keys(left, keys);
+                collect_bitvector_memory_load_keys(right, keys);
+            } else {
+                let (_, value) = term
+                    .as_unary()
+                    .expect("every other term is binary or unary");
+                collect_bitvector_memory_load_keys(value, keys);
+            }
+        }
     }
 }
 
@@ -2660,6 +2628,7 @@ impl PureFactContext {
     }
 
     fn adjust_signed_order_bound(&mut self, condition: &ConditionTerm, value: bool, insert: bool) {
+        self.signed_variable_chains.adjust(condition, value, insert);
         if let Some((left, right, strict)) = condition_as_order_fact(condition, value) {
             let mut index = std::mem::take(&mut self.signed_order_bounds);
             Self::adjust_order_bound_index(&mut index, left, right, strict, insert);
@@ -3467,6 +3436,12 @@ impl PureFactContext {
                 block: block.clone(),
                 offset: offset.clone(),
             })
+    }
+
+    pub(in crate::kernel) fn exact_pointer_offset_alias_count(&self, pointer: &Pointer) -> usize {
+        self.pointer_offset_aliases
+            .get(&pointer.offset)
+            .map_or(0, |aliases| aliases.len())
     }
 
     /// Re-express one selected address using checked graph equality to a
@@ -7980,10 +7955,6 @@ impl ProofObligation {
         Self::new(Proposition::ConditionIs(condition, value))
     }
 
-    pub fn memory_loadable(memory: CMemory, pointer: Pointer) -> Self {
-        Self::memory_loadable_bytes(memory, pointer, 4)
-    }
-
     pub fn memory_loadable_bytes(memory: CMemory, pointer: Pointer, byte_width: u32) -> Self {
         Self::new(Proposition::CMemoryLoadable {
             memory,
@@ -7991,10 +7962,6 @@ impl ProofObligation {
             bytes: Bitvector32Term::Constant(byte_width),
             wide: false,
         })
-    }
-
-    pub fn memory_can_store(memory: CMemory, pointer: Pointer) -> Self {
-        Self::memory_can_store_bytes(memory, pointer, 4)
     }
 
     pub fn memory_can_store_bytes(memory: CMemory, pointer: Pointer, byte_width: u32) -> Self {

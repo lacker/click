@@ -1,6 +1,6 @@
 # C division and remainder
 
-This checks C0 signed `int32` `/` and `%`: parser precedence, ordinary
+This checks signed `int32` `/` and `%`: parser precedence, ordinary
 results, negative truncation toward zero, and Surface Click functions using the
 same operators.
 

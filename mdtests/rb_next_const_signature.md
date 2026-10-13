@@ -6,7 +6,7 @@ may write through a pointer the function itself only read through.
 
 As in C, the result of an explicit cast has exactly the destination's pointee
 qualification, so the unchanged signature and body are accepted. The rule is
-documented in [the C0 reference](../docs/reference/language/c0.md);
+documented in [the Supported C reference](../docs/reference/language/c.md);
 [`c_const_cast_owned_write.md`](c_const_cast_owned_write.md) and
 [`c_const_cast_storage_writes_rejected.md`](c_const_cast_storage_writes_rejected.md)
 are its own regressions.

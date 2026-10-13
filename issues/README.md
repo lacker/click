@@ -25,7 +25,29 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; when the user requests
 an issue, scope it narrowly to the evidence.
 
-## P1: before launch (10)
+Every issue file states `Priority: P1.` or `Priority: P2.` directly under its
+title. Directly under that, a `Soundness:` paragraph gives one label and a
+written argument for it. A bug in [`bugs/`](../bugs/README.md) puts the
+`Soundness:` paragraph directly under its title. The labels are:
+
+- `unsound`: Click can verify a claim that is false for the program built for
+  the named target. The paragraph gives the reproduction, or an argument that
+  a false claim verifies.
+- `incomplete`: Click refuses, or cannot state, something true. No false
+  acceptance is known.
+- `soundness-adjacent`: no false acceptance is known, but there is a trust or
+  model gap a reviewer would ask about. Examples: a modeled assumption that
+  differs from the real toolchain, a meaningless claim that Click accepts
+  with a Click-specific meaning, or a check that holds only because another
+  rule happens to enforce it.
+- `not soundness`: features, tooling, documentation and performance.
+
+A suspected false acceptance stays `soundness-adjacent` until it is
+reproduced. To move a file off `unsound`, the reproduction must stop
+verifying. Narrowing the documented claim does not count. Re-check the label
+whenever the file's reproduction or scope changes.
+
+## P1: before launch (4)
 
 The launch strategy is to complete P1, deliver the minimum viable rbtree
 (MVR), and launch publicly with rbtree as the key demo. MVR is the smallest
@@ -50,10 +72,15 @@ compiler/target profile; cross-compiler and cross-architecture verification
 belongs to [multiple-compilers.md](multiple-compilers.md).
 
 P1 is the work that has to land before launch. The list is a
-dependency marker, not a prescribed implementation order. An unsound rule is
-P1 whatever it is about: the claim is worthless if the verifier accepts false
-contracts, so soundness bugs come first even when rbtree does not exercise
-them. A gap that only a different program would hit is normally P2. The
+dependency marker, not a prescribed implementation order. Every file labelled
+`Soundness: unsound` is P1 whatever it is about, and that includes `bugs/`
+files, which need no list entry. The claim is worthless if the verifier
+accepts false contracts, so soundness bugs come first even when rbtree does
+not exercise them. When the full feature is not launch work, refusing the
+construct with a diagnostic that names it satisfies the P1 requirement, and
+the full feature can stay P2. `incomplete` and `soundness-adjacent` files are
+prioritized by launch need, not by label. A gap that only a different program
+would hit is normally P2. The
 selected control-flow, byte-representation, arena, and basic C++ milestones
 have landed with bounded support claims. The selected safe-Rust and shared C/Rust
 checksum milestones are P1 by user direction; broader language,
@@ -92,10 +119,9 @@ Specification and proof:
 - [SMT-backed automation with kernel-checked certificates](smt-auto.md)
 - [Launch design review: open critiques, each to be fixed or ruled wontfix](design-review.md) (depends on smt-auto.md)
 
-## P2: after launch (20)
+## P2: after launch (17)
 
 - [Make `step` simple across a call precondition](simplify-step.md)
-- [Reject `result` inside entry snapshots](result-accepted-in-entry-snapshots.md)
 
 Worth doing, not worth blocking the rbtree claim on. Promote one to P1 when
 it turns out to block that claim: if P1 work exposes one of the tooling
@@ -110,11 +136,10 @@ C language coverage:
 - [Verify Linux rbtree inline helpers from the pinned headers](linux-rbtree-inline-helpers.md)
 - [Transport current static state through cross-file callers](static-state-caller-transport.md)
 - [Support multiple C compilers and target ABIs](multiple-compilers.md)
-- [Give private static storage sound ownership across helper calls](private-static-helper-ownership.md)
+- [Verify unchanged PCG wrappers that pass private static storage to helpers](private-static-helper-ownership.md)
 - [Extend bounded control flow](control-flow.md)
 - [Resolve linked initializers in their defining file](linked-initializer-private-names.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)
-- [Model signed eight-bit integers](signed-byte-integers.md)
 
 Additional languages:
 

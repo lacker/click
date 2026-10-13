@@ -972,11 +972,31 @@ impl EqualityGraph {
     /// checked class. It selects a base, never bounds or access authority.
     pub(in crate::kernel) fn additive_address(&self, pointer: &Pointer) -> Option<Pointer> {
         let id = self.address_class(pointer)?;
-        self.state
-            .lock()
-            .expect("equality graph")
+        let mut state = self.state.lock().expect("equality graph");
+        state.terms.additive_address(id).or_else(|| {
+            state
+                .terms
+                .additive_offset(&pointer.offset, false)
+                .map(|offset| Pointer {
+                    block: pointer.block.clone(),
+                    offset,
+                })
+        })
+    }
+
+    /// The same checked address in a retained wide-index coordinate, when
+    /// the supplying range carries wide bounds. This adds no bound or authority.
+    fn wide_additive_address(&self, pointer: &Pointer) -> Option<Pointer> {
+        let id = self.address_class(pointer)?;
+        let mut state = self.state.lock().expect("equality graph");
+        state
             .terms
-            .additive_address(id)
+            .additive_offset(&pointer.offset, true)
+            .map(|offset| Pointer {
+                block: pointer.block.clone(),
+                offset,
+            })
+            .or_else(|| state.terms.wide_additive_address(id))
     }
 
     /// A typed pair of byte endpoints used only to select retained resource
@@ -1133,6 +1153,21 @@ impl EqualityGraph {
         base: &Pointer,
     ) -> Option<Pointer> {
         self.pointer_at_base_with_spelling(pointer, base, true)
+    }
+
+    /// Keep the wide producer's source index when borrowing from a wide range.
+    /// The class retains at most one producer per width; no aliases are searched.
+    pub(in crate::kernel) fn pointer_at_base_with_wide_index(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+    ) -> Option<Pointer> {
+        if let Some(spelling) = self.wide_additive_address(pointer)
+            && let Some(aligned) = self.pointer_at_base_with_spelling(&spelling, base, false)
+        {
+            return Some(aligned);
+        }
+        self.pointer_at_base(pointer, base)
     }
 
     fn pointer_at_base_with_spelling(
@@ -1377,9 +1412,14 @@ impl EqualityGraph {
         if left == right {
             return true;
         }
+        // Canonicalize before taking the lock, as the uint64 queries do:
+        // canonicalizing a load can consult this graph's own read
+        // generation, and a std mutex is not reentrant.
+        let left = crate::kernel::canonical_term(left);
+        let right = crate::kernel::canonical_term(right);
         let mut state = self.state.lock().expect("equality graph");
-        self.register_int32_operands(&mut state, left, right);
-        let equal = state.terms.are_int32_equal(left, right);
+        self.register_int32_operands(&mut state, &left, &right);
+        let equal = state.terms.are_int32_equal(&left, &right);
         state.close(Vec::new());
         equal
     }
@@ -1497,8 +1537,10 @@ impl EqualityGraph {
         &self,
         term: &Bitvector32Term,
     ) -> Option<(i64, i64)> {
+        // See `are_int32_equal`: canonicalize outside the lock.
+        let term = crate::kernel::canonical_term(term);
         let mut state = self.state.lock().expect("equality graph");
-        let node = state.terms.int32_class(term);
+        let node = state.terms.int32_class(&term);
         state.close(Vec::new());
         state.terms.signed_int32_interval(node)
     }
@@ -1509,6 +1551,9 @@ impl EqualityGraph {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
+        // See `are_int32_equal`: canonicalize outside the lock.
+        let left = &crate::kernel::canonical_term(left);
+        let right = &crate::kernel::canonical_term(right);
         let mut state = self.state.lock().expect("equality graph");
         self.register_int32_operands(&mut state, left, right);
         let changed = state.terms.add_int32_equality(left, right);
@@ -2152,6 +2197,80 @@ mod tests {
         assert!(graph.add_equality(&base, &address));
         let unrelated = Pointer::symbolic(Variable(999_103));
         assert!(graph.pointer_at_base(&base, &unrelated).is_none());
+    }
+
+    #[test]
+    fn wide_borrow_alignment_retains_both_index_widths_without_alias_scans() {
+        let mut samples = Vec::new();
+        for size in [16_u64, 64, 256, 1024] {
+            let mut graph = EqualityGraph::default();
+            let bytes = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(index(999_200), 1),
+            };
+            let base = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(index(999_201), 1),
+            };
+            let computed = base.offset_by_elements(index(999_202), 1);
+            let wide = bytes.offset_by_typed_elements(index(999_203), 1, true, true);
+            assert!(graph.add_offset_equality(&computed.offset, &wide.offset));
+            assert_eq!(graph.additive_address(&computed), Some(computed.clone()));
+            assert_eq!(graph.wide_additive_address(&computed), Some(wide.clone()));
+            for item in 0..size {
+                let alias = Pointer::symbolic(Variable(1_100_000 + item));
+                assert!(graph.add_equality(&alias, &computed));
+            }
+            let ((aligned, work), map_work) = crate::persistent::measure_persistent_work(|| {
+                crate::instrumentation::measure_deterministic_work(|| {
+                    graph.pointer_at_base_with_wide_index(&computed, &bytes)
+                })
+            });
+            assert_eq!(aligned, Some(wide));
+            samples.push((size, work, map_work));
+        }
+        assert!(
+            samples[3].1 <= samples[0].1 * 2 + 32,
+            "wide alignment scanned the address class: {samples:?}"
+        );
+        assert!(
+            samples[3].2 <= samples[0].2 * 3 + 128,
+            "wide alignment map work scanned the address class: {samples:?}"
+        );
+    }
+
+    #[test]
+    fn wide_borrow_alignment_uses_native_displacement_after_a_mixed_prefix() {
+        let mut graph = EqualityGraph::default();
+        let bytes = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(index(999_400), 1),
+        };
+        let mixed = bytes
+            .offset_by_typed_elements(index(999_401), 1, true, true)
+            .offset_by_elements(index(999_402), 1);
+        let wide = bytes.offset_by_typed_elements(index(999_403), 1, true, true);
+        assert!(graph.add_offset_equality(&mixed.offset, &wide.offset));
+        assert_eq!(
+            graph.pointer_at_base_with_wide_index(&mixed, &bytes),
+            Some(wide)
+        );
+    }
+
+    #[test]
+    fn retained_offset_spelling_does_not_identify_unrelated_pointer_blocks() {
+        let mut graph = EqualityGraph::default();
+        let base = Pointer::symbolic(Variable(999_300));
+        let bytes = Pointer::symbolic(Variable(999_301));
+        let computed = base.offset_by_elements(index(999_302), 1);
+        let wide = bytes.offset_by_typed_elements(index(999_303), 1, true, true);
+        assert!(graph.add_offset_equality(&computed.offset, &wide.offset));
+        assert!(!graph.are_equal(&computed, &wide));
+        assert!(
+            graph
+                .pointer_at_base_with_wide_index(&computed, &bytes)
+                .is_none()
+        );
     }
 
     // Every pointer equality query registers both addresses. Repeating a

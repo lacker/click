@@ -344,15 +344,14 @@ fn push_blank_line(expanded: &mut String, line_map: &mut ExpandedLineMap) {
     line_map.push(None);
 }
 
-/// The object-like macros of Click's built-in `<limits.h>`, for the LP64
-/// layout and unsigned plain `char` that every supported target selects.
+/// The object-like macros of Click's built-in `<limits.h>` for the LP64
+/// layout every supported target selects. `CHAR_MIN` and `CHAR_MAX` follow
+/// the target's plain `char` and are listed by [`char_limits_macros`].
 const LIMITS_MACROS: &[(&str, &str)] = &[
     ("CHAR_BIT", "8"),
     ("SCHAR_MIN", "(-128)"),
     ("SCHAR_MAX", "127"),
     ("UCHAR_MAX", "255"),
-    ("CHAR_MIN", "0"),
-    ("CHAR_MAX", "255"),
     ("SHRT_MIN", "(-32768)"),
     ("SHRT_MAX", "32767"),
     ("USHRT_MAX", "65535"),
@@ -367,16 +366,29 @@ const LIMITS_MACROS: &[(&str, &str)] = &[
     ("ULLONG_MAX", "18446744073709551615ULL"),
 ];
 
+/// `CHAR_MIN` and `CHAR_MAX` for the target's plain `char`, spelled as the
+/// `SCHAR_` or `UCHAR_` values they equal.
+fn char_limits_macros(target: super::target::CTarget) -> [(&'static str, &'static str); 2] {
+    match target.plain_char() {
+        super::target::PlainChar::Unsigned => [("CHAR_MIN", "0"), ("CHAR_MAX", "255")],
+        super::target::PlainChar::Signed => [("CHAR_MIN", "(-128)"), ("CHAR_MAX", "127")],
+    }
+}
+
 /// Defines the built-in `<limits.h>` macros. Including the header again is
 /// harmless, but a program's own different definition of one of its names
 /// is a conflicting redefinition, as it would be under a C compiler.
 fn define_limits_macros(
     source_path: &str,
     line_number: usize,
+    target: super::target::CTarget,
     macros: &mut BTreeMap<String, MacroDefinition>,
     defined_macros: &mut BTreeSet<String>,
 ) -> Result<(), CSourceError> {
-    for &(name, value) in LIMITS_MACROS {
+    for &(name, value) in LIMITS_MACROS
+        .iter()
+        .chain(char_limits_macros(target).iter())
+    {
         let definition = MacroDefinition::ObjectLike(value.to_string());
         if defined_macros.contains(name) && macros.get(name) != Some(&definition) {
             return Err(CSourceError::new(
@@ -578,7 +590,13 @@ fn expand_source<'a>(
                         defined_macros.insert("NULL".into());
                     }
                     (_, "limits.h") => {
-                        define_limits_macros(source_path, line_number, macros, defined_macros)?;
+                        define_limits_macros(
+                            source_path,
+                            line_number,
+                            target,
+                            macros,
+                            defined_macros,
+                        )?;
                     }
                     (super::target::CTarget::X86_64LinuxUserspace, "string.h" | "stdlib.h") => {
                         let (name, text) = if header == "string.h" {
@@ -809,6 +827,7 @@ fn collect_local_include_paths(
                         define_limits_macros(
                             source_path,
                             line_number,
+                            target,
                             &mut macros,
                             &mut defined_macros,
                         )?;

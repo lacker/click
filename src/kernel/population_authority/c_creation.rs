@@ -350,6 +350,37 @@ impl Hash for CreationEvents {
 }
 
 impl CreationEvents {
+    /// The next ledger: a fresh identity and empty memo caches, with every
+    /// recorded field carried over. Each transition overrides the fields it
+    /// changes with struct-update syntax.
+    fn successor(&self) -> Root {
+        Root {
+            identity: fresh_identity(),
+            entry_call: OnceLock::new(),
+            proof_entry: OnceLock::new(),
+            transfers: Mutex::new(BTreeMap::new()),
+            returns: Mutex::new(BTreeMap::new()),
+            c_events: Mutex::new(BTreeMap::new()),
+            invocation: self.0.invocation,
+            opaque_actor: self.0.opaque_actor,
+            pending: self.0.pending.clone(),
+            creators: self.0.creators.clone(),
+            anchors: self.0.anchors.clone(),
+            authority: self.0.authority.clone(),
+            scopes: self.0.scopes.clone(),
+            exact_members: self.0.exact_members.clone(),
+            opaque_types: self.0.opaque_types.clone(),
+            symbolic_batches: self.0.symbolic_batches.clone(),
+            symbolic_holders: self.0.symbolic_holders.clone(),
+            tainted: self.0.tainted.clone(),
+            opaque_imports: self.0.opaque_imports.clone(),
+            opaque_holders: self.0.opaque_holders.clone(),
+            opaque_transfers: Mutex::new(BTreeMap::new()),
+            opaque_entry_counts: Mutex::new(BTreeMap::new()),
+            empty_populations: self.0.empty_populations.clone(),
+        }
+    }
+
     /// Whether this ledger records nothing: no storage, member, authority,
     /// import, scope or batch. Its identity and holders are fresh names that
     /// nothing else in its state can refer to, so two such ledgers describe
@@ -889,21 +920,6 @@ impl CreationEvents {
             },
         );
         Ok(Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
             opaque_holders: self.0.opaque_holders.with_inserted(
                 self.0.opaque_actor,
                 self.0
@@ -914,11 +930,6 @@ impl CreationEvents {
                     + 1
                     + u32::from(owned_members > 0 || symbolic_members.is_some()),
             ),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
             opaque_types: if named_authority {
                 self.0
                     .opaque_types
@@ -927,6 +938,7 @@ impl CreationEvents {
                 self.0.opaque_types.clone()
             },
             opaque_imports,
+            ..self.successor()
         })))
     }
 
@@ -1013,29 +1025,8 @@ impl CreationEvents {
                 }
             }
             Self(Arc::new(Root {
-                identity: fresh_identity(),
-                entry_call: OnceLock::new(),
-                proof_entry: OnceLock::new(),
-                transfers: Mutex::new(BTreeMap::new()),
-                returns: Mutex::new(BTreeMap::new()),
-                c_events: Mutex::new(BTreeMap::new()),
-                invocation: self.0.invocation,
-                opaque_actor: self.0.opaque_actor,
-                pending: self.0.pending.clone(),
-                creators: self.0.creators.clone(),
-                anchors: self.0.anchors.clone(),
-                authority: self.0.authority.clone(),
-                scopes: self.0.scopes.clone(),
-                exact_members: self.0.exact_members.clone(),
-                opaque_types: self.0.opaque_types.clone(),
-                symbolic_batches: self.0.symbolic_batches.clone(),
-                symbolic_holders: self.0.symbolic_holders.clone(),
-                tainted: self.0.tainted.clone(),
                 opaque_imports: imports,
-                opaque_holders: self.0.opaque_holders.clone(),
-                opaque_transfers: Mutex::new(BTreeMap::new()),
-                opaque_entry_counts: Mutex::new(BTreeMap::new()),
-                empty_populations: self.0.empty_populations.clone(),
+                ..self.successor()
             }))
         });
         // The cache key names one explicit resource. A different declaration
@@ -1544,29 +1535,9 @@ impl CreationEvents {
             .opaque_imports
             .with_inserted(description.clone(), updated);
         let successor = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
             opaque_holders: holders,
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
             opaque_imports: imports,
+            ..self.successor()
         }));
         Ok(self
             .0
@@ -2233,29 +2204,10 @@ impl CreationEvents {
                 tainted.insert(block.clone(), families);
             }
             let after = Self(Arc::new(Root {
-                identity: fresh_identity(),
-                entry_call: OnceLock::new(),
-                proof_entry: OnceLock::new(),
-                transfers: Mutex::new(BTreeMap::new()),
-                returns: Mutex::new(BTreeMap::new()),
-                c_events: Mutex::new(BTreeMap::new()),
-                invocation: self.0.invocation,
-                opaque_actor: self.0.opaque_actor,
-                pending: self.0.pending.clone(),
-                creators: self.0.creators.clone(),
-                anchors: self.0.anchors.clone(),
-                authority: self.0.authority.clone(),
                 symbolic_batches: batches,
                 symbolic_holders: holders,
                 tainted,
-                opaque_holders: self.0.opaque_holders.clone(),
-                opaque_transfers: Mutex::new(BTreeMap::new()),
-                opaque_entry_counts: Mutex::new(BTreeMap::new()),
-                empty_populations: self.0.empty_populations.clone(),
-                scopes: self.0.scopes.clone(),
-                exact_members: self.0.exact_members.clone(),
-                opaque_types: self.0.opaque_types.clone(),
-                opaque_imports: self.0.opaque_imports.clone(),
+                ..self.successor()
             }));
             let evidence = CheckedPopulationMemberExchange {
                 before: self.0.identity,
@@ -2331,32 +2283,11 @@ impl CreationEvents {
             return Err(CreationRefusal::MissingMembers);
         }
         let after = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
             opaque_holders: self.adjust_opaque_right(
                 self.0.opaque_actor,
                 import.entry_symbolic_members.is_some() || import.symbolic_delta.is_some(),
                 produce,
             ),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
             opaque_imports: self.0.opaque_imports.with_inserted(
                 description.clone(),
                 OpaqueImport {
@@ -2365,6 +2296,7 @@ impl CreationEvents {
                     ..import.clone()
                 },
             ),
+            ..self.successor()
         }));
         let evidence = CheckedPopulationMemberExchange {
             before: self.0.identity,
@@ -2523,28 +2455,6 @@ impl CreationEvents {
             import.born_named.clone()
         };
         let after = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
             opaque_imports: self.0.opaque_imports.with_inserted(
                 scope.clone(),
                 OpaqueImport {
@@ -2562,6 +2472,7 @@ impl CreationEvents {
                     ..import.clone()
                 },
             ),
+            ..self.successor()
         }));
         Ok(self
             .0
@@ -2799,32 +2710,11 @@ impl CreationEvents {
                 );
             }
             let after = Self(Arc::new(Root {
-                identity: fresh_identity(),
-                entry_call: OnceLock::new(),
-                proof_entry: OnceLock::new(),
-                transfers: Mutex::new(BTreeMap::new()),
-                returns: Mutex::new(BTreeMap::new()),
-                c_events: Mutex::new(BTreeMap::new()),
-                invocation: self.0.invocation,
-                opaque_actor: self.0.opaque_actor,
-                pending: self.0.pending.clone(),
-                creators: self.0.creators.clone(),
-                anchors: self.0.anchors.clone(),
-                authority: self.0.authority.clone(),
-                symbolic_batches: self.0.symbolic_batches.clone(),
-                symbolic_holders: self.0.symbolic_holders.clone(),
-                tainted: self.0.tainted.clone(),
                 opaque_holders: self.adjust_opaque_right(
                     self.0.opaque_actor,
                     held > 0,
                     next_held > 0,
                 ),
-                opaque_transfers: Mutex::new(BTreeMap::new()),
-                opaque_entry_counts: Mutex::new(BTreeMap::new()),
-                empty_populations: self.0.empty_populations.clone(),
-                scopes: self.0.scopes.clone(),
-                exact_members: self.0.exact_members.clone(),
-                opaque_types: self.0.opaque_types.clone(),
                 opaque_imports: self.0.opaque_imports.with_inserted(
                     scope.clone(),
                     OpaqueImport {
@@ -2847,6 +2737,7 @@ impl CreationEvents {
                         ..import.clone()
                     },
                 ),
+                ..self.successor()
             }));
             let evidence = CheckedPopulationMemberExchange {
                 before: self.0.identity,
@@ -2920,29 +2811,10 @@ impl CreationEvents {
             tainted.insert(block.clone(), families);
         }
         let after = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
             authority,
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
             tainted,
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
             exact_members,
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }));
         let evidence = CheckedPopulationMemberExchange {
             before: self.0.identity,
@@ -2991,29 +2863,9 @@ impl CreationEvents {
             .entry_call
             .get_or_init(|| {
                 Self(Arc::new(Root {
-                    identity: fresh_identity(),
-                    entry_call: OnceLock::new(),
-                    proof_entry: OnceLock::new(),
-                    transfers: Mutex::new(BTreeMap::new()),
-                    returns: Mutex::new(BTreeMap::new()),
-                    c_events: Mutex::new(BTreeMap::new()),
                     invocation: Holder::fresh(),
                     opaque_actor: Holder::fresh(),
-                    pending: self.0.pending.clone(),
-                    creators: self.0.creators.clone(),
-                    anchors: self.0.anchors.clone(),
-                    authority: self.0.authority.clone(),
-                    symbolic_batches: self.0.symbolic_batches.clone(),
-                    symbolic_holders: self.0.symbolic_holders.clone(),
-                    tainted: self.0.tainted.clone(),
-                    opaque_holders: self.0.opaque_holders.clone(),
-                    opaque_transfers: Mutex::new(BTreeMap::new()),
-                    opaque_entry_counts: Mutex::new(BTreeMap::new()),
-                    empty_populations: self.0.empty_populations.clone(),
-                    scopes: self.0.scopes.clone(),
-                    exact_members: self.0.exact_members.clone(),
-                    opaque_types: self.0.opaque_types.clone(),
-                    opaque_imports: self.0.opaque_imports.clone(),
+                    ..self.successor()
                 }))
             })
             .clone()
@@ -3027,29 +2879,8 @@ impl CreationEvents {
             .proof_entry
             .get_or_init(|| {
                 Self(Arc::new(Root {
-                    identity: fresh_identity(),
-                    entry_call: OnceLock::new(),
-                    proof_entry: OnceLock::new(),
-                    transfers: Mutex::new(BTreeMap::new()),
-                    returns: Mutex::new(BTreeMap::new()),
-                    c_events: Mutex::new(BTreeMap::new()),
                     invocation: Holder::fresh(),
-                    opaque_actor: self.0.opaque_actor,
-                    pending: self.0.pending.clone(),
-                    creators: self.0.creators.clone(),
-                    anchors: self.0.anchors.clone(),
-                    authority: self.0.authority.clone(),
-                    symbolic_batches: self.0.symbolic_batches.clone(),
-                    symbolic_holders: self.0.symbolic_holders.clone(),
-                    tainted: self.0.tainted.clone(),
-                    opaque_holders: self.0.opaque_holders.clone(),
-                    opaque_transfers: Mutex::new(BTreeMap::new()),
-                    opaque_entry_counts: Mutex::new(BTreeMap::new()),
-                    empty_populations: self.0.empty_populations.clone(),
-                    scopes: self.0.scopes.clone(),
-                    exact_members: self.0.exact_members.clone(),
-                    opaque_types: self.0.opaque_types.clone(),
-                    opaque_imports: self.0.opaque_imports.clone(),
+                    ..self.successor()
                 }))
             })
             .clone()
@@ -3215,29 +3046,10 @@ impl CreationEvents {
             return Err(CreationRefusal::MissingMembers);
         };
         let successor = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
             authority,
             symbolic_batches: batches,
             symbolic_holders: holders,
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }));
         Ok(self
             .0
@@ -3276,29 +3088,8 @@ impl CreationEvents {
             CEvent::TransferredAnchor(from.0.invocation, to.0.invocation, block.clone()),
             || {
                 Self(Arc::new(Root {
-                    identity: fresh_identity(),
-                    entry_call: OnceLock::new(),
-                    proof_entry: OnceLock::new(),
-                    transfers: Mutex::new(BTreeMap::new()),
-                    returns: Mutex::new(BTreeMap::new()),
-                    c_events: Mutex::new(BTreeMap::new()),
-                    invocation: self.0.invocation,
-                    opaque_actor: self.0.opaque_actor,
-                    pending: self.0.pending.clone(),
-                    creators: self.0.creators.clone(),
-                    anchors: self.0.anchors.clone(),
                     authority,
-                    symbolic_batches: self.0.symbolic_batches.clone(),
-                    symbolic_holders: self.0.symbolic_holders.clone(),
-                    tainted: self.0.tainted.clone(),
-                    opaque_holders: self.0.opaque_holders.clone(),
-                    opaque_transfers: Mutex::new(BTreeMap::new()),
-                    opaque_entry_counts: Mutex::new(BTreeMap::new()),
-                    empty_populations: self.0.empty_populations.clone(),
-                    scopes: self.0.scopes.clone(),
-                    exact_members: self.0.exact_members.clone(),
-                    opaque_types: self.0.opaque_types.clone(),
-                    opaque_imports: self.0.opaque_imports.clone(),
+                    ..self.successor()
                 }))
             },
         ))
@@ -3355,29 +3146,9 @@ impl CreationEvents {
             return cached.clone();
         }
         let successor = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
             invocation: caller.0.invocation,
             opaque_actor: caller.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }));
         self.0
             .returns
@@ -3406,29 +3177,8 @@ impl CreationEvents {
         let mut pending = self.0.pending.clone();
         pending.insert(block, self.0.invocation);
         Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
             pending,
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }))
     }
 
@@ -3477,29 +3227,13 @@ impl CreationEvents {
             creators.insert(block, creator);
         }
         Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
             pending,
             creators,
             anchors,
             authority,
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
             tainted,
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
             empty_populations,
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }))
     }
 
@@ -3523,29 +3257,11 @@ impl CreationEvents {
         anchors.insert(block.clone(), anchor);
         creators.insert(block.clone(), self.0.invocation);
         Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
             creators,
             anchors,
             authority,
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
             empty_populations: self.0.empty_populations.without_key(&block),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }))
     }
 
@@ -3590,29 +3306,8 @@ impl CreationEvents {
             .with_value(family.to_owned());
         tainted.insert(block.clone(), families);
         Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
             tainted,
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         }))
     }
 
@@ -3655,27 +3350,7 @@ impl CreationEvents {
             .establish(self.0.invocation, anchor, family)
             .map_err(CreationRefusal::from)?;
         Ok(Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
             authority,
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
             scopes: match scope {
                 Some(scope) => self
                     .0
@@ -3683,7 +3358,7 @@ impl CreationEvents {
                     .with_inserted((block.clone(), family.into()), scope.clone()),
                 None => self.0.scopes.clone(),
             },
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         })))
     }
 
@@ -3784,28 +3459,7 @@ impl CreationEvents {
             .get(description)
             .expect("checked import");
         let after = Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
-            authority: self.0.authority.clone(),
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
             opaque_holders: self.adjust_opaque_right(self.0.opaque_actor, true, false),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
             opaque_imports: self.0.opaque_imports.with_inserted(
                 description.clone(),
                 OpaqueImport {
@@ -3813,6 +3467,7 @@ impl CreationEvents {
                     ..import.clone()
                 },
             ),
+            ..self.successor()
         }));
         let evidence = CheckedPopulationAuthorityExchange {
             before: self.0.identity,
@@ -3847,24 +3502,7 @@ impl CreationEvents {
             .retire(self.0.invocation, population)
             .map_err(CreationRefusal::from)?;
         Ok(Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
-            creators: self.0.creators.clone(),
-            anchors: self.0.anchors.clone(),
             authority,
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
-            tainted: self.0.tainted.clone(),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
             empty_populations: self.0.empty_populations.with_inserted(
                 block.clone(),
                 self.0
@@ -3874,10 +3512,7 @@ impl CreationEvents {
                     .unwrap_or_default()
                     .with_value(family.to_owned()),
             ),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         })))
     }
 
@@ -3915,29 +3550,11 @@ impl CreationEvents {
         let mut anchors = self.0.anchors.clone();
         anchors.remove(block);
         Ok(Self(Arc::new(Root {
-            identity: fresh_identity(),
-            entry_call: OnceLock::new(),
-            proof_entry: OnceLock::new(),
-            transfers: Mutex::new(BTreeMap::new()),
-            returns: Mutex::new(BTreeMap::new()),
-            c_events: Mutex::new(BTreeMap::new()),
-            invocation: self.0.invocation,
-            opaque_actor: self.0.opaque_actor,
-            pending: self.0.pending.clone(),
             creators,
             anchors,
             authority,
-            symbolic_batches: self.0.symbolic_batches.clone(),
-            symbolic_holders: self.0.symbolic_holders.clone(),
             tainted: self.0.tainted.without_key(block),
-            opaque_holders: self.0.opaque_holders.clone(),
-            opaque_transfers: Mutex::new(BTreeMap::new()),
-            opaque_entry_counts: Mutex::new(BTreeMap::new()),
-            empty_populations: self.0.empty_populations.clone(),
-            scopes: self.0.scopes.clone(),
-            exact_members: self.0.exact_members.clone(),
-            opaque_types: self.0.opaque_types.clone(),
-            opaque_imports: self.0.opaque_imports.clone(),
+            ..self.successor()
         })))
     }
 }

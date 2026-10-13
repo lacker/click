@@ -858,7 +858,7 @@ fn common_possible_instance_arm(
 /// already holds are left alone.
 pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
     resource_environment: &ResourceEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
+    spec_definitions: SpecDefinitions<'_>,
     parameter_binding: ParameterBinding<'_>,
     state: CState,
     instance: &ResourceInstance,
@@ -871,16 +871,44 @@ pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
     // any later write, mints a second load identity for it.
     let selected = selected_resource_instance_arm(
         resource_environment,
-        click_function_environment,
+        spec_definitions.functions,
         instance,
         assumptions,
     )
     .or_else(|| {
         let definition = resource_environment.get(instance.name())?;
         let body = definition.composite_body()?;
-        body.matched
-            .is_none()
-            .then(|| unmatched_instance_body(definition, body, instance))?
+        if body.matched.is_some() {
+            return None;
+        }
+        if body.condition.is_none() {
+            return unmatched_instance_body(definition, body, instance);
+        }
+        // The checked unfold has exposed only the active body's cells.
+        // Select that same body here; a false or undecided guard must not
+        // materialize its cells, and the entry projection stays unconditional.
+        let mut active_body = body.clone();
+        active_body.condition = None;
+        let selected = unmatched_instance_body(definition, &active_body, instance)?;
+        let substitutions = resource_value_substitutions_for_parameters(
+            selected.arm.name(),
+            instance.arguments(),
+            &selected.bindings,
+            selected.arm.parameters(),
+        )
+        .ok()?;
+        let active = try_select_composite_resource_body(
+            definition,
+            &substitutions,
+            parameter_binding,
+            &state,
+            &state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            assumptions,
+            spec_definitions,
+        )
+        .ok()?;
+        (active == Some(true)).then_some(selected)
     });
     let Some(selected) = selected else {
         return state;
@@ -5379,5 +5407,83 @@ mod wide_range_reader_tests {
             &[],
         );
         assert_eq!(result.diagnostic_identity(), memory.diagnostic_identity());
+    }
+}
+
+#[cfg(test)]
+mod guarded_unmatched_materialization_tests {
+    use super::*;
+
+    #[test]
+    fn guarded_cells_materialize_only_after_a_proved_active_guard() {
+        let file = crate::surface::parser::parse_file_items(
+            r#"
+resource cell(p: int32*) {
+    field number: int32;
+    if p != 0 {
+        owns *p;
+        fact *p == number;
+    }
+}"#,
+        )
+        .unwrap();
+        let resources = ResourceEnvironment::new(&file.resource_definitions);
+        let functions = ClickFunctionEnvironment::new(&[]);
+        let predicates = PredicateEnvironment::new(&[]);
+        let specs = SpecDefinitions::new(&predicates, &functions);
+        let schema = crate::kernel::ResourceFieldSchema::new(vec![(
+            "number".to_string(),
+            crate::kernel::ResourceFieldType::C(CType::Int32),
+        )])
+        .unwrap();
+        for (pointer, active) in [
+            (crate::kernel::Pointer::null(), false),
+            (
+                crate::kernel::Pointer::symbolic(crate::kernel::Variable(88_001)),
+                false,
+            ),
+            (
+                crate::kernel::Pointer {
+                    block: "object".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                },
+                true,
+            ),
+        ] {
+            let instance = ResourceInstance::new(
+                crate::kernel::Variable(88_002),
+                "cell".to_string(),
+                vec![AlgebraicValue::C(CValue::typed_pointer(
+                    pointer.clone(),
+                    CType::Int32Pointer,
+                ))]
+                .into(),
+                schema.clone(),
+                vec![AlgebraicValue::C(crate::kernel::int32(3))].into(),
+            )
+            .unwrap();
+            let before = CState::new();
+            let after = materialize_unfolded_instance_arm_cells(
+                &resources,
+                specs,
+                ParameterBinding::new(&[], &[]),
+                before.clone(),
+                &instance,
+                &PureFactContext::new(),
+                &PureFactContext::new(),
+            );
+            assert_eq!(
+                matches!(after.memory().load(&pointer), CExpressionOutcome::Value(_)),
+                active
+            );
+            assert_eq!(
+                after.resources().facts(),
+                before.resources().facts(),
+                "naming cells grants no ownership"
+            );
+            if !active {
+                assert_eq!(after.memory(), before.memory());
+            }
+        }
     }
 }

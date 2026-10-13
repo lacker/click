@@ -1,6 +1,6 @@
 # Initialization needs every byte of mutex storage
 
-This synthetic C0 regression uses allocator builtins directly.
+This synthetic C regression uses allocator builtins directly.
 
 ```c filename=mutex_init_short_allocation.c
 #include <pthread.h>

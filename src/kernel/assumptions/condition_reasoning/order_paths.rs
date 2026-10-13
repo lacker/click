@@ -33,6 +33,9 @@ impl PureFactContext {
         &self,
         condition: &ConditionTerm,
     ) -> Option<bool> {
+        if let Some(result) = self.decide_from_variable_chain(condition) {
+            return Some(result);
+        }
         if let Some((term, bound, _)) = unsigned_upper_bound_below_sign_bit(condition, true)
             && let Some(value) = self.decide_unsigned_upper_bound_by_signed_order(term, bound)
         {
@@ -1222,6 +1225,9 @@ impl PureFactContext {
     ) -> bool {
         if crate::kernel::assumptions::reasoning_interrupted() {
             return false;
+        }
+        if value && self.decide_from_variable_chain(condition) == Some(true) {
+            return true;
         }
         // The biased spelling of an unsigned bound below the sign bit is the
         // signed pair `0 <= term` and `term <= bound`, read the same way the

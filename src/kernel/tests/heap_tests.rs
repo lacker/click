@@ -45,8 +45,7 @@ fn heap_allocation_paths() -> Vec<CStatementExecutionPath> {
         &state,
         &c_heap_allocate("p", 16),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("fixed-size allocation should execute")
@@ -80,8 +79,7 @@ fn checked_object_address_rejects_freed_backing_without_reading_it() {
         &success,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .unwrap();
@@ -290,8 +288,7 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
             true,
         ),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("calloc-shaped allocation should execute");
@@ -339,8 +336,7 @@ fn zeroed_heap_allocation_reads_zero_until_a_store() {
             c_int32_literal(7),
         ),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("store into zeroed allocation should execute");
@@ -376,8 +372,7 @@ fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
             true,
         ),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("calloc-shaped allocation should execute");
@@ -402,8 +397,7 @@ fn realloc_preserves_zeroed_prefix_and_leaves_growth_uninitialized() {
         &allocated,
         &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(12)]),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("realloc of zeroed storage should execute");
@@ -502,8 +496,7 @@ fn pending_and_failed_heap_allocation_preserve_existing_memory() {
         &state,
         &c_heap_allocate("p", 16),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("allocation statement should produce a pending result");
@@ -620,8 +613,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
         &state,
         &c_heap_allocate("q", 16),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         // Deliberately reset the generator: existing heap identities still
         // have to prevent reuse.
         &mut ExecutionBudget::default(),
@@ -745,8 +737,7 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
         &success,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("free should execute");
@@ -796,8 +787,7 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
         freed,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("double free should execute to a diagnostic");
@@ -877,8 +867,7 @@ fn scoped_call_borrows_end_before_free() {
         &state,
         &statement,
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::default(),
     )
     .expect("a read-only call borrow followed by free should execute");
@@ -912,8 +901,7 @@ fn standalone_view_cannot_authorize_free() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("a standalone view should fail locally at free");
@@ -949,8 +937,7 @@ fn persistent_composite_view_blocks_free_locally() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("a persistent stale view should produce a local diagnostic");
@@ -987,8 +974,7 @@ fn separated_persistent_view_survives_free() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("a view of a distinct allocation should survive free");
@@ -1032,8 +1018,7 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("freeing an imported allocation should execute");
@@ -1134,8 +1119,7 @@ fn free_requires_allocation_authority_not_just_write_access() {
         &success,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("missing-authority free should execute to a diagnostic");
@@ -1157,8 +1141,7 @@ fn heap_storage_becomes_readable_only_after_a_store() {
         &success,
         &c_store(c_variable("p"), c_int32_literal(37)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("an owned fresh heap cell should be writable");
@@ -1204,8 +1187,7 @@ fn active_stable_loan_rejects_overlapping_heap_free_and_realloc() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("free should return a checked refusal");
@@ -1216,8 +1198,7 @@ fn active_stable_loan_rejects_overlapping_heap_free_and_realloc() {
         &state,
         &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(8)]),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("realloc should return a checked refusal");
@@ -1231,8 +1212,7 @@ fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
         &state,
         &c_store(c_variable("p"), c_int32_literal(37)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("the old allocation should be writable");
@@ -1252,8 +1232,7 @@ fn realloc_keeps_old_resources_until_result_and_transfers_them_on_success() {
         &state,
         &c_call_assign("q", "realloc", vec![c_variable("p"), c_int32_literal(8)]),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("realloc should leave one pending result");
@@ -1397,8 +1376,7 @@ fn realloc_preserves_a_stored_pointer_designation_until_its_outcome() {
             state,
             &statement,
             &context,
-            &CExecutionEnvironment::new(),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
             &mut ExecutionBudget::default(),
         )
         .unwrap()
@@ -1457,8 +1435,7 @@ fn free_null_needs_no_allocation_resources() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("free(NULL) should execute");
@@ -1503,8 +1480,7 @@ fn free_preserves_a_separate_recursive_tail_with_the_same_symbolic_block() {
         &state,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("freeing a separated parent should execute");
@@ -1615,8 +1591,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
         &null_state,
         &c_call_assign("result", "item_destroy", vec![c_int32_literal(0)]),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::default(),
     )
     .expect("an inactive malformed footprint should not be evaluated");
@@ -1644,8 +1619,7 @@ fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
         &nonnull_state,
         &c_call_assign("result", "item_destroy", vec![c_pointer_value(nonnull)]),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::default(),
     )
     .expect("an active malformed footprint should produce a local diagnostic");
@@ -1740,8 +1714,7 @@ fn interior_free_and_store_after_free_are_rejected() {
         &success,
         &c_heap_free(c_add(c_variable("p"), c_int32_literal(1))),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("interior free should produce a diagnostic");
@@ -1759,8 +1732,7 @@ fn interior_free_and_store_after_free_are_rejected() {
         &success,
         &c_heap_free(c_variable("p")),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("valid free should execute");
@@ -1777,8 +1749,7 @@ fn interior_free_and_store_after_free_are_rejected() {
         freed,
         &c_store(c_variable("p"), c_int32_literal(1)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("store-after-free should produce undefined behavior");
@@ -1799,8 +1770,7 @@ fn returning_malloc_result_resolves_null_and_success_outcomes() {
         &state,
         &statement,
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("returning a malloc result should split its outcomes");
@@ -1854,8 +1824,7 @@ fn unreturned_unresolved_malloc_result_cannot_cross_a_return() {
         &state,
         &statement,
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("unresolved allocation should execute to a diagnostic");
@@ -1944,8 +1913,7 @@ fn contract_retire_forgets_zeroed_reading_and_records_the_change() {
         &state,
         &c_heap_allocate_sized_with_zeroed("p", c_int32_literal(4), true),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("calloc-shaped allocation should execute");

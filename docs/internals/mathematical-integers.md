@@ -436,7 +436,7 @@ indexed store-gap decisions use the same bound. Known load kinds, pointer
 reads, and retained typed cells use their own access widths; a wider unknown
 fallback must not erase precise separation evidence.
 
-The shared runtime and internal C0 type identities also model signed and
+The shared runtime and internal Click's C type identities also model signed and
 unsigned wide object pointers, pointer slots, fixed scalar arrays, and arrays
 of those pointers. Scalar array elements and pointer arithmetic use a 16-byte
 stride; pointer objects and pointer-array slots retain the LP64 8-byte width.
@@ -457,7 +457,7 @@ checked signed multiplication, division/remainder, and comparisons. Contracts
 observe these values through `to_integer` and use checked reverse conversions.
 Wide source pointers, references, arrays, and record fields
 remain unsupported, as do ordinary C and Rust wide source spellings. Internal
-C0 identities model the wider memory profile without granting source admission.
+C identities model the wider memory profile without granting source admission.
 
 ## Work budgets and certificate scaling
 
@@ -841,8 +841,11 @@ Nested conversions are compared with the canonical modulo cast of the source
 observation, including a narrowing cast that discards an intermediate cast.
 Unsigned byte readback also admits an exact low-bit mask: a `uint32` source
 masked by `255` for a `uint8` observation or `65535` for a `uint16` observation.
-Both forms require the same two range bounds. A different mask, operand, or
-destination is refused; widening after an intervening truncation cannot be
+Both forms require the same two range bounds. C narrowing into `int8`,
+`uint8`, `int16` or `uint16` keeps the source's 32-bit carrier, or the low
+word of a 64-bit source, without a cast node; the rule admits exactly those
+two carriers, again with bounds on the source observation inside the
+destination range. A different mask, operand, or destination is refused; widening after an intervening truncation cannot be
 mistaken for a direct cast of the original value. These forms connect native
 Rust narrowing stores to their full-width modulo results.
 

@@ -25,6 +25,7 @@ unsigned char *version_text(void) { return TEXT; }
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "version.c";
 
 int version_num() {

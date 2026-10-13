@@ -404,8 +404,7 @@ pub(super) fn verify_execution_theorem(
     let conclusion = lower_pure_theorem_proposition(
         theorem.name(),
         goal,
-        &context.values,
-        &context.array_refs,
+        ContractEnvironment::new(&context.values, &context.array_refs),
         &context.memory,
         spec_definitions,
     )

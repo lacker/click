@@ -6,7 +6,8 @@ use super::arithmetic_special::SpecialArithmeticCheckError as Error;
 use crate::kernel::{ConditionTerm, IntegerTerm, Proposition, SharedIntegerTerm};
 use num_bigint::BigInt;
 
-fn order(proposition: &Proposition) -> Option<(&SharedIntegerTerm, &SharedIntegerTerm)> {
+/// The two sides of an Integer `<=` fact.
+pub(super) fn order(proposition: &Proposition) -> Option<(&SharedIntegerTerm, &SharedIntegerTerm)> {
     match proposition {
         Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(left, right), true) => {
             Some((left, right))

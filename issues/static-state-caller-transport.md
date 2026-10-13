@@ -1,5 +1,10 @@
 # Transport current static state through cross-file callers
 
+Priority: P2.
+
+Soundness: incomplete. `multifile-registry` fails to verify and is
+quarantined. No caller is accepted using initializer values.
+
 ## Violated invariant
 
 After ordinary function entry stops restoring mutable static initializers, a

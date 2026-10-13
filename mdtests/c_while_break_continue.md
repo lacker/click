@@ -1,6 +1,6 @@
 # While-loop break and continue
 
-C0 preserves the structured loop exits that are useful in ordinary search and
+Click preserves the structured loop exits that are useful in ordinary search and
 filter loops. `break` exits the innermost `while`; `continue` skips the rest of
 the current body and rechecks the loop condition.
 

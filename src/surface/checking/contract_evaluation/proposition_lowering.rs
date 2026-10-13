@@ -35,24 +35,21 @@ pub(in crate::surface) fn lower_outcome_proposition_with_auxiliary_facts(
     let values = parameter_values(parameter_binding).map_err(|error| error.message)?;
     let array_refs =
         array_refs_for_parameters(parameter_binding.parameters, &values, post_state.memory());
-    crate::surface::proof::lower_fixed_state_proposition_through_kernel_recording_introductions_with_bound_array_memories_and_facts(
+    crate::surface::proof::lower_fixed_state_proposition_through_kernel_with_facts(
         proposition,
         assumptions,
-        assumptions,
-        &values,
-        &array_refs,
-        &BTreeMap::new(),
-        &crate::persistent::PersistentMap::default(),
-        &BTreeMap::new(),
-        FixedStateFrame::new(pre_state, post_state, Some(result), &RecordedSnapshots::new()),
+        ContractEnvironment::new(&values, &array_refs),
+        FixedStateFrame::new(
+            pre_state,
+            post_state,
+            Some(result),
+            &RecordedSnapshots::new(),
+        ),
         spec_definitions,
-        &std::collections::BTreeSet::new(),
-        BTreeMap::new(),
+        FixedStateLoweringOptions::default(),
     )
     .map(|(proposition, _, facts)| {
-        let facts = {
-            facts
-        };
+        let facts = { facts };
         (proposition, facts)
     })
 }
@@ -76,8 +73,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_assumptions(
     crate::surface::proof::lower_fixed_state_proposition_through_kernel(
         proposition,
         assumptions,
-        &values,
-        &array_refs,
+        ContractEnvironment::new(&values, &array_refs),
         FixedStateFrame::new(
             pre_state,
             post_state,
@@ -106,8 +102,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
     crate::surface::proof::lower_fixed_state_proposition_through_kernel(
         proposition,
         &assumptions,
-        &values,
-        &array_refs,
+        ContractEnvironment::new(&values, &array_refs),
         FixedStateFrame::new(pre_state, post_state, Some(result), recorded_snapshots),
         spec_definitions,
     )

@@ -1,7 +1,7 @@
 # known function call verification
 
 This checks that `.click` verification builds a function environment from all
-verified C0 sources and can execute a known helper call.
+verified C sources and can execute a known helper call.
 
 ```c filename=increment.c
 int32 increment(int32 x) {

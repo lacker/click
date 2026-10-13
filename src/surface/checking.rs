@@ -329,8 +329,7 @@ pub(super) fn evaluate_witness_tactic_value(
     claim_label: &str,
     path_index: usize,
     tactic_index: usize,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     pre_state: &CState,
     post_state: &CState,
     result: Option<&CValue>,
@@ -340,8 +339,8 @@ pub(super) fn evaluate_witness_tactic_value(
 ) -> Result<CValue, ClickError> {
     let mut active_functions = BTreeSet::new();
     let value = evaluate_contract_expression_with_environment(
-        values,
-        array_refs,
+        contract_environment.values,
+        contract_environment.array_refs,
         pre_state,
         post_state,
         result,

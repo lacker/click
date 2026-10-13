@@ -1,6 +1,6 @@
 # Multiple declarations in a `for` initializer
 
-C0 accepts same-type, initialized declaration lists in a `for` initializer and
+Click accepts same-type, initialized declaration lists in a `for` initializer and
 lowers them in source order, just like scalar assignment initializer lists.
 
 ```c filename=for_declaration_init_list.c

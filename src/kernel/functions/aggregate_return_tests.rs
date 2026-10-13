@@ -119,8 +119,7 @@ fn allocate_destination(state: &CState, name: &str) -> CState {
         state,
         &c_allocate_aggregate_destination(name, node_layout()),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("checked destination allocation");
@@ -268,8 +267,7 @@ fn constructor_binding_requires_the_native_record_declaration_identity() {
         &CState::new(),
         &c_allocate_aggregate_destination("parent", parent),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .unwrap();
@@ -317,8 +315,7 @@ fn constructor_binding_requires_complete_or_explicit_child_designation() {
         &CState::new(),
         &c_allocate_aggregate_destination("parent", parent.clone()),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .unwrap();
@@ -595,8 +592,7 @@ fn aggregate_declaration_survives_value_changes_without_initializing_padding() {
         &initial,
         &c_declare_aggregate("node", layout.clone()),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .expect("complete aggregate declaration");
@@ -966,10 +962,11 @@ fn construction_return_preserves_exact_destination_through_two_factories() {
         &outer,
         &[c_int32_literal(37)],
         &PureFactContext::new(),
-        &CExecutionEnvironment::new()
-            .with_function(inner)
-            .with_function(middle),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(
+            &CExecutionEnvironment::new()
+                .with_function(inner)
+                .with_function(middle),
+        ),
         &mut ExecutionBudget::default(),
     )
     .unwrap();
@@ -1036,8 +1033,7 @@ fn construction_return_rejects_missing_binding_authority_and_partial_values() {
             &function,
             &[c_int32_literal(37)],
             &PureFactContext::new(),
-            &CExecutionEnvironment::new(),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
             &mut ExecutionBudget::default(),
         )
         .unwrap();
@@ -1073,8 +1069,7 @@ fn construction_return_rejects_missing_binding_authority_and_partial_values() {
         &partial,
         &[c_int32_literal(37)],
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .unwrap();
@@ -1130,8 +1125,7 @@ fn construction_destination_can_alias_an_argument_without_becoming_fresh() {
             &function,
             &[c_pointer_value(at.offset_by_bytes(8))],
             &PureFactContext::new(),
-            &CExecutionEnvironment::new(),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
             &mut ExecutionBudget::default(),
         )
         .unwrap();
@@ -1248,8 +1242,7 @@ fn construction_temporary_retirement_preserves_copies_and_external_backing() {
             &CState::new().with_population_creation_tracking(),
             &prefix,
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::default(),
         )
         .unwrap();
@@ -1322,8 +1315,7 @@ fn construction_temporary_retirement_preserves_copies_and_external_backing() {
             after,
             &c_return(c_typed_load(c_pointer_value(referent), CType::Int32)),
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::default(),
         )
         .unwrap();
@@ -1512,10 +1504,11 @@ fn supplied_constructor_destination_survives_two_procedure_boundaries() {
         &outer,
         &[c_pointer_value(destination.clone()), c_int32_literal(37)],
         &PureFactContext::new(),
-        &CExecutionEnvironment::new()
-            .with_function(constructor)
-            .with_function(forward),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(
+            &CExecutionEnvironment::new()
+                .with_function(constructor)
+                .with_function(forward),
+        ),
         &mut ExecutionBudget::default(),
     )
     .expect("forwarded constructor execution");
@@ -1812,8 +1805,7 @@ fn symbolic_construction_storage_is_unreadable_until_written() {
                 &state,
                 &c_return(c_typed_load(c_pointer_value(source.clone()), CType::Int32)),
                 &assumptions,
-                &CExecutionEnvironment::new(),
-                CExecutionSemantics::EXECUTE_BODIES,
+                CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
                 &mut ExecutionBudget::default(),
             )
             .expect("raw destination read");
@@ -1876,8 +1868,7 @@ fn symbolic_construction_storage_respects_known_aliases() {
                     &state,
                     &c_return(c_typed_load(c_pointer_value(read.clone()), CType::Int32)),
                     &assumptions,
-                    &CExecutionEnvironment::new(),
-                    CExecutionSemantics::EXECUTE_BODIES,
+                    CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
                     &mut ExecutionBudget::default(),
                 )
                 .expect("aliased destination read");
@@ -2128,8 +2119,7 @@ fn construction_parameter_completion_checks_original_storage() {
             &function,
             &[c_pointer_value(at.clone()), c_int32_literal(37)],
             &PureFactContext::new(),
-            &CExecutionEnvironment::new(),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
             &mut ExecutionBudget::default(),
         )
         .unwrap();
@@ -2188,8 +2178,7 @@ fn construction_parameter_completion_checks_original_storage() {
         &function,
         &[c_pointer_value(at), c_pointer_value(other)],
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::default(),
     )
     .unwrap();

@@ -16,6 +16,7 @@ int32 read_literal() {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "string_literals_call.c";
 
 uint8* literal_source() {

@@ -1,7 +1,7 @@
 # Click documentation
 
-Click is a verifier for existing C programs. A `.click` sidecar names C source
-files, specifies contracts, and supplies proofs that the implementation meets
+Click is a verifier for existing C, C++, and Rust programs. A `.click` sidecar
+names source files, specifies contracts, and supplies proofs that the implementation meets
 those contracts.
 
 These technical pages are written and maintained by AI. They aim to be
@@ -13,14 +13,17 @@ contradicts the page.
 
 The documentation assumes broad programming experience but no background in
 theorem proving. Start with [What Click proves](concepts/what-click-proves.md)
-and [Your first proof](concepts/first-proof.md) if Click is new to you.
+and [Your first proof](concepts/first-proof.md) if Click is new to you, then
+[Verify a function in your own project](concepts/own-project.md) to bring in
+your project's build flags and libc calls.
 
 ## Technical reference
 
 Use the [technical reference](reference/index.md) to look up exact behavior:
 
-- [Language](reference/language/index.md) documents Surface Click and the
-  supported C0 subset.
+- [Language](reference/language/index.md) documents Surface Click and
+  supported C; [language coverage](reference/coverage.md) compares C, C++, and
+  Rust.
 - [Tactics](reference/tactics/index.md) inventories the proof operations and
   identifies simple, smart, and control forms.
 - [Command-line interface](reference/cli/index.md) documents verification,
@@ -48,12 +51,12 @@ Click adapts to working C; working C does not adapt to the verifier. Contracts,
 proofs, libraries, tactics, lowering, and kernel support must handle supported
 source patterns as written. A C change is appropriate only when it is an
 independently desirable program change, fixes a real bug or undefined behavior,
-or is a documented semantics-preserving translation into the supported C0
-subset.
+or is a documented semantics-preserving translation into supported C.
 
 ## Current status
 
-Click is experimental and its supported language is intentionally small. The
+Click is experimental and each supported language is an incomplete subset;
+[language coverage](reference/coverage.md) states what each admits. The
 [language limitations](reference/language/limitations.md) describe known
 boundaries. The [rbtree launch roadmap](internals/roadmap.md) is to complete P1,
 verify rbtree, and launch publicly with rbtree as the key demo. It describes

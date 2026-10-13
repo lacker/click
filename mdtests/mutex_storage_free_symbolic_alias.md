@@ -1,6 +1,6 @@
 # A returned pointer can still name an initialized mutex's allocation
 
-This synthetic C0 regression uses allocator builtins and a modular identity
+This synthetic C regression uses allocator builtins and a modular identity
 helper. The returned pointer's symbolic identity must not make the underlying
 allocation appear unrelated to the initialized mutex.
 

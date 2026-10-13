@@ -30,7 +30,7 @@ The claim is small, but it contains the whole Click shape:
 - `verifying "zero.c";` names the C source. The C itself is not changed.
 - `int32 zero()` identifies the C function being specified. Click spells C
   types by their width, so C's `int`, `signed int` and `int32_t` are all
-  `int32` (see [Supported types](../reference/language/c0.md#supported-types)).
+  `int32` (see [Supported types](../reference/language/c.md#supported-types)).
 - `ensures result == 0` states the fact to prove.
 - `by auto` asks Click's default automation to prove it.
 
@@ -113,3 +113,7 @@ languages used in that process. Once ordinary contract debugging is not enough, 
 [proof-failure triage guide](proof-failure-triage.md) to distinguish
 proof-authoring work from unsupported semantics, missing functionality,
 correctness bugs, and tooling failures.
+
+To verify a function in an existing project, with its include paths, `-D`
+settings, and libc calls, continue with
+[Verify a function in your own project](own-project.md).

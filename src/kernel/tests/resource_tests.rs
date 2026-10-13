@@ -8899,3 +8899,175 @@ fn native_owned_fragments_supply_indexed_writes() {
         .unchecked_with_fact(CResourceFact::View(CResource::Memory(range(0, 3))));
     assert!(viewed.memory_write_range(&base, 4, &facts).is_none());
 }
+
+#[test]
+fn observable_projection_uses_current_loan_bindings_and_composite_eligibility() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let context = context_with_one_loan_dependency(false);
+    assert_eq!(
+        context
+            .observable_facts_assuming_valid(&PureFactContext::new())
+            .len(),
+        1,
+        "a separately held owner and live borrow expose their composition"
+    );
+    let original = context.observable_composition();
+    let (occurrence, binding) = context.live_loan_dependencies().next().unwrap();
+    assert_eq!(original.loan_dependency(occurrence), Some(binding));
+    let current = context
+        .clone()
+        .with_loan_dependency_state(ResourceContext::new().loan_dependency_state());
+    let updated = current.observable_composition();
+    assert!(std::sync::Arc::ptr_eq(&original.storage, &updated.storage));
+    assert!(updated.loan_dependency(occurrence).is_none());
+    assert_eq!(updated, current.observable_composition_uncached());
+    assert_ne!(original, updated);
+    assert!(
+        current
+            .observable_facts_assuming_valid(&PureFactContext::new())
+            .is_empty(),
+        "one owner alone does not expose a separation composition"
+    );
+    let composite = CResourceFact::own_composite("observable_box".into(), Vec::new());
+    let context = ResourceContext::new().unchecked_with_fact(composite.clone());
+    assert_eq!(
+        context
+            .observable_facts_assuming_valid(&PureFactContext::new())
+            .len(),
+        1
+    );
+    let context = context.without_exact_representation(&composite).unwrap();
+    assert!(
+        context
+            .observable_facts_assuming_valid(&PureFactContext::new())
+            .is_empty()
+    );
+}
+
+#[test]
+fn observable_projection_ignores_excluded_loan_bindings_when_hashing() {
+    let mut costs = Vec::new();
+    for size in [4, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        crate::kernel::set_never_address_taken_locals(
+            (0..size).map(|index| format!("hidden_{index}")).collect(),
+        );
+        let base = context_with_one_loan_dependency(false);
+        let expected = base.observable_composition();
+        let mut context = base;
+        let ledger = LoanLedger::new();
+        let owner = ledger.fresh_participant().unwrap();
+        let reader = ledger.fresh_participant().unwrap();
+        for index in 0..size {
+            let range = CMemoryRange::new(
+                CMemory::local_pointer(&format!("hidden_{index}")),
+                0u32.into(),
+                1u32.into(),
+            );
+            let support = CResourceFact::own_memory(range.clone());
+            let view = CResourceFact::view_memory(range);
+            context = context.unchecked_with_fact(support.clone());
+            let support_occurrence = context.owned_occurrences_for_fact(&support)[0];
+            let opening = ledger
+                .lend(owner, reader, support_occurrence, support.clone())
+                .unwrap();
+            context = context.unchecked_with_supported_facts(&support, [view.clone()]);
+            let occurrence = context.occurrences_for_fact(&view)[0];
+            context = context.with_loan_dependency(
+                occurrence,
+                LoanViewBinding {
+                    loan: opening.loan,
+                    scope: opening.scope,
+                    share: opening.root_share,
+                    support: support_occurrence,
+                    viewed: view,
+                    hold: None,
+                },
+            );
+        }
+        let observed = context.observable_composition();
+        assert_eq!(observed, expected);
+        let (hash, work) =
+            crate::instrumentation::measure_deterministic_work(|| resource_context_hash(&observed));
+        assert_eq!(hash, resource_context_hash(&expected));
+        assert_eq!(observed.live_loan_dependencies().count(), 1);
+        assert!(work <= 16, "{size} excluded loans caused {work} hash units");
+        costs.push(work);
+    }
+    assert!(
+        costs.iter().all(|work| *work == costs[0]),
+        "excluded loan costs: {costs:?}"
+    );
+}
+
+#[test]
+fn observable_projection_with_one_owner_and_borrow_does_not_scan_views() {
+    let mut costs = Vec::new();
+    for size in [4, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let context =
+            context_with_one_loan_dependency(false).unchecked_with_facts((0..size).map(|index| {
+                CResourceFact::view_token(format!("ambient_observer_{index}"), Vec::new())
+            }));
+        let expected = context.observable_composition();
+        let assumptions = PureFactContext::new();
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            for _ in 0..16 {
+                let observed = context.observable_facts_assuming_valid(&assumptions);
+                let [Proposition::CResourceComposition(composition)] = observed.as_slice() else {
+                    panic!("one owner and a live borrow expose their composition");
+                };
+                assert!(std::sync::Arc::ptr_eq(
+                    &composition.storage,
+                    &expected.storage
+                ));
+            }
+        });
+        assert!(work <= 256, "one-owner borrow queries N={size}: {work}");
+        costs.push(work);
+    }
+    assert!(
+        costs.iter().all(|work| *work == costs[0]),
+        "one-owner borrow query costs: {costs:?}"
+    );
+}
+
+/// A base with N stated aliases (`q_i == b`, as a function requiring N
+/// parameters equal to one it owns) must not cost N² to validate: every
+/// alias's related roots are the same recorded-equality class, so walking
+/// it once per alias re-walked one N-member class N times
+/// (`bugs/call-step-grows-with-stated-pointer-aliases.md`).
+#[test]
+fn owned_range_validity_is_linear_in_stated_aliases_of_its_base() {
+    let parameter = |id: u64| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(id)), 4),
+    };
+    let samples = [16, 64, 256]
+        .into_iter()
+        .map(|size| {
+            let owned = parameter(41_000);
+            let assumptions = (0..size).fold(PureFactContext::new(), |assumptions, index| {
+                assumptions.assume_condition(
+                    ConditionTerm::pointer_equal(parameter(41_100 + index as u64), owned.clone()),
+                    true,
+                )
+            });
+            let context = ResourceContext::new().unchecked_with_facts(
+                [41_001, 41_002, 41_000]
+                    .map(|id| CResourceFact::own_memory(memory_range(parameter(id), 0, 4))),
+            );
+            let (error, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context.validity_error(&assumptions)
+            });
+            assert!(error.is_none(), "size-{size} owned ranges should be valid");
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    for pair in samples.windows(2) {
+        assert!(
+            pair[1].1 <= pair[0].1.saturating_mul(6),
+            "validity is superlinear in the base's stated aliases: {samples:?}"
+        );
+    }
+}

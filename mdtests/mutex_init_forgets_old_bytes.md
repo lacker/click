@@ -1,6 +1,6 @@
 # Reading initialized mutex bytes: pointer-retyping limitation
 
-This synthetic C0 regression uses allocator builtins directly. Owning the
+This synthetic C regression uses allocator builtins directly. Owning the
 storage permits initialization, but does not preserve the old byte values.
 The current frontend rejects the unchanged representation cast before this
 claim can be checked; kernel coverage tests the byte invalidation directly.

@@ -2,7 +2,7 @@
 
 Unary `+` is a no-op scalar operator, and scalar assignments in a `for`
 initializer execute left to right. Multiple declaration declarators remain
-outside this C0 slice.
+outside this slice of Click's C support.
 
 ```c filename=unary_plus_for_init.c
 int32 unary_plus_for_init() {

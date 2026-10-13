@@ -1,5 +1,10 @@
 # P2: General backward and irreducible `goto`
 
+Priority: P2.
+
+Soundness: incomplete. Jump shapes outside the delivered forward and
+natural-cycle subset are refused by the parser.
+
 This is intentionally deferred P2 work. The selected control-flow milestone
 does not depend on it, and the bounded extensions in
 [`control-flow.md`](control-flow.md) must not broaden accepted jump shapes as
@@ -16,7 +21,7 @@ function-scope labels, exact target resumption, path joins, and chained
 ordinary C cleanup. This issue now tracks only the deferred general jump
 shapes.
 
-C0 accepts the documented forward subset and one narrow reducible natural-cycle
+Click accepts the documented forward subset and one narrow reducible natural-cycle
 subset: a direct function-body entry label with exactly one backward edge in
 the re-entered region. That edge may be nested in an `if`, and the existing
 `loop` proof supplies its invariant and termination evidence. General

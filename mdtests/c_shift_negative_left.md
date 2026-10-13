@@ -1,6 +1,6 @@
 # C shift negative left operand
 
-This checks the C0 rule that signed left shift requires a nonnegative left
+This checks Click's rule that signed left shift requires a nonnegative left
 operand.
 
 ```c filename=shift_negative_left.c

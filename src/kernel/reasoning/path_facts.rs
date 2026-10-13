@@ -354,8 +354,8 @@ fn sequence_terms_equal_by_elements(left: &SequenceTerm, right: &SequenceTerm) -
     {
         return false;
     }
-    let mut left = SequenceElements::new(left);
-    let mut right = SequenceElements::new(right);
+    let mut left = crate::kernel::spec::sequence_elements(left);
+    let mut right = crate::kernel::spec::sequence_elements(right);
     loop {
         match (left.next(), right.next()) {
             (Some(left), Some(right)) if left == right => {}
@@ -371,50 +371,14 @@ fn sequence_terms_definitely_distinct(left: &SequenceTerm, right: &SequenceTerm)
     {
         return true;
     }
-    let mut left = SequenceElements::new(left);
-    let mut right = SequenceElements::new(right);
+    let mut left = crate::kernel::spec::sequence_elements(left);
+    let mut right = crate::kernel::spec::sequence_elements(right);
     loop {
         match (left.next(), right.next()) {
             (Some(left), Some(right)) if c_values_definitely_distinct(left, right) => return true,
             (Some(_), Some(_)) => {}
             (None, None) => return false,
             _ => return true,
-        }
-    }
-}
-
-struct SequenceElements<'a> {
-    pending: Vec<&'a SequenceTerm>,
-    current: Option<std::slice::Iter<'a, CValue>>,
-}
-
-impl<'a> SequenceElements<'a> {
-    fn new(sequence: &'a SequenceTerm) -> Self {
-        Self {
-            pending: vec![sequence],
-            current: None,
-        }
-    }
-}
-
-impl<'a> Iterator for SequenceElements<'a> {
-    type Item = &'a CValue;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(values) = &mut self.current {
-                if let Some(value) = values.next() {
-                    return Some(value);
-                }
-                self.current = None;
-            }
-            match self.pending.pop()?.node.as_ref() {
-                SequenceTermNode::Literal(values) => self.current = Some(values.iter()),
-                SequenceTermNode::Concat(left, right) => {
-                    self.pending.push(right);
-                    self.pending.push(left);
-                }
-            }
         }
     }
 }

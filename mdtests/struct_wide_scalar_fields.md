@@ -1,6 +1,6 @@
 # Wide scalar fields in structs
 
-Struct fields may use the scalar widths already supported by C0: `uint32`,
+Struct fields may use the scalar widths already supported by Click: `uint32`,
 `int64`, and `uint64`. Pointer access preserves each field's type and LP64
 offset, while by-value copies preserve the same leaf types and layout.
 

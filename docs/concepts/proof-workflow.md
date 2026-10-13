@@ -124,7 +124,7 @@ control flow.
   loop.
 - `execute()`: build symbolic verification paths from the current execution
   frontier to function exit. From function entry, this executes the
-  whole C0 function. It applies verified abstract loop rules where available.
+  whole C function. It applies verified abstract loop rules where available.
   Requirements of opaque calls may be routine consequences of current facts;
   smart execution retains a checked proposition derivation for each such
   premise, and expansion emits the corresponding exact source-level facts.

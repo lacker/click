@@ -1055,7 +1055,12 @@ fn shift_right_jam(value: u128, shift: u32) -> u128 {
     truncated | u128::from(lost != 0)
 }
 
-fn round_right_to_even(value: u128, shift: u32) -> u128 {
+/// Round a nonnegative integer right shift to nearest, ties to even.
+///
+/// The floating-point conversions in this slice operate on the exact integer
+/// significands of IEEE values. Keeping the rounding here in integer space
+/// makes the result independent of the host floating-point environment.
+pub(in crate::kernel) fn round_right_to_even(value: u128, shift: u32) -> u128 {
     if shift == 0 {
         return value;
     }
@@ -2505,17 +2510,9 @@ impl ConditionTerm {
         }
     }
 
+    /// 64-bit equality reads no sign, so it is [`Self::int64_equal`].
     pub(crate) fn uint64_equal(left: Bitvector32Term, right: Bitvector32Term) -> Self {
-        if left == right {
-            return Self::Constant(true);
-        }
-        if let Some(condition) = Self::address_equality_as_pointer_equality(&left, &right) {
-            return condition;
-        }
-        match (left.bitvector64_as_const(), right.bitvector64_as_const()) {
-            (Some(left), Some(right)) => Self::Constant(left == right),
-            _ => Self::Bitvector64Equal(Box::new(left), Box::new(right)),
-        }
+        Self::int64_equal(left, right)
     }
 
     pub(crate) fn int64_signed_add_overflows(
@@ -3135,6 +3132,45 @@ impl CType {
             | Self::Float32Array(_)
             | Self::Float64Array(_) => None,
             Self::PointerArray(_, _) => None,
+        }
+    }
+
+    /// `unsigned char *` or `signed char *` (plain `char *` is one of them).
+    pub(crate) fn is_character_pointer(self) -> bool {
+        matches!(self, Self::UInt8Pointer | Self::Int8Pointer)
+    }
+
+    /// The value a load of this type reads from a cell holding `stored`, or
+    /// `None` when the cell holds nothing this load can read.
+    ///
+    /// A load reads a cell of its own kind as stored ([`Self::accepts`]).
+    /// The one other read is a character-type access (C11 6.5p7): a one-byte
+    /// character load reads a one-byte integer cell of the other signedness
+    /// as the same eight bits. An `unsigned char` load of a `signed char`
+    /// cell holding `t` reads `t mod 256`; a `signed char` load of an
+    /// `unsigned char` cell holding `u` reads the two's-complement value of
+    /// `u`'s eight bits. Both are the modular conversion between the two
+    /// byte types, so a constant is folded and a symbolic value keeps an
+    /// explicit conversion term; nothing about the cell is guessed.
+    pub(crate) fn read_cell(self, stored: &CValue) -> Option<CValue> {
+        if self.accepts(stored) {
+            return Some(stored.clone());
+        }
+        let reinterpret = |source, destination, term: &Bitvector32Term| {
+            Bitvector32Term::machine_integer_cast(source, destination, term.clone())
+        };
+        match (self, stored) {
+            (Self::UInt8, CValue::Int8(term)) => Some(CValue::UInt8(reinterpret(
+                MachineIntegerType::Int8,
+                MachineIntegerType::UInt8,
+                term,
+            ))),
+            (Self::Int8, CValue::UInt8(term)) => Some(CValue::Int8(reinterpret(
+                MachineIntegerType::UInt8,
+                MachineIntegerType::Int8,
+                term,
+            ))),
+            _ => None,
         }
     }
 

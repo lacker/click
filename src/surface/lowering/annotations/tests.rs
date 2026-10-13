@@ -574,3 +574,75 @@ fn snapshot_scalar_local_address_keeps_its_full_carrier_after_current_scope_ends
         );
     }
 }
+
+#[test]
+fn proposition_snapshot_selection_matches_full_context_without_unrelated_bindings() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let entry = CState::new().with_local("used", int32(1));
+    let atom = |expression| ClickProposition::Comparison {
+        left: expression,
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::Binding("late".into()),
+    };
+    let proposition = ClickProposition::And(
+        Box::new(atom(ContractExpression::At {
+            selector: SnapshotSelector::Mark("before".into()),
+            expression: Box::new(ContractExpression::Binding("used".into())),
+        })),
+        Box::new(atom(ContractExpression::Old(Box::new(
+            ContractExpression::Binding("used".into()),
+        )))),
+    );
+    let mut costs = Vec::new();
+    for size in [16, 64, 256, 1024] {
+        let mut state = CState::new().with_local("used", int32(2));
+        for index in 0..size {
+            state = state.with_local(format!("unused{index}"), int32(index));
+        }
+        let mut snapshots = RecordedSnapshots::new();
+        snapshots.insert(SnapshotSelector::Mark("before".into()), state);
+        let (mut lowerer, context) = fixed_state_elaboration(
+            BTreeMap::new(),
+            BTreeMap::new(),
+            &entry,
+            BTreeMap::from([("used".into(), int32(1))]),
+            BTreeMap::from([("used".into(), int32(9)), ("late".into(), int32(3))]),
+            None,
+            &snapshots,
+            SpecDefinitions::new(&predicates, &functions),
+            BTreeSet::new(),
+            BTreeMap::new(),
+        );
+        let reference = lowerer
+            .click_proposition_to_spec_proposition(&proposition, &context)
+            .unwrap();
+        let mut names = BTreeSet::new();
+        collect_click_proposition_referenced_names(&proposition, &mut names);
+        lowerer.capture_referenced_names = Some(names);
+        let ((selected, projected), work) =
+            crate::instrumentation::measure_deterministic_work(|| {
+                let selected = lowerer
+                    .click_proposition_to_spec_proposition(&proposition, &context)
+                    .unwrap();
+                let projected = lowerer
+                    .snapshot_environment(&SnapshotSelector::Mark("before".into()), &context)
+                    .unwrap()
+                    .unwrap();
+                (selected, projected)
+            });
+        assert_eq!(selected, reference);
+        assert_eq!(projected.values.len(), 2);
+        assert!(
+            matches!(projected.values.get(&"used".to_string()), Some(SpecExpression::Value(value)) if value == &int32(2))
+        );
+        assert!(
+            matches!(projected.values.get(&"late".to_string()), Some(SpecExpression::Value(value)) if value == &int32(3))
+        );
+        costs.push(work);
+    }
+    assert!(
+        costs.iter().all(|cost| *cost == costs[0]),
+        "snapshot selection costs: {costs:?}"
+    );
+}

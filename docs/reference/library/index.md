@@ -1377,6 +1377,34 @@ Two unsigned 16-bit fields have this exact packed Integer value with the shifted
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).
 
+### `uint32_unpack_uint16_low`
+
+```click
+theorem uint32_unpack_uint16_low(low: uint32, high: uint32) {
+    requires low <= 65535u32;
+    requires high <= 65535u32;
+    ensures (((high << 16) | low) & 65535u32) == low;
+}
+```
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+### `uint32_unpack_uint16_high`
+
+```click
+theorem uint32_unpack_uint16_high(low: uint32, high: uint32) {
+    requires low <= 65535u32;
+    requires high <= 65535u32;
+    ensures ((((high << 16) | low) >> 16) & 65535u32) == high;
+}
+```
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+These exact word identities require both fields to fit in 16 bits. The high
+word uses a logical right shift, so the identity also holds when the packed
+word's top bit is set. Their bounds are checked premises of the kernel rules.
+
 ### `uint64_pack_uint16_to_integer`
 
 ```click
@@ -1523,6 +1551,44 @@ theorem uint32_to_integer_bounds(value: uint32) {
 ```
 
 Proves the full unsigned observation range from native order. This theorem does not distribute observations over wrapping operations.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+### `int32_to_integer_bounds`
+
+```click
+theorem int32_to_integer_bounds(value: int32) {
+    ensures -2147483648 <= to_integer(value) by {
+        have -2147483648 <= value;
+        apply(int32_less_equal_to_integer(-2147483648, value)) using { -2147483648 <= value; }
+    }
+    ensures to_integer(value) <= 2147483647 by {
+        have value <= 2147483647;
+        apply(int32_less_equal_to_integer(value, 2147483647)) using { value <= 2147483647; }
+    }
+}
+```
+
+Proves the full signed 32-bit observation range from native order. `auto` applies it to an `int32` value whose range its `Integer` claim needs.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).
+
+### `int64_to_integer_bounds`
+
+```click
+theorem int64_to_integer_bounds(value: int64) {
+    ensures -9223372036854775808 <= to_integer(value) by {
+        have -9223372036854775808i64 <= value;
+        apply(int64_less_equal_to_integer(-9223372036854775808i64, value)) using { -9223372036854775808i64 <= value; }
+    }
+    ensures to_integer(value) <= 9223372036854775807 by {
+        have value <= 9223372036854775807i64;
+        apply(int64_less_equal_to_integer(value, 9223372036854775807i64)) using { value <= 9223372036854775807i64; }
+    }
+}
+```
+
+Proves the full signed 64-bit observation range from native order.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md).
 
@@ -2756,7 +2822,7 @@ theorem cstr_len_has_terminator(bytes: uint8[], len: uint64) {
 
 ## External C contracts
 
-These declarations cover the narrow byte-oriented libc slice supported by C0.
+These declarations cover the narrow byte-oriented libc slice supported by Click.
 They are body-less assumptions: callers must satisfy their requirements, and
 Click does not verify an implementation of the external function.
 
@@ -2836,8 +2902,8 @@ extern uint8* memset(uint8 destination[], int32 value, uint64 bytes) {
 ```
 
 **Meaning:** Fills `bytes` bytes (a `size_t` count, as in C) of an owned
-destination with a value C0 can represent as `unsigned char`, and returns the
-destination pointer. C converts any `int` fill value to `unsigned char`; C0
+destination with a value Click can represent as `unsigned char`, and returns the
+destination pointer. C converts any `int` fill value to `unsigned char`; Click
 models that narrowing only for a representable value, so the contract requires
 one.
 

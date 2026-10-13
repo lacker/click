@@ -58,6 +58,25 @@ the negative regression rejects a claim covering that read. Connecting this
 reset behavior to the Rust constructor and general incremental processing is
 still pending.
 
+The [moving-cursor byte-sum reduction](../../../mdtests/loop_entry_memory_capture_byte_sum.md)
+checks actual `*p++` reads, termination, signed addition bounds, and preservation
+of every byte for counts up to fifteen. The
+[postdecrement reduction](../../../mdtests/loop_entry_memory_capture_postdecrement.md)
+checks `while (n--)` through its wrapping zero exit. These are reduced control
+and memory proofs, not proofs of the original checksum loop.
+
+[Native 64-bit same-base prefix narrowing](../../../mdtests/native_view_prefix_narrowing.md)
+now checks the full unsigned byte-count bound and preserves the source view's
+lifetime and snapshot evidence. Symbolic byte and word prefixes use explicit
+selected premises; low-word bounds, missing bounds, larger prefixes, and
+unrelated bases are rejected. This removes the short-loop refusal when
+narrowing a positive remaining count to its first byte.
+
+The remaining short-loop memory work is checked transport through the saved
+pointer used by `*buf++`, followed by moving-base subrange coverage for the
+next head. Both require actual address and nonwrapping coverage evidence;
+same-base prefixes alone do not finish the original checksum loop.
+
 | Original file | SHA-256 |
 | --- | --- |
 | `adler32.c` | `9cd1443a24ff2a3053961695bd432035c58347386a420d3388232376ebabe211` |

@@ -1,6 +1,6 @@
 # A possibly divergent call promises only its return case
 
-When `flag[0]` is nonzero this C0 function loops forever because nothing can
+When `flag[0]` is nonzero this C function loops forever because nothing can
 change the viewed cell. When it is zero, the function and its caller return
 zero. The callee contract remains useful on that hypothetical return branch.
 

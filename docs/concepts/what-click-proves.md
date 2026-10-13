@@ -1,8 +1,8 @@
 # What Click is
 
-Click is a verifier for C-like code.
+Click is a verifier for existing C, C++, and Rust programs.
 
-You write ordinary C0 source files, then write `.click` sidecar files that say
+You write ordinary C source files, then write `.click` sidecar files that say
 what the C functions are supposed to guarantee. Click checks those sidecars
 against the C code.
 
@@ -35,7 +35,7 @@ same.
 
 There are narrow exceptions. A project may fix a real C bug or undefined
 behavior, make a program change it wanted independently of verification, or
-translate unsupported syntax into the C0 subset while preserving its semantics.
+translate unsupported syntax into the supported C subset while preserving its semantics.
 Those are program or frontend-boundary changes, not proof workarounds.
 
 ## What Click proves
@@ -53,10 +53,14 @@ marker; such a contract drops the third line above and keeps the rest, which
 is the partial-correctness guarantee. Loop invariants prove safety across
 every finite number of iterations and describe any exit that does occur.
 
-The guarantee covers the modeled C0 execution and resources, not the physical
+Every guarantee rests on a trusted base: Click's kernel, its translation of
+claims into kernel obligations, its C and target model, and the `extern`
+contracts you declare. [What Click trusts](trust.md) lists it.
+
+The guarantee covers the modeled C execution and resources, not the physical
 machine running the verifier or program. In particular, a verified function
 can still exhaust the process stack, address space, or available memory; those
-resource limits are outside the current judgment. C constructs outside C0's
+resource limits are outside the current judgment. Constructs outside Click's
 model are rejected with a diagnostic rather than silently approximated.
 
 ### Host resource limits
@@ -79,24 +83,23 @@ Click also treats C undefined behavior as part of verification. If a function
 can overflow signed `int32`, read invalid memory, or divide by zero under its
 requirements, the proof should fail.
 
-## The current C target
+## The current targets
 
-The current C subset is called C0. It is intentionally small: scalar `int16`,
-`int32`, `uint8`, `uint16`, and `uint32`, plus pointers, arrays, loops, function
-calls, and a pilot slice of structs. C0 exists
-so the verifier can grow against precise semantics before it accepts more of
-real C.
+Click verifies supported C, C++, and Rust. Each is an incomplete subset of its
+language; [language coverage](../reference/coverage.md) states what each admits
+and which runtime errors a proof rules out. Anything else is refused with a
+diagnostic.
 
-The long-term goal is to verify realistic C codebases. The current system is a
+The long-term goal is to verify realistic C, C++, and Rust codebases. The current system is a
 small but working path toward that goal.
 
 ## The main pieces
 
 You will see these terms throughout the documentation:
 
-- **C0 source**: the C-like implementation being verified.
-- **Click sidecar**: a `.click` file containing contracts and proofs for C0
-  functions.
+- **Program source**: the C, C++, or Rust being verified.
+- **Click sidecar**: a `.click` file containing contracts and proofs for the
+  functions being verified.
 - **Contract**: the `requires`, `ensures`, `owns`, and `views` clauses
   for a function.
 - **Proposition**: a logical claim written in Click, such as `result == x` or

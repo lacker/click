@@ -16,6 +16,19 @@ use super::wide_arithmetic::{Carrier, Relation, apply, have, relate, relation_pa
 use super::*;
 use crate::surface::checking::{IntegerRefutation, plan_integer_refutation};
 
+/// How many rewrites `auto`'s equality search chains before closing.
+const REWRITE_DEPTH: usize = 3;
+
+/// How many connected equalities the search offers, and how many checked
+/// rewrites it tries in all. A large connected component fails promptly
+/// instead of exploring every short chain of its equalities.
+const REWRITE_EQUALITIES: usize = 64;
+const REWRITE_ATTEMPTS: usize = 256;
+
+/// How many rewritten goals the search offers to `simp`, after the cheap
+/// closers miss: `simp` unfolds and computes what a rewrite exposes.
+const REWRITE_SIMP_CLOSURES: usize = 8;
+
 /// The machine type an order fact compares, with the names its bridges use.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum MachineOrder {
@@ -36,6 +49,11 @@ impl MachineOrder {
                 | ConditionTerm::Bitvector32SignedGreaterEqual(..),
                 _,
             ) => Some(Self::Int32),
+            // An `int32` equality; a `uint32` one is refused by the `int32`
+            // bridges and left out.
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(..), true) => {
+                Some(Self::Int32)
+            }
             _ => None,
         }
     }
@@ -56,12 +74,18 @@ impl MachineOrder {
 
     /// The type range of an unsigned value's observation, when the standard
     /// library states one.
-    fn range(self) -> Option<(&'static str, &'static str)> {
+    fn range(self) -> Option<(&'static str, &'static str, &'static str)> {
         match self {
-            Self::Wide(carrier) if carrier.name() == "uint64" => {
-                Some(("uint64_to_integer_bounds", "18446744073709551615"))
-            }
-            _ => None,
+            Self::Int32 => Some(("int32_to_integer_bounds", "-2147483648", "2147483647")),
+            Self::Wide(carrier) => match carrier.name() {
+                "uint64" => Some(("uint64_to_integer_bounds", "0", "18446744073709551615")),
+                "int64" => Some((
+                    "int64_to_integer_bounds",
+                    "-9223372036854775808",
+                    "9223372036854775807",
+                )),
+                _ => None,
+            },
         }
     }
 }
@@ -149,6 +173,94 @@ impl Carried {
     }
 }
 
+/// The type range of a machine value's observation, for each type whose
+/// range theorem could apply. The wrong types' applications fail when the
+/// fact is established, and are left out.
+fn range_items(value: &ContractExpression) -> Vec<Carried> {
+    let mut items = Vec::new();
+    for (theorem, minimum, maximum) in [
+        ("int32_to_integer_bounds", "-2147483648", "2147483647"),
+        (
+            "int64_to_integer_bounds",
+            "-9223372036854775808",
+            "9223372036854775807",
+        ),
+        ("uint64_to_integer_bounds", "0", "18446744073709551615"),
+    ] {
+        let bounds = apply(theorem, vec![value.clone()], Vec::new());
+        for bound in [
+            relate(
+                integer_literal(minimum),
+                to_integer(value),
+                Relation::LessEqual,
+            ),
+            relate(
+                to_integer(value),
+                integer_literal(maximum),
+                Relation::LessEqual,
+            ),
+        ] {
+            items.push(Carried {
+                establish: Establish::Steps(vec![have(bound.clone(), vec![bounds.clone()])]),
+                surface: bound,
+            });
+        }
+    }
+    items
+}
+
+/// What `auto`'s rewrite search may still spend.
+struct RewriteBudget {
+    attempts: usize,
+    simp_closures: usize,
+}
+
+/// An equality in both directions, each with its kernel form.
+fn oriented_forms(
+    kernel: Proposition,
+    surface: ClickProposition,
+) -> Vec<(Proposition, ClickProposition)> {
+    let reverse = crate::kernel::proof::equality_rewrite::reverse_equality(&kernel).zip(
+        super::fixed_state_proofs::reverse_surface_equality(&surface),
+    );
+    std::iter::once((kernel, surface)).chain(reverse).collect()
+}
+
+/// `l == r` for an equality spelled `at(S, l) == at(S, r)` or `at(S, l == r)`.
+fn unanchored_equality(surface: &ClickProposition) -> Option<ClickProposition> {
+    match surface {
+        ClickProposition::At { proposition, .. } => Some(proposition.as_ref().clone()),
+        ClickProposition::Comparison {
+            left:
+                ContractExpression::At {
+                    selector: left_selector,
+                    expression: left,
+                },
+            operator,
+            right:
+                ContractExpression::At {
+                    selector: right_selector,
+                    expression: right,
+                },
+        } if left_selector == right_selector => Some(ClickProposition::Comparison {
+            left: left.as_ref().clone(),
+            operator: *operator,
+            right: right.as_ref().clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// An `Integer` literal, negative ones as a negation of their magnitude.
+fn integer_literal(text: &str) -> ContractExpression {
+    match text.strip_prefix('-') {
+        Some(magnitude) => ContractExpression::Negate(Box::new(
+            ContractExpression::IntegerLiteral(magnitude.into()),
+        )),
+        None => ContractExpression::IntegerLiteral(text.into()),
+    }
+}
+
 /// The sums and differences observed by `to_integer(...)` in `expression`.
 fn observed_operations(expression: &ContractExpression, found: &mut Vec<ContractExpression>) {
     if let ContractExpression::Call { name, arguments } = expression
@@ -210,12 +322,35 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         let mut carried = self.carried_machine_facts(&candidates);
-        for operation in proposition_operations(surface_goal) {
+        // Every sum or difference an `Integer` claim observes, from the
+        // goal, the carried facts, and the connected `defined(...)` facts,
+        // and every one nested inside an observed operation: each gets its
+        // term-by-term observation and its type range.
+        let mut operations = proposition_operations(surface_goal);
+        for item in &carried {
+            operations.extend(proposition_operations(&item.surface));
+        }
+        operations.extend(self.defined_operations(&candidates));
+        let mut seen: Vec<ContractExpression> = Vec::new();
+        while let Some(operation) = operations.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            if seen.contains(&operation) {
+                continue;
+            }
+            seen.push(operation.clone());
             let (left, right, subtract) = match &operation {
                 ContractExpression::Add(left, right) => (left, right, false),
                 ContractExpression::Subtract(left, right) => (left, right, true),
                 _ => continue,
             };
+            for operand in [left.as_ref(), right.as_ref()] {
+                if matches!(
+                    operand,
+                    ContractExpression::Add(..) | ContractExpression::Subtract(..)
+                ) {
+                    operations.push(operand.clone());
+                }
+            }
             let exact = if subtract {
                 ContractExpression::Subtract(
                     Box::new(to_integer(left)),
@@ -230,9 +365,10 @@ impl<'a> Proof<'a> {
                     left: left.as_ref().clone(),
                     right: right.as_ref().clone(),
                     subtract,
-                    operation,
+                    operation: operation.clone(),
                 },
             });
+            carried.extend(range_items(&operation));
         }
         if carried.is_empty() {
             return Ok(None);
@@ -379,6 +515,212 @@ impl<'a> Proof<'a> {
         )))
     }
 
+    /// `auto` on a proposition goal with no C to run: the solver routes,
+    /// then `simp`.
+    pub(in crate::surface::proof) fn try_auto_proof_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        if let Some(closed) = self.try_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_bridged_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_machine_goal_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_solver_equality_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_definedness_solver_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_auto_conjunction_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_simp_closure()? {
+            return Ok(Some(closed));
+        }
+        self.try_auto_equality_chain_closure()
+    }
+
+    /// Rewrite the goal by the equality facts connected to it until
+    /// `assumption`, `normalize` or another direct closer finishes it: the
+    /// congruence step `simp` takes only once its decider has selected the
+    /// premises, here offered every connected equality, algebraic `==` facts
+    /// included. Each rewrite is an ordinary checked step.
+    pub(in crate::surface::proof) fn try_auto_equality_chain_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        use crate::kernel::proof::equality_rewrite::{equality_rewrite_applies, reverse_equality};
+        let Some(goal) = self.goal() else {
+            return Ok(None);
+        };
+        let Some(mut equalities) =
+            crate::surface::planning::proposition_search::solver_connected_equalities(
+                self.facts().assumptions(),
+                goal,
+            )
+        else {
+            return Ok(None);
+        };
+        // Equalities that rewrite the goal itself come first, so the
+        // spelling cap keeps the ones a short chain starts from.
+        let applies = |kernel: &Proposition| {
+            equality_rewrite_applies(goal, kernel)
+                || reverse_equality(kernel)
+                    .is_some_and(|reverse| equality_rewrite_applies(goal, &reverse))
+        };
+        equalities.sort_by_key(|equality| !applies(equality));
+        let mut candidates: Vec<Vec<(Proposition, ClickProposition)>> = Vec::new();
+        for equality in &equalities {
+            check_verification_deadline()?;
+            if candidates.len() >= REWRITE_EQUALITIES {
+                break;
+            }
+            let Some((kernel, surface)) = self
+                .resolve_simp_premises(std::slice::from_ref(equality), &[])
+                .and_then(|mut spelled| spelled.pop())
+            else {
+                continue;
+            };
+            // A fact recorded at a statement's entry is spelled there; its
+            // unanchored form denotes the same fact where the proof stands
+            // when nothing it names has changed since, which lowering and
+            // the checked rewrite decide. Offer the unanchored form first.
+            if let Some(unanchored) = unanchored_equality(&surface)
+                && let Ok(lowered) =
+                    self.lower_surface_proposition(&unanchored, "`auto` rewrite equality")
+            {
+                candidates.push(oriented_forms(lowered, unanchored));
+            }
+            candidates.push(oriented_forms(kernel, surface));
+        }
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let mut seen = std::collections::BTreeMap::from([(goal.clone(), REWRITE_DEPTH)]);
+        let mut budget = RewriteBudget {
+            attempts: REWRITE_ATTEMPTS,
+            simp_closures: REWRITE_SIMP_CLOSURES,
+        };
+        self.rewrite_search(
+            &candidates,
+            &mut vec![false; candidates.len()],
+            REWRITE_DEPTH,
+            &mut seen,
+            &mut budget,
+        )
+    }
+
+    /// A bounded depth-first search over rewrite sequences: every applicable
+    /// equality in either direction, each used at most once, closing after
+    /// every step by `assumption`, `normalize` or the direct logical closer.
+    /// An orientation whose left side does not occur in the goal costs no
+    /// checked step. A goal already reached with at least as many rewrites
+    /// left is not explored again, and the whole search tries at most
+    /// `REWRITE_ATTEMPTS` rewrites.
+    fn rewrite_search(
+        &self,
+        candidates: &[Vec<(Proposition, ClickProposition)>],
+        used: &mut Vec<bool>,
+        depth: usize,
+        seen: &mut std::collections::BTreeMap<Proposition, usize>,
+        budget: &mut RewriteBudget,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(current) = self.goal() else {
+            return Ok(None);
+        };
+        for (index, forms) in candidates.iter().enumerate() {
+            if used[index] {
+                continue;
+            }
+            for (kernel, surface) in forms {
+                check_verification_deadline()?;
+                if !crate::kernel::proof::equality_rewrite::equality_rewrite_applies(
+                    current, kernel,
+                ) {
+                    continue;
+                }
+                if budget.attempts == 0 {
+                    return Ok(None);
+                }
+                budget.attempts -= 1;
+                let Ok(rewritten) = self.apply_step(ProofStep::Rewrite(surface.clone())) else {
+                    continue;
+                };
+                let Some(goal) = rewritten.goal().cloned() else {
+                    continue;
+                };
+                let left = depth - 1;
+                match seen.get(&goal) {
+                    Some(&reached) if reached >= left => continue,
+                    Some(_) => {}
+                    None => {
+                        if let Some(closed) = rewritten.try_close_after_rewrite(budget)? {
+                            return Ok(Some(closed));
+                        }
+                    }
+                }
+                seen.insert(goal, left);
+                if depth > 1 {
+                    used[index] = true;
+                    let found =
+                        rewritten.rewrite_search(candidates, used, depth - 1, seen, budget)?;
+                    used[index] = false;
+                    if found.is_some() {
+                        return Ok(found);
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn try_close_after_rewrite(
+        &self,
+        budget: &mut RewriteBudget,
+    ) -> Result<Option<Self>, ClickError> {
+        // Inside a `have`, the stated fact is the focused goal; the proof
+        // around it is not complete yet.
+        let closes = |proof: &Self| proof.focused_discharged() || proof.is_complete();
+        if let Ok(closed) = self.apply_step(ProofStep::Assumption)
+            && closes(&closed)
+        {
+            return Ok(Some(closed));
+        }
+        if let Ok(closed) = self.apply_step(ProofStep::Normalize)
+            && closes(&closed)
+        {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_direct_logical_closure().ok().flatten() {
+            return Ok(Some(closed));
+        }
+        if budget.simp_closures == 0 {
+            return Ok(None);
+        }
+        budget.simp_closures -= 1;
+        Ok(self.try_simp_closure()?.filter(closes))
+    }
+
+    /// A conjunction goal: each conjunct by `auto` on the stated fact, then
+    /// `assumption`, which closes a conjunction whose sides are facts.
+    pub(in crate::surface::proof) fn try_auto_conjunction_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(ClickProposition::And(left, right)) = self.surface_goal() else {
+            return Ok(None);
+        };
+        let Some(proof) = self.prove_stated_fact(left)? else {
+            return Ok(None);
+        };
+        let Some(proof) = proof.prove_stated_fact(right)? else {
+            return Ok(None);
+        };
+        attempt::candidate_outcome(proof.apply_step(ProofStep::Assumption))
+    }
+
     /// Prove `fact` where the proof stands with `auto` on the stated fact,
     /// as `have fact by auto;` does.
     fn prove_stated_fact(&self, fact: &ClickProposition) -> Result<Option<Self>, ClickError> {
@@ -411,6 +753,22 @@ impl<'a> Proof<'a> {
             ContractExpression::Add(Box::new(to_integer(left)), Box::new(to_integer(right)))
         };
         let stem = if subtract { "subtract" } else { "add" };
+        // An operand that is itself an operation must be defined too; prove
+        // that first so the outer theorem's conclusion completes the goal.
+        let mut base = self.clone();
+        for operand in [left.as_ref(), right.as_ref()] {
+            if matches!(
+                operand,
+                ContractExpression::Add(..) | ContractExpression::Subtract(..)
+            ) {
+                let defined = ClickProposition::Defined {
+                    expression: operand.clone(),
+                };
+                if let Some(next) = base.prove_stated_fact(&defined)? {
+                    base = next;
+                }
+            }
+        }
         for (width, minimum, maximum) in [
             ("int32", "-2147483648", "2147483647"),
             ("int64", "-9223372036854775808", "9223372036854775807"),
@@ -425,7 +783,7 @@ impl<'a> Proof<'a> {
                 ContractExpression::IntegerLiteral(maximum.into()),
                 Relation::LessEqual,
             );
-            let Some(bounded) = self.prove_stated_fact(&lower)? else {
+            let Some(bounded) = base.prove_stated_fact(&lower)? else {
                 continue;
             };
             let Some(bounded) = bounded.prove_stated_fact(&upper)? else {
@@ -470,6 +828,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         let stem = match (order, relation) {
+            (_, Relation::Equal) => "to_integer_equal_implies_equal",
             (_, Relation::LessEqual) => "to_integer_less_equal_implies_less_equal",
             // `int32` has no strict converse bridge in the standard library.
             (MachineOrder::Wide(_), Relation::Less) => "to_integer_less_than_implies_less_than",
@@ -478,7 +837,22 @@ impl<'a> Proof<'a> {
         let lower = order.typed_literals(&lower);
         let upper = order.typed_literals(&upper);
         let observed = relate(to_integer(&lower), to_integer(&upper), relation);
-        let scope = match self.begin_have(observed.clone()) {
+        // `to_integer(a + b)` can be stated only where `a + b` is defined.
+        let mut base = self.clone();
+        for side in [&lower, &upper] {
+            if matches!(
+                side,
+                ContractExpression::Add(..) | ContractExpression::Subtract(..)
+            ) {
+                let defined = ClickProposition::Defined {
+                    expression: side.clone(),
+                };
+                if let Some(next) = base.prove_stated_fact(&defined)? {
+                    base = next;
+                }
+            }
+        }
+        let scope = match base.begin_have(observed.clone()) {
             Ok(scope) => scope,
             Err(_) => return Ok(None),
         };
@@ -501,6 +875,37 @@ impl<'a> Proof<'a> {
         Ok(applied.try_direct_logical_closure().ok().flatten())
     }
 
+    /// The sums and differences named by connected `defined(...)` facts.
+    fn defined_operations(&self, candidates: &[Proposition]) -> Vec<ContractExpression> {
+        let mut operations = Vec::new();
+        for candidate in candidates {
+            if !matches!(
+                candidate,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedAddOverflows(..)
+                        | ConditionTerm::Bitvector32SignedSubtractOverflows(..)
+                        | ConditionTerm::Bitvector64SignedAddOverflows(..)
+                        | ConditionTerm::Bitvector64SignedSubtractOverflows(..),
+                    false
+                )
+            ) {
+                continue;
+            }
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some((_, ClickProposition::Defined { expression })) = self
+                .resolve_simp_premises(std::slice::from_ref(candidate), &[])
+                .and_then(|mut spelled| spelled.pop())
+                && matches!(
+                    expression,
+                    ContractExpression::Add(..) | ContractExpression::Subtract(..)
+                )
+            {
+                operations.push(expression);
+            }
+        }
+        operations
+    }
+
     /// The `Integer` reading of each connected machine order fact, and the
     /// type range of each unsigned value they mention.
     fn carried_machine_facts(&self, candidates: &[Proposition]) -> Vec<Carried> {
@@ -521,11 +926,6 @@ impl<'a> Proof<'a> {
             let Some((lower, upper, relation, _)) = relation_parts(&surface) else {
                 continue;
             };
-            let stem = match relation {
-                Relation::Less => "less_than_to_integer",
-                Relation::LessEqual => "less_equal_to_integer",
-                Relation::Equal => continue,
-            };
             let lower = order.typed_literals(&lower);
             let upper = order.typed_literals(&upper);
             let stated = relate(lower.clone(), upper.clone(), relation);
@@ -536,19 +936,27 @@ impl<'a> Proof<'a> {
                 steps.push(have(stated.clone(), vec![ProofStep::Assumption]));
             }
             let observed = relate(to_integer(&lower), to_integer(&upper), relation);
-            steps.push(have(
-                observed.clone(),
-                vec![apply(
-                    &format!("{}_{stem}", order.name()),
+            let carry = match relation {
+                Relation::Less => vec![apply(
+                    &format!("{}_less_than_to_integer", order.name()),
                     vec![lower.clone(), upper.clone()],
                     vec![stated],
                 )],
-            ));
+                Relation::LessEqual => vec![apply(
+                    &format!("{}_less_equal_to_integer", order.name()),
+                    vec![lower.clone(), upper.clone()],
+                    vec![stated],
+                )],
+                // Equal values have equal observations: rewriting by the
+                // fact leaves an identity.
+                Relation::Equal => vec![ProofStep::Rewrite(stated), ProofStep::Normalize],
+            };
+            steps.push(have(observed.clone(), carry));
             carried.push(Carried {
                 establish: Establish::Steps(steps),
                 surface: observed,
             });
-            if let Some((theorem, maximum)) = order.range() {
+            if let Some((theorem, minimum, maximum)) = order.range() {
                 for value in [lower, upper] {
                     if matches!(to_integer(&value), ContractExpression::IntegerLiteral(_))
                         || ranged.contains(&value)
@@ -559,13 +967,13 @@ impl<'a> Proof<'a> {
                     let bounds = apply(theorem, vec![value.clone()], Vec::new());
                     for bound in [
                         relate(
-                            ContractExpression::IntegerLiteral("0".into()),
+                            integer_literal(minimum),
                             to_integer(&value),
                             Relation::LessEqual,
                         ),
                         relate(
                             to_integer(&value),
-                            ContractExpression::IntegerLiteral(maximum.into()),
+                            integer_literal(maximum),
                             Relation::LessEqual,
                         ),
                     ] {

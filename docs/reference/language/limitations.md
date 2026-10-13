@@ -29,28 +29,18 @@ for example, sequence literals currently require scalar elements, so deeply
 nested bracket literals are checked for safe parsing and rendering but are not
 valid theorem values.
 
-## C0 is small
+## Supported C is incomplete
 
-Click does not parse general C. See [Supported C0](c0.md). Missing
-features include broader structs, pointer and array forms of 64-bit and
-`size_t` integers, signed `char` and wider string-literal forms, unmodeled allocator
-compatibility, and some
-operators. Supported scalar file-scope globals are described in [Supported
-C0](c0.md). The
-supported `switch` slice is intentionally narrow: labels must be direct integer
-or character literals in one compound body, with no `goto` or arbitrary
-constant-expression labels yet.
+Click does not parse general C. [Language coverage](../coverage.md) summarizes
+what supported C admits, beside C++ and Rust, and [Supported C](c.md) defines
+the exact forms.
 
-C0 supports `sizeof` for the modeled scalar and pointer types, plus
-`malloc(sizeof(struct T))` into a matching `struct T*` and runtime-sized
-`int32` backing allocations such as `malloc(count * sizeof(int32))`, with
-ordinary null checking and `free`. The zeroed variants are
-`calloc(count, sizeof(int32))` and matching
-`calloc(count, sizeof(struct T))` for a `struct T*` target. Compatible
+The modeled `malloc`, `calloc`, `realloc`, and `free` forms are listed in
+[Heap allocation](c.md#heap-allocation). Compatible
 external allocator declarations may describe a supported data-pointer or
 pointer-array result with `allocation(result, bytes)` and an owned result
 range. Zero sizes, arbitrary byte layouts, `size_t`, allocator results
-declared as `void *`, unrelated custom allocator APIs, and `realloc` remain
+declared as `void *`, and unrelated custom allocator APIs remain
 outside this surface description. Opaque `void *` identity conversions are
 supported, but dereference, indexing, arithmetic, and ownership through an
 untyped pointer are not.
@@ -61,7 +51,7 @@ are supported and preserve pointer provenance. Casts between `char **` and
 `unsigned char **` remain unsupported; sharing byte storage does not make their
 pointer cells interchangeable.
 
-Struct support is partial; the [struct subset](c0.md#struct-subset) defines
+Struct support is partial; the [struct subset](c.md#struct-subset) defines
 its current type and layout boundary. Supported records include scalar and
 pointer fields, named enums, fixed-dimensional scalar arrays, embedded structs,
 and fixed-dimensional embedded-struct arrays. Member access, local arrays, and
@@ -84,7 +74,7 @@ struct arrays, with zero-filled omitted elements. Supported conditional
 aggregate expressions require matching struct types and copy only the selected
 branch. Static-storage positional and designated initializers, including
 function addresses in callback tables, are supported for the shapes described
-in [file-scope objects](c0.md#file-scope-scalar-globals) and the struct
+in [file-scope objects](c.md#file-scope-scalar-globals) and the struct
 reference. Automatic/local const aggregates,
 whole-union initialization, and broader aggregate initializer forms remain
 outside the documented subset.
@@ -116,9 +106,9 @@ that covers the complete representation of an initialized source cell
 establishes that cell's value at the mapped destination offset. The effect is
 bound to that exact declaration, so a user function named `memcpy` does not
 acquire it, and a partial, unaligned, or untyped copy establishes no typed
-value. These contracts still describe
-only the supported C0 types; `void *` dereference or ownership, `size_t`,
-overlap semantics, and unbounded string viewability remain outside the model.
+value. These contracts describe only
+supported C types; `void *` dereference or ownership and unbounded string
+viewability remain outside the model. `memcpy` requires non-overlapping ranges.
 
 A body-less variadic prototype such as `int report(const char *format, ...);`
 is retained as a declaration only. Click has no model of variable arguments,
@@ -136,8 +126,7 @@ the expanded translation unit. A call to a helper with a verified sidecar
 contract applies that contract as its boundary, like any call; a call to a
 helper with no contract executes the checked body directly, on the caller's
 own memory and resources. Click never emits a standalone definition or
-selects an external one under the single supported `x86_64-linux-kernel`
-profile. Termination follows the same split: a contracted helper is a callee
+selects an external one under either supported x86-64 Linux target. Termination follows the same split: a contracted helper is a callee
 with its own termination rule, while a contract-less helper is a node of the
 caller's call graph, so a straight-line one needs no ranking of its own and a
 ranked loop may call it, while one carrying a loop still needs that loop
@@ -163,7 +152,7 @@ expressions remain unsupported. Bounded `==` and `!=` comparisons are supported
 when both operands are integer or character literals, literal-valued macros, or
 `defined(NAME)`; undefined identifiers evaluate to zero.
 Canonical whole-header guards (`#ifndef NAME`/`#define NAME`/`#endif`),
-`#pragma once`, and the bounded conditional subset are supported. C0 also
+`#pragma once`, and the bounded conditional subset are supported. Click also
 supports object-like macros with literal, alias, and multi-token expression
 replacements; those macros are expanded in
 translation-unit order across a source file and its local headers, and `#undef NAME`
@@ -201,57 +190,30 @@ fails to prepare, because the clause is lowered with no facts or resources in
 scope, so a callback that recomputes from a child link cannot state that
 footprint.
 
-## Type support is still narrow
+## Type support is partial
 
-The verifier supports `void` function returns and scalar `int8`, `int16`, `int32`,
-`uint8`, `uint16`, `uint32`, `int64`, and `uint64`, including their standard spellings
-(`signed char`/`int8_t`, `short`/`int16_t`, `int`/`int32_t`, `unsigned char`/`uint8_t`,
-`unsigned short`/`uint16_t`, `unsigned int`/`uint32_t`,
-`long`/`long long`/`int64_t`/`ssize_t`, and
-`unsigned long`/`unsigned long long`/`uint64_t`/`size_t`), plus the existing
-`int32*`, `uint8*`, `int32**`, `uint8**`, and `uint8[]` forms. C typedefs may
-alias these modeled types and named struct-pointer types. The 16-bit, `uint32`,
-and 64-bit types are not yet available through pointers or arrays. `uint32`
-supports modular `+`,
-`-`, and `*`, unsigned `/` and `%`, equality, unsigned ordered comparisons,
-bitwise operators, and typed shifts; division by zero and invalid shift counts
-remain undefined behavior. It does not support `void` objects or
-parameters. Scalar casts are supported, with checked narrowing into `int16`,
-`uint8`, or `uint16`; a contract may cast a `void *` parameter to a struct
-pointer or convert a current object pointer explicitly through `void*` to a
-struct pointer. Other pointer casts and aggregate casts remain unsupported. This is
-not a full C integer model: pointer/array forms of `size_t` and the 64-bit
-types, plus the complete usual arithmetic-conversion lattice, remain outside
-the slice.
-Signed `int32` addition, subtraction, multiplication, division, and remainder
-are modeled with C undefined behavior for their C undefined cases: overflow,
-zero divisors, and `INT_MIN / -1` or `INT_MIN % -1`. `int32` bitwise `&`, `|`,
+[Language coverage](../coverage.md#scalar-types) lists the admitted scalar
+types, and [Supported C](c.md) gives their spellings and operations. Integer
+promotions and the usual arithmetic conversions apply; fully general symbolic
+narrowing between unlike 64-bit and narrower integer types does not. A
+checked narrowing conversion requires the current pure facts to prove the
+value in range. A contract may cast a `void *` parameter to
+a struct pointer or convert a current object pointer explicitly through
+`void*` to a struct pointer. Other pointer casts, aggregate casts, and `void`
+objects or parameters remain unsupported.
+
+Signed `int32` and `int64` addition, subtraction, multiplication, division,
+and remainder are modeled with C undefined behavior for their C undefined
+cases: overflow, zero divisors, and the minimum value divided by `-1`.
+Narrower types promote to `int32` first. `int32` bitwise `&`, `|`,
 `^`, unary `~`, `<<`, and `>>` are modeled as fixed 32-bit two's-complement
-bitvector operations. C0 models signed `int32 >>` as arithmetic right shift
+bitvector operations. Click models signed `int32 >>` as arithmetic right shift
 with sign extension, matching GCC, Clang, and MSVC. Shift counts outside
 `0..32`, negative signed left shifts, and unrepresentable signed left-shift
 results are undefined behavior.
 
-`int8`, `int16`, `uint8`, and `uint16` rvalues promote to `int32` for arithmetic, ordered
-comparisons, shifts, bitwise operators, assignments, and returns. `uint32` addition and
-subtraction are 32-bit modular operations; equality compares the bit patterns,
-and ordered comparisons use unsigned order. Assigning or returning an `int32`
-into `uint8` is a checked narrowing conversion: the current pure facts must
-prove `0 <= value <= 255`. Narrowing to `int16` requires
-`-32768 <= value <= 32767`, and narrowing to `uint16` requires
-`0 <= value <= 65535`.
-
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
 there is still no first-class Click string value and no full libc string model.
-Pointer/array forms of `size_t` and 64-bit integers, and the full usual
-arithmetic conversion story, remain future work.
-
-The first `for` support is sugar over `while`, and its initializer may be a
-scalar assignment or scalar declaration initializer. Its step can use scalar
-update-statement sugar such as `i++`. Omitted clauses, `continue`, and general
-C expression side effects are still unsupported. `i++` is accepted as a
-standalone statement, but not as a value-producing expression inside
-`j = i++`.
 
 ## Aliasing is default
 

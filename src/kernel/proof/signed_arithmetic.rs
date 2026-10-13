@@ -6,7 +6,7 @@
 //! `fact_reasoning` decision procedure remains in place while the surface
 //! migration is in progress.
 
-use super::super::{Bitvector32Term, ConditionTerm, Proposition, Variable};
+use super::super::{Bitvector32Term, BitvectorBinaryOp, ConditionTerm, Proposition, Variable};
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use std::collections::{BTreeMap, HashMap};
@@ -45,25 +45,10 @@ enum SignedArithmeticAtomToken {
     Narrow64Variable(Variable),
     Narrow64Expression,
     NativeConstant(u64),
-    NativeBinary(SignedArithmeticBinaryOperator),
+    NativeBinary(BitvectorBinaryOp),
     PureFunction { name: String, arity: usize },
-    Binary(SignedArithmeticBinaryOperator),
+    Binary(BitvectorBinaryOp),
     UnaryNot,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-enum SignedArithmeticBinaryOperator {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Remainder,
-    ShiftLeft,
-    ArithmeticShiftRight,
-    LogicalShiftRight,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
 }
 
 /// Flat, iterative identity for the supported signed-machine term fragment.
@@ -104,7 +89,7 @@ impl SignedArithmeticAtom {
         matches!(
             self.tokens.first(),
             Some(SignedArithmeticAtomToken::Binary(
-                SignedArithmeticBinaryOperator::BitwiseXor
+                BitvectorBinaryOp::BitwiseXor
             ))
         ) && (self.tokens.get(1) == Some(&SIGN_BIT) || self.tokens.last() == Some(&SIGN_BIT))
     }
@@ -154,18 +139,8 @@ fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmetic
             Bitvector32Term::PureFunctionApplication { name, arguments } => {
                 name.len().saturating_add(arguments.len()).saturating_add(3)
             }
-            Bitvector32Term::Add(_, _)
-            | Bitvector32Term::Subtract(_, _)
-            | Bitvector32Term::Multiply(_, _)
-            | Bitvector32Term::Divide(_, _)
-            | Bitvector32Term::Remainder(_, _)
-            | Bitvector32Term::ShiftLeft(_, _)
-            | Bitvector32Term::ArithmeticShiftRight(_, _)
-            | Bitvector32Term::LogicalShiftRight(_, _)
-            | Bitvector32Term::BitwiseAnd(_, _)
-            | Bitvector32Term::BitwiseOr(_, _)
-            | Bitvector32Term::BitwiseXor(_, _) => 3,
             Bitvector32Term::BitwiseNot(_) => 2,
+            term if signed_binary(term).is_some() => 3,
             _ => 1,
         };
         if crate::instrumentation::deadline_exceeded_with_work(units) {
@@ -193,7 +168,7 @@ fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmetic
                     if crate::instrumentation::deadline_exceeded_with_work(1) {
                         return None;
                     }
-                    let (left, right, operator) = match native {
+                    let (operator, left, right) = match native {
                         Bitvector32Term::Variable(variable) => {
                             push_token!(SignedArithmeticAtomToken::Variable(*variable));
                             continue;
@@ -202,22 +177,20 @@ fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmetic
                             push_token!(SignedArithmeticAtomToken::NativeConstant(*value));
                             continue;
                         }
-                        Bitvector32Term::UInt64Add(a, b) => {
-                            (a, b, SignedArithmeticBinaryOperator::Add)
-                        }
-                        Bitvector32Term::UInt64Subtract(a, b) => {
-                            (a, b, SignedArithmeticBinaryOperator::Subtract)
-                        }
-                        Bitvector32Term::UInt64Multiply(a, b) => {
-                            (a, b, SignedArithmeticBinaryOperator::Multiply)
-                        }
-                        Bitvector32Term::UInt64Divide(a, b) => {
-                            (a, b, SignedArithmeticBinaryOperator::Divide)
-                        }
-                        Bitvector32Term::UInt64Remainder(a, b) => {
-                            (a, b, SignedArithmeticBinaryOperator::Remainder)
-                        }
-                        _ => return None,
+                        native => match native.as_binary() {
+                            Some(
+                                binary @ (
+                                    BitvectorBinaryOp::UInt64Add
+                                    | BitvectorBinaryOp::UInt64Subtract
+                                    | BitvectorBinaryOp::UInt64Multiply
+                                    | BitvectorBinaryOp::UInt64Divide
+                                    | BitvectorBinaryOp::UInt64Remainder,
+                                    _,
+                                    _,
+                                ),
+                            ) => binary,
+                            _ => return None,
+                        },
                     };
                     push_token!(SignedArithmeticAtomToken::NativeBinary(operator));
                     native_pending.push(right);
@@ -231,91 +204,33 @@ fn signed_arithmetic_atom_key(root: &Bitvector32Term) -> Option<SignedArithmetic
                 });
                 pending.extend(arguments.iter().rev());
             }
-            Bitvector32Term::Add(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::Add,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::Subtract(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::Subtract,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::Multiply(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::Multiply,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::Divide(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::Divide,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::Remainder(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::Remainder,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::ShiftLeft(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::ShiftLeft,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::ArithmeticShiftRight(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::ArithmeticShiftRight,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::LogicalShiftRight(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::LogicalShiftRight,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::BitwiseAnd(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::BitwiseAnd,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::BitwiseOr(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::BitwiseOr,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
-            Bitvector32Term::BitwiseXor(left, right) => {
-                push_token!(SignedArithmeticAtomToken::Binary(
-                    SignedArithmeticBinaryOperator::BitwiseXor,
-                ));
-                pending.push(right);
-                pending.push(left);
-            }
             Bitvector32Term::BitwiseNot(operand) => {
                 push_token!(SignedArithmeticAtomToken::UnaryNot);
                 pending.push(operand);
             }
-            _ => return None,
+            term => {
+                let (operator, left, right) = signed_binary(term)?;
+                push_token!(SignedArithmeticAtomToken::Binary(operator));
+                pending.push(right);
+                pending.push(left);
+            }
         }
     }
     Some(SignedArithmeticAtom { tokens })
+}
+
+/// A 32-bit operation of the supported signed fragment. The unsigned
+/// division and remainder read their operands unsigned, so they stay out.
+fn signed_binary(
+    term: &Bitvector32Term,
+) -> Option<(BitvectorBinaryOp, &Bitvector32Term, &Bitvector32Term)> {
+    term.as_binary().filter(|(operator, _, _)| {
+        operator.is_bitvector32()
+            && !matches!(
+                operator,
+                BitvectorBinaryOp::UnsignedDivide | BitvectorBinaryOp::UnsignedRemainder
+            )
+    })
 }
 
 /// A normalized signed-machine affine proposition.
@@ -1168,7 +1083,7 @@ impl SignedArithmeticCertificate {
                             (CheckedTerm::Atom(base), CheckedTerm::Atom(actual)) => {
                                 let mut expected = Vec::with_capacity(base.tokens.len() + 2);
                                 expected.push(SignedArithmeticAtomToken::Binary(
-                                    SignedArithmeticBinaryOperator::Remainder,
+                                    BitvectorBinaryOp::Remainder,
                                 ));
                                 expected.extend(base.tokens.iter().cloned());
                                 expected.push(SignedArithmeticAtomToken::Constant(*divisor as u32));

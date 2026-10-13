@@ -825,6 +825,33 @@ pub(super) fn append_surface_tactics_by_leaf(
     }
 }
 
+/// The steps a branch path continues through when a certificate ends in a
+/// proof `match` with exactly one arm, such as a match on a single-variant
+/// model field: every path takes that arm, so it selects nothing and the
+/// path's later surface `if`s sit inside it. A match with several arms is a
+/// decision of its own and stops the walk.
+pub(super) fn through_single_arm_matches(mut steps: &[ProofStep]) -> &[ProofStep] {
+    while let Some(ProofStep::Match { arms, .. }) = steps.last()
+        && let [arm] = arms.as_slice()
+    {
+        steps = arm.proof.steps();
+    }
+    steps
+}
+
+/// [`through_single_arm_matches`] for a certificate being extended.
+pub(super) fn through_single_arm_matches_mut(
+    mut steps: &mut Vec<ProofStep>,
+) -> &mut Vec<ProofStep> {
+    while matches!(steps.last(), Some(ProofStep::Match { arms, .. }) if arms.len() == 1) {
+        let Some(ProofStep::Match { arms, .. }) = steps.last_mut() else {
+            unreachable!()
+        };
+        steps = arms[0].proof.steps_mut();
+    }
+    steps
+}
+
 /// Appends a suffix at the one leaf of a surface certificate selected by
 /// `branch_path`, following each terminal surface `if` outermost first. The
 /// leaf takes the suffix the way [`append_surface_step_to_leaves`] would.
@@ -833,7 +860,7 @@ pub(super) fn append_surface_steps_at_step_branch_path(
     branch_path: &[bool],
     suffix: Vec<ProofStep>,
 ) -> Result<(), String> {
-    let mut current = steps;
+    let mut current = through_single_arm_matches_mut(steps);
     for selected_then in branch_path {
         let Some(ProofStep::If {
             then_proof,
@@ -845,11 +872,11 @@ pub(super) fn append_surface_steps_at_step_branch_path(
                 "execution path selects more surface branches than the certificate has".to_string(),
             );
         };
-        current = if *selected_then {
+        current = through_single_arm_matches_mut(if *selected_then {
             then_proof.steps_mut()
         } else {
             else_proof.steps_mut()
-        };
+        });
     }
     if matches!(current.last(), Some(ProofStep::If { .. })) {
         return Err("execution path stops before its surface branch leaf".to_string());
@@ -1282,6 +1309,9 @@ pub(super) enum PostExecutionTactic {
         returned_tactics: Vec<DeferredPostExecutionTactic>,
         threw_tactics: Vec<DeferredPostExecutionTactic>,
     },
+    /// `auto` closing the pending claims: `simp`, then the rest of
+    /// `auto`'s search on each claim `simp` leaves open.
+    AutoClose,
     Simp,
     SimpUsing(ProofSimpUsing),
 }
@@ -1617,6 +1647,7 @@ pub(super) fn post_execution_tactic_timing(
             },
         ),
         PostExecutionTactic::Simp | PostExecutionTactic::SimpUsing(_) => ("simp", "smart"),
+        PostExecutionTactic::AutoClose => ("auto", "smart"),
         PostExecutionTactic::Fold(_) => ("fold", "simple"),
         PostExecutionTactic::Unfold(_) => ("unfold", "simple"),
         PostExecutionTactic::Construct(_) => ("construct", "simple"),

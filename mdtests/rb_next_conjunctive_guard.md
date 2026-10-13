@@ -5,7 +5,7 @@ then left as far as it goes — and it is the same shape as
 [`rb_first_last.md`](rb_first_last.md), which the node-keyed model verifies. The
 second is the ascent
 `while ((parent = rb_parent(node)) && node == parent->rb_right) node = parent;`,
-which now parses unchanged. C0 lowers the call, conversion to `parent`'s
+which now parses unchanged. Click lowers the call, conversion to `parent`'s
 pointer type, write, and expression result into checked statements at the loop
 head. That prefix is re-executed on every iteration, including after
 `continue`, and the existing logical `&&` keeps the parent-link read lazy.

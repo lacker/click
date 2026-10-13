@@ -1,6 +1,6 @@
 # C `for` loops with omitted initializer and step
 
-The C0 `for` lowering permits an omitted initializer and/or step when the
+The C `for` lowering permits an omitted initializer and/or step when the
 condition is present. The omitted pieces lower to `skip`; unconditional loops
 remain unsupported until `break` is modeled.
 

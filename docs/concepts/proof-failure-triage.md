@@ -216,7 +216,7 @@ documented semantics. A deliberately unsupported construct is a current
 limitation. If supporting it is part of Click's intended scope, record it as
 **missing functionality** rather than treating the program as erroneous.
 
-A semantics-preserving translation into Click's documented C0 subset may be
+A semantics-preserving translation into Click's documented supported C may be
 useful while support is incomplete, but it must be identified as such. It is
 not evidence that Click verifies the unchanged source form.
 

@@ -1,5 +1,12 @@
 # P2: Extend bounded control flow
 
+Priority: P2.
+
+Soundness: incomplete. Unsupported switch, cleanup and unwind shapes are
+refused. On 2026-10-12, `return 0 && bump();` was checked with the release
+binary: the unselected call contributed no effect, and a false claim that it
+ran was refused.
+
 The selected P1 control-flow milestone is complete: structured C loops and
 loop exits, constant-expression-label `switch`, checked forward `goto` cleanup,
 and the bounded C++ cleanup/unwind profile all have checked execution and

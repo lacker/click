@@ -1,6 +1,6 @@
 # C `switch` cases and fallthrough
 
-C0 keeps switch cases in source order. Dispatch enters the first matching
+Click keeps switch cases in source order. Dispatch enters the first matching
 case, then continues through later cases until a `break` or the end of the
 switch.
 

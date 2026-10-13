@@ -6,7 +6,7 @@ ultimately justify acceptance.
 
 1. The project loader finds the C source named by `verifying` and resolves the
    selected target.
-2. The C0 and Click parsers build source-level syntax trees with source spans.
+2. The C and Click parsers build source-level syntax trees with source spans.
 3. Validation resolves names, checks types and declaration rules, and rejects
    unsupported C or Click forms.
 4. Elaboration makes contextual Surface Click meaning explicit, including

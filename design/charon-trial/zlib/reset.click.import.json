@@ -16,7 +16,6 @@
       "path": "adler32.c",
       "args": [
         "-std=c11",
-        "-funsigned-char",
         "-isystem",
         "/usr/lib/gcc/x86_64-linux-gnu/14/include",
         "-isystem",

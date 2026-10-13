@@ -3,18 +3,10 @@
 //! definedness, observer range, or ambient premise search is inferred.
 
 use super::arithmetic_special::SpecialArithmeticCheckError as Error;
-use crate::kernel::{ConditionTerm, IntegerTerm, Proposition, SharedIntegerTerm};
+use super::integer_product_bounds::order;
+use crate::kernel::{IntegerTerm, Proposition};
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero};
-
-fn order(proposition: &Proposition) -> Option<(&SharedIntegerTerm, &SharedIntegerTerm)> {
-    match proposition {
-        Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(left, right), true) => {
-            Some((left, right))
-        }
-        _ => None,
-    }
-}
 
 pub(super) fn check(
     node: usize,
@@ -125,6 +117,7 @@ pub(super) fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::ConditionTerm;
     use crate::kernel::{
         Variable,
         proof::arithmetic_special::{SpecialArithmeticCertificate, SpecialArithmeticNode},

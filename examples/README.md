@@ -28,8 +28,8 @@ Examples have three distinct provenance classes:
   language or proof-model question. Their source should still remain fixed while a
   proof is repaired, but they are not evidence that Click accepts unchanged
   third-party source.
-- **C0 transcriptions** are semantics-preserving translations of identified C
-  into Click's supported C0 subset. They must include a `SOURCE.md` naming the
+- **C transcriptions** are semantics-preserving translations of identified C
+  into Click's supported C. They must include a `SOURCE.md` naming the
   upstream source and revision and recording every translation.
 - **Unchanged existing-source** fixtures preserve identified upstream files
   byte-for-byte. They must include a `SOURCE.md` plus a checked source-integrity
@@ -77,7 +77,7 @@ Current projects:
   heap-derived in-order sequence model, membership, rotation-preservation, and
   structural-termination work required by MVR; its sidecar currently imports
   the C without claiming those proofs.
-- `arena/` fixes the C0 implementation boundary for a first-fit allocator
+- `arena/` fixes the C implementation boundary for a first-fit allocator
   whose regions exercise user-defined suballocation and lifetime ownership.
   `arena_cells.click` verifies initialization, allocation anywhere, frees in
   any order, reads, writes, and destruction over per-cell occupancy with
@@ -96,6 +96,10 @@ Current projects:
   a small object.
 - `jsonc-numeric/` verifies synthetic json-c-shaped `double` field reads and
   mixed integer/double scaling through pointer contracts and memory resources.
+- `label-build-flags/` is the worked example of the own-project guide: a
+  `Makefile` library whose `-I`/`-D` file is verified through a compiler
+  import and whose `strlen` caller is verified directly, with an `extern`
+  contract between them.
 - `jsonc-existing-source/` preserves the upstream json-c version helper and
   proves its numeric and string results without editing the upstream C.
 - `owned-string/` verifies a length-tracked string with a trailing terminator

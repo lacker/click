@@ -1,4 +1,4 @@
-# The modeled stdint header supplies standard C0 type spellings
+# The modeled stdint header supplies standard Click's C type spellings
 
 ```c filename=include/types.h
 #ifndef TYPES_H

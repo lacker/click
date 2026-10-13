@@ -275,7 +275,7 @@ fn synthesize_struct_loadable_segment(
                 continue;
             }
             let width = match field.c_type() {
-                C0Type::Char | C0Type::UInt8 | C0Type::Int8 => 1,
+                C0Type::Char(_) | C0Type::UInt8 | C0Type::Int8 => 1,
                 C0Type::Int16 | C0Type::UInt16 => 2,
                 C0Type::Int64 | C0Type::UInt64 | C0Type::Float64 => 8,
                 _ => 4,
@@ -978,15 +978,18 @@ fn synthesized_surface_matches_proposition(
         state.memory(),
     );
     let (values, array_refs) = contract_environment_at_state(&parameter_values, &array_refs, state);
-    let lowered = crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with_opaque_calls_and_pointer_widths(
+    let pointer_element_widths =
+        crate::surface::lowering::parameter_pointer_element_widths(parameter_binding.parameters);
+    let lowered = crate::surface::proof::fixed_state_proofs::lower_fixed_state_proposition_through_kernel_with(
         candidate,
         &PureFactContext::new(),
-        &values,
-        &array_refs,
+        ContractEnvironment::new(&values, &array_refs),
         FixedStateFrame::new(state, state, None, &RecordedSnapshots::default()),
         SpecDefinitions::new(&PredicateEnvironment::new(&[]), &ClickFunctionEnvironment::new(&[])),
-        &std::collections::BTreeSet::new(),
-        crate::surface::lowering::parameter_pointer_element_widths(parameter_binding.parameters),
+        FixedStateLoweringOptions {
+            pointer_element_widths,
+            ..Default::default()
+        },
     );
     lowered.is_ok_and(|lowered| {
         crate::kernel::proof::propositions_are_alpha_equal(&lowered, proposition)
@@ -2867,6 +2870,14 @@ fn synthesize_surface_bitvector(
                     bound_variables,
                 );
                 let pointer = pointer?;
+                // An unsigned byte read is spelled as one whatever the
+                // pointer's own element type: through a signed plain `char`
+                // pointer it is the byte's one name, not the pointer's read.
+                let value_type = if *kind == crate::kernel::LoadKind::UInt8 {
+                    Some(CType::UInt8)
+                } else {
+                    value_type
+                };
                 Some(ContractExpression::CFragment(match value_type {
                     Some(CType::UInt8) => CExpression::TypedLoad {
                         pointer: Box::new(pointer),

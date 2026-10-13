@@ -1,5 +1,11 @@
 # P2: Extend C++ support toward Bitcoin Core
 
+Priority: P2.
+
+Soundness: incomplete. Language coverage. Unsupported C++ constructs are
+refused, and each delivered slice states its compiler profile. The Clang
+exporter is a documented trusted front end.
+
 The long-term goal is to verify substantial parts of unchanged Bitcoin Core.
 Grow support through independently useful, bounded proofs that exercise the
 common execution and resource model. Each delivered slice must state exactly
@@ -273,7 +279,7 @@ prerequisites, not a source proof of `SpanPopBack` or its symbolic length.
 The complete helper now supplies checked native-index/range-endpoint evidence.
 
 Read-only wide-index refusals now distinguish compact recorded cell ranges from
-individual source stores in the shared resource tracker. C0 and offline C++
+individual source stores in the shared resource tracker. C and offline C++
 regressions reject invented source-store attribution and speculative unequal-index
 repairs. They request the unresolved address relation or preservation instead;
 relevant explicit equality rewrites still give ordinary, expanded and retained
@@ -1027,7 +1033,7 @@ and variables, scalar locals and function parameters/results, substitution,
 observations. Reverse Integer conversions retain both wide range obligations;
 truthiness observes all bits. Legacy arithmetic carriers are refused;
 native arithmetic and typed memory access are admitted only in the slices below.
-C0 identities carry the kernel types without adding source parser admission.
+C identities carry the kernel types without adding source parser admission.
 
 Symbolic wide widening, narrowing, and signedness changes are delivered at
 the shared explicit modulo boundary. Cast terms retain both machine types;
@@ -1057,7 +1063,7 @@ load/validation work is tested over multiple unrelated-memory sizes.
 Byte reinterpretation and source admission remain open.
 
 Shared wide object pointers, pointer slots, fixed scalar arrays, and arrays of
-wide pointers are delivered, with exact internal C0 type identities. Element
+wide pointers are delivered, with exact internal Click's C type identities. Element
 strides and scalar alignment are sixteen bytes; pointer objects and slots
 remain eight bytes under LP64. Address-of, indexing, and local declarations use
 the shared paths. Regression coverage includes full-width payloads, one-past

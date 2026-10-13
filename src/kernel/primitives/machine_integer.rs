@@ -525,6 +525,53 @@ impl MachineIntegerType {
 }
 
 impl Bitvector32Term {
+    /// The term a read of `kind` at `pointer` in `memory` denotes. This is
+    /// the one place a symbolic read term is formed from a kind.
+    ///
+    /// One byte, one name: a byte of memory has a single term, its unsigned
+    /// (`UInt8`) read. A signed (`Int8`) read of the byte is the
+    /// two's-complement conversion of that one term, [`Self::signed_byte`],
+    /// never an unknown of its own, so a signed and an unsigned read of the
+    /// same byte are related by construction. Every other kind is its own
+    /// `MemoryLoad`. A `MemoryLoad` of kind `Int8` is never formed; the load
+    /// registry refuses to name one (`load_variable_for_term`), so a
+    /// producer that bypassed this constructor gets no name and no fact.
+    pub(crate) fn memory_read(
+        memory: crate::kernel::SharedCMemory,
+        pointer: crate::kernel::Pointer,
+        kind: crate::kernel::LoadKind,
+    ) -> Self {
+        use crate::kernel::LoadKind;
+        match kind {
+            LoadKind::Int8 => {
+                Self::signed_byte(Self::MemoryLoad(memory, Box::new(pointer), LoadKind::UInt8))
+            }
+            kind => Self::MemoryLoad(memory, Box::new(pointer), kind),
+        }
+    }
+
+    /// The `signed char` value of the byte whose `unsigned char` value is
+    /// `unsigned`: its eight bits read in two's complement.
+    pub(crate) fn signed_byte(unsigned: Self) -> Self {
+        Self::machine_integer_cast(
+            MachineIntegerType::UInt8,
+            MachineIntegerType::Int8,
+            unsigned,
+        )
+    }
+
+    /// The unsigned byte a [`Self::signed_byte`] term converts, if this is one.
+    pub(crate) fn signed_byte_operand(&self) -> Option<&Self> {
+        match self {
+            Self::MachineIntegerCast {
+                value,
+                source: MachineIntegerType::UInt8,
+                destination: MachineIntegerType::Int8,
+            } => Some(value),
+            _ => None,
+        }
+    }
+
     /// Fold only a constant at the operand root. Symbolic conversion records
     /// both formats, and construction does not scan or clone the operand tree.
     pub(crate) fn machine_integer_cast(

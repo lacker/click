@@ -31,6 +31,7 @@ int32 read_literal() {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "a_returned_pointer_reads_across_stores_to_caller_locals.c";
 
 uint8* literal_source() {

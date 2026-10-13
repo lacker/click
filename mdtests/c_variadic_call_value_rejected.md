@@ -18,5 +18,5 @@ int32 run(int32 value) {
 ```
 
 ```expect
-fail:c_variadic_call_value_rejected.c:4: calls to variadic function `report` are not supported in C0
+fail:c_variadic_call_value_rejected.c:4: calls to variadic function `report` are not supported by Click
 ```

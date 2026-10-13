@@ -1,5 +1,11 @@
 # Verify the Linux rbtree example on the recursive structure models
 
+Priority: P1.
+
+Soundness: not soundness. This is example delivery. The soundness defects
+found along the way are fixed and listed in the package table (rows 31, 41
+and 59).
+
 Renamed from `recursive-structure-models.md` on 2026-09-13 and collapsed
 from its 1600-line journal to the state, the decisions, and the remaining
 work. The models, the two syntax extensions (loop binders `owns name:
@@ -1067,7 +1073,7 @@ unbounded fold.
 `static __always_inline __rb_insert`. By the owner's decision, an inline
 helper with a verified contract is called through that contract like any
 function, and only a contract-less helper runs its body at the call site
-(`docs/reference/language/c0.md`). The proof is one call step binding the
+(`docs/reference/language/c.md`). The proof is one call step binding the
 context and red subtree to `__rb_insert`'s `consumes` binders. A contract-less
 helper with a symbolic loop still runs away instead of failing promptly
 (`bugs/inline-helper-symbolic-loop-call-runs-away.md`).
@@ -1098,7 +1104,7 @@ model, on the verbatim body. Certified (2026-10-02): `mdtests/rb_next.md`
 proves the successor contract on the unchanged body, with `RB_EMPTY_NODE`, the
 descent, the ascent loop (`decreases t;`, `decreases c;`) and the section after
 it; `mdtests/rb_next_rejects_a_dropped_context.md` is the negative. One
-translation remains: the parameter is declared without `const`, because C0
+translation remains: the parameter is declared without `const`, because Click
 keeps `const` across the explicit cast in `return (struct rb_node *)node;`
 (`mdtests/rb_next_const_signature.md`). Restoring it waits on the importer's
 const-dropping cast rule. A predecessor claim is refused only by `simp`

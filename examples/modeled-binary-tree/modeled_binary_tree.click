@@ -464,19 +464,7 @@ struct tree_node* tree_rotate_left(struct tree_node* root) {
                         model: HeapTree::Node(pivot_node, pivot_value,
                             HeapTree::Node(node, value, left_model, middle_model), far_right_model)
                     }, { left: lower, right: z });
-                    have rotated.model == heap_rotate_left(old(t.model)) by {
-                        rewrite(old(t.model) == HeapTree::Node(node, value, left_model, right_model));
-                        rewrite(right_model == HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model));
-                        unfold(heap_rotate_left(HeapTree::Node(node, value, left_model,
-                            HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model))));
-                        normalize();
-                    }
-                    have heap_inorder(rotated.model) == heap_inorder(old(t.model)) by {
-                        rewrite(rotated.model == heap_rotate_left(old(t.model)));
-                        apply(heap_rotate_left_preserves_inorder(old(t.model)));
-                        assumption();
-                    }
-                    simp();
+                    apply(heap_rotate_left_preserves_inorder(old(t.model)));
                 },
             }
         },
@@ -516,19 +504,7 @@ struct tree_node* tree_rotate_right(struct tree_node* root) {
                         model: HeapTree::Node(pivot_node, pivot_value, far_left_model,
                             HeapTree::Node(node, value, middle_model, right_model))
                     }, { left: z, right: lower });
-                    have rotated.model == heap_rotate_right(old(t.model)) by {
-                        rewrite(old(t.model) == HeapTree::Node(node, value, left_model, right_model));
-                        rewrite(left_model == HeapTree::Node(pivot_node, pivot_value, far_left_model, middle_model));
-                        unfold(heap_rotate_right(HeapTree::Node(node, value,
-                            HeapTree::Node(pivot_node, pivot_value, far_left_model, middle_model), right_model)));
-                        normalize();
-                    }
-                    have heap_inorder(rotated.model) == heap_inorder(old(t.model)) by {
-                        rewrite(rotated.model == heap_rotate_right(old(t.model)));
-                        apply(heap_rotate_right_preserves_inorder(old(t.model)));
-                        assumption();
-                    }
-                    simp();
+                    apply(heap_rotate_right_preserves_inorder(old(t.model)));
                 },
             }
         },

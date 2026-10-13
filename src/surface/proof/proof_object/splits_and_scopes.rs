@@ -480,14 +480,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: ids.to_vec(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), ids.to_vec()),
         };
         successor.record_trace_split(
             &successor.node,
@@ -562,14 +555,7 @@ impl<'a> Proof<'a> {
             state,
             // The marker records the split instance in provenance; its
             // identity is what the join verifies (identity rule 3).
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: ids.to_vec(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), ids.to_vec()),
         };
         if let Some(facts) = traced_arms {
             successor.record_trace_split(&successor.node, ids, &facts, "cases", ["left", "right"]);
@@ -613,14 +599,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: ids.to_vec(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), ids.to_vec()),
         };
         if let Some(facts) = traced_arms {
             successor.record_trace_split(&successor.node, ids, &facts, "if", ["then", "else"]);
@@ -796,14 +775,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: ids.to_vec(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), ids.to_vec()),
         };
         successor.record_trace_branch(&successor.node, ids, &path_facts, &condition);
         let record = ExecutionProofCaseSplit {
@@ -866,14 +838,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: ids.to_vec(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), ids.to_vec()),
         };
         let record = ExecutionLogicalCasesSplit {
             arm_branches: ids,
@@ -1031,17 +996,14 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(parent.clone()),
-                step: Some(Arc::new(step(
+            node: ProofNode::step_child(
+                &parent,
+                marker.node.focused_branch,
+                Arc::new(step(
                     ProofCertificate::from_steps(left_steps)?,
                     ProofCertificate::from_steps(right_steps)?,
-                ))),
-                focused_branch: marker.node.focused_branch,
-                depth: parent.depth + 1,
-                split_branches: Vec::new(),
-            }),
+                )),
+            ),
         };
         if crate::surface::proof_trace::enabled_for(self.claim_label()) {
             let added = successor.state().added_facts();

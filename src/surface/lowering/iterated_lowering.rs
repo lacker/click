@@ -460,8 +460,7 @@ pub(in crate::surface) fn lower_iterated_clause_with_values(
         crate::surface::proof::evaluate_resource_fragment_through_kernel(
             expression,
             assumptions,
-            values,
-            &array_refs,
+            ContractEnvironment::new(values, &array_refs),
             state,
             result,
         )

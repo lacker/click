@@ -86,12 +86,12 @@ pub(in crate::kernel) fn with_store_gap_skip_disabled<R>(body: impl FnOnce() -> 
 }
 
 #[cfg(test)]
-fn store_gap_skip_disabled() -> bool {
+pub(in crate::kernel) fn store_gap_skip_disabled() -> bool {
     STORE_GAP_SKIP_DISABLED.with(std::cell::Cell::get)
 }
 
 #[cfg(not(test))]
-fn store_gap_skip_disabled() -> bool {
+pub(in crate::kernel) fn store_gap_skip_disabled() -> bool {
     false
 }
 
@@ -192,7 +192,10 @@ fn kept_shifts(k: i64, bytes: i64, exclude_zero: bool) -> Vec<(i64, i64)> {
 /// variables, which exact-load normalization never rewrites, and the
 /// anchor rebuilds to itself and neither is nor ends in a constant, so the
 /// smart `add` keeps the trailing constant where it is.
-fn anchor_is_normal(anchor: &PointerOffsetTerm, assumptions: &PureFactContext) -> bool {
+pub(in crate::kernel) fn anchor_is_normal(
+    anchor: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> bool {
     if anchor.as_const().is_some() {
         return false;
     }

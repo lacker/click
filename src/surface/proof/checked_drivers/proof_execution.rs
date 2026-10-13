@@ -735,6 +735,7 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         ),
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
         ProofTactic::Simp => Some(PostExecutionTactic::Simp),
+        ProofTactic::AutoClose => Some(PostExecutionTactic::AutoClose),
         ProofTactic::SimpUsing(simp) => Some(PostExecutionTactic::SimpUsing(simp.clone())),
         _ => None,
     }
@@ -830,7 +831,7 @@ fn deferred_post_execution_if_is_explicit_path_cursor(
     fn explicit_tree(tactics: &[DeferredPostExecutionTactic], depth: usize) -> bool {
         depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
             && tactics.iter().all(|deferred| match &deferred.tactic {
-                PostExecutionTactic::Simp => false,
+                PostExecutionTactic::Simp | PostExecutionTactic::AutoClose => false,
                 PostExecutionTactic::If {
                     condition,
                     then_tactics,
@@ -1867,7 +1868,7 @@ fn source_have_error(
     cause: Option<ClickError>,
 ) -> ClickError {
     if let Some(error) = cause {
-        return error.with_context(format!(
+        return proof.attach_step_diagnostic(error).with_context(format!(
             "`{}` tactic {index}: `have` failed for `{}`",
             proof.claim_label(),
             crate::surface::diagnostics::describe_click_proposition(&have.proposition)

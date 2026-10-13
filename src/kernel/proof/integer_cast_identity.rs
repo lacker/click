@@ -61,20 +61,28 @@ pub(super) fn check(
                     | crate::kernel::MachineIntegerType::UInt64
             )
         };
-        // A promoted unsigned byte/short read can retain the same 32-bit
-        // carrier instead of an explicit narrowing node. This direction
-        // still owes bounds on the word observation, checked below against
-        // the narrow destination range. Bounds on the narrow observation
-        // alone cannot justify interpreting an arbitrary carrier as a word.
-        if machine.value() == operand.value()
-            && matches!(
-                operand.ty(),
-                crate::kernel::MachineIntegerType::Int32
-                    | crate::kernel::MachineIntegerType::UInt32
-            )
+        // A narrowed byte/short value can retain the same 32-bit carrier, or
+        // the low word of a 64-bit source, instead of an explicit narrowing
+        // node. This direction still owes bounds on the word observation,
+        // checked below against the narrow destination range; within it the
+        // carrier is the destination's value, signed or unsigned. Bounds on
+        // the narrow observation alone cannot justify interpreting an
+        // arbitrary carrier as a word.
+        let carrier = match operand.ty() {
+            crate::kernel::MachineIntegerType::Int32
+            | crate::kernel::MachineIntegerType::UInt32 => Some(operand.value().clone()),
+            crate::kernel::MachineIntegerType::Int64
+            | crate::kernel::MachineIntegerType::UInt64 => {
+                Some(Bitvector32Term::uint32_from_64(operand.value().clone()))
+            }
+            _ => None,
+        };
+        if carrier.as_ref() == Some(machine.value())
             && matches!(
                 machine.ty(),
-                crate::kernel::MachineIntegerType::UInt8
+                crate::kernel::MachineIntegerType::Int8
+                    | crate::kernel::MachineIntegerType::UInt8
+                    | crate::kernel::MachineIntegerType::Int16
                     | crate::kernel::MachineIntegerType::UInt16
             )
         {
@@ -308,6 +316,79 @@ mod tests {
                     assert_eq!(
                         value.convert_modulo(destination.format()).to_integer() == number,
                         number <= maximum,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrowed_subword_carriers_require_destination_bounds_on_the_source() {
+        let word = Bitvector32Term::Variable(Variable(168_013));
+        let wide = Bitvector32Term::Variable(Variable(168_014));
+        for (source, original_carrier, carrier) in [
+            (Ty::Int32, word.clone(), word.clone()),
+            (Ty::UInt32, word.clone(), word.clone()),
+            (
+                Ty::Int64,
+                wide.clone(),
+                Bitvector32Term::uint32_from_64(wide.clone()),
+            ),
+            (
+                Ty::UInt64,
+                wide.clone(),
+                Bitvector32Term::uint32_from_64(wide.clone()),
+            ),
+        ] {
+            for destination in [Ty::Int8, Ty::UInt8, Ty::Int16, Ty::UInt16] {
+                let original = IntegerTerm::from_machine(source, original_carrier.clone()).unwrap();
+                let observed = IntegerTerm::from_machine(destination, carrier.clone()).unwrap();
+                let goal = Proposition::ConditionIs(
+                    ConditionTerm::integer_equal(observed.clone(), original.clone()),
+                    true,
+                );
+                let (minimum, maximum) = destination.format().bounds();
+                let bounds = |value: IntegerTerm, lower: BigInt, upper: BigInt| {
+                    vec![
+                        le(IntegerTerm::constant(lower), value.clone()),
+                        le(value, IntegerTerm::constant(upper)),
+                    ]
+                };
+                let cert = certificate(goal.clone(), vec![0, 1]);
+                cert.check(
+                    &goal,
+                    &bounds(original.clone(), minimum.clone(), maximum.clone()),
+                )
+                .unwrap();
+                assert!(
+                    cert.check(&goal, &bounds(observed, minimum.clone(), maximum.clone()))
+                        .is_err()
+                );
+                assert!(
+                    cert.check(
+                        &goal,
+                        &bounds(original.clone(), minimum.clone(), &maximum + 1)
+                    )
+                    .is_err()
+                );
+                assert!(
+                    cert.check(
+                        &goal,
+                        &bounds(original.clone(), &minimum - 1, maximum.clone())
+                    )
+                    .is_err()
+                );
+                // A 64-bit source is narrowed only through its low word.
+                if source.format().bits() == 64 {
+                    let untruncated = IntegerTerm::from_machine(destination, wide.clone()).unwrap();
+                    let goal = Proposition::ConditionIs(
+                        ConditionTerm::integer_equal(untruncated, original.clone()),
+                        true,
+                    );
+                    assert!(
+                        certificate(goal.clone(), vec![0, 1])
+                            .check(&goal, &bounds(original, minimum, maximum))
+                            .is_err()
                     );
                 }
             }

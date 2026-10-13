@@ -6,7 +6,7 @@ abstractly through the memory it owns instead, so the same check belongs
 at the call: otherwise passing literal storage to a callee that owns it stores
 there, and the caller reads the stored value back.
 
-C0 models a literal as an ordinary `uint8*`, so no qualifier catches this the
+Click models a literal as an ordinary `uint8*`, so no qualifier catches this the
 way `const` catches a write through a pointer-to-const.
 
 ```c filename=string_literal_mutable_footprint_rejected.c
@@ -22,6 +22,7 @@ int32 string_literal_mutable_footprint_rejected() {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "string_literal_mutable_footprint_rejected.c";
 
 void overwrite(uint8* p) {

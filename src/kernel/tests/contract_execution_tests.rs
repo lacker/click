@@ -6864,8 +6864,7 @@ fn automatic_scalar_ownership_is_exact_and_required_for_all_accesses() {
         &CState::new(),
         &c_declare("word", CType::UInt32),
         &assumptions,
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -6917,8 +6916,7 @@ fn automatic_scalar_ownership_is_exact_and_required_for_all_accesses() {
             &empty,
             &statement,
             &assumptions,
-            &CExecutionEnvironment::new(),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
             &mut ExecutionBudget::new(),
         )
         .unwrap();
@@ -6967,8 +6965,7 @@ fn automatic_scalar_ownership_work_is_independent_of_unrelated_storage() {
                 &state,
                 &statement,
                 &PureFactContext::new(),
-                &CExecutionEnvironment::new(),
-                CExecutionSemantics::EXECUTE_BODIES,
+                CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
                 &mut ExecutionBudget::new(),
             )
             .unwrap()
@@ -6984,4 +6981,120 @@ fn automatic_scalar_ownership_work_is_independent_of_unrelated_storage() {
             .all(|work| *work <= measurements[0].max(1) * 4 + 32),
         "unrelated storage changed scalar allocation/access work: {measurements:?}"
     );
+}
+
+#[test]
+fn independent_entry_matches_only_checked_exhaustive_resource_guard_cases() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let pointer = Pointer::symbolic(Variable(9_898_450));
+    let arguments = vec![CExpression::Value(CValue::typed_pointer(
+        pointer.clone(),
+        CType::Int32Pointer,
+    ))];
+    let input = CResourceSpec::composite(
+        CResourceAccessMode::Own,
+        "nullable_input".into(),
+        vec![c_variable("p")],
+        vec![CType::Int32Pointer],
+    );
+    let definition = CCompositeResourceDefinition::new(
+        "nullable_input",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        Some(SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("p")),
+            operator: CComparisonOperator::NotEqual,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        }),
+        false,
+        Vec::new(),
+        Vec::new(),
+    );
+    let function = c_function(
+        CType::Void,
+        "nullable_input_identity",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_void_value()),
+    )
+    .with_resource_summary(vec![input.clone()], vec![input])
+    .with_composite_resource_definitions(vec![definition]);
+    let entry =
+        crate::kernel::functions::independent_entry::construct(&function, &arguments, None, false)
+            .expect("independently declared opaque head");
+    let execution = certify_contract_with_kernel_artifacts(
+        entry.caller.clone(),
+        function.clone(),
+        arguments.clone(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    assert_eq!(
+        execution.cases.len(),
+        2,
+        "both nullability cases are checked"
+    );
+    let specialized = entry
+        .caller
+        .clone()
+        .with_memory(entry.caller.memory().clone().store(pointer, int32(7)));
+    for alternatives in &execution.cases {
+        assert!(
+            !alternatives.is_empty(),
+            "each resource case has a checked execution"
+        );
+        for set in alternatives {
+            assert_eq!(set.checked_resource_guard_cases.len(), set.paths.len());
+            assert!(!set.paths.is_empty());
+            for (path, witness) in set.paths.iter().zip(&set.checked_resource_guard_cases) {
+                assert!(crate::kernel::functions::independent_entry::matches(
+                    &function,
+                    &arguments,
+                    &entry.caller,
+                    &path.assumptions,
+                    Some(witness),
+                ));
+                assert!(
+                    !crate::kernel::functions::independent_entry::matches(
+                        &function,
+                        &arguments,
+                        &entry.caller,
+                        &path.assumptions,
+                        None,
+                    ),
+                    "a case guard is not an unconditional interface premise"
+                );
+                let extra = path
+                    .assumptions
+                    .clone()
+                    .assume_proposition(Proposition::ConditionIs(
+                        ConditionTerm::equal(
+                            Bitvector32Term::Variable(Variable(9_898_451)),
+                            1u32.into(),
+                        ),
+                        true,
+                    ));
+                assert!(
+                    !crate::kernel::functions::independent_entry::matches(
+                        &function,
+                        &arguments,
+                        &entry.caller,
+                        &extra,
+                        Some(witness),
+                    ),
+                    "the case witness cannot authenticate an arbitrary additional premise"
+                );
+                assert!(
+                    !crate::kernel::functions::independent_entry::matches(
+                        &function,
+                        &arguments,
+                        &specialized,
+                        &path.assumptions,
+                        Some(witness),
+                    ),
+                    "the case witness cannot authenticate caller-specific cells"
+                );
+            }
+        }
+    }
 }

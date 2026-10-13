@@ -1,6 +1,6 @@
 # C for loop declaration rejection
 
-This documents the first `for` slice boundary: C0 lowers assignment-style
+This documents the first `for` slice boundary: Click lowers assignment-style
 `for` loops to `while`, but does not support declarations inside the `for`
 initializer yet.
 

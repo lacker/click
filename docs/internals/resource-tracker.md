@@ -321,7 +321,7 @@ reads only `PointerBlock::proven_distinct` and the checked write set the edge
 itself carries — which is path-independent, and so may be read off an interned
 edge.
 
-Two of those answers are not reachable from C0 yet, and fail closed where they
+Two of those answers are not reachable from C yet, and fail closed where they
 stop: a `free` of an object distinct from the subject needs a `malloc`, whose
 `branch` continuation is reached by a transition that records no edge, and a
 loop's checked write set is separated from its own head state by a memory the
@@ -614,13 +614,28 @@ A load term is a value, and what a read returns depends on more than its
 address: a byte of `0xFF` is `-1` read as `int8` and `255` read as `uint8`, and
 an `int32` read at the same address returns all four bytes. A
 `Bitvector32Term::MemoryLoad` therefore carries a `LoadKind`
-(`src/kernel/primitives.rs`) beside its snapshot and address: `Int8`, `UInt8`,
+(`src/kernel/primitives.rs`) beside its snapshot and address: `UInt8`,
 `Int16`, `UInt16`, `Bits32`, `Bits64`, `Float32` or `Float64`. Four- and
 eight-byte integer reads keep their bit pattern in the term and let the
 `CValue` wrapper choose signed or unsigned, so `int32` and `uint32` are one
-kind; narrower reads hold the extended value, which signedness changes. A
+kind; two-byte reads hold the extended value, which signedness changes. A
 pointer read is a `Bits32` read, because Click names a pointer value by the
 four-byte word at its address, as a materialized pointer field's cells hold it.
+
+**One byte, one name.** A byte has a single load term: its unsigned (`UInt8`)
+read. A signed (`Int8`) read of the byte is not a load term of its own; it is
+the two's-complement conversion of that one term,
+`MachineIntegerCast { UInt8 -> Int8 }`, built only by
+`Bitvector32Term::memory_read` (and `canonical_form_of_load`, which delegates
+to it for the `Int8` kind). So a signed and an unsigned read of the same byte
+are related by construction: `s[i] == -1` names the same unknown as
+`u[i] == 255`. A `MemoryLoad` of kind `Int8` is never formed; the load
+registry refuses to name one (`load_variable_for_term`), so a producer that
+bypassed `memory_read` gets no name and no fact rather than a second, unrelated
+value of the byte. A cell stored with the other signedness is read the same
+way (`CType::read_cell`, `LoadKind::read_cell`): C11 6.5p7 lets any character
+type read an object's bytes, and the reinterpretation is the same modular
+conversion.
 
 When a pointer read reuses a cached scalar load name, its legacy coordinates
 come from that name's defining read. Reading the same cached cell through an
@@ -636,9 +651,13 @@ Before the kind was part of the term, two reads of one address in one snapshot
 were one term whatever they read, and every route that equates loads equated
 them: `s[i] == u[i]` through a `signed char*` and an `unsigned char*` view, and
 `q[i] == u[4 * i]` for an `int32` and its low byte, were provable, in a body, in
-a contract, across a call and through `at(...)`
+a contract, across a call and through `at(...)`. With one name per byte the
+signed read is now the conversion of the unsigned one, so `s[i] == u[i]` is
+still refused (the two differ for every byte of `0x80` or more) while
+`u[i] == 255` proves `s[i] == -1` and `s[i] == -1` proves `u[i] == 255`
 (`mdtests/a_signed_and_an_unsigned_byte_read_are_two_values.md` and its
-neighbours). The load variable is named by the term, so its identity, its
+neighbours; the backward rule is described in
+[byte representation](byte-representation.md#character-reads-of-one-byte-cells)). The load variable is named by the term, so its identity, its
 registry entry (`registered_load_kind_for_variable`) and its defining equation
 carry the kind too.
 
@@ -654,8 +673,9 @@ The kind is checked in three kinds of place:
   at, a cell a snapshot holds (`MemoryDagCell::resolved_value`,
   `resolve_memory_load_value`, the deep canonical form, exact-load
   normalization, `memory_materializes_atomic_load`) — asks
-  `LoadKind::reads_value`: the value is exactly what a read of this kind
-  returns;
+  `LoadKind::reads_value`, or `LoadKind::read_cell` where a character read of
+  a one-byte cell of the other signedness answers with the same bits
+  converted: the value is exactly what a read of this kind returns;
 - the int32 equality graph takes a load variable as an int32 load only when its
   kind is `Bits32`. Its recorded width is the widest access seen at the
   address, so a byte read beside an `int32` read used to qualify
@@ -841,7 +861,7 @@ aggregate object's name — so an object neither of them reaches is storage no
 pointer value in the program designates. Nothing else can reach it either:
 arithmetic that leaves the object it was derived from is undefined behaviour
 that Click refuses on every displaced access (`CMemoryCanStore` /
-`access_in_bounds`), and an integer cast to a pointer is outside C0. An `&x`
+`access_in_bounds`), and an integer cast to a pointer is outside supported C. An `&x`
 written in a *proof* creates no runtime pointer.
 
 `src/languages/c/address_taken.rs` is the one conservative syntactic pass

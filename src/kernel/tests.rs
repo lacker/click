@@ -5,6 +5,7 @@ use super::prelude::*;
 use crate::surface::planning::proposition_search::PropositionSearch;
 mod byte_view_tests;
 mod callback_signature_tests;
+mod one_byte_one_name_tests;
 
 fn checked_memory_load_equality(
     left: &CMemory,

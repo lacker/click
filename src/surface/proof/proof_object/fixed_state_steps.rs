@@ -930,6 +930,23 @@ impl<'a> Proof<'a> {
             facts = facts.with_kernel_checked_fact(fact.clone());
             checked.push(fact);
         }
+        // The opened body is spelled as written, under the names just bound,
+        // for premise lookups; see `ProofLocals::surface_facts`.
+        let mut written_body = Some(&binding.proposition);
+        for _ in &binding.bindings {
+            written_body = match written_body {
+                Some(ClickProposition::Exists { body, .. }) => Some(body.as_ref()),
+                _ => None,
+            };
+        }
+        // A spelling is an index, not authority: a body whose written shape
+        // does not record is left unspelled rather than failing the step.
+        if let (Some(written_body), Some(body)) = (written_body, checked.last()) {
+            let mut spelled = locals.surface_facts.clone();
+            if spelled.record_lowering(written_body, body).is_ok() {
+                locals.surface_facts = spelled;
+            }
+        }
         let mut transition = self.checked_fact_transition(locals, facts, false, added, checked);
         // Every machine-integer witness projects as `int32` does: a C string's
         // `size_t` length is chosen the same way as an `int32` index.
@@ -1550,8 +1567,7 @@ impl<'a> Proof<'a> {
             let value = capture_fixed_state_algebraic_value(
                 checked_witness.value(),
                 self.facts().assumptions(),
-                &values,
-                &array_refs,
+                ContractEnvironment::new(&values, &array_refs),
                 algebraic_values,
                 view.fixed_state.pre_state,
                 view.fixed_state.state,
@@ -1599,8 +1615,7 @@ impl<'a> Proof<'a> {
             view.claim_label,
             0,
             view.tactic_index,
-            &values,
-            &array_refs,
+            ContractEnvironment::new(&values, &array_refs),
             view.fixed_state.pre_state,
             view.fixed_state.state,
             view.fixed_state.result,
@@ -1782,8 +1797,7 @@ impl<'a> Proof<'a> {
         let value = evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
             checked_witness.value(),
             self.facts().assumptions(),
-            &values,
-            &arrays,
+            ContractEnvironment::new(&values, &arrays),
             algebraic_values,
             FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
             context.spec_definitions,
@@ -1997,8 +2011,7 @@ impl<'a> Proof<'a> {
         capture_fixed_state_algebraic_value(
             &expression,
             self.facts().assumptions(),
-            &values,
-            &arrays,
+            ContractEnvironment::new(&values, &arrays),
             algebraic_values,
             &state,
             &state,
@@ -2070,7 +2083,10 @@ impl<'a> Proof<'a> {
             .collect();
         let state = CState::new().with_memory(context.theorem_context.memory.clone());
         let states = crate::surface::proof::fixed_state_proofs::FixedStateLowering::new(
-            &values, &arrays, &state, &state, None,
+            ContractEnvironment::new(&values, &arrays),
+            &state,
+            &state,
+            None,
         );
         let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
             &ClickProposition::Comparison { left: promoted, operator: ComparisonOperator::Equal, right: ContractExpression::IntegerLiteral("0".into()) },
@@ -2154,8 +2170,7 @@ impl<'a> Proof<'a> {
             evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
                 &argument,
                 self.facts().assumptions(),
-                &values,
-                &arrays,
+                ContractEnvironment::new(&values, &arrays),
                 algebraic_values,
                 FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
                 context.spec_definitions,
@@ -2211,8 +2226,7 @@ impl<'a> Proof<'a> {
             evaluate_fixed_state_expression_through_kernel_with_algebraic_values(
                 &argument,
                 self.facts().assumptions(),
-                &values,
-                &array_refs,
+                ContractEnvironment::new(&values, &array_refs),
                 algebraic_values,
                 view.fixed_state,
                 view.spec_definitions,

@@ -1,7 +1,7 @@
-# C0 rejects floating-point environment directives
+# Click rejects floating-point environment directives
 
 The source expander must not silently discard a floating-point environment
-directive whose rounding or exception behavior is outside the C0 model.
+directive whose rounding or exception behavior is outside Click's C model.
 
 ```c filename=floating_environment_rejected.c
 #pragma STDC FENV_ACCESS ON

@@ -1,6 +1,6 @@
 # C bitwise operators
 
-This checks C0 bitwise operators on `int32` values, Surface Click
+This checks bitwise operators on `int32` values, Surface Click
 postconditions using the same operators, C-style precedence, and `uint8`
 integer promotion through bitwise expressions.
 

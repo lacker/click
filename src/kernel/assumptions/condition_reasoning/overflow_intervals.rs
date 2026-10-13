@@ -207,6 +207,21 @@ impl PureFactContext {
                 (i128::from(i32::MIN) <= lower && upper <= i128::from(i32::MAX)).then_some(false)
             }
             ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                // An established definedness fact follows the same typed
+                // operand classes as other checked predicates. No interval
+                // reconstruction is needed to reuse that evidence.
+                let reversed = ConditionTerm::signed_add_overflows(
+                    right.as_ref().clone(),
+                    left.as_ref().clone(),
+                );
+                for value in [false, true] {
+                    if self.equality_graph.knows_condition(condition, value)
+                        || self.equality_graph.knows_condition(&reversed, value)
+                    {
+                        return Some(value);
+                    }
+                }
+
                 if right.as_ref() == &Bitvector32Term::Constant(1) {
                     let int_max = Bitvector32Term::Constant(i32::MAX as u32);
                     let left = left.as_ref().clone();
@@ -1040,6 +1055,24 @@ impl PureFactContext {
             | Bitvector32Term::Subtract(_, _)
             | Bitvector32Term::Multiply(_, _) => {
                 return self.signed_interval_from_operands(term);
+            }
+            // A signed byte read is its unsigned byte's two's-complement
+            // value: below 0x80 the same number, from 0x80 that number less
+            // 256, and otherwise somewhere in the signed byte range.
+            term if term.signed_byte_operand().is_some() => {
+                let unsigned = term.signed_byte_operand().expect("matched above");
+                let (unsigned_lower, unsigned_upper) = self
+                    .signed_interval(unsigned)
+                    .map(|(lower, upper)| (lower.max(0), upper.min(255)))
+                    .unwrap_or((0, 255));
+                let (lower, upper) = if unsigned_upper <= 127 {
+                    (unsigned_lower, unsigned_upper)
+                } else if unsigned_lower >= 128 {
+                    (unsigned_lower - 256, unsigned_upper - 256)
+                } else {
+                    (-128, 127)
+                };
+                return (lower <= upper).then_some((lower, upper));
             }
             Bitvector32Term::If {
                 then_term,

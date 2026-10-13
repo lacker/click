@@ -1,6 +1,6 @@
 # Local declaration lists
 
-C0 accepts same-type local declaration lists and lowers each declarator in
+Click accepts same-type local declaration lists and lowers each declarator in
 source order.
 
 ```c filename=local_declaration_list.c

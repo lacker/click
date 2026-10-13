@@ -3,7 +3,10 @@
 This project uses the shared model from `../rbtree-model/rbtree_model.click`.
 The Linux-derived C in `rbtree.h` and `rb_insert_color.c` is unchanged from the
 former `mdtests/rb_insert_color.md` fixture; `tests/examples.rs` pins both
-files by SHA-256.
+files by SHA-256. The function bodies in `rb_insert_color.c` are copied from
+Linux v6.8.12, but `rbtree.h` is a hand-written stand-in for the kernel
+headers that differs from them; see
+[Current rbtree status](../../docs/internals/roadmap.md#current-rbtree-status).
 
 `rbtree_insert.click` proves the Linux insert fixup, `__rb_insert`, end to end.
 It takes the context and the red subtree at the inserted node

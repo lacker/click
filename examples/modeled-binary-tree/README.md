@@ -19,7 +19,7 @@ Every function in `modeled_binary_tree.c` is verified:
 
 Run `cargo run --bin click -- verify examples/modeled-binary-tree` from the
 repository root. `cargo run --bin click -- audit examples/modeled-binary-tree`
-expands every smart tactic and rechecks the result: 37 of 37 sites. The example
+expands every smart tactic and rechecks the result: 39 of 39 sites. The example
 is also checked by `scripts/check.sh`.
 
 ## The model

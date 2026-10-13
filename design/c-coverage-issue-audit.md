@@ -15,7 +15,7 @@ subset boundaries or already belong to other issues. Keeping the umbrellas
 open makes delivered functionality look like pending launch work.
 
 The original issue histories and numbered milestones remain in Git. The
-[Supported C0 reference](../docs/reference/language/c0.md) and
+[Supported C0 reference](../docs/reference/language/c.md) and
 [limitations](../docs/reference/language/limitations.md) are the lasting
 user-facing descriptions. No C, verifier, resource, or loan implementation is
 changed by this audit.

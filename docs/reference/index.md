@@ -8,7 +8,7 @@ For explanations that connect several features, use the
 ## Language
 
 The [language reference](language/index.md) covers every user-visible Surface
-Click construct and the supported C0 subset. It distinguishes Surface Click,
+Click construct and supported C. It distinguishes Surface Click,
 Kernel Click, and C fragments, and records unsupported neighboring forms.
 
 ## Tactics

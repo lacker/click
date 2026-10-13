@@ -4,6 +4,11 @@ Priority: P2. The user confirmed on 2026-09-10 that the delivered importer
 milestone is sufficient for MVR. Remaining full-Linux import coverage is deferred
 and does not block MVR; this issue stays open for that work.
 
+Soundness: incomplete. Unsupported GNU forms and declarations in the pinned
+Linux input are refused with located diagnostics. The compiler preprocessor
+is a trusted source-selection step, documented in `docs/concepts/trust.md`.
+It is not an open gap of this issue.
+
 Found by the 2026-09-04 minimum-viable-rbtree (MVR) audit of Linux
 `lib/rbtree.c` and its public headers. Expanded into an implementation handoff
 on 2026-09-10, based on repository commit
@@ -574,7 +579,7 @@ variadic declaration of `panic`. That came from the C tokenizer, which then
 rejected any `...` in the artifact before parsing began, so it located the
 first `...` and said nothing about the declarations before it. Body-less
 variadic prototypes are now retained as uncallable declarations
-(`docs/reference/language/c0.md`, `mdtests/c_variadic_*.md`).
+(`docs/reference/language/c.md`, `mdtests/c_variadic_*.md`).
 
 The actual compiler vector includes options such as
 `-ftrivial-auto-var-init=zero`, `-fshort-wchar`, and `-fno-strict-overflow` that
@@ -772,8 +777,8 @@ because one implementation package landed.
 
 ## References
 
-- [Supported translation units and preprocessing](../docs/reference/language/c0.md#supported-expressions-and-statements)
-- [Supported GNU C forms](../docs/reference/language/c0.md#supported-expressions-and-statements)
+- [Supported translation units and preprocessing](../docs/reference/language/c.md#supported-expressions-and-statements)
+- [Supported GNU C forms](../docs/reference/language/c.md#supported-expressions-and-statements)
 - [Multiple compilers and targets](multiple-compilers.md)
 - [Linux rbtree inline helpers](linux-rbtree-inline-helpers.md)
 - [Testing and tooling failure workflow](../docs/internals/testing.md)

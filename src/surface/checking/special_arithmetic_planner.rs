@@ -737,44 +737,6 @@ fn bounded_term_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
             (Bitvector32Term::PointerAddress(_), Bitvector32Term::PointerAddress(_)) => {
                 return false;
             }
-            (Bitvector32Term::Add(a, b), Bitvector32Term::Add(c, d))
-            | (Bitvector32Term::Subtract(a, b), Bitvector32Term::Subtract(c, d))
-            | (Bitvector32Term::Multiply(a, b), Bitvector32Term::Multiply(c, d))
-            | (Bitvector32Term::UInt64Add(a, b), Bitvector32Term::UInt64Add(c, d))
-            | (Bitvector32Term::UInt64Subtract(a, b), Bitvector32Term::UInt64Subtract(c, d))
-            | (Bitvector32Term::UInt64Multiply(a, b), Bitvector32Term::UInt64Multiply(c, d))
-            | (Bitvector32Term::UInt64BitwiseAnd(a, b), Bitvector32Term::UInt64BitwiseAnd(c, d))
-            | (Bitvector32Term::UInt64BitwiseOr(a, b), Bitvector32Term::UInt64BitwiseOr(c, d)) => {
-                pending.push((a, c));
-                pending.push((b, d));
-            }
-            (
-                Bitvector32Term::Float32Binary {
-                    operator: left_operator,
-                    left: a,
-                    right: b,
-                },
-                Bitvector32Term::Float32Binary {
-                    operator: right_operator,
-                    left: c,
-                    right: d,
-                },
-            )
-            | (
-                Bitvector32Term::Float64Binary {
-                    operator: left_operator,
-                    left: a,
-                    right: b,
-                },
-                Bitvector32Term::Float64Binary {
-                    operator: right_operator,
-                    left: c,
-                    right: d,
-                },
-            ) if left_operator == right_operator => {
-                pending.push((a, c));
-                pending.push((b, d));
-            }
             (
                 Bitvector32Term::PureFunctionApplication {
                     name: left_name,
@@ -787,7 +749,32 @@ fn bounded_term_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
             ) if left_name == right_name && left_arguments.len() == right_arguments.len() => {
                 pending.extend(left_arguments.iter().zip(right_arguments.iter()));
             }
-            _ => return false,
+            _ => {
+                use crate::kernel::BitvectorBinaryOp as Op;
+                let (Some((operator, a, b)), Some((other, c, d))) =
+                    (left.as_binary(), right.as_binary())
+                else {
+                    return false;
+                };
+                let compared = matches!(
+                    operator,
+                    Op::Add
+                        | Op::Subtract
+                        | Op::Multiply
+                        | Op::UInt64Add
+                        | Op::UInt64Subtract
+                        | Op::UInt64Multiply
+                        | Op::UInt64BitwiseAnd
+                        | Op::UInt64BitwiseOr
+                        | Op::Float32(_)
+                        | Op::Float64(_)
+                );
+                if operator != other || !compared {
+                    return false;
+                }
+                pending.push((a, c));
+                pending.push((b, d));
+            }
         }
     }
     true

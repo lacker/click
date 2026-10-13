@@ -1,0 +1,23 @@
+{
+  "schema": 4,
+  "language": "rust",
+  "target": "x86_64-unknown-linux-gnu",
+  "source": "incremental.rs",
+  "exporter": "../../../target/charon/debug/charon",
+  "artifact": "incremental.ullbc",
+  "crate": {
+    "name": "adler_incremental",
+    "edition": "2021",
+    "features": [
+      "std"
+    ],
+    "roots": [
+      "adler_incremental::incremental"
+    ],
+    "files": [
+      "incremental.rs",
+      "src/lib.rs",
+      "src/algo.rs"
+    ]
+  }
+}

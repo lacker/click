@@ -11,6 +11,7 @@ uint8* string_literal() {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "string_literals.c";
 
 uint8* string_literal() {

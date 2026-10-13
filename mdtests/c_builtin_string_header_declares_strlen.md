@@ -4,9 +4,14 @@ Click's `<string.h>` declares `size_t strlen(const char *s)`, and a call
 binds to the standard-library contract: the caller's `cstr_readable`
 requirement, stated over its `const char *` parameter, discharges the
 contract's precondition. The length is a `size_t`, as in C, so the returned
-index reads the terminator without any narrowing. Plain `char` is unsigned 8-bit on every supported
-target, so a C string and `uint8` bytes are the same values in a
-specification.
+index reads the terminator without any narrowing.
+
+Under the user-space target plain `char` is signed, so `s` points at `int8`
+bytes while the predicate and the `strlen` contract read `uint8` bytes. The
+requirement is elaborated to the explicit byte view `cstr_readable((uint8*)s)`,
+the contract accepts the `char` pointer as its byte pointer, and `s[result]`,
+a signed read, is the conversion of the byte `strlen` promises is zero, so
+it is zero too.
 
 ```c filename=builtin_strlen.c
 #include <string.h>

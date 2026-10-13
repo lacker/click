@@ -58,7 +58,7 @@ merely evade verifier bugs.
 
 Change C only for an independently desirable program change, an actual C bug
 or undefined behavior, or a documented semantics-preserving translation into
-the supported C0 subset. Retain the original source pattern in regressions;
+supported C. Retain the original source pattern in regressions;
 a simplified example is not evidence that the original pattern is supported.
 
 ## Use proof friction to improve the tool

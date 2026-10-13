@@ -265,7 +265,7 @@ impl PureFactContext {
     ) -> Option<CValue> {
         let byte_width = kind.byte_width();
         if let Some(value) = memory.known_value(pointer) {
-            return kind.reads_value(&value).then_some(value);
+            return kind.read_cell(&value);
         }
 
         // The first cell, in pointer order, proven at `pointer` answers; short
@@ -413,7 +413,7 @@ impl PureFactContext {
                     .is_some_and(|(equal, _)| equal == cell_pointer);
         }
         if let Some((_, value)) = first_equal {
-            return kind.reads_value(&value).then_some(value);
+            return kind.read_cell(&value);
         }
 
         if unresolved_alias {

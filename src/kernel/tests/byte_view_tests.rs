@@ -70,8 +70,9 @@ fn store_byte(memory: CMemory, offset: i64, byte: CValue, byte_order: ByteOrder)
         &state,
         &statement,
         &PureFactContext::new(),
-        &CExecutionEnvironment::new().with_byte_order(byte_order),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(
+            &CExecutionEnvironment::new().with_byte_order(byte_order),
+        ),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -989,4 +990,77 @@ fn checked_entry_naming_preserves_distinct_nested_slot_spellings() {
         );
         assert!(!named.has_initialized_bytes_under(&output, 4, &facts));
     }
+}
+/// C11 6.5p7: a character load of a one-byte cell of the other signedness
+/// reads the same eight bits. Constants fold to the reinterpreted value in
+/// both directions; a symbolic cell keeps an explicit modular conversion of
+/// its own term, never a fresh unrelated value.
+#[test]
+fn character_loads_read_a_one_byte_cell_of_the_other_signedness_as_its_bits() {
+    let int8 = |value: i8| CValue::Int8(Bitvector32Term::Constant(value as i32 as u32));
+    let uint8 = |value: u8| CValue::UInt8(Bitvector32Term::Constant(u32::from(value)));
+    for byte in [0u8, 1, 0x7F, 0x80, 0xC8, 0xFF] {
+        assert_eq!(CType::UInt8.read_cell(&int8(byte as i8)), Some(uint8(byte)));
+        assert_eq!(CType::Int8.read_cell(&uint8(byte)), Some(int8(byte as i8)));
+        assert_eq!(
+            CType::Int8.read_cell(&int8(byte as i8)),
+            Some(int8(byte as i8))
+        );
+        assert_eq!(
+            LoadKind::UInt8.read_cell(&int8(byte as i8)),
+            Some(uint8(byte))
+        );
+        assert_eq!(
+            LoadKind::Int8.read_cell(&uint8(byte)),
+            Some(int8(byte as i8))
+        );
+    }
+    let variable = Bitvector32Term::Variable(Variable(613_001));
+    assert_eq!(
+        CType::UInt8.read_cell(&CValue::Int8(variable.clone())),
+        Some(CValue::UInt8(Bitvector32Term::machine_integer_cast(
+            MachineIntegerType::Int8,
+            MachineIntegerType::UInt8,
+            variable.clone(),
+        )))
+    );
+    // Reading back through the original signedness is the original term.
+    let Some(CValue::Int8(round_trip)) = CType::UInt8
+        .read_cell(&CValue::Int8(variable.clone()))
+        .and_then(|value| CType::Int8.read_cell(&value))
+    else {
+        panic!("a character round trip reads a signed byte");
+    };
+    assert_eq!(round_trip, variable);
+    // No other cell gains a character view: wider integers go through the
+    // byte view, and bool, pointer, and float cells stay refused.
+    for (load, stored) in [
+        (CType::UInt8, CValue::Int16(Bitvector32Term::Constant(1))),
+        (CType::Int8, CValue::Bool(Bitvector32Term::Constant(1))),
+        (CType::UInt8, CValue::Float32(Bitvector32Term::Constant(0))),
+        (CType::Int16, CValue::UInt16(Bitvector32Term::Constant(1))),
+        (CType::UInt16, CValue::Int8(Bitvector32Term::Constant(1))),
+    ] {
+        assert_eq!(load.read_cell(&stored), None, "{load:?} of {stored:?}");
+    }
+}
+
+/// The execution load path applies the rule: a cell stored as `signed char`
+/// is read through `unsigned char` as its bits, and the reverse.
+#[test]
+fn execution_loads_read_character_cells_of_the_other_signedness() {
+    let memory = CMemory::new()
+        .store(
+            word(0),
+            CValue::Int8(Bitvector32Term::Constant(-56i32 as u32)),
+        )
+        .store(word(1), CValue::UInt8(Bitvector32Term::Constant(200)));
+    assert_eq!(
+        load_byte(&memory, 0, CType::UInt8, Some(ByteOrder::Little)),
+        CExpressionOutcome::Value(CValue::UInt8(Bitvector32Term::Constant(200)))
+    );
+    assert_eq!(
+        load_byte(&memory, 1, CType::Int8, Some(ByteOrder::Little)),
+        CExpressionOutcome::Value(CValue::Int8(Bitvector32Term::Constant(-56i32 as u32)))
+    );
 }

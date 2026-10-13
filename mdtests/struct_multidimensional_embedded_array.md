@@ -1,6 +1,6 @@
 # Multidimensional arrays of embedded structs preserve row-major stride
 
-Fixed dimensions on an inline array of embedded structs are retained in C0
+Fixed dimensions on an inline array of embedded structs are retained by Click
 metadata. Indexing them uses the C row-major offset, with each element stepping
 by the nested struct's complete ABI size.
 

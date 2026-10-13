@@ -50,16 +50,14 @@ fn execute_c_function_body_paths(
     state: &CState,
     function: &CFunction,
     assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
+    execution_context: CExecutionContext<'_>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let initial = execute_c_statement_paths(
         state,
         function.body(),
         assumptions,
-        environment,
-        execution_semantics,
+        execution_context,
         budget,
     )?;
     if function.control_target_count() == 0 {
@@ -94,8 +92,7 @@ fn execute_c_function_body_paths(
             jump_state,
             &target.remaining,
             assumptions,
-            environment,
-            execution_semantics,
+            execution_context,
             &path.facts,
             &path.obligations,
             &path.loan_evidence,
@@ -115,8 +112,7 @@ fn execute_c_function_body_verification_paths(
     state: &CState,
     function: &CFunction,
     assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
+    execution_context: CExecutionContext<'_>,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -124,8 +120,7 @@ fn execute_c_function_body_verification_paths(
         state,
         function.body(),
         assumptions,
-        environment,
-        execution_semantics,
+        execution_context,
         budget,
         variables,
     )?;
@@ -161,8 +156,7 @@ fn execute_c_function_body_verification_paths(
             jump_state,
             &target.remaining,
             assumptions,
-            environment,
-            execution_semantics,
+            execution_context,
             &path.facts,
             &path.obligations,
             budget,
@@ -1665,8 +1659,7 @@ pub(super) fn execute_c_function_paths(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
+    execution_context: CExecutionContext<'_>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     execute_c_function_paths_with_contract_resources(
@@ -1674,8 +1667,7 @@ pub(super) fn execute_c_function_paths(
         function,
         arguments,
         assumptions,
-        environment,
-        execution_semantics,
+        execution_context,
         budget,
         false,
         false,
@@ -1695,8 +1687,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
+    execution_context: CExecutionContext<'_>,
     budget: &mut ExecutionBudget,
     prepare_contract_resources: bool,
     defer_conditional_resource_effect: bool,
@@ -1714,9 +1705,13 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
     }
 
     let mut paths = Vec::new();
-    for arguments_path in
-        evaluate_c_arguments_paths(state, arguments, assumptions, budget, Some(environment))?
-    {
+    for arguments_path in evaluate_c_arguments_paths(
+        state,
+        arguments,
+        assumptions,
+        budget,
+        Some(execution_context.environment),
+    )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath::new(
                 outcome,
@@ -1817,8 +1812,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             &callee_state,
             function,
             &body_assumptions,
-            environment,
-            execution_semantics,
+            execution_context,
             budget,
         )? {
             let Some((mut facts, obligations)) = merge_execution_pure_facts_and_obligations(
@@ -1953,8 +1947,7 @@ pub(super) fn execute_c_function_verification_paths(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
+    execution_context: CExecutionContext<'_>,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
     prepare_contract_resources: bool,
@@ -1977,7 +1970,15 @@ pub(super) fn execute_c_function_verification_paths(
         function.name(),
         "independent kernel execution",
         "verification argument evaluation",
-        || evaluate_c_arguments_paths(state, arguments, assumptions, budget, Some(environment)),
+        || {
+            evaluate_c_arguments_paths(
+                state,
+                arguments,
+                assumptions,
+                budget,
+                Some(execution_context.environment),
+            )
+        },
     )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath::new(
@@ -2086,10 +2087,13 @@ pub(super) fn execute_c_function_verification_paths(
             &body_assumptions,
             budget,
         ) {
-            Ok(Some(anchor)) => {
-                std::borrow::Cow::Owned(environment.clone().with_recursion_anchor(anchor))
-            }
-            Ok(None) => std::borrow::Cow::Borrowed(environment),
+            Ok(Some(anchor)) => std::borrow::Cow::Owned(
+                execution_context
+                    .environment
+                    .clone()
+                    .with_recursion_anchor(anchor),
+            ),
+            Ok(None) => std::borrow::Cow::Borrowed(execution_context.environment),
             Err(message) => {
                 paths.push(CFunctionPath::new(
                     CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
@@ -2108,8 +2112,7 @@ pub(super) fn execute_c_function_verification_paths(
                     &callee_state,
                     function,
                     &body_assumptions,
-                    &anchored_environment,
-                    execution_semantics,
+                    CExecutionContext::new(&anchored_environment, execution_context.semantics),
                     budget,
                     variables,
                 )
@@ -4588,8 +4591,7 @@ pub(super) fn execute_c_function_call_paths(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
+    execution_context: CExecutionContext<'_>,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let executable_assumptions;
@@ -4600,10 +4602,12 @@ pub(super) fn execute_c_function_call_paths(
         assumptions
     };
     if contract_reaches_population(function.contract_interface())
-        && environment
+        && execution_context
+            .environment
             .get_verified_function_rule(function.name())
             .is_none()
-        && !environment
+        && !execution_context
+            .environment
             .get_external_function_rule(function.name())
             .is_some_and(|rule| {
                 rule.is_scoped_unselected()
@@ -4619,7 +4623,11 @@ pub(super) fn execute_c_function_call_paths(
             Vec::new(),
         )]);
     }
-    if environment.selected_call_contract.is_some() {
+    if execution_context
+        .environment
+        .selected_call_contract
+        .is_some()
+    {
         return Ok(vec![CFunctionPath::new(
             CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
                 "step(Contract) requires a function-pointer call".to_string(),
@@ -4628,7 +4636,10 @@ pub(super) fn execute_c_function_call_paths(
             Vec::new(),
         )]);
     }
-    if let Some(rule) = environment.get_external_function_rule(function.name()) {
+    if let Some(rule) = execution_context
+        .environment
+        .get_external_function_rule(function.name())
+    {
         // External summaries use the same body-independent application
         // interface as verified rules, but remain an assumption: do not
         // repackage one as `CVerifiedFunctionRule`, whose type carries body
@@ -4638,7 +4649,7 @@ pub(super) fn execute_c_function_call_paths(
             rule.function.name(),
             rule.function.contract_interface(),
             caller_state,
-            environment,
+            execution_context.environment,
         ) {
             Ok(application) => application,
             Err(message) => return Ok(vec![resource_call_failure(message)]),
@@ -4662,7 +4673,7 @@ pub(super) fn execute_c_function_call_paths(
                 .map(|application| (0, application)),
             arguments,
             assumptions,
-            environment,
+            execution_context.environment,
             budget,
         );
     }
@@ -4672,7 +4683,8 @@ pub(super) fn execute_c_function_call_paths(
     // its checked C body at the call site, on the caller's own resources,
     // including while the surrounding function is being contract-certified.
     let executes_inline_body = function.has_inline_body()
-        && environment
+        && execution_context
+            .environment
             .get_verified_function_rule(function.name())
             .is_none();
     // A binder map selects a contract boundary, and an inline body run in
@@ -4680,7 +4692,8 @@ pub(super) fn execute_c_function_call_paths(
     // would bind nothing and silently mean something other than what the
     // proof wrote.
     if executes_inline_body
-        && environment
+        && execution_context
+            .environment
             .selected_call_binders
             .as_ref()
             .is_some_and(|transport| transport.names_call_to(function.name()))
@@ -4690,10 +4703,13 @@ pub(super) fn execute_c_function_call_paths(
         )]);
     }
     if !executes_inline_body {
-        match execution_semantics.calls {
+        match execution_context.semantics.calls {
             CCallSemantics::ExecuteBodies => {}
             CCallSemantics::ApplyVerifiedRules => {
-                let Some(rule) = environment.get_verified_function_rule(function.name()) else {
+                let Some(rule) = execution_context
+                    .environment
+                    .get_verified_function_rule(function.name())
+                else {
                     let error = if function.verified_direct_contract_supported() {
                         CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
                     } else {
@@ -4712,7 +4728,7 @@ pub(super) fn execute_c_function_call_paths(
                     rule,
                     arguments,
                     assumptions,
-                    environment,
+                    execution_context.environment,
                     budget,
                 );
                 return result;
@@ -4737,7 +4753,7 @@ pub(super) fn execute_c_function_call_paths(
         arguments,
         assumptions,
         budget,
-        Some(environment),
+        Some(execution_context.environment),
     )? {
         if let Some(outcome) = arguments_path.outcome {
             paths.push(CFunctionPath::new(
@@ -4841,8 +4857,7 @@ pub(super) fn execute_c_function_call_paths(
                 &callee_state,
                 function,
                 &body_assumptions,
-                environment,
-                execution_semantics,
+                execution_context,
                 budget,
             );
             budget.inline_call_name = previous_inline_call;
@@ -4906,8 +4921,7 @@ pub(super) fn execute_c_function_call_paths(
             &callee_state,
             function,
             &body_assumptions,
-            environment,
-            execution_semantics,
+            execution_context,
             budget,
         )? {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
@@ -5037,8 +5051,7 @@ pub(crate) fn apply_verified_tactic_rule(
         function,
         &expressions,
         facts.assumptions(),
-        environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(environment),
         &mut budget,
     )
     .map_err(|limit| {
@@ -13859,11 +13872,34 @@ fn spec_pure_function_argument_is_state_independent(argument: &SpecPureFunctionA
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_is_state_independent(expression)
         }
-        SpecPureFunctionArgument::Integer(_) => true,
+        SpecPureFunctionArgument::Integer(expression) => {
+            spec_integer_expression_is_state_independent(expression)
+        }
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_is_state_independent(expression)
         }
         SpecPureFunctionArgument::ArrayRef { .. } => false,
+    }
+}
+
+/// An Integer argument or field reads the state exactly when a machine value
+/// inside it does: `to_integer(*p)` reads `*p`. A `Term` is closed, whether an
+/// Integer binder, a constant, or a value already resolved at lowering.
+fn spec_integer_expression_is_state_independent(expression: &SpecIntegerExpression) -> bool {
+    match expression {
+        SpecIntegerExpression::Term(_) => true,
+        SpecIntegerExpression::FromMachine(value) => spec_expression_is_state_independent(value),
+        SpecIntegerExpression::Negate(value) => spec_integer_expression_is_state_independent(value),
+        crate::kernel::binary_spec_integer_expression!(left, right) => {
+            spec_integer_expression_is_state_independent(left)
+                && spec_integer_expression_is_state_independent(right)
+        }
+        SpecIntegerExpression::PureFunctionApplication { arguments, .. } => arguments
+            .iter()
+            .all(spec_pure_function_argument_is_state_independent),
+        SpecIntegerExpression::ResourceField(_)
+        | SpecIntegerExpression::AlgebraicMatch { .. }
+        | SpecIntegerExpression::RangeFold { .. } => false,
     }
 }
 
@@ -13962,7 +13998,9 @@ pub(super) fn spec_algebraic_expression_is_state_independent(
                 SpecAlgebraicValue::C(expression) => {
                     spec_expression_is_state_independent(expression)
                 }
-                SpecAlgebraicValue::Integer(_) => true,
+                SpecAlgebraicValue::Integer(expression) => {
+                    spec_integer_expression_is_state_independent(expression)
+                }
                 SpecAlgebraicValue::Algebraic(expression) => {
                     spec_algebraic_expression_is_state_independent(expression)
                 }
@@ -14283,7 +14321,9 @@ fn spec_algebraic_expression_reads_current_parameter(
                 SpecAlgebraicValue::C(expression) => {
                     spec_expression_reads_current_parameter(expression, parameter_name)
                 }
-                SpecAlgebraicValue::Integer(_) => false,
+                SpecAlgebraicValue::Integer(expression) => {
+                    spec_integer_expression_reads_current_parameter(expression, parameter_name)
+                }
                 SpecAlgebraicValue::Algebraic(expression) => {
                     spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
                 }
@@ -14311,7 +14351,9 @@ fn spec_pure_function_argument_reads_current_parameter(
         SpecPureFunctionArgument::Value(expression) => {
             spec_expression_reads_current_parameter(expression, parameter_name)
         }
-        SpecPureFunctionArgument::Integer(_) => false,
+        SpecPureFunctionArgument::Integer(expression) => {
+            spec_integer_expression_reads_current_parameter(expression, parameter_name)
+        }
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_reads_current_parameter(expression, parameter_name)
         }
@@ -14843,7 +14885,12 @@ fn spec_proposition_current_parameter_accesses(
     unknown_read: &mut bool,
 ) {
     match proposition {
-        SpecProposition::IntegerComparison { .. } => {}
+        // An Integer read has no precise byte range here, so any read of the
+        // parameter is an unknown read.
+        SpecProposition::IntegerComparison { left, right, .. } => {
+            *unknown_read |= spec_integer_expression_reads_current_parameter(left, parameter_name)
+                || spec_integer_expression_reads_current_parameter(right, parameter_name);
+        }
         SpecProposition::AlgebraicComparison { left, right, .. } => {
             spec_algebraic_expression_current_parameter_accesses(
                 left,
@@ -15029,7 +15076,12 @@ fn spec_algebraic_expression_current_parameter_accesses(
                             unknown_read,
                         );
                     }
-                    SpecAlgebraicValue::Integer(_) => {}
+                    SpecAlgebraicValue::Integer(expression) => {
+                        *unknown_read |= spec_integer_expression_reads_current_parameter(
+                            expression,
+                            parameter_name,
+                        );
+                    }
                     SpecAlgebraicValue::Algebraic(expression) => {
                         spec_algebraic_expression_current_parameter_accesses(
                             expression,
@@ -15085,7 +15137,10 @@ fn spec_pure_function_argument_current_parameter_accesses(
                 unknown_read,
             );
         }
-        SpecPureFunctionArgument::Integer(_) => {}
+        SpecPureFunctionArgument::Integer(expression) => {
+            *unknown_read |=
+                spec_integer_expression_reads_current_parameter(expression, parameter_name);
+        }
         SpecPureFunctionArgument::Algebraic(expression) => {
             spec_algebraic_expression_current_parameter_accesses(
                 expression,
@@ -15624,6 +15679,79 @@ mod allocation_continuity_tests {
         }
     }
 
+    /// An allocating call beside N live objects the caller keeps folded
+    /// (`boxed(p_j)`, one heap block each) must not expand them: none can
+    /// expose, continue or be left stale by an allocation the call did not
+    /// consume (`bugs/heap-object-steps-grow-with-live-allocations.md`).
+    #[test]
+    fn allocating_call_does_not_expand_the_callers_kept_objects() {
+        let boxed = c_function(CType::Void, "unused", vec![], c_return(c_void_value()))
+            .with_composite_resource_definitions(vec![CCompositeResourceDefinition::new(
+                "boxed",
+                vec![c_parameter("p", CType::Int32Pointer)],
+                None,
+                false,
+                vec![CResourceSpec::owned_memory(CMemorySegment::new(
+                    c_variable("p"),
+                    c_int32_literal(0),
+                    c_int32_literal(1),
+                ))],
+                vec![],
+            )]);
+        let interface = boxed.contract_interface();
+        let heap = |id: u64| Pointer {
+            block: PointerBlock::Heap(id),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let bytes = Bitvector32Term::Constant(4);
+        let samples = [16, 64, 256]
+            .into_iter()
+            .map(|size| {
+                let mut memory = CMemory::new();
+                let mut kept = ResourceContext::new();
+                for index in 0..size {
+                    let object = heap(931_000 + index as u64);
+                    memory = memory
+                        .with_heap_allocation_claim(object.clone(), bytes.clone())
+                        .expect("a fresh live object");
+                    kept = kept.unchecked_with_fact(CResourceFact::own_composite(
+                        "boxed".into(),
+                        vec![CValue::pointer(object)],
+                    ));
+                }
+                let created = heap(932_000);
+                let output = ResourceContext::new().unchecked_with_fact(
+                    CResourceFact::own_allocation(created.clone(), bytes.clone()),
+                );
+                let state = CState::new().with_memory(memory.clone());
+                let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    apply_verified_heap_allocation_delta(
+                        memory.clone(),
+                        &memory,
+                        &ResourceContext::new(),
+                        &kept,
+                        &output,
+                        interface,
+                        &PureFactContext::new(),
+                        None,
+                        &state,
+                        &state,
+                    )
+                });
+                let (after, _, retired) = result.expect("an allocating call");
+                assert!(retired.is_empty());
+                assert!(after.live_heap_block_size(&created).is_some());
+                (size, work)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            samples
+                .windows(2)
+                .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(2)),
+            "an allocating call's delta grows with the caller's kept objects: {samples:?}"
+        );
+    }
+
     fn external_pointer(variable: u64) -> Pointer {
         Pointer {
             block: PointerBlock::ExternalArgument,
@@ -16003,45 +16131,55 @@ fn apply_verified_heap_allocation_delta(
             "could not inspect output allocation effects at call".to_string(),
         ))
     })?;
-    // Returned projections describe the successor allocation. They decide
-    // whether an input allocation continues, but they are not resources that
-    // survived from the caller and therefore cannot be stale after the old
-    // allocation is freed.
-    let preserved = expand_allocations(preserved_caller_resources, mutex_state, &memory)
-        .ok_or_else(|| {
-            VerifiedAllocationDeltaError::Runtime(CRuntimeError::FunctionContract(
-                "could not inspect preserved caller allocation effects at call".to_string(),
-            ))
-        })?;
-    // Returned controls belong to the callee until checked custody returns;
-    // untouched controls belong to the caller. Keep their checked projections
-    // separate and visit the same returned facts without rebuilding the frame.
-    let returned_facts = || {
-        output
-            .facts()
-            .iter()
-            .chain(preserved.facts().iter().take(preserved.facts().len()))
-    };
     let allocation_assumptions = input
         .observable_facts_assuming_valid(assumptions)
         .into_iter()
         .fold(assumptions.clone(), |assumptions, fact| {
             assumptions.assume_proposition(fact)
         });
+    let input_allocations = input
+        .facts()
+        .iter()
+        .filter_map(|fact| {
+            fact.allocation()
+                .map(|(base, bytes)| (fact, base.clone(), bytes.clone()))
+        })
+        .collect::<Vec<_>>();
+    // The caller's untouched resources are expanded only when the callee
+    // consumed an allocation: they are what may still expose it, continue
+    // it, or be left stale by its retirement. A call that consumes none
+    // (an allocator, or a call on unrelated memory) never asks them, so it
+    // costs nothing in the live objects the caller keeps; expanding them
+    // anyway made every call linear in them.
+    //
+    // Returned projections describe the successor allocation. They decide
+    // whether an input allocation continues, but they are not resources that
+    // survived from the caller and therefore cannot be stale after the old
+    // allocation is freed.
+    let preserved = if input_allocations.is_empty() {
+        ResourceContext::new()
+    } else {
+        expand_allocations(preserved_caller_resources, mutex_state, &memory).ok_or_else(|| {
+            VerifiedAllocationDeltaError::Runtime(CRuntimeError::FunctionContract(
+                "could not inspect preserved caller allocation effects at call".to_string(),
+            ))
+        })?
+    };
     let mut output_allocations_by_block =
         BTreeMap::<PointerBlock, Vec<(Pointer, Bitvector32Term)>>::new();
-    for (base, bytes) in returned_facts().filter_map(CResourceFact::allocation) {
+    for (base, bytes) in output
+        .facts()
+        .iter()
+        .chain(preserved.facts())
+        .filter_map(CResourceFact::allocation)
+    {
         output_allocations_by_block
             .entry(base.block.clone())
             .or_default()
             .push((base.clone(), bytes.clone()));
     }
 
-    for allocation in input.facts().iter().filter_map(|fact| {
-        fact.allocation()
-            .map(|(base, bytes)| (fact, base.clone(), bytes.clone()))
-    }) {
-        let (fact, base, bytes) = allocation;
+    for (fact, base, bytes) in input_allocations {
         if output
             .cached_support_exposing_fact(fact, &allocation_assumptions)
             .is_some()
@@ -16179,7 +16317,10 @@ fn apply_verified_heap_allocation_delta(
         ));
     }
 
-    for fact in returned_facts() {
+    // Only what the call returns can be a new allocation. An allocation one
+    // of the caller's untouched resources exposes was the caller's before
+    // the call, so this call has nothing to claim for it.
+    for fact in output.facts() {
         let Some((base, bytes)) = fact.allocation() else {
             continue;
         };
@@ -17500,8 +17641,22 @@ fn coerce_c_contract_arguments(
         if parameter.aggregate_layout().is_some() {
             coerced.push(value.clone());
         } else {
+            // A contract stated over one character type's bytes accepts a
+            // pointer to the other's: C11 6.5p7 lets either read the object,
+            // and loads read a one-byte cell of either signedness through
+            // either type (`CType::read_cell`). This is how a byte contract
+            // such as `strlen`'s serves a signed plain `char *`.
+            let value = match value {
+                CValue::Pointer(pointer)
+                    if parameter.c_type().is_character_pointer()
+                        && pointer.c_type().is_character_pointer() =>
+                {
+                    CValue::Pointer(pointer.clone().with_type(parameter.c_type()))
+                }
+                value => value.clone(),
+            };
             coerced.push(coerce_c_value_with_pointee_constant(
-                value.clone(),
+                value,
                 parameter.c_type(),
                 parameter.pointee_is_constant(),
                 &mut obligations,
@@ -17771,7 +17926,7 @@ fn initialize_c_function_globals_owned(
                         block: slot.block.clone(),
                         offset: PointerOffsetTerm::Constant(offset as i64),
                     },
-                    uint8(u32::from(byte)),
+                    literal.element_value(byte),
                 ));
             }
         }
@@ -17789,7 +17944,7 @@ fn initialize_c_function_globals_owned(
         );
         state.locals.set_array_object_at(
             literal.name().to_string(),
-            CType::UInt8,
+            literal.element_type(),
             literal.bytes().len() as u32,
             slot.clone(),
         );
@@ -18711,16 +18866,21 @@ fn aggregate_zero_fields(layout: &CAggregateLayout) -> Vec<(u32, u32, u32, CValu
             | CType::UInt128PointerPointer
             | CType::Int32Pointer
             | CType::UInt8Pointer
+            // A signed plain `char` pointer field is an `int8*` cell.
+            | CType::Int8Pointer
             | CType::Float32Pointer
             | CType::Float64Pointer
             | CType::Int32PointerPointer
             | CType::UInt8PointerPointer
+            | CType::Int8PointerPointer
             | CType::Float32PointerPointer
             | CType::Float64PointerPointer
             // Static storage zero-initializes a callback field to a null
             // function pointer, just like a data-pointer field.
             | CType::FunctionPointer(_) => (field.c_type(), 1),
             CType::Int32Array(length) => (CType::Int32, length),
+            // A signed plain `char` array field holds `int8` cells.
+            CType::Int8Array(length) => (CType::Int8, length),
             CType::Int64Array(length) => (CType::Int64, length),
             CType::Int128Array(length) => (CType::Int128, length),
             CType::UInt64Array(length) => (CType::UInt64, length),
@@ -18767,10 +18927,12 @@ fn aggregate_zero_fields(layout: &CAggregateLayout) -> Vec<(u32, u32, u32, CValu
                 | CType::UInt128PointerPointer
                 | CType::Int32Pointer
                 | CType::UInt8Pointer
+                | CType::Int8Pointer
                 | CType::Float32Pointer
                 | CType::Float64Pointer
                 | CType::Int32PointerPointer
                 | CType::UInt8PointerPointer
+                | CType::Int8PointerPointer
                 | CType::Float32PointerPointer
                 | CType::Float64PointerPointer
                 | CType::FunctionPointer(_) => CValue::typed_pointer(Pointer::null(), element_type),
@@ -18794,7 +18956,6 @@ fn aggregate_zero_fields(layout: &CAggregateLayout) -> Vec<(u32, u32, u32, CValu
                 | CType::VoidPointerPointer => {
                     continue;
                 }
-                CType::Int8Pointer | CType::Int8PointerPointer => continue,
                 CType::Int16Pointer
                 | CType::UInt16Pointer
                 | CType::UInt32Pointer
@@ -31935,7 +32096,7 @@ fn function_outcome_from_body_changing_quantities(
     else {
         return Ok((
             CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "{} returned a value that does not match its declared type",
+                "{} {RETURN_TYPE_MISMATCH}",
                 function.name()
             ))),
             obligations,
@@ -32011,7 +32172,7 @@ fn function_outcome_from_body_with_resource_transfer(
     else {
         return Ok((
             CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                "{} returned a value that does not match its declared type",
+                "{} {RETURN_TYPE_MISMATCH}",
                 function.name()
             ))),
             obligations,
@@ -33026,7 +33187,7 @@ pub(super) fn function_outcome_from_body(
             else {
                 return (
                     CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                        "{} returned a value that does not match its declared type",
+                        "{} {RETURN_TYPE_MISMATCH}",
                         function.name()
                     ))),
                     obligations,
@@ -33349,8 +33510,7 @@ mod population_creation_frame_tests {
                 helper,
                 &[],
                 &PureFactContext::new(),
-                &CExecutionEnvironment::new(),
-                CExecutionSemantics::APPLY_VERIFIED_RULES,
+                CExecutionContext::apply_verified_rules(&CExecutionEnvironment::new()),
                 &mut ExecutionBudget::new(),
             )
             .unwrap()
@@ -33628,8 +33788,7 @@ mod verified_call_initialization_tests {
             &function,
             &[c_pointer_value(pointer.clone())],
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment),
             &mut ExecutionBudget::new(),
         )
         .expect("verified call should execute")
@@ -33942,8 +34101,7 @@ mod stable_view_call_tests {
             &function,
             &[c_pointer_value(pointer)],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut budget,
             &mut variables,
             true,
@@ -34529,8 +34687,7 @@ mod stable_view_call_tests {
             &function,
             &[c_pointer_value(pointer)],
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment),
             &mut ExecutionBudget::new(),
         )
         .expect("the call should execute");
@@ -34569,8 +34726,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("first composite call should execute");
@@ -34592,8 +34748,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("second composite call should execute");
@@ -34623,8 +34778,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate call should execute");
@@ -34666,8 +34820,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate direct call should execute");
@@ -34703,8 +34856,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate call should execute");
@@ -34766,8 +34918,7 @@ mod stable_view_call_tests {
             &outer,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::new(),
         )
         .expect("nested candidate call should execute");
@@ -34797,8 +34948,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate local view call should execute");
@@ -34835,8 +34985,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate out-of-bounds local view should execute to a diagnostic");
@@ -34866,8 +35015,7 @@ mod stable_view_call_tests {
             &function,
             &[c_pointer_value(Pointer::null())],
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::new(),
         )
         .expect("a false composite guard should execute");
@@ -34898,8 +35046,7 @@ mod stable_view_call_tests {
             &function,
             &[c_pointer_value(symbolic)],
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::new(),
         )
         .expect("an undecided composite guard should execute to a diagnostic");
@@ -34956,8 +35103,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(token.clone()), CExpression::Value(token)],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("a doubled token requirement should execute to a diagnostic");
@@ -34984,8 +35130,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate inline call should execute");
@@ -35303,8 +35448,7 @@ mod stable_view_call_tests {
             &outer,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::new(),
         )
         .expect("nested candidate reader should execute through the real body call");
@@ -35397,8 +35541,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate output call should execute to a diagnostic path");
@@ -35750,8 +35893,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate mutable call should execute")
@@ -35787,8 +35929,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate symbolic overlap should execute to a diagnostic path");
@@ -35845,8 +35986,7 @@ mod stable_view_call_tests {
                 CExpression::Value(CValue::pointer(mutated)),
             ],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate unknown separation should execute to a diagnostic path");
@@ -35931,8 +36071,7 @@ mod stable_view_call_tests {
                 CExpression::Value(CValue::pointer(mutated)),
             ],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate separate-occurrence effect call should execute");
@@ -35975,8 +36114,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate same-occurrence overlap should execute to a diagnostic path");
@@ -36072,8 +36210,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate composite mutable call should execute")
@@ -36127,8 +36264,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate intrinsic view effect call should execute");
@@ -36193,8 +36329,7 @@ mod stable_view_call_tests {
             &function,
             &[CExpression::Value(CValue::pointer(pointer.clone()))],
             &PureFactContext::new(),
-            &environment(&function),
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment(&function)),
             &mut ExecutionBudget::new(),
         )
         .expect("candidate early return should execute");
@@ -36540,8 +36675,10 @@ mod inline_loop_boundary_tests {
             &function,
             &[CExpression::Value(value)],
             &PureFactContext::new(),
-            &CExecutionEnvironment::new().with_function(function.clone()),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::new(
+                &CExecutionEnvironment::new().with_function(function.clone()),
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
+            ),
             budget,
         )
     }

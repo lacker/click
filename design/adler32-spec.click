@@ -944,3 +944,74 @@ theorem adler_spec_three(bytes: uint8[]) {
   simp();
  }
 }
+
+# Extensionality uses only equality of the selected input bytes; it grants no memory authority.
+theorem adler_sums_extensional(left: uint8[], right: uint8[], bound: int32, n: int32, weight: int32) {
+ requires 0 <= n;
+ requires n <= bound;
+ requires forall (k: int32) { 0 <= k and k < bound implies left[k] == right[k] };
+ ensures adler_byte_sum(left, n) == adler_byte_sum(right, n) and adler_weighted_sum(left, n, weight) == adler_weighted_sum(right, n, weight) by {
+  induct(n) as ih;
+  if n <= 0 {
+   apply(adler_sum_empty(left, weight));
+   apply(adler_sum_empty(right, weight));
+   have n == 0 by arithmetic() using { 0 <= n; n <= 0; };
+   rewrite(n == 0);
+   rewrite(adler_byte_sum(left, 0) == 0);
+   rewrite(adler_byte_sum(right, 0) == 0);
+   rewrite(adler_weighted_sum(left, 0, weight) == 0);
+   rewrite(adler_weighted_sum(right, 0, weight) == 0);
+   both { normalize(); } and { normalize(); }
+  } else {
+   have 0 < n;
+   have 0 <= n - 1 by arithmetic() using { 0 < n; };
+   have n - 1 < n by arithmetic() using { 0 < n; };
+   have n - 1 <= bound by arithmetic() using { n <= bound; 0 < n; };
+   have n - 1 < bound by arithmetic() using { n <= bound; 0 < n; };
+   apply(ih(n - 1)) using {
+    0 <= n - 1; n - 1 < n; n - 1 <= bound;
+    forall (k: int32) { 0 <= k and k < bound implies left[k] == right[k] };
+   }
+   instantiate(forall (k: int32) { 0 <= k and k < bound implies left[k] == right[k] }, n - 1) using { 0 <= n - 1; n - 1 < bound; }
+   apply(adler_sum_append(left, n)) using { 0 < n; }
+   apply(adler_sum_append(right, n)) using { 0 < n; }
+   apply(adler_weighted_append(left, n, weight)) using { 0 < n; }
+   apply(adler_weighted_append(right, n, weight)) using { 0 < n; }
+   both {
+    rewrite(adler_byte_sum(left, n) == adler_byte_sum(left, n - 1) + to_integer((int32)left[n - 1]));
+    rewrite(adler_byte_sum(right, n) == adler_byte_sum(right, n - 1) + to_integer((int32)right[n - 1]));
+    rewrite(adler_byte_sum(left, n - 1) == adler_byte_sum(right, n - 1));
+    rewrite(left[n - 1] == right[n - 1]);
+    normalize();
+   } and {
+    rewrite(adler_weighted_sum(left, n, weight) == adler_weighted_sum(left, n - 1, weight) + (to_integer(weight) - to_integer(n - 1)) * to_integer((int32)left[n - 1]));
+    rewrite(adler_weighted_sum(right, n, weight) == adler_weighted_sum(right, n - 1, weight) + (to_integer(weight) - to_integer(n - 1)) * to_integer((int32)right[n - 1]));
+    rewrite(adler_weighted_sum(left, n - 1, weight) == adler_weighted_sum(right, n - 1, weight));
+    rewrite(left[n - 1] == right[n - 1]);
+    normalize();
+   }
+  }
+ }
+}
+
+theorem adler_spec_extensional(left: uint8[], right: uint8[], length: int32, a0: Integer, b0: Integer) {
+ requires 0 <= length;
+ requires forall (k: int32) { 0 <= k and k < length implies left[k] == right[k] };
+ ensures adler_spec_a(left, length, a0) == adler_spec_a(right, length, a0) and adler_spec_b(left, length, a0, b0) == adler_spec_b(right, length, a0, b0) by {
+  apply(adler_sums_extensional(left, right, length, length, length)) using {
+   0 <= length; length <= length;
+   forall (k: int32) { 0 <= k and k < length implies left[k] == right[k] };
+  }
+  both {
+   unfold(adler_spec_a(left, length, a0));
+   unfold(adler_spec_a(right, length, a0));
+   rewrite(adler_byte_sum(left, length) == adler_byte_sum(right, length));
+   normalize();
+  } and {
+   unfold(adler_spec_b(left, length, a0, b0));
+   unfold(adler_spec_b(right, length, a0, b0));
+   rewrite(adler_weighted_sum(left, length, length) == adler_weighted_sum(right, length, length));
+   normalize();
+  }
+ }
+}

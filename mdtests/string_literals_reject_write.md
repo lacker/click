@@ -14,6 +14,7 @@ uint8* string_literal_reject_write() {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "string_literals_reject_write.c";
 
 uint8* string_literal_reject_write() {

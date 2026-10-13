@@ -1,5 +1,18 @@
 # Support multiple C compilers and target ABIs
 
+Priority: P2.
+
+Soundness: soundness-adjacent. A verified claim holds for Click's built-in
+target model. That model is not checked against the compiler that builds the
+program: there is no layout manifest, flag fingerprint or compiler query. A
+mismatch between the model and the real target turns directly into false
+acceptance. The one reproduced instance, plain `char` under the userspace
+target, is filed separately as an `unsound` P1 bug
+(`bugs/userspace-plain-char-is-unsigned.md`). No other model divergence for
+LP64 x86-64 is known. The remaining risk is a program built under a different
+ABI or different flags, which `docs/concepts/trust.md` places outside the
+claim.
+
 Click currently imports C under one built-in LP64 layout model. The C
 standard fixes important semantic rules, such as array contiguity, member
 ordering, and the defined domain of pointer arithmetic, but it does not fix
@@ -69,9 +82,9 @@ or set of ABI-affecting flags.
   mismatched compiler features.
 - Existing LP64 behavior remains unchanged, and `scripts/check.sh` passes.
 
-Related: [signed-byte-integers.md](signed-byte-integers.md) for signed-byte types;
-[Supported struct layout and field access](../docs/reference/language/c0.md#struct-subset);
-[translation units and preprocessing](../docs/reference/language/c0.md#supported-expressions-and-statements)
+Related: [the `int8` signed-byte type](../docs/reference/language/c.md);
+[Supported struct layout and field access](../docs/reference/language/c.md#struct-subset);
+[translation units and preprocessing](../docs/reference/language/c.md#supported-expressions-and-statements)
 for the delivered single-profile baseline;
 [kernel-scale-preprocessing.md](kernel-scale-preprocessing.md) for remaining
 compiler/header integration work.

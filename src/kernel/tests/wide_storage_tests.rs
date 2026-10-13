@@ -215,6 +215,30 @@ fn wide_storage_frame_transport_uses_all_sixteen_bytes() {
     }
 }
 
+/// A 64-bit order over a load matches across a disjoint store just as a
+/// 32-bit one does: the comparison operator is compared, not its width.
+#[test]
+fn wide_order_frame_transport_matches_across_a_disjoint_store() {
+    let before = CMemory::new().with_block("local:wide-storage", 16);
+    let after = before
+        .clone()
+        .store(address(8), literal(c_uint8_literal(3)));
+    let condition = |memory: &CMemory| {
+        ConditionTerm::uint64_less_than(
+            Bitvector32Term::MemoryLoad(
+                intern_c_memory(memory.clone()),
+                Box::new(address(0)),
+                LoadKind::Bits64,
+            ),
+            Bitvector32Term::Variable(Variable(152_004)),
+        )
+    };
+    assert!(
+        PureFactContext::new()
+            .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after))
+    );
+}
+
 #[test]
 fn wide_storage_exact_load_and_validation_work_ignore_unrelated_memory() {
     let value = literal(c_uint128_literal(u128::MAX));

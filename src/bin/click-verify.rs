@@ -2253,7 +2253,7 @@ mod tests {
     fn marker_contents_include_environment_switches() {
         let relative = Path::new("examples/tiny/tiny.click");
         let plain = marker_contents("abc", relative, "fp", "", CTarget::SUPPORTED);
-        assert!(plain.contains("\ntarget=x86_64-linux-kernel\n"));
+        assert!(plain.contains("\ntarget=x86_64-linux-userspace\n"));
         let switches = environment_switches_from([(
             "CLICK_DISABLE_TACTIC_BUDGETS".to_string(),
             "1".to_string(),
@@ -2619,7 +2619,7 @@ mod tests {
             "verifier-a",
             CTarget::SUPPORTED
         ));
-        let other_target = valid.replace("target=x86_64-linux-kernel", "target=another-target");
+        let other_target = valid.replace("target=x86_64-linux-userspace", "target=another-target");
         assert!(!valid_marker(
             &other_target,
             "abc123",
@@ -2633,7 +2633,7 @@ mod tests {
             "abc123",
             path,
             "verifier-a",
-            CTarget::X86_64LinuxUserspace
+            CTarget::X86_64LinuxKernel
         ));
         assert!(!valid_marker(
             "truncated",

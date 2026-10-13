@@ -1,27 +1,52 @@
-# Supported C0
+# Supported C
 
-C0 is this repository's small C subset. It is not a standard language. The
-subset exists so proof features can be developed against a precise target before
-Click grows toward real C. When C0 syntax appears inside Surface Click, this
-documentation calls that syntax a **C fragment**.
+This page lists the C that Click models. Coverage is incomplete: a construct
+that is not listed here is refused with a diagnostic rather than approximated.
+The same is true of C++ and Rust, whose coverage is described in
+[`click import`](../cli/import.md) and
+[Experimental Rust imports](../rust.md);
+[language coverage](../coverage.md) summarizes all three side by side. When C syntax appears inside Surface
+Click, this documentation calls that syntax a **C fragment**.
 
 ## C implementation target
 
-The default concrete target is `x86_64-linux-kernel`: the existing LP64 data
-layout with eight-bit, unsigned plain `char`. This follows the Linux kernel's
-explicit `-funsigned-char` build setting, not the default of every x86-64 C
-compiler. The settings are centralized in `CTarget`; LP64 alone does not imply
-char signedness. `char` remains a distinct C type from both `signed char` and `unsigned char`.
+The default concrete target is `x86_64-linux-userspace`: the LP64 data layout
+of the x86-64 System V ABI, as GCC and Clang build it by default, with
+eight-bit, signed plain `char`. The `x86_64-linux-kernel` target has the same
+layout with unsigned plain `char`, following the Linux kernel's explicit
+`-funsigned-char` build setting; select it with `target "x86_64-linux-kernel";`
+or a `click.project.json` for kernel code. The settings are centralized in `CTarget`; LP64 alone
+does not imply char signedness. Under either target `char` remains a distinct
+C type from both `signed char` and `unsigned char`; only its values and its
+one-byte representation are those of `unsigned char` (kernel) or `signed
+char` (user space). The signedness is fixed when the source is parsed, so the
+same C verified under the two targets can have different results
+(`mdtests/kernel_plain_char_is_unsigned.md`,
+`mdtests/userspace_plain_char_is_signed.md`).
+
+<!-- verified-example: mdtests/userspace_plain_char_is_signed.md -->
+```click
+target "x86_64-linux-userspace";
+verifying "userspace_plain_char.c";
+
+int32 negative_byte() {
+    ensures result == 1;
+} by {
+    execute();
+    simp();
+}
+```
 
 Header discovery and expansion use the profile's modeled predefines, including
-`__CHAR_UNSIGNED__`, `__CHAR_BIT__`, LP64 type-size macros, Linux/x86-64 markers,
-`__KERNEL__`, and byte-order constants. These are not a complete compiler macro
+`__CHAR_UNSIGNED__` (kernel target only, as plain `char` is unsigned there),
+`__CHAR_BIT__`, LP64 type-size macros, Linux/x86-64 markers,
+`__KERNEL__` (kernel target only), and byte-order constants. These are not a complete compiler macro
 environment: compiler-version and feature-test macros are not synthesized.
 
 Verification results apply to this supported subset under these assumptions,
 not to every C target or every Linux kernel compiler option. The verifier does
-not discover the user's compiler flags or prove portability to signed-char,
-32-bit, or differently laid-out builds. Compiler-provided layout validation and
+not discover the user's compiler flags or prove portability between the two
+plain-`char` signednesses, to 32-bit, or to differently laid-out builds. Compiler-provided layout validation and
 symbolic target-independent proofs remain future work.
 
 The `click verify` command does not print the target on each run (see
@@ -60,17 +85,17 @@ The accepted names are `x86_64-linux-kernel` and `x86_64-linux-userspace`; any
 other name is a parse error. A file declares at most one `target`, and every
 module of one project must agree on it, since a project is preprocessed once.
 Place the directive in the module that declares `verifying`. Without a
-directive the default target is selected, which is the unchanged behavior of
-every existing sidecar.
+directive the default target, `x86_64-linux-userspace`, is selected.
 
 The selected target and project configuration participate in the proof-artifact identity, so the same C
 and Click sources verified under different targets are different artifacts:
 certificates and incremental caches are never reused across them.
 
-`x86_64-linux-userspace` is C11/POSIX user space with the same LP64 layout and
-unsigned plain `char` selection, but without the `__KERNEL__` predefine. Its
+`x86_64-linux-userspace` is C11/POSIX user space with the same LP64 layout,
+signed plain `char` (no `__CHAR_UNSIGNED__`), and no `__KERNEL__` predefine. Its
 modeled `<stddef.h>` supplies `NULL`, and its declaration-only `<pthread.h>`
-declares `pthread_create` and `pthread_join`; the kernel target rejects both
+declares `pthread_create`, `pthread_join`, and `pthread_mutex_init`, `_lock`,
+`_unlock`, and `_destroy`; the kernel target rejects both
 headers. Its declaration-only `<stdatomic.h>` projects the one-shot
 publication subset: an opaque `atomic_int`, the `memory_order` constants, and
 `atomic_init`, `atomic_store_explicit` and `atomic_load_explicit` for
@@ -153,8 +178,8 @@ does. Verifying plain C needs no compiler or system headers; see the
 
 | Header | Targets | Provides |
 | --- | --- | --- |
-| `<stdint.h>`, `<inttypes.h>`, `<stdbool.h>` | all | the standard type spellings mapped to C0 types |
-| `<limits.h>` | all | `CHAR_BIT` and the integer limit macros for LP64 with unsigned plain `char` |
+| `<stdint.h>`, `<inttypes.h>`, `<stdbool.h>` | all | the standard type spellings mapped to Click's C types |
+| `<limits.h>` | all | `CHAR_BIT` and the integer limit macros for LP64; `CHAR_MIN`/`CHAR_MAX` follow the target's plain `char` |
 | `<stddef.h>` | user space | `NULL` |
 | `<string.h>` | user space | `memcpy`, `memcmp`, `memset`, `strlen`, and `NULL` |
 | `<stdlib.h>` | user space | `malloc`, `calloc`, `realloc`, `free`, and `NULL` |
@@ -197,8 +222,10 @@ through two calls to a pointer-taking helper without resetting the state.
 
 - `int32`
 - `uint8`
-- `char`, an unsigned eight-bit C type distinct from `unsigned char` on the
-  supported kernel target, with scalar, pointer, pointer-cell, and array forms
+- `char`, an eight-bit C type distinct from both `signed char` and
+  `unsigned char`, with scalar, pointer, pointer-cell, and array forms. Its
+  values are unsigned on the kernel target and signed on the user-space
+  target
 - `int8`/`signed char`/`int8_t`, a signed byte with range `-128..127`
 - `int16`/`short` and `uint16`/`unsigned short`
 - `uint32`
@@ -223,9 +250,13 @@ through two calls to a pointer-taking helper without resetting the state.
   fixed-width aliases. See `mdtests/c_integer_trailing_int.md` and
   `mdtests/c_integer_specifier_order.md` for promotion and width checks.
 - The modeled `<stdbool.h>` header is a no-op include; its `bool`, `true`, and
-  `false` spellings are understood directly by C0. The `true` and `false`
+  `false` spellings are understood directly by Click. The `true` and `false`
   constants are fallbacks when no ordinary C declaration binds that name;
   explicit macros expand before parsing.
+  These fallback constants apply in C source. In contract expressions, use
+  `1`/`0` or another `bool` value; an unbound `true` or `false` is diagnosed
+  at its clause. Other unbound value names in `requires` and `ensures` are
+  also refused during declaration checking, before any proof runs.
 - `void` as a function return type
 - `void*` and `const void*` as opaque object pointers. They preserve pointer
   identity, provenance, nullness, and qualification, but have no modeled
@@ -237,7 +268,7 @@ through two calls to a pointer-taking helper without resetting the state.
 - Pointer-to-pointer forms for all modeled scalar widths, such as `int32**`
   and `uint64**`, including `float**` and `double**`.
 - Pointer-to-pointer forms for named struct pointers, such as `struct node**`.
-  The C0 surface retains the struct tag alongside the existing eight-byte
+  The Click's C front end retains the struct tag alongside the existing eight-byte
   pointer-cell ABI, so assignments through the cell reject pointers to a
   different struct type. File-scope struct pointers and pointer-valued
   function returns retain the same tag metadata.
@@ -254,7 +285,7 @@ through two calls to a pointer-taking helper without resetting the state.
 - One-dimensional function parameters declared as arrays of supported structs;
   these decay to pointers while retaining the ABI-sized struct stride.
 - Modeled function-pointer fields, such as `int32 (*compare)(int32, int32)`,
-  in both pointer-backed and by-value structs. C0 retains the callback
+  in both pointer-backed and by-value structs. Click retains the callback
   signature and LP64 pointer slot in field metadata; a compatible concrete
   `&function` may be stored, loaded into a local callback, dispatched, or
   called directly as `p->callback(args)`. A named Click contract can authorize
@@ -296,7 +327,7 @@ external call may write through such a pointer.
 <!-- verified-example: mdtests/c_void_pointer_operations_rejected.md -->
 <!-- verified-example: mdtests/c_void_pointer_callback_rejected.md -->
 
-C0 accepts top-level aliases for modeled scalar and struct types, such as
+Click accepts top-level aliases for modeled scalar and struct types, such as
 `typedef int32_t index_t;` and `typedef struct item item_t;`. The latter can
 be used as `item_t*` or as a copyable struct value under the field restrictions
 below.
@@ -350,10 +381,57 @@ positions. The adapter retains those type identities, but grants no callable
 extended-precision ABI. Their definitions, calls, and function addresses are
 rejected. This does not admit automatic `long double` values or arithmetic.
 
-The accepted standard scalar spellings alias the existing C0 type model,
+The accepted standard scalar spellings alias the existing Click's C type model,
 except that plain `char` retains its distinct C type identity. `signed char`
-is modeled separately as `int8`; signed plain-char target profiles are not
-yet modeled.
+is modeled separately as `int8`. Where plain `char` is signed it has `int8`'s
+values and representation without becoming `signed char`.
+
+Click accepts what GCC and Clang accept by default, not the letter of C11.
+An uncast conversion between pointers to distinct one-byte character types,
+`char *`, `signed char *` (`int8 *`), and `unsigned char *` (`uint8 *`), with
+otherwise allowed qualifiers, is only a `-Wpointer-sign` warning there, so
+Click accepts it in a return, an initialization, an assignment, a call argument
+(including a `static inline` callee's), and the operand of a comparison, where
+the warning is `-Wcompare-distinct-pointer-types`. Each is lowered exactly as
+the explicit cast to the destination type and reads the same bytes: a `uint8 *`
+passed as a `char *` reads the byte `0xC8` as `-56` where plain `char` is
+signed (`mdtests/a_uint8_pointer_passed_as_a_char_pointer_reads_signed_bytes.md`,
+`mdtests/a_char_pointer_assigned_to_an_unsigned_char_pointer_reads_unsigned_bytes.md`).
+A converted pointer keeps its `const` view, so discarding `const` is still
+refused. Conversions GCC and Clang refuse stay refused: pointers to character
+pointers such as `char **` to `unsigned char **`
+(`mdtests/a_char_pointer_pointer_is_not_converted_to_an_unsigned_char_pointer_pointer.md`),
+`?:` arms of different character pointer types, whose common type would be
+`void *`, the subtraction of such pointers, and conversions to or from a
+pointer to a wider integer type. An uncast or explicit conversion between
+pointers to wider integer types of the same width and different signedness,
+such as `int *` and `unsigned int *`, is also only a `-Wpointer-sign`
+warning in GCC and Clang, but it is not yet supported: the kernel reads a
+wider cell only through its stored type, so the conversion is refused as a
+retyping object-pointer cast.
+
+An integer constant expression converted to an integer type that cannot
+represent it, such as `unsigned char c = -56;` or `signed char c = 200;`, is at
+most a `-Woverflow` or `-Wconstant-conversion` warning in GCC and Clang, which
+reduce the value modulo 2^N into the type's range: C11 6.3.1.3p2 defines this
+for an unsigned type, and GCC defines the implementation-defined signed
+conversion the same way. Click converts such a constant identically in a
+static, automatic, or array initializer, an assignment, a store, an explicit
+cast, a `return`, and a call argument: `unsigned char c = -56` holds 200,
+`short s = 40000` holds -25536, and plain `char c = -56` holds 200 under
+`x86_64-linux-kernel`
+(`mdtests/an_out_of_range_integer_constant_converts_modulo_its_destination_width.md`,
+`mdtests/a_negative_char_constant_is_unsigned_on_the_kernel_target.md`).
+A narrowing of a value that is not an integer constant expression keeps the
+checked range rule of the scalar casts below.
+
+The character pointer types `char *`, `signed char *`, and `unsigned char *`
+convert to one another by an explicit one-level cast, which C11 6.3.2.3p7 and
+6.5p7 allow: a character type may read any object's bytes. A byte has one
+value in memory, its unsigned value; a `signed char` read of it is that
+value's two's-complement reinterpretation, so the reads agree
+(`mdtests/userspace_character_pointer_casts_read_the_same_bytes.md`,
+`mdtests/a_signed_read_of_a_byte_follows_from_its_unsigned_read.md`).
 
 Direct and callback function returns may be pointers to const-qualified data, including
 `const char *`. Qualification is retained across definitions, prototypes,
@@ -393,7 +471,7 @@ cover such storage. A write through a cast pointer to storage that is not
 itself const needs ordinary write authority, as any other store does. See
 `mdtests/c_const_cast_storage_writes_rejected.md` and
 `mdtests/c_const_cast_owned_write.md`.
-Top-level const pointer casts remain unsupported because C0 does not represent
+Top-level const pointer casts remain unsupported because Click does not represent
 qualifiers on a pointer rvalue itself. The one volatile exception is a
 pointer-cell view such as `(int32 * volatile *)p`: the immediate pointee cell
 is marked volatile for sequential loads and stores, while the `int32` storage
@@ -409,7 +487,7 @@ char *` casts and the reverse remain supported. Other casts between modeled
 typed object pointers are unsupported; identity casts preserve the source
 pointer type.
 
-Named enums are supported as four-byte `int32`-shaped scalar fields. C0
+Named enums are supported as four-byte `int32`-shaped scalar fields. Click
 preserves the enum name and enumerator values in imported metadata, and named
 enumerators such as `PACKET_READY` lower to their declared integer values in C
 expressions and by-value copies. Enum parameters, return types, local
@@ -418,7 +496,7 @@ slice.
 
 ## Floating-point boundary
 
-C0 models `float` as an IEEE-754 binary32 payload and `double` as an IEEE-754
+Click models `float` as an IEEE-754 binary32 payload and `double` as an IEEE-754
 binary64 payload. Slices 1 through 5 support their declared widths and LP64
 alignment, parameters, locals, struct fields, arrays, allocation, typed
 loads/stores, value-preserving copies, unary negation, exceptional constants,
@@ -451,7 +529,7 @@ floating-point environment directives such as `#pragma STDC FENV_ACCESS ON`.
 
 The value model is explicit and target-bound. `float` is IEEE-754 binary32
 with four-byte size and alignment, and `double` is IEEE-754
-binary64 with eight-byte size and alignment under C0's LP64 ABI. Arithmetic
+binary64 with eight-byte size and alignment under Click's LP64 ABI. Arithmetic
 operations use round-to-nearest, ties-to-even at the declared result type.
 Constant arithmetic is folded in integer space; symbolic arithmetic remains a
 typed, checked operation term until its operands are known. Alternate
@@ -473,7 +551,7 @@ unsupported/type-error outcomes when their definedness checks are not
 established; symbolic conversions carry those checks as proof obligations.
 
 The integer constant `0`, alone or cast to `void *` as in `((void *)0)`, is
-the supported null pointer constant. C0 converts
+the supported null pointer constant. Click converts
 it to the canonical null pointer when returning or initializing a pointer,
 assigning a pointer local or field, passing a pointer argument, and comparing
 a pointer with zero. Nonzero integers do not implicitly convert to pointers;
@@ -483,7 +561,7 @@ value that is exactly the recorded address of an object pointer or is proven
 zero by the current facts; see the pointer/integer cast entry below and the
 memory model's treatment of pointer addresses.
 
-C0 follows the modeled LP64 C integer-constant rules. An unsuffixed decimal
+Click follows the modeled LP64 C integer-constant rules. An unsuffixed decimal
 literal has type `int32` when it fits and otherwise `int64`; an unsuffixed
 octal or hexadecimal literal tries `int32`, `uint32`, `int64`, and `uint64` in
 that order. `U`, `L`, and `LL` suffixes select the corresponding modeled
@@ -492,7 +570,7 @@ has been typed, so `-2147483648` is an `int64` expression while
 `-0x80000000` is an unsigned 32-bit expression with modulo arithmetic.
 
 `sizeof` has type `size_t`, modeled as `uint64` under LP64. When both operands
-of a scalar operator are arithmetic, C0 applies integer promotions and the
+of a scalar operator are arithmetic, Click applies integer promotions and the
 usual arithmetic conversions before evaluating the operation. The same rule
 selects and converts both arms of an arithmetic conditional expression; only
 the selected arm is evaluated. When one arm is a pointer and the other a null
@@ -502,7 +580,7 @@ combinations, including a struct pointer against a non-null `void *`, are
 rejected with a source-positioned diagnostic. See
 `mdtests/c_conditional_null_pointer_constant.md`.
 
-Boolean objects use C0's one-byte LP64 layout and always contain the normalized
+Boolean objects use Click's one-byte LP64 layout and always contain the normalized
 values `0` or `1`. Assignment, initialization, parameter passing, returns, and
 casts to `bool` or `_Bool` convert integer values by zero-testing and convert
 pointers by null-testing. Boolean rvalues undergo the usual integer promotion
@@ -516,7 +594,7 @@ arithmetic are not currently modeled.
 
 ## Supported expressions and statements
 
-Supported C0 surface includes:
+Supported C surface includes:
 
 - ordinary `//` line comments and `/* ... */` block comments
 - decimal, octal, and hexadecimal integer literals, with the conventional
@@ -531,12 +609,19 @@ Supported C0 surface includes:
   `(uint64) expression`; supported widening conversions preserve the value,
   while conversion from a signed or unsigned 64-bit integer to `uint32`
   retains the low 32 bits (modulo 2^32), including for symbolic values.
-  Other narrowing requires a concrete representable value or a checked target
+  An integer constant expression out of the target's range converts modulo
+  2^N, as GCC converts it. Other narrowing requires a checked target
   range where the conversion is modeled (`int8`: `-128..127`, `int16`: `-32768..32767`, `uint8`:
-  `0..255`, and `uint16`: `0..65535`), while aggregate casts remain outside C0
+  `0..255`, and `uint16`: `0..65535`), while aggregate casts remain outside supported C.
+  Narrowing into those four types is modeled from every 16-, 32- and 64-bit
+  integer source, explicitly or implicitly; the range is stated in the
+  source's own type, and a 64-bit source keeps its low word. Relating such a
+  narrowed 64-bit value back to its source uses the range-checked
+  `integer_cast_identity` rule
+  (`mdtests/narrowing_from_wide_sources_into_bytes_and_shorts.md`)
 - the GNU type operators `typeof(type-name)` and `__typeof__(type-name)`, plus
   their expression forms `typeof(expression)` and `__typeof__(expression)`;
-  expression operands are inspected only for their modeled C0 type and are not
+  expression operands are inspected only for their modeled Click's C type and are not
   evaluated, including when they contain a call. The result preserves the
   modeled scalar or pointer type, struct-pointer tag, and supported `const`
   qualification. Unsupported or unmodeled operand types are rejected
@@ -569,8 +654,10 @@ Supported C0 surface includes:
 - ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`, with the
   simple escapes `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\'`, `\"`, and
   `\?`, octal escapes of one to three digits such as `'\001'`, and
-  hexadecimal escapes such as `'\x7f'`. A numeric escape must fit one byte;
-  plain `char` is unsigned in the supported profile, so `'\377'` is 255.
+  hexadecimal escapes such as `'\x7f'`. A numeric escape must fit one byte.
+  A character constant has the `int` value of a plain `char` holding the byte
+  (C11 6.4.4.4p10): `'\377'` is 255 on the kernel target and -1 on the
+  user-space target. String literals are arrays of plain `char`.
   Multi-character literals and universal character names are rejected. See
   `mdtests/c_numeric_character_escapes.md`
 - signed `+`, `-`, `*`, `/`, and `%`; in a proof, `defined(a + b)` or
@@ -837,8 +924,8 @@ Supported C0 surface includes:
   expanded C body at each call site, on the caller's own memory and
   resources; a binder map on such a call names no binder and is refused
   (`mdtests/call_step_binder_map_on_an_uncontracted_inline_helper_rejected.md`).
-  Linkage and body-selection rules, for the single supported
-  `x86_64-linux-kernel` compiler profile: Click never emits a standalone
+  Linkage and body-selection rules, under either supported x86-64 Linux
+  target: Click never emits a standalone
   out-of-line definition and never selects an external definition. Applying
   a verified contract at a call is sound whether or not the compiler inlines
   the body, because the contract holds of the body that runs. Termination
@@ -889,24 +976,31 @@ Supported C0 surface includes:
   relational operators, and other general preprocessor expressions remain
   unsupported
 - the modeled system headers `#include <stdint.h>`, `#include <inttypes.h>`, and `#include <stdbool.h>`, which contribute the
-  standard spellings already mapped to C0 types, including `int32_t` and
+  standard spellings already mapped to Click's C types, including `int32_t` and
   `uint8_t`; they are otherwise no-ops. This does not model format macros or
   library functions from `<inttypes.h>`
 - the built-in `#include <limits.h>` on every target, which defines
   `CHAR_BIT`, the `char`, `short`, `int`, `long`, and `long long` minimum and
-  maximum macros, and the unsigned maxima, for the LP64 layout with unsigned
-  plain `char`. A program's own different definition of one of these names
-  conflicts with the header
+  maximum macros, and the unsigned maxima, for the LP64 layout. `CHAR_MIN`
+  and `CHAR_MAX` are 0 and 255 on the kernel target and -128 and 127 on the
+  user-space target (`mdtests/userspace_char_limits_are_signed.md`). A
+  program's own different definition of one of these names conflicts with
+  the header
 - for the user-space target, the declaration-only `#include <string.h>` and
   `#include <stdlib.h>`. Each declares exactly the functions Click specifies,
   `memcpy`, `memcmp`, `memset`, and `strlen`, and `malloc`, `calloc`,
   `realloc`, and `free`, and defines `NULL`; calls are checked against the
   standard-library contracts and the allocation model
   (`mdtests/c_builtin_string_and_stdlib_headers.md`,
-  `mdtests/c_builtin_string_header_declares_strlen.md`). Plain `char` is
-  unsigned 8-bit on every supported target, so a specification may pass a
-  `char` pointer where a predicate or pure function takes `uint8` bytes, as in
-  `requires cstr_readable(s);` for a `const char *s`. As in C, the `strlen`
+  `mdtests/c_builtin_string_header_declares_strlen.md`). A specification may
+  pass a `char` pointer where a predicate or pure function takes `uint8`
+  bytes, as in `requires cstr_readable(s);` for a `const char *s`. Where plain
+  `char` is signed, the argument is elaborated to the explicit byte view
+  `(uint8*)s`: the predicate reads the string's bytes as unsigned values,
+  and since a signed read of a byte is the conversion of its unsigned read,
+  `s[k] == '\0'` holds exactly when `((uint8*)s)[k] == '\0'` does. A library
+  contract over `uint8` bytes, such as `strlen`'s, likewise accepts a `char`
+  pointer of either signedness. As in C, the `strlen`
   contract's result and every C-string length in the library are `size_t`
   (`uint64`) values
 - function-pointer callbacks for modeled signatures, using `&function` to
@@ -916,7 +1010,7 @@ Supported C0 surface includes:
   pass the same callback; the name must be declared as a function in the
   translation unit that uses it, and a name in call position stays a call.
   Callback signatures may include modeled `struct T *` and
-  `struct T **` parameters and returns; C0 retains those nominal tags and
+  `struct T **` parameters and returns; Click retains those nominal tags and
   rejects a known callback target with a different struct identity before
   lowering. An indirect call whose exact target is known dispatches that
   function. A call through an abstract function-pointer parameter or an
@@ -925,7 +1019,7 @@ Supported C0 surface includes:
   functions. Function pointers are not dereferenceable or subject to pointer
   arithmetic
 - GNU statement expressions of the exact form `({ statements; value; })`;
-  `statements` use the supported C0 statement grammar and execute in a nested
+  `statements` use the supported C statement grammar and execute in a nested
   scope, while the final `value` must be a modeled scalar, pointer, or function
   pointer expression. The body and final value are lowered into an explicit
   temporary in source order, preserving assignments and calls; `return`,
@@ -1006,8 +1100,8 @@ Supported C0 surface includes:
   positive byte extents assigned to supported pointer types, zeroed
   runtime-sized scalar allocation such as `calloc(count, sizeof(int32))`,
   matching zeroed struct allocation such as `calloc(count, sizeof(struct T))`,
-  bounded `realloc(data, bytes)` for live modeled scalar pointers, pointer
-  arrays, and matching `struct T*` allocations, including arbitrary byte
+  bounded `realloc(data, bytes)` for the pointer types listed in
+  [Heap allocation](#heap-allocation), and matching `struct T*` allocations, including arbitrary byte
   extents; initialized cells are preserved only when their complete byte
   ranges fit, and standalone `free(pointer);`
 - local scalar, pointer, and fixed-size array declarations for the modeled
@@ -1029,7 +1123,7 @@ cast, requires Click to prove the corresponding target range. Conditional
 expressions first convert arithmetic arms to their common C type, then evaluate
 only the selected branch.
 
-C0 follows the GCC/Clang/MSVC consensus for signed right shift: `int32 >> k`
+Click follows the GCC/Clang/MSVC consensus for signed right shift: `int32 >> k`
 is arithmetic right shift with sign extension. This is implementation-defined
 in ISO C for negative signed values, but it is the behavior of the mainstream
 compilers Click is targeting.
@@ -1054,8 +1148,9 @@ initialized definitions remain rejected. Integer scalar initializers
 may use bounded constant expressions built from supported integer literals and
 arithmetic, bitwise, shift, comparison, logical, and conditional operators,
 plus checked scalar integer casts, with the same usual arithmetic conversions
-and unsigned wrapping as runtime expressions. Signed and narrow target types
-still require a representable final value.
+and unsigned wrapping as runtime expressions. A final value the target type
+cannot represent converts modulo 2^N, as GCC converts it; signed overflow
+within the expression is still refused.
 <!-- verified-example: mdtests/c_expression_typing.md -->
 Logical and conditional expressions evaluate only the branch selected by their
 constant condition. Pointer initializers may use the null pointer constant `0` or the address
@@ -1213,7 +1308,7 @@ of a modeled type.
 
 ## Sequential scalar and pointer-qualified volatile objects
 
-C0 supports a deliberately small sequential volatile model for scalar integer
+Click supports a deliberately small sequential volatile model for scalar integer
 objects, pointers to scalar storage, and pointer-valued objects. A leading
 qualifier such as
 `volatile int32 status;` qualifies the object, while
@@ -1241,10 +1336,10 @@ concurrency-dependent problem tracked in
 
 ## Checked sequential kernel access primitives
 
-C0 recognizes the Linux-style `READ_ONCE`, `WRITE_ONCE`, `likely`, `unlikely`,
+Click recognizes the Linux-style `READ_ONCE`, `WRITE_ONCE`, `likely`, `unlikely`,
 and `rcu_assign_pointer` spellings at the source boundary. Header wrappers
 whose replacement text uses GNU `typeof`, volatile accesses, or the matching
-helper names are mapped to these checked operations before ordinary C0
+helper names are mapped to these checked operations before ordinary C
 parsing, so statement-expression implementations do not get erased or
 silently treated as ordinary calls.
 
@@ -1257,7 +1352,7 @@ used by the sequential profile. `likely(x)`, `unlikely(x)`, and
 prediction is not a proof assumption.
 
 Each supported access emits a distinct ordered sequential access event and
-updates the checked symbolic memory state. Pointer values retain their C0
+updates the checked symbolic memory state. Pointer values retain their C
 type and allocation provenance. These events do not assert atomicity,
 inter-thread visibility, release/acquire ordering, RCU grace periods, or the
 absence of data races, and they cannot discharge a contract requiring any of
@@ -1320,20 +1415,26 @@ designators, and dynamic or non-literal initialization remain unsupported.
 
 ## String literals
 
-C0 accepts basic ASCII string literals in expressions, such as `"ok\\n"`.
+Click accepts basic ASCII string literals in expressions, such as `"ok\\n"`.
 Adjacent basic literals are concatenated as in C, so `"hello, " "world"`
 creates one literal object.
 String literals accept the same simple, octal, and hexadecimal escapes as
 character literals. An octal escape ends after three digits, so `"\\0012"` is
 the byte 1 followed by `2`.
-Each literal sequence is represented as a fresh function-owned `uint8` array with one
-explicit trailing NUL byte. The expression has the array-to-pointer behavior of
-a local byte array, so the result can be returned, indexed, or passed to a
-function expecting `uint8*`. The storage is stable across calls and remains
+Each literal sequence is represented as a fresh function-owned array of plain
+`char` with one explicit trailing NUL byte. The expression has the
+array-to-pointer behavior of a local byte array, so the result can be returned,
+indexed, or passed to a function expecting `uint8*`. Like any character
+pointer, the literal may also initialize, be assigned to, or be returned as a
+`uint8*` without a cast, which reads its bytes as unsigned on every target
+(`mdtests/a_string_literal_returned_as_a_uint8_pointer_reads_its_bytes.md`,
+`mdtests/a_string_literal_initializing_a_uint8_pointer_reads_its_bytes.md`,
+`mdtests/a_string_literal_assigned_to_a_uint8_pointer_reads_its_bytes.md`).
+The storage is stable across calls and remains
 read-only even after the pointer is copied to another local; an indirect store
 through that pointer is undefined behavior. The existing `viewable` byte-range
 interface can describe reads from the literal. Wide literals, non-ASCII
-characters, and unsupported escapes remain outside C0; adjacent basic literals
+characters, and unsupported escapes remain outside supported C; adjacent basic literals
 are supported.
 
 <!-- verified-example: mdtests/string_literals.md -->
@@ -1739,7 +1840,7 @@ parameters use 8-byte pointer cells and can be indexed and dereferenced like
 ordinary C pointer arrays.
 
 Declarations in nested compound statements may shadow parameters and locals
-from an enclosing scope. C0 resolves each use to the innermost declaration
+from an enclosing scope. Click resolves each use to the innermost declaration
 that is live at that source position, and the kernel assigns shadowed objects
 distinct local identities. Their addresses and storage therefore remain
 separate; after the nested block ends, a use of the outer spelling resolves to
@@ -1769,7 +1870,7 @@ initializer writes each element in declaration order; omitted elements are
 zero-initialized, and too many elements are rejected.
 
 Scalar local arrays may have multiple fixed dimensions, such as
-`int32 matrix[3][4]`. C0 lowers their storage in row-major order while
+`int32 matrix[3][4]`. Click lowers their storage in row-major order while
 retaining the declared element width and each declared dimension. An access
 such as `matrix[i][j]` therefore carries separate obligations for
 `0 <= i < 3` and `0 <= j < 4` before its flattened offset is formed; the
@@ -1782,7 +1883,7 @@ zero-filled.
 
 ## Struct subset
 
-C0 supports a small struct slice:
+Click supports a small struct slice:
 
 <!-- verified-example: mdtests/struct_multifield_explicit_permissions.md -->
 ```c
@@ -1815,7 +1916,7 @@ embedded field such as `p->inner` is an aggregate place carrying its address
 and nested layout; `p->inner.value` selects the leaf field by combining the
 outer and inner ABI offsets, without loading a runtime aggregate value. The
 importer retains the pointee struct name across intermediate field loads, so
-`p->child->field` remains typed. Named enum fields use the supported C0 ABI's
+`p->child->field` remains typed. Named enum fields use the modeled ABI's
 four-byte scalar representation; their enumerator names are resolved to
 int32 values while the field metadata retains the enum name. Fields use the
 documented LP64 ABI: each field is aligned, pointers occupy eight bytes, and
@@ -1913,7 +2014,7 @@ Direct whole-union values and union-member writes remain outside this slice;
 union-containing struct copies preserve the overlapping member views. Compiler-dependent layout rules are tracked in
 `issues/multiple-compilers.md`. Fixed multidimensional arrays of embedded
 structs are supported through indexed leaf-field access and retain their
-row-major shape in C0 metadata. Local arrays of those structs also accept
+row-major shape in Click's C metadata. Local arrays of those structs also accept
 `[literal] = {...}` element designators, including nested designators for
 multidimensional arrays; omitted elements remain zero-filled.
 
@@ -1997,7 +2098,7 @@ the copied value does not extend their lifetime.
 
 ## Heap allocation
 
-C0 recognizes a deliberately small set of allocation patterns:
+Click recognizes a deliberately small set of allocation patterns:
 
 <!-- verified-example: mdtests/heap_free_owned_allocation_effect.md -->
 ```c
@@ -2021,7 +2122,7 @@ uninitialized: every field must be stored before it is read. `free(NULL)` is a
 no-op; nonnull `free` requires the allocation base, complete owned access, and
 the matching Click allocation authority.
 
-For an `int32*`, C0 also accepts a runtime byte expression such as
+For an `int32*`, Click also accepts a runtime byte expression such as
 `malloc(count * sizeof(int32))` (equivalently `malloc(count * 4)`). Verification
 must prove that the resulting byte count is
 positive, is an exact number of `int32` elements, and does not overflow signed
@@ -2039,14 +2140,14 @@ read as zero or null until overwritten. Both forms require a positive,
 non-overflowing element count, and the struct size must match the target
 pointee type.
 
-For a `uint8*`, C0 accepts byte-oriented forms such as
+For a `uint8*`, Click accepts byte-oriented forms such as
 `malloc(count * sizeof(uint8))` and `calloc(count, sizeof(uint8))`. The
 allocation extent is a positive `int32` byte count, and `data[i]` uses a
 one-byte logical range element. Successful `malloc` storage is uninitialized;
 successful `calloc` storage reads as zero. `free(data)` consumes the complete
 one-byte range just as it does for the supported int32 and struct allocations.
 
-For an `int32**` or `uint8**`, C0 accepts `malloc(count * sizeof(int32*))` or
+For an `int32**` or `uint8**`, Click accepts `malloc(count * sizeof(int32*))` or
 `malloc(count * sizeof(uint8*))`. The allocation uses the LP64 eight-byte
 pointer stride, so `slots[i]` addresses one pointer-valued cell and `free(slots)`
 consumes the complete pointer-array range. Successful `malloc` storage is
@@ -2062,18 +2163,19 @@ extent and transfers the complete allocation authority to the successful
 fresh result. When the source is a pointer-array `calloc`, the retained prefix
 remains initialized to null and any grown tail is uninitialized.
 
-For a live, nonzero `int32*` or `uint8*` allocation, `realloc(data, bytes)`
-accepts a positive byte count. An `int32*` size must be an exact number of
-`int32` elements; a `uint8*` size is already an exact number of byte elements.
-It returns a pending null-or-success result like `malloc`: failure leaves
+For a live, nonzero allocation held by an integer data pointer of 16 to 128
+bits, a `uint8*`, or a matching `struct T*`, `realloc(data, bytes)` accepts a
+positive byte count, which need not be a whole number of elements
+(`mdtests/arbitrary_layout_realloc.md`); `int8*`, `float*`, and `double*`
+targets are refused. It returns a pending null-or-success result like `malloc`: failure leaves
 `data` and its allocation authority unchanged, while success retires the old
 allocation, returns a fresh allocation, and preserves initialized cells whose
 complete elements fit in the new extent. When the source is a bounded zeroed
 `calloc` allocation, the preserved prefix remains zeroed and any grown tail is
-uninitialized. Reallocations with other or unknown byte layouts remain
-unsupported.
+uninitialized. Fixtures exercise `int32*`, `uint8*`, `int32**`, `uint8**`, and
+struct pointers.
 
-This is a modeled C0 builtin, not general libc compatibility. Zero-size
+This is a modeled C builtin, not general libc compatibility. Zero-size
 allocation, incomplete types, allocator results declared as `void *`,
 unmodeled allocator prototypes, and non-concrete zeroed-prefix `realloc` cases
 remain unsupported.
@@ -2094,9 +2196,8 @@ The first `for` slice is sugar for existing `while` semantics:
 (condition) { body; step; }`. The initializer may be a scalar assignment or a
 scalar declaration initializer such as `int32 i = 0`, or it may be omitted.
 The step may be a scalar assignment or one of the supported scalar
-update-statement forms, or it may be omitted. The condition remains required
-because unconditional loops need the separate `break` control-flow form. As in
-C, `continue` executes the step before the next condition check. The step may
+update-statement forms, or it may be omitted. An omitted condition is
+equivalent to true. As in C, `continue` executes the step before the next condition check. The step may
 contain a comma-separated
 sequence such as `i++, j--`; it is lowered in source order. Scalar assignment
 initializers such as `i = 0, j = 1` and same-type declaration initializers
@@ -2122,9 +2223,9 @@ These are not general C features yet:
 - fully general symbolic narrowing between unlike 64-bit and narrower integer
   types
 - pointer comparisons beyond the supported equality/range patterns
-- general heap allocation beyond exact struct objects, runtime-sized `int32`
-  arrays, and the supported `uint8` byte-buffer forms; arbitrary byte-layout
-  reallocations remain unsupported
+- zero-size allocation, allocators returning `void *` without a contract,
+  and reallocation of pointer types outside the `realloc` list in
+  [Heap allocation](#heap-allocation)
 - `void` objects, named `void` parameters (a sole `(void)` denotes no parameters),
   and untyped pointer
   dereference, indexing, or arithmetic
@@ -2161,8 +2262,7 @@ These are not general C features yet:
   read, in one unsequenced expression are rejected rather than choosing a C
   evaluation order; the same conservative boundary applies between function
   arguments and through a surrounding assignment expression
-- update expressions inside larger expressions, such as `j = i++`
-- compound/update operations on non-scalar lvalues, such as `p[i]++`
+- expression-valued updates of memory lvalues, such as `j = p[i]++`
 - initializers for arrays of structs or other unsupported aggregate objects
   outside the automatic/local and static-storage forms documented above
 

@@ -5,9 +5,10 @@
 # Technical reference
 
 - [Technical reference](reference/index.md)
+- [Language coverage](reference/coverage.md)
 - [Language](reference/language/index.md)
   - [Grammar and operators](reference/language/grammar.md)
-  - [Supported C0](reference/language/c0.md)
+  - [Supported C](reference/language/c.md)
   - [Limitations and compatibility](reference/language/limitations.md)
 - [Tactics](reference/tactics/index.md)
 - [Command-line interface](reference/cli/index.md)
@@ -26,8 +27,10 @@
 
 - [Concepts](concepts/index.md)
 - [What Click proves](concepts/what-click-proves.md)
+- [What Click trusts](concepts/trust.md)
 - [Files and sidecars](concepts/sidecars.md)
 - [Your first proof](concepts/first-proof.md)
+- [Verify a function in your own project](concepts/own-project.md)
 - [Contracts](concepts/contracts.md)
 - [Propositions](concepts/propositions.md)
 - [Proofs and proof scripts](concepts/proof-scripts.md)
@@ -38,7 +41,7 @@
 - [Expansion](concepts/expansion.md)
 - [Profiling](concepts/profiling.md)
 - [Audit](concepts/audit.md)
-- [C0 and C fragments](concepts/c0-and-c-fragments.md)
+- [C fragments](concepts/c-fragments.md)
 - [Undefined behavior](concepts/undefined-behavior.md)
 - [Viewable ranges](concepts/viewability.md)
 - [Resources and memory permissions](concepts/resources.md)

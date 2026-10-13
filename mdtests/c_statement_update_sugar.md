@@ -1,6 +1,6 @@
 # C statement update sugar
 
-This checks the narrow C0 update-sugar slice. These forms are accepted only as
+This checks the narrow update-sugar slice. These forms are accepted only as
 statements and lower to ordinary assignments:
 
 - `i++;`

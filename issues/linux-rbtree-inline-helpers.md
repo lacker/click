@@ -1,12 +1,18 @@
 # Verify Linux rbtree inline helpers from the pinned headers
 
+Priority: P2.
+
+Soundness: incomplete. The pinned translation unit does not import yet, so
+no helper is verified or assumed. The acceptance criteria forbid treating a
+header helper as opaque.
+
 The header-inline mechanism is landed: supported `static inline` and
 `static __always_inline` definitions reached through headers parse with
 translation-unit-local linkage, accept sidecar contracts by ordinary C
 spelling, are called through that contract when they have one and execute
 their checked bodies at call sites when they do not, and attribute bundle
 diagnostics to `header.h:line`
-(`docs/reference/language/c0.md`,
+(`docs/reference/language/c.md`,
 `docs/reference/language/limitations.md`; regressions
 `mdtests/inline_functions_in_headers.md`,
 `mdtests/always_inline_functions_in_headers.md`,
@@ -67,5 +73,5 @@ verifier-friendly macro bodies, or bless forged output.
 
 Related: [kernel-scale-preprocessing.md](kernel-scale-preprocessing.md)
 (importer, manifest, retained C semantics, and fixture provisioning) and the
-[supported GNU C forms](../docs/reference/language/c0.md#supported-expressions-and-statements)
+[supported GNU C forms](../docs/reference/language/c.md#supported-expressions-and-statements)
 (GNU form semantics).

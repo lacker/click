@@ -592,7 +592,10 @@ impl<'a> ProofScope<'a> {
                 Some(body) => Some(body),
                 None => match self.body.try_solver_equality_closure()? {
                     Some(body) => Some(body),
-                    None => self.body.try_definedness_solver_closure()?,
+                    None => match self.body.try_definedness_solver_closure()? {
+                        Some(body) => Some(body),
+                        None => self.body.try_auto_conjunction_closure()?,
+                    },
                 },
             },
         };
@@ -601,7 +604,29 @@ impl<'a> ProofScope<'a> {
             next.body = body;
             return Ok(Some(next));
         }
-        self.try_simp_closure()
+        if let Some(closed) = self.try_simp_closure()? {
+            return Ok(Some(closed));
+        }
+        let Some(body) = self.body.try_auto_equality_chain_closure()? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
+    /// The searches `auto` runs besides `simp`: the solver and its bridges,
+    /// then a bounded chain of rewrites. A closer that has already tried
+    /// `simp` runs these when it misses.
+    pub(in crate::surface::proof) fn try_auto_closure_after_simp(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_auto_closure_after_simp()? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
     }
 
     pub(in crate::surface::proof) fn try_solver_closure(&self) -> Result<Option<Self>, ClickError> {
@@ -786,6 +811,9 @@ impl<'a> ProofScope<'a> {
                     self.root.focused_obligation().cloned().ok_or_else(|| {
                         self.root.step_error("`have` scope goal is no longer open")
                     })?;
+                // A pure proof has no frontier or outcome to spell the fact
+                // on; its proof locals carry the spelling instead.
+                let mut local_spelling = None;
                 let execution = match (self.root.context.as_ref(), &obligation) {
                     // A `have` at an execution frontier publishes what the
                     // shared mid-execution law publishes: the proposition's
@@ -870,6 +898,8 @@ impl<'a> ProofScope<'a> {
                                 .surface_propositions
                                 .record_lowering(&proposition, &kernel)?;
                             execution = Some(Arc::new(updated));
+                        } else {
+                            local_spelling = Some((proposition.clone(), kernel.clone()));
                         }
                     }
                     Obligation::Frontier(_) => {}
@@ -888,22 +918,22 @@ impl<'a> ProofScope<'a> {
                 let trace_source =
                     crate::surface::proof_trace::enabled_for(self.root.claim_label())
                         .then(|| crate::surface::printing::source_click_proposition(&proposition));
-                let successor = Proof {
+                let mut successor = Proof {
                     site: self.root.site.clone(),
                     context: self.root.context.clone(),
                     state,
-                    node: Arc::new(ProofNode {
-                        path_memo: Default::default(),
-                        parent: Some(self.root.node.clone()),
-                        step: Some(Arc::new(ProofStep::Have {
+                    node: ProofNode::step_child(
+                        &self.root.node,
+                        self.root.focused_branch_id(),
+                        Arc::new(ProofStep::Have {
                             proposition,
                             proof: Box::new(body),
-                        })),
-                        focused_branch: self.root.focused_branch_id(),
-                        depth: self.root.node.depth + 1,
-                        split_branches: Vec::new(),
-                    }),
+                        }),
+                    ),
                 };
+                if let Some((surface, kernel)) = &local_spelling {
+                    successor = successor.with_local_surface_fact(surface, kernel)?;
+                }
                 if let Some(source) = trace_source {
                     let location = self
                         .root
@@ -1052,17 +1082,14 @@ impl<'a> ProofScope<'a> {
                     site: self.root.site.clone(),
                     context: self.root.context.clone(),
                     state,
-                    node: Arc::new(ProofNode {
-                        path_memo: Default::default(),
-                        parent: Some(self.root.node.clone()),
-                        step: Some(Arc::new(ProofStep::Open {
+                    node: ProofNode::step_child(
+                        &self.root.node,
+                        focused_branch,
+                        Arc::new(ProofStep::Open {
                             resource,
                             proof: Box::new(body),
-                        })),
-                        focused_branch,
-                        depth: self.root.node.depth + 1,
-                        split_branches: Vec::new(),
-                    }),
+                        }),
+                    ),
                 })
             }
         }
@@ -1126,17 +1153,14 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: Some(Arc::new(ProofStep::Have {
+            node: ProofNode::step_child(
+                &self.node,
+                self.focused_branch_id(),
+                Arc::new(ProofStep::Have {
                     proposition,
                     proof: Box::new(body.clone()),
-                })),
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth + 1,
-                split_branches: Vec::new(),
-            }),
+                }),
+            ),
         };
 
         // The step reports its added facts in conclusion order, omitting any
@@ -1175,17 +1199,14 @@ impl<'a> Proof<'a> {
                 site: retained.site.clone(),
                 context: retained.context.clone(),
                 state,
-                node: Arc::new(ProofNode {
-                    path_memo: Default::default(),
-                    parent: Some(retained.node.clone()),
-                    step: Some(Arc::new(ProofStep::Have {
+                node: ProofNode::step_child(
+                    &retained.node,
+                    retained.focused_branch_id(),
+                    Arc::new(ProofStep::Have {
                         proposition: conclusion.clone(),
                         proof: Box::new(body.clone()),
-                    })),
-                    focused_branch: retained.focused_branch_id(),
-                    depth: retained.node.depth + 1,
-                    split_branches: Vec::new(),
-                }),
+                    }),
+                ),
             };
         }
         Ok(retained)

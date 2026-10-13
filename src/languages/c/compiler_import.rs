@@ -663,10 +663,16 @@ fn fixed_args(target: CTarget) -> Vec<String> {
         CTarget::X86_64LinuxKernel => "-std=gnu11",
         CTarget::X86_64LinuxUserspace => "-std=c11",
     };
+    // Plain `char`'s signedness is fixed explicitly, so the compiler and the
+    // verifier agree on it whatever the compiler's own default.
+    let plain_char = match target.plain_char() {
+        super::target::PlainChar::Unsigned => "-funsigned-char",
+        super::target::PlainChar::Signed => "-fsigned-char",
+    };
     let mut args = vec![
         standard.into(),
         "-m64".into(),
-        "-funsigned-char".into(),
+        plain_char.into(),
         "-nostdinc".into(),
     ];
     if target == CTarget::X86_64LinuxUserspace {
@@ -1330,10 +1336,22 @@ fn abi_probe(config: &Config) -> Result<String, String> {
     let output = output?;
     let macros = String::from_utf8(output.stdout)
         .map_err(|e| format!("ABI probe output was not UTF-8: {e}"))?;
+    // Plain `char` is unsigned exactly when the compiler defines
+    // `__CHAR_UNSIGNED__`; the probe checks it matches the target's.
+    let char_unsigned = macros
+        .lines()
+        .any(|line| line.trim() == "#define __CHAR_UNSIGNED__ 1");
+    if char_unsigned != (config.c_target().plain_char() == super::target::PlainChar::Unsigned) {
+        return Err(format!(
+            "compiler ABI probe found plain `char` {}, but target `{}` gives it {}",
+            if char_unsigned { "unsigned" } else { "signed" },
+            config.c_target().name(),
+            if char_unsigned { "signed" } else { "unsigned" },
+        ));
+    }
     for expected in [
         "#define __x86_64__ 1",
         "#define __LP64__ 1",
-        "#define __CHAR_UNSIGNED__ 1",
         "#define __CHAR_BIT__ 8",
         "#define __SIZEOF_SHORT__ 2",
         "#define __SIZEOF_INT__ 4",
@@ -1837,7 +1855,7 @@ mod tests {
             fs::write(root.join("main.i"), artifact).unwrap();
             fs::write(
                 root.join("main.click"),
-                "verifying \"main.c\"; int answer() { ensures result == 42; } by { execute(); simp(); }",
+                "target \"x86_64-linux-kernel\"; verifying \"main.c\"; int answer() { ensures result == 42; } by { execute(); simp(); }",
             )
             .unwrap();
             let config = serde_json::json!({
@@ -2100,7 +2118,7 @@ mod tests {
                 "-include".into(),
                 "config.h".into(),
             ],
-            CTarget::SUPPORTED,
+            CTarget::X86_64LinuxKernel,
             None,
         )
         .unwrap();

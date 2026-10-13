@@ -1,6 +1,6 @@
 # computed result expression verification
 
-This checks that an `ensures` clause can use a small C0 integer expression on
+This checks that an `ensures` clause can use a small Click's C integer expression on
 the right side of `result ==`.
 
 ```c filename=three.c

@@ -32,7 +32,7 @@ authorize their write footprints. The driver proof records intermediate call
 results with small explicit steps before closing the final arithmetic claim.
 Each call initializer lowers to a call step followed by its local assignment.
 
-C0 translation: the initial driver expression called both read-only getters
+C translation: the initial driver expression called both read-only getters
 inside one sum. Click currently rejects multiple unsequenced calls in an
 expression, so `driver.c` explicitly stores their results in local snapshots.
 The getters have no side effects, so this sequencing preserves behavior.

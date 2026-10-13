@@ -1,6 +1,6 @@
 # Multidimensional local arrays use row-major pointer arithmetic
 
-The C0 frontend flattens scalar multidimensional arrays into the existing
+The C front end flattens scalar multidimensional arrays into the existing
 stack block model. Indexing all dimensions computes the corresponding
 row-major element offset before the kernel applies the element width.
 

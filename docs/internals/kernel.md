@@ -7,7 +7,7 @@ Click specs.
 
 - `src/kernel/`: proof terms, C semantics, assumptions, symbolic execution,
   and theorem-producing functions.
-- `src/languages/c/syntax.rs`: C0 parser and lowering to kernel C terms.
+- `src/languages/c/syntax.rs`: C parser and lowering to kernel C terms.
 - `src/surface.rs`: Click parser, validation, lowering, tactics, and proof
   orchestration.
 
@@ -502,7 +502,7 @@ In `src/kernel/`:
   Kernel execution reports
   `TypeMismatch` if `Void` is used as a condition or object type; it never
   erases that execution path.
-- `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax. Calls have
+- `CExpression`, `CStatement`, `CFunction`: lowered C syntax. Calls have
   distinct assigned-result and discarded-result statements; a normal
   fallthrough from a `void` body completes with `CValue::Void`.
 - `SpecExpression`, `SpecProposition`: Kernel Click forms used for
@@ -579,13 +579,13 @@ on one arm and fails on the other stays undecided.
 
 ## C ABI and memory layout
 
-The C0 importer models one explicit ABI: LP64. In that ABI, `int8` has size and alignment 1, `int16` and
+The C front end models one explicit ABI: LP64. In that ABI, `int8` has size and alignment 1, `int16` and
 `uint16` have size and alignment 2, `int32` has size and alignment 4, `uint8`
 has size and alignment 1, `uint32` has size and alignment 4, `int64` and
 `uint64` have size and alignment 8, and every supported pointer has size and
 alignment 8. Struct fields are aligned individually and the
 struct size includes the tail padding required by its maximum field alignment.
-Named enum fields use the supported four-byte `int32` representation. The C0
+Named enum fields use the supported four-byte `int32` representation. The C
 metadata retains the enum declaration and enumerator values, but lowering
 turns an enumerator into its int32 bit pattern and emits the same scalar field
 load or store as an `int32` field. The same representation is retained when a
@@ -598,7 +598,7 @@ field used in an expression decays to a pointer to its first element; the
 kernel never represents the aggregate as a runtime `CValue`. Embedded struct
 fields follow the same address-first rule: for `{ uint8 tag; struct inner in;
 int32 tail; }` with `inner` sized at 8 bytes, `in` starts at byte offset 4 and
-`tail` starts at byte offset 12. The C0 surface carries `in` as an aggregate
+`tail` starts at byte offset 12. The Click's C front end carries `in` as an aggregate
 place while nested member lowering adds the inner field offset before emitting
 the kernel's scalar load or store. Taking the address of a modeled scalar leaf
 uses that same typed lvalue path, so the pointer retains the allocation block
@@ -613,7 +613,7 @@ the bounds do not divide. An enclosing owned object can therefore be lent to
 satisfy a leaf-width view, and two owners of the same bytes at different widths
 are refused as overlapping. Typed loads and stores keep their own widths. Fixed
 multidimensional arrays of embedded structs and supported scalar fields retain
-their declared shapes in C0 metadata. Indexed leaf access flattens indices in
+their declared shapes in Click's C metadata. Indexed leaf access flattens indices in
 row-major order before adding the nested struct's complete ABI stride or the
 scalar field's element-width stride.
 Taking the address of an indexed scalar-array cell uses the same typed lvalue
@@ -640,7 +640,7 @@ issuance, pointer-valued load transport and access enforcement remain pending in
 the [object-model design](https://github.com/clicklang/click/blob/master/design/cpp-object-model.md#checked-pointer-designation-representation-and-implementation).
 
 Copyable by-value structs are the first exception to that address-first
-boundary. C0 retains each leaf field name, byte offset, and kernel type in a
+boundary. Click retains each leaf field name, byte offset, and kernel type in a
 flattened `CAggregateLayout`; embedded fields use qualified names such as
 `inner.value`. The kernel binds a value to an `AggregateObject` with its own
 local block. Parameter binding, local assignment, and aggregate return
@@ -663,7 +663,7 @@ values and member writes remain outside this by-value slice; other unsupported
 aggregate shapes remain outside it as well.
 
 Aggregate returns supplied by a pointer-backed whole-object expression have a
-small ABI boundary: C0's struct-pointer view is `int32*`, while the internal
+small ABI boundary: Click's struct-pointer view is `int32*`, while the internal
 address-backed return slot is `uint8*`. The return transition accepts only
 those two modeled data-pointer views, retags the address at that boundary, and
 copies every modeled leaf into a fresh `__return` block. Consequently a
@@ -672,7 +672,7 @@ fresh result cell with the source snapshot without turning the returned
 aggregate into an alias or weakening ordinary pointer-return type checks.
 
 Positional initializers for copyable struct-valued locals use the same
-address-backed boundary. The C0 parser walks fields in declaration order,
+address-backed boundary. The C parser walks fields in declaration order,
 recurses through explicitly braced embedded structs and embedded-struct
 arrays, and emits typed stores for each initialized leaf. It emits explicit
 zero stores for omitted members and cells, so an automatic aggregate is fully
@@ -873,15 +873,15 @@ rounding, exceptional values, and conversion rules. Symbolic float-to-integer
 conversions retain finite and range obligations at function, assignment, and
 return boundaries.
 
-Named unions are represented on the C0 side as address-backed layouts. Every
+Named unions are represented on the C side as address-backed layouts. Every
 modeled member has offset zero, and a member read lowers to a kernel typed load
 using that member's scalar or pointer type. The kernel still has no runtime
-union value or active-member tag; C0 therefore rejects union writes and
+union value or active-member tag; Click therefore rejects union writes and
 whole-union operations, while the tag/member relationship remains an explicit
 source-level precondition or branch.
 
 This is not a target-independent C model. Packed structs,
-non-LP64 targets, and field types outside the documented C0 subset are not
+non-LP64 targets, and field types outside documented supported C are not
 silently approximated; they must remain unsupported until their ABI rules are
 represented explicitly. Bitfields and other compiler-dependent layout rules
 are tracked in `issues/multiple-compilers.md`.
@@ -1130,7 +1130,7 @@ declared it. Its storage stops existing, so a pointer into it designates no
 object and a load through one is undefined behaviour, not a way to read what
 the block wrote.
 
-The kernel has no statement that stands for a block — C0 lowers a source block
+The kernel has no statement that stands for a block — Click lowers a source block
 to a `Seq` tree — so a scope's own declarations are the `Declare` and
 `DeclareAggregate` statements reachable from its root through that tree.
 `scope_declared_names` collects them, stopping at a nested scope, which retires

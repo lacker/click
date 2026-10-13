@@ -168,7 +168,7 @@ fn grouped_auto_completes_the_proof_execution_without_a_body_rerun() {
     let _ = crate::kernel::take_checked_function_body_execution_count();
     let verified = verify_c0_sources(click_source, &[("set.c", c_source)])
         .expect("grouped auto proof should verify");
-    let expected_tactics = [ProofTactic::SmartExecute, ProofTactic::Simp];
+    let expected_tactics = [ProofTactic::SmartExecute, ProofTactic::AutoClose];
 
     assert_eq!(verified.len(), 3);
     assert!(

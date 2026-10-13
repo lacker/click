@@ -50,3 +50,14 @@ theorem adler_pack_fields_spec(a: uint16, b: uint16, bytes: uint8[], length: int
   }
  }
 }
+
+# Canonical observations are accepted unchanged as the next native seed.
+theorem adler_canonical_observation(value: uint16) {
+ requires to_integer(value) <= 65520;
+ ensures (uint32)value <= 65520u32 by {
+  apply(adler_u16_observation(value));
+  have to_integer((uint32)value) <= to_integer(65520u32) by { rewrite(to_integer((uint32)value) == to_integer(value)); assumption(); }
+  apply(uint32_to_integer_less_equal_implies_less_equal((uint32)value, 65520u32));
+  assumption();
+ }
+}

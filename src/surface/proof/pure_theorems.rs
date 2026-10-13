@@ -476,8 +476,7 @@ pub(super) fn pure_induction_hypothesis(
             &setup.hypothesis,
             requirement,
             &assumptions,
-            &context.values,
-            &context.array_refs,
+            ContractEnvironment::new(&context.values, &context.array_refs),
             &context.memory,
             spec_definitions,
         )
@@ -489,8 +488,7 @@ pub(super) fn pure_induction_hypothesis(
         &setup.hypothesis,
         &setup.surface_goal,
         &assumptions,
-        &context.values,
-        &context.array_refs,
+        ContractEnvironment::new(&context.values, &context.array_refs),
         &context.memory,
         spec_definitions,
     )
@@ -887,8 +885,7 @@ fn check_pure_structural_induction(
     let state = CState::new().with_memory(context.memory.clone());
     let parameter_value = capture_fixed_state_algebraic_expression(
         &parameter_expression,
-        &context.values,
-        &context.array_refs,
+        ContractEnvironment::new(&context.values, &context.array_refs),
         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         spec_definitions,
     )
@@ -1014,8 +1011,10 @@ fn check_pure_structural_induction(
                     };
                     let captured = capture_fixed_state_algebraic_expression(
                         &symbolic,
-                        &branch_context.values,
-                        &branch_context.array_refs,
+                        ContractEnvironment::new(
+                            &branch_context.values,
+                            &branch_context.array_refs,
+                        ),
                         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
                         spec_definitions,
                     )
@@ -1041,8 +1040,7 @@ fn check_pure_structural_induction(
         let branch_goal = lower_pure_theorem_proposition_with_algebraic_values(
             claim_label,
             &branch_surface_goal,
-            &branch_context.values,
-            &branch_context.array_refs,
+            ContractEnvironment::new(&branch_context.values, &branch_context.array_refs),
             &branch_algebraic_values,
             &branch_context.memory,
             spec_definitions,
@@ -1056,8 +1054,7 @@ fn check_pure_structural_induction(
             let kernel = lower_pure_theorem_proposition_with_algebraic_values(
                 claim_label,
                 &surface,
-                &branch_context.values,
-                &branch_context.array_refs,
+                ContractEnvironment::new(&branch_context.values, &branch_context.array_refs),
                 &branch_algebraic_values,
                 &branch_context.memory,
                 spec_definitions,
@@ -1106,8 +1103,7 @@ fn check_pure_structural_induction(
                 let kernel = lower_pure_theorem_proposition_with_algebraic_values(
                     claim_label,
                     &surface,
-                    &branch_context.values,
-                    &branch_context.array_refs,
+                    ContractEnvironment::new(&branch_context.values, &branch_context.array_refs),
                     &branch_algebraic_values,
                     &branch_context.memory,
                     spec_definitions,
@@ -1122,8 +1118,7 @@ fn check_pure_structural_induction(
             let conclusion = lower_pure_theorem_proposition_with_algebraic_values(
                 claim_label,
                 &child_surface_goal,
-                &branch_context.values,
-                &branch_context.array_refs,
+                ContractEnvironment::new(&branch_context.values, &branch_context.array_refs),
                 &branch_algebraic_values,
                 &branch_context.memory,
                 spec_definitions,
@@ -1279,8 +1274,7 @@ pub(super) fn pure_theorem_context(
             theorem.name(),
             proposition,
             &requirement_assumptions,
-            &values,
-            &array_refs,
+            ContractEnvironment::new(&values, &array_refs),
             &BTreeMap::new(),
             &integer_values,
             &memory,
@@ -1389,8 +1383,7 @@ pub(in crate::surface) fn assumed_theorem_certification_authorities(
                 theorem.name(),
                 surface_goal,
                 &lowering_assumptions,
-                &context.values,
-                &context.array_refs,
+                ContractEnvironment::new(&context.values, &context.array_refs),
                 &BTreeMap::new(),
                 &context.integer_values,
                 &context.memory,
@@ -1482,7 +1475,12 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 C0Type::Int16 => CValue::Int16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt32 => CValue::UInt32(Bitvector32Term::Variable(Variable(index as u64))),
-                C0Type::Char => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Char(crate::languages::c::syntax::PlainChar::Unsigned) => {
+                    CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64)))
+                }
+                C0Type::Char(crate::languages::c::syntax::PlainChar::Signed) => {
+                    CValue::Int8(Bitvector32Term::Variable(Variable(index as u64)))
+                }
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt16 => CValue::UInt16(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int64 => CValue::Int64(Bitvector32Term::Variable(Variable(index as u64))),
@@ -1541,8 +1539,8 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::Int32Pointer,
                 ),
-                C0Type::CharPointer
-                | C0Type::CharArray(_)
+                C0Type::CharPointer(_)
+                | C0Type::CharArray(_, _)
                 | C0Type::UInt8Pointer
                 | C0Type::UInt8Array(_) => CValue::typed_pointer(
                     Pointer {
@@ -1660,7 +1658,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     )
                 }
                 C0Type::Int32PointerPointer
-                | C0Type::CharPointerPointer
+                | C0Type::CharPointerPointer(_)
                 | C0Type::UInt8PointerPointer
                 | C0Type::Int16PointerPointer
                 | C0Type::UInt16PointerPointer
@@ -1779,8 +1777,7 @@ fn verify_theorem_ensure(
         theorem.name(),
         surface_goal,
         &lowering_assumptions,
-        &context.values,
-        &context.array_refs,
+        ContractEnvironment::new(&context.values, &context.array_refs),
         &BTreeMap::new(),
         &context.integer_values,
         &context.memory,
@@ -1807,6 +1804,10 @@ fn verify_theorem_ensure(
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
             let (certificate, completion) = check_direct_pure_goal_with_proof(
                 !matches!(ensure_clause.proof(), SourceProof::Default),
+                matches!(
+                    ensure_clause.proof(),
+                    SourceProof::Tactic(SmartTactic::Auto)
+                ),
                 claim_label,
                 context,
                 surface_goal,
@@ -2187,9 +2188,8 @@ fn verify_contract_refinement_theorem(
     let goal = lower_pure_theorem_proposition_with_integer_values(
         theorem.name(),
         surface_goal,
-        &context.values,
+        ContractEnvironment::new(&context.values, &context.array_refs),
         &context.integer_values,
-        &context.array_refs,
         &context.memory,
         spec_definitions,
     )
@@ -2259,8 +2259,7 @@ fn certificate_int32_rewrites(
             ProofStep::Rewrite(surface) => lower_pure_theorem_proposition(
                 claim_label,
                 surface,
-                &context.values,
-                &context.array_refs,
+                ContractEnvironment::new(&context.values, &context.array_refs),
                 &context.memory,
                 spec_definitions,
             )
@@ -2291,8 +2290,11 @@ fn claim_script_sites(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_direct_pure_goal_with_proof(
     has_written_tactic: bool,
+    // `by auto;` tries the solver before `simp`.
+    auto: bool,
     claim_label: &str,
     context: &PureTheoremContext,
     surface_goal: &ClickProposition,
@@ -2326,7 +2328,12 @@ fn check_direct_pure_goal_with_proof(
             TacticTiming::new(claim_label, 0, 0, &ProofTactic::Simp, 0),
         )
     };
-    let result = match root.try_simp_closure() {
+    let result = if auto {
+        root.try_auto_proof_closure()
+    } else {
+        root.try_simp_closure()
+    };
+    let result = match result {
         Ok(result) => result,
         Err(error) => return Err(error.with_search_failures(search.finish())),
     };
@@ -2395,6 +2402,8 @@ pub(in crate::surface) fn is_kernel_standard_theorem_name(name: &str) -> bool {
                 | "uint64_pack_uint16_to_integer"
                 | "uint32_pack_uint16_to_integer"
                 | "uint32_pack_uint16_high_first_to_integer"
+                | "uint32_unpack_uint16_low"
+                | "uint32_unpack_uint16_high"
                 | "uint64_add_to_integer"
                 | "uint64_multiply_to_integer"
                 | "uint64_subtract_to_integer"
@@ -2526,6 +2535,8 @@ fn verify_kernel_standard_theorem_axiom(
         "uint64_pack_uint16_to_integer"
         | "uint32_pack_uint16_to_integer"
         | "uint32_pack_uint16_high_first_to_integer"
+        | "uint32_unpack_uint16_low"
+        | "uint32_unpack_uint16_high"
         | "uint64_divide_to_integer"
         | "uint64_remainder_to_integer"
         | "uint32_divide_to_integer"
@@ -2734,6 +2745,12 @@ fn verify_kernel_standard_theorem_axiom(
         };
         let value = uint32_parameter(0)?;
         match theorem.name() {
+            "uint32_unpack_uint16_low" => {
+                crate::kernel::prove_uint32_unpack_uint16_low(value, uint32_parameter(1)?)
+            }
+            "uint32_unpack_uint16_high" => {
+                crate::kernel::prove_uint32_unpack_uint16_high(value, uint32_parameter(1)?)
+            }
             "uint32_pack_uint16_high_first_to_integer" => {
                 crate::kernel::prove_unsigned_pack_u16_high_first_to_integer(
                     crate::kernel::MachineIntegerType::UInt32,
@@ -3290,16 +3307,14 @@ pub(super) fn induction_application_surface_premises(
 pub(super) fn lower_pure_theorem_proposition(
     theorem_name: &str,
     proposition: &ClickProposition,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     memory: &CMemory,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     lower_pure_theorem_proposition_with_opaque_calls(
         theorem_name,
         proposition,
-        values,
-        array_refs,
+        contract_environment,
         memory,
         spec_definitions,
         &BTreeSet::new(),
@@ -3309,17 +3324,15 @@ pub(super) fn lower_pure_theorem_proposition(
 pub(super) fn lower_pure_theorem_proposition_with_integer_values(
     theorem_name: &str,
     proposition: &ClickProposition,
-    values: &BTreeMap<String, CValue>,
+    contract_environment: ContractEnvironment<'_>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
-    array_refs: &ClickArrayRefs,
     memory: &CMemory,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
     lower_pure_theorem_proposition_with_algebraic_and_integer_values(
         theorem_name,
         proposition,
-        values,
-        array_refs,
+        contract_environment,
         &BTreeMap::new(),
         integer_values,
         memory,
@@ -3331,8 +3344,7 @@ pub(super) fn lower_pure_theorem_proposition_with_integer_values(
 pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
     theorem_name: &str,
     proposition: &ClickProposition,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     memory: &CMemory,
@@ -3342,8 +3354,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_and_integer_values(
         theorem_name,
         proposition,
         &PureFactContext::new(),
-        values,
-        array_refs,
+        contract_environment,
         algebraic_values,
         integer_values,
         memory,
@@ -3360,26 +3371,25 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
     theorem_name: &str,
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     memory: &CMemory,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<(Proposition, crate::kernel::LoweringIntroductions), String> {
     let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_recording_introductions(
+    lower_fixed_state_proposition_through_kernel_with_introductions(
         proposition,
         &PureFactContext::new(),
-        assumptions,
-        values,
-        array_refs,
-        algebraic_values,
-        integer_values,
+        contract_environment,
         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         spec_definitions,
-        &BTreeSet::new(),
-        BTreeMap::new(),
+        FixedStateLoweringOptions {
+            algebraic_values: Some(algebraic_values),
+            integer_values: Some(integer_values),
+            obligation_assumptions: Some(assumptions),
+            ..Default::default()
+        },
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
@@ -3387,8 +3397,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
 pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
     theorem_name: &str,
     proposition: &ClickProposition,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     algebraic_values: &BTreeMap<String, SpecAlgebraicExpression>,
     memory: &CMemory,
     spec_definitions: SpecDefinitions<'_>,
@@ -3396,8 +3405,7 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
     lower_pure_theorem_proposition_with_algebraic_and_integer_values(
         theorem_name,
         proposition,
-        values,
-        array_refs,
+        contract_environment,
         algebraic_values,
         &crate::persistent::PersistentMap::default(),
         memory,
@@ -3411,21 +3419,22 @@ pub(super) fn lower_pure_theorem_proposition_with_algebraic_values(
 fn lower_pure_theorem_proposition_with_opaque_calls(
     theorem_name: &str,
     proposition: &ClickProposition,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     memory: &CMemory,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: &BTreeSet<String>,
 ) -> Result<Proposition, String> {
     let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+    lower_fixed_state_proposition_through_kernel_with(
         proposition,
         &PureFactContext::new(),
-        values,
-        array_refs,
+        contract_environment,
         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         spec_definitions,
-        opaque_click_functions,
+        FixedStateLoweringOptions {
+            opaque_click_functions: Some(opaque_click_functions),
+            ..Default::default()
+        },
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
@@ -3434,8 +3443,7 @@ fn lower_pure_theorem_proposition_opaque(
     theorem_name: &str,
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     memory: &CMemory,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
@@ -3446,14 +3454,16 @@ fn lower_pure_theorem_proposition_opaque(
         .cloned()
         .collect::<BTreeSet<_>>();
     let state = CState::new().with_memory(memory.clone());
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+    lower_fixed_state_proposition_through_kernel_with(
         proposition,
         assumptions,
-        values,
-        array_refs,
+        contract_environment,
         FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
         spec_definitions,
-        &opaque,
+        FixedStateLoweringOptions {
+            opaque_click_functions: Some(&opaque),
+            ..Default::default()
+        },
     )
     .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
@@ -3868,8 +3878,7 @@ mod tests {
             let goal = lower_pure_theorem_proposition(
                 theorem.name(),
                 surface_goal,
-                &context.values,
-                &context.array_refs,
+                ContractEnvironment::new(&context.values, &context.array_refs),
                 &context.memory,
                 spec_definitions,
             )
@@ -4043,8 +4052,7 @@ mod tests {
             theorem.name(),
             surface_goal,
             &assumptions_from_propositions(&context.requires),
-            &context.values,
-            &context.array_refs,
+            ContractEnvironment::new(&context.values, &context.array_refs),
             &BTreeMap::new(),
             &context.integer_values,
             &context.memory,
@@ -4391,6 +4399,35 @@ theorem int32_less_equal_to_integer(left: int32, right: int32) {
             ] {
                 assert_ne!(source, invalid);
                 assert!(verify_standard_declaration(&invalid).is_err(), "{invalid}");
+            }
+        }
+    }
+
+    #[test]
+    fn unsigned_unpacking_declarations_require_exact_bounds_words_and_unsigned_shift() {
+        for (name, extraction, result) in [
+            ("low", "(((high << 16) | low) & 65535u32)", "low"),
+            ("high", "((((high << 16) | low) >> 16) & 65535u32)", "high"),
+        ] {
+            let source = format!(
+                "theorem uint32_unpack_uint16_{name}(low: uint32, high: uint32) {{ requires low <= 65535u32; requires high <= 65535u32; ensures {extraction} == {result}; }}"
+            );
+            verify_standard_declaration(&source).unwrap();
+            for invalid in [
+                source.replace("requires low <= 65535u32;", ""),
+                source.replace("requires high <= 65535u32;", ""),
+                source.replace("65535", "65536"),
+                source.replace("high << 16", "high << 15"),
+                source.replace("& 65535u32", "& 32767u32"),
+                source.replace(&format!("== {result};"), "== 0u32;"),
+                source.replace(": uint32", ": int32"),
+                source.replace(": uint32", ": uint64"),
+            ] {
+                assert_ne!(source, invalid);
+                assert!(verify_standard_declaration(&invalid).is_err(), "{invalid}");
+            }
+            if name == "high" {
+                assert!(verify_standard_declaration(&source.replace(">> 16", ">> 15")).is_err());
             }
         }
     }

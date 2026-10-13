@@ -516,13 +516,6 @@ impl ClickModuleSource {
         }
     }
 
-    /// Places `source` after `line_offset` lines of its file, as a fenced
-    /// block of a larger container.
-    pub fn with_line_offset(mut self, line_offset: usize) -> Self {
-        self.line_offset = line_offset;
-        self
-    }
-
     pub fn identity(&self) -> &str {
         &self.identity
     }
@@ -1159,6 +1152,8 @@ struct ClickFunctionType {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FunctionBlock {
+    /// C objects visible in this declaration, supplied by the source frontend.
+    c_object_names: std::sync::Arc<BTreeSet<String>>,
     signature: FunctionSignature,
     external: bool,
     /// Internal source grouping for an `executes` theorem's call and return.
@@ -2100,7 +2095,10 @@ impl ClickProposition {
     }
 }
 
-fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet<String>) {
+pub(crate) fn collect_c_expression_variables(
+    expression: &CExpression,
+    names: &mut BTreeSet<String>,
+) {
     match expression {
         CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Variable(name) => {
@@ -2215,7 +2213,7 @@ fn collect_current_resource_subject_variables(
     }
 }
 
-fn collect_current_contract_expression_variables(
+pub(crate) fn collect_current_contract_expression_variables(
     expression: &ContractExpression,
     names: &mut BTreeSet<String>,
 ) {
@@ -2544,6 +2542,20 @@ struct ClickArrayRef {
 }
 
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
+
+/// The names a contract expression reads: scalar values and array
+/// references, as `contract_environment_at_state` builds them.
+#[derive(Clone, Copy)]
+struct ContractEnvironment<'a> {
+    values: &'a BTreeMap<String, CValue>,
+    array_refs: &'a ClickArrayRefs,
+}
+
+impl<'a> ContractEnvironment<'a> {
+    fn new(values: &'a BTreeMap<String, CValue>, array_refs: &'a ClickArrayRefs) -> Self {
+        Self { values, array_refs }
+    }
+}
 #[derive(Clone)]
 struct RecordedSnapshots {
     version: std::sync::Arc<RecordedSnapshotVersion>,
@@ -3542,6 +3554,11 @@ pub enum ProofTactic {
         premises: Option<Vec<ClickProposition>>,
     },
     Simp,
+    /// The closer `auto` ends a proof with: each pending claim is tried by
+    /// `simp`, then by the rest of `auto`'s search. It has no source
+    /// spelling; `by auto;`, an omitted proof, and a script that ends with
+    /// claims still open use it.
+    AutoClose,
     SimpUsing(ProofSimpUsing),
     ArithmeticCertificate(ArithmeticCertificate),
     /// Dev-only proof hole. Closes the enclosing proof unit without checking
@@ -5275,6 +5292,7 @@ impl ProofTactic {
             Self::SmartExecute => TacticClass::Smart(SmartTacticKind::SmartExecute),
             Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
+            Self::AutoClose => TacticClass::Smart(SmartTacticKind::Auto),
             Self::SimpUsing(_) => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::Control(ControlTactic::Have),
             Self::Open(_) => TacticClass::Control(ControlTactic::Open),
@@ -5925,6 +5943,27 @@ impl From<ProgramPointRef> for SnapshotSelector {
     fn from(point: ProgramPointRef) -> Self {
         Self::ProgramPoint(point)
     }
+}
+
+/// Whether a snapshot can name the contract `result`. `result` is the return
+/// value, which exists only once the function returns, so `old(...)` (`None`)
+/// and every program point but `function.exit` precede it. A proof mark is
+/// placed by the proof itself and may follow the return.
+pub(crate) fn snapshot_can_name_result(selector: Option<&SnapshotSelector>) -> bool {
+    match selector {
+        None => false,
+        Some(SnapshotSelector::Mark(_)) => true,
+        Some(SnapshotSelector::ProgramPoint(point)) => {
+            point.region == CodeRegionRef::Function && point.kind == ProgramPointKind::Exit
+        }
+    }
+}
+
+/// Whether `result` occurs in a proposition outside any nested snapshot.
+pub(crate) fn proposition_names_result(proposition: &ClickProposition) -> bool {
+    let mut names = BTreeSet::new();
+    collect_current_proposition_variables(proposition, &mut names);
+    names.contains("result")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -8572,11 +8611,6 @@ impl ClickError {
             .origin
             .source_tactic_path
             .as_deref()
-    }
-
-    pub fn proof_step_location(&self) -> Option<&str> {
-        let origin = &self.diagnostic.as_ref()?.origin;
-        (origin.stage != "contract certification").then_some(origin.location.as_str())
     }
 
     pub fn kind(&self) -> ClickErrorKind {

@@ -1,6 +1,6 @@
 # C division by zero
 
-This checks that C0 signed `int32` division by zero is undefined behavior, not a
+This checks that Click signed `int32` division by zero is undefined behavior, not a
 wrapping or symbolic value.
 
 ```c filename=divide_by_zero.c

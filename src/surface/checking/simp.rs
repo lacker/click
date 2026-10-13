@@ -732,105 +732,12 @@ pub(in crate::surface) fn simp_bitvector_const(term: &Bitvector32Term) -> Option
 
 pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
     match term {
-        Bitvector32Term::MachineIntegerCast {
-            value,
-            source,
-            destination,
-        } => Bitvector32Term::machine_integer_cast(*source, *destination, simp_bitvector(value)),
-
         Bitvector32Term::Constant(_)
         | Bitvector32Term::Int64Constant(_)
         | Bitvector32Term::UInt64Constant(_)
         | Bitvector32Term::MachineIntegerConstant(_)
         | Bitvector32Term::Variable(_) => term.clone(),
         Bitvector32Term::IntegerToMachine { .. } => term.clone(),
-        Bitvector32Term::Int64From32(value) => {
-            Bitvector32Term::int64_from_32(simp_bitvector(value))
-        }
-        Bitvector32Term::UInt64From32(value) => {
-            Bitvector32Term::uint64_from_32(simp_bitvector(value))
-        }
-        Bitvector32Term::UInt32From64(value) => {
-            Bitvector32Term::uint32_from_64(simp_bitvector(value))
-        }
-        Bitvector32Term::Int64FromUInt32(value) => {
-            Bitvector32Term::int64_from_uint32(simp_bitvector(value))
-        }
-        Bitvector32Term::UInt64FromInt32(value) => {
-            Bitvector32Term::uint64_from_int32(simp_bitvector(value))
-        }
-        Bitvector32Term::UInt64FromInt64(value) => {
-            Bitvector32Term::uint64_from_int64(simp_bitvector(value))
-        }
-        Bitvector32Term::Int64Add(left, right) => {
-            Bitvector32Term::int64_add(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64Subtract(left, right) => {
-            Bitvector32Term::int64_subtract(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64Multiply(left, right) => {
-            Bitvector32Term::int64_multiply(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64Divide(left, right) => {
-            Bitvector32Term::int64_divide(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64Remainder(left, right) => {
-            Bitvector32Term::int64_remainder(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64ShiftLeft(left, right) => {
-            Bitvector32Term::int64_shift_left(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64ArithmeticShiftRight(left, right) => {
-            Bitvector32Term::int64_arithmetic_shift_right(
-                simp_bitvector(left),
-                simp_bitvector(right),
-            )
-        }
-        Bitvector32Term::Int64BitwiseAnd(left, right) => {
-            Bitvector32Term::int64_bitwise_and(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64BitwiseOr(left, right) => {
-            Bitvector32Term::int64_bitwise_or(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64BitwiseXor(left, right) => {
-            Bitvector32Term::int64_bitwise_xor(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::Int64BitwiseNot(value) => {
-            Bitvector32Term::int64_bitwise_not(simp_bitvector(value))
-        }
-        Bitvector32Term::UInt64Add(left, right) => {
-            Bitvector32Term::uint64_add(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64Subtract(left, right) => {
-            Bitvector32Term::uint64_subtract(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64Multiply(left, right) => {
-            Bitvector32Term::uint64_multiply(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64Divide(left, right) => {
-            Bitvector32Term::uint64_divide(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64Remainder(left, right) => {
-            Bitvector32Term::uint64_remainder(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64ShiftLeft(left, right) => {
-            Bitvector32Term::uint64_shift_left(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
-            Bitvector32Term::uint64_logical_shift_right(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            Bitvector32Term::uint64_bitwise_and(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            Bitvector32Term::uint64_bitwise_or(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64BitwiseXor(left, right) => {
-            Bitvector32Term::uint64_bitwise_xor(simp_bitvector(left), simp_bitvector(right))
-        }
-        Bitvector32Term::UInt64BitwiseNot(value) => {
-            Bitvector32Term::uint64_bitwise_not(simp_bitvector(value))
-        }
         Bitvector32Term::Add(left, right) => {
             bitvector32_add(simp_bitvector(left), simp_bitvector(right))
         }
@@ -846,21 +753,11 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
             bitvector32_divide(left.clone(), right.clone())
                 .unwrap_or_else(|_| Bitvector32Term::Divide(Box::new(left), Box::new(right)))
         }
-        Bitvector32Term::UnsignedDivide(left, right) => {
-            let left = simp_bitvector(left);
-            let right = simp_bitvector(right);
-            Bitvector32Term::unsigned_divide(left.clone(), right.clone())
-        }
         Bitvector32Term::Remainder(left, right) => {
             let left = simp_bitvector(left);
             let right = simp_bitvector(right);
             bitvector32_remainder(left.clone(), right.clone())
                 .unwrap_or_else(|_| Bitvector32Term::Remainder(Box::new(left), Box::new(right)))
-        }
-        Bitvector32Term::UnsignedRemainder(left, right) => {
-            let left = simp_bitvector(left);
-            let right = simp_bitvector(right);
-            Bitvector32Term::unsigned_remainder(left, right)
         }
         Bitvector32Term::ShiftLeft(left, right) => {
             let left = simp_bitvector(left);
@@ -875,11 +772,6 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
                 Bitvector32Term::ArithmeticShiftRight(Box::new(left), Box::new(right))
             })
         }
-        Bitvector32Term::LogicalShiftRight(left, right) => {
-            let left = simp_bitvector(left);
-            let right = simp_bitvector(right);
-            Bitvector32Term::logical_shift_right(left, right)
-        }
         Bitvector32Term::BitwiseAnd(left, right) => {
             bitvector32_and(simp_bitvector(left), simp_bitvector(right))
         }
@@ -890,26 +782,6 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
             bitvector32_xor(simp_bitvector(left), simp_bitvector(right))
         }
         Bitvector32Term::BitwiseNot(value) => bitvector32_not(simp_bitvector(value)),
-        Bitvector32Term::Float32Negate(value) => {
-            Bitvector32Term::float32_negate(simp_bitvector(value))
-        }
-        Bitvector32Term::Float32Binary {
-            operator,
-            left,
-            right,
-        } => {
-            Bitvector32Term::float32_binary(simp_bitvector(left), simp_bitvector(right), *operator)
-        }
-        Bitvector32Term::Float64Negate(value) => {
-            Bitvector32Term::float64_negate(simp_bitvector(value))
-        }
-        Bitvector32Term::Float64Binary {
-            operator,
-            left,
-            right,
-        } => {
-            Bitvector32Term::float64_binary(simp_bitvector(left), simp_bitvector(right), *operator)
-        }
         Bitvector32Term::If {
             condition,
             then_term,
@@ -952,6 +824,11 @@ pub(in crate::surface) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32T
         Bitvector32Term::PointerAddress(pointer) => {
             Bitvector32Term::PointerAddress(pointer.clone())
         }
+        term => match (term.as_binary(), term.as_unary()) {
+            (Some((op, left, right)), _) => op.build(simp_bitvector(left), simp_bitvector(right)),
+            (_, Some((op, value))) => op.build(simp_bitvector(value)),
+            _ => unreachable!("every other variant has its own arm"),
+        },
     }
 }
 

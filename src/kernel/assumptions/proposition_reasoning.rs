@@ -3139,51 +3139,20 @@ impl PureFactContext {
             return true;
         }
 
+        if let (Some((operator, left_a, left_b)), Some((other, right_a, right_b))) =
+            (left.as_binary(), right.as_binary())
+        {
+            return operator == other
+                && operator.is_bitvector32()
+                && !matches!(
+                    operator,
+                    crate::kernel::BitvectorBinaryOp::UnsignedDivide
+                        | crate::kernel::BitvectorBinaryOp::UnsignedRemainder
+                )
+                && self.bitvector_terms_equal_for_transport(left_a, right_a)
+                && self.bitvector_terms_equal_for_transport(left_b, right_b);
+        }
         match (left, right) {
-            (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
-            | (
-                Bitvector32Term::Subtract(left_a, left_b),
-                Bitvector32Term::Subtract(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::Multiply(left_a, left_b),
-                Bitvector32Term::Multiply(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::Divide(left_a, left_b),
-                Bitvector32Term::Divide(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::Remainder(left_a, left_b),
-                Bitvector32Term::Remainder(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::ShiftLeft(left_a, left_b),
-                Bitvector32Term::ShiftLeft(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::ArithmeticShiftRight(left_a, left_b),
-                Bitvector32Term::ArithmeticShiftRight(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::LogicalShiftRight(left_a, left_b),
-                Bitvector32Term::LogicalShiftRight(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::BitwiseAnd(left_a, left_b),
-                Bitvector32Term::BitwiseAnd(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::BitwiseOr(left_a, left_b),
-                Bitvector32Term::BitwiseOr(right_a, right_b),
-            )
-            | (
-                Bitvector32Term::BitwiseXor(left_a, left_b),
-                Bitvector32Term::BitwiseXor(right_a, right_b),
-            ) => {
-                self.bitvector_terms_equal_for_transport(left_a, right_a)
-                    && self.bitvector_terms_equal_for_transport(left_b, right_b)
-            }
             (Bitvector32Term::BitwiseNot(left), Bitvector32Term::BitwiseNot(right)) => {
                 self.bitvector_terms_equal_for_transport(left, right)
             }

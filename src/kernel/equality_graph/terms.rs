@@ -242,10 +242,20 @@ pub(super) struct TermClasses {
     // Retained concrete address evidence follows typed class merges. This
     // disambiguates parameters sharing the external address-space block.
     storage_addresses: PersistentMap<u64, Option<Pointer>>,
-    // One producer-registered additive spelling per address class. Retain
-    // its explicit base for captured interior addresses without enumerating
-    // class members or searching the caller's resource frame.
-    additive_addresses: PersistentMap<u64, (bool, Arc<Pointer>)>,
+    // One producer-registered additive spelling per index width and address
+    // class. A narrow spelling must not discard the wide coordinate whose
+    // bounds justify a borrow. Queries never enumerate class members.
+    additive_addresses: PersistentMap<u64, (Option<Arc<Pointer>>, Option<Arc<Pointer>>)>,
+    // Same-block pointer comparisons enter as offset equalities. Their checked
+    // producer spellings carry no block identity and are applied only in the
+    // query's own block.
+    additive_offsets: PersistentMap<
+        u64,
+        (
+            Option<Arc<PointerOffsetTerm>>,
+            Option<Arc<PointerOffsetTerm>>,
+        ),
+    >,
     alignment_witnesses: PersistentMap<u64, (u64, Pointer)>,
     // One zero-offset typed-read value per class. Congruence emits only
     // newly identified pairs for the legacy affine/index projection.
@@ -476,10 +486,42 @@ impl TermClasses {
         if !matches!(pointer.offset, PointerOffsetTerm::Add(_, _)) {
             return;
         }
-        // Prefer an already checked int32-index spelling when both widths
-        // denote this address: range resources retain those signed endpoints.
-        // This preference changes lookup coordinates, not the bounds oracle.
-        let mut pending = vec![&pointer.offset];
+        let wide = Self::additive_offset_is_wide(&pointer.offset);
+        let root = self.root(id);
+        let mut spellings = self
+            .additive_addresses
+            .get(&root)
+            .cloned()
+            .unwrap_or_default();
+        let selected = if wide {
+            &mut spellings.1
+        } else {
+            &mut spellings.0
+        };
+        if selected
+            .as_ref()
+            .is_none_or(|prior| wide && Self::prefer_wide_offset(&pointer.offset, &prior.offset))
+        {
+            *selected = Some(Arc::new(pointer.clone()));
+            self.additive_addresses.insert(root, spellings);
+        }
+    }
+
+    // A wide supplier checks the final displacement in its uint64 coordinate.
+    // Prefer that producer over a wide prefix followed by a signed displacement;
+    // both denote the same checked address, but only the former retains the
+    // native index on which the caller stated its window bounds.
+    fn prefer_wide_offset(new: &PointerOffsetTerm, prior: &PointerOffsetTerm) -> bool {
+        let native = |offset: &PointerOffsetTerm| {
+            matches!(offset,
+            PointerOffsetTerm::Add(_, right) if matches!(right.as_ref(),
+                PointerOffsetTerm::Int64Scaled { unsigned: true, .. }))
+        };
+        native(new) && !native(prior)
+    }
+
+    fn additive_offset_is_wide(offset: &PointerOffsetTerm) -> bool {
+        let mut pending = vec![offset];
         let mut wide = false;
         while let Some(offset) = pending.pop() {
             crate::instrumentation::record_deterministic_work(1);
@@ -495,31 +537,105 @@ impl TermClasses {
                 _ => {}
             }
         }
-        let root = self.root(id);
-        if self
-            .additive_addresses
-            .get(&root)
-            .is_none_or(|(prior_wide, _)| *prior_wide && !wide)
-        {
-            self.additive_addresses
-                .insert(root, (wide, Arc::new(pointer.clone())));
+        wide
+    }
+
+    fn retain_additive_offset(&mut self, id: u64, offset: &PointerOffsetTerm) {
+        if !matches!(offset, PointerOffsetTerm::Add(_, _)) {
+            return;
         }
+        let wide = Self::additive_offset_is_wide(offset);
+        let root = self.root(id);
+        let mut spellings = self
+            .additive_offsets
+            .get(&root)
+            .cloned()
+            .unwrap_or_default();
+        let selected = if wide {
+            &mut spellings.1
+        } else {
+            &mut spellings.0
+        };
+        if selected
+            .as_ref()
+            .is_none_or(|prior| wide && Self::prefer_wide_offset(offset, prior))
+        {
+            *selected = Some(Arc::new(offset.clone()));
+            self.additive_offsets.insert(root, spellings);
+        }
+    }
+
+    pub(super) fn additive_offset(
+        &mut self,
+        offset: &PointerOffsetTerm,
+        wide: bool,
+    ) -> Option<PointerOffsetTerm> {
+        let id = self.intern(offset);
+        let (narrow, wide_spelling) = self.additive_offsets.get(&self.root(id))?;
+        (if wide {
+            wide_spelling.as_ref()
+        } else {
+            narrow.as_ref().or(wide_spelling.as_ref())
+        })
+        .map(|offset| (**offset).clone())
+    }
+
+    fn merge_additive_offsets(&mut self, moved: u64, kept: u64) {
+        if let Some((narrow, wide)) = self.additive_offsets.get(&moved).cloned() {
+            let mut spellings = self
+                .additive_offsets
+                .get(&kept)
+                .cloned()
+                .unwrap_or_default();
+            if spellings.0.is_none() {
+                spellings.0 = narrow;
+            }
+            if let Some(wide) = wide
+                && spellings
+                    .1
+                    .as_ref()
+                    .is_none_or(|prior| Self::prefer_wide_offset(&wide, prior))
+            {
+                spellings.1 = Some(wide);
+            }
+            self.additive_offsets.insert(kept, spellings);
+        }
+        self.additive_offsets.remove(&moved);
     }
 
     pub(super) fn additive_address(&self, id: u64) -> Option<Pointer> {
         self.additive_addresses
             .get(&self.root(id))
-            .map(|(_, pointer)| (**pointer).clone())
+            .and_then(|(narrow, wide)| narrow.as_ref().or(wide.as_ref()))
+            .map(|pointer| (**pointer).clone())
+    }
+
+    pub(super) fn wide_additive_address(&self, id: u64) -> Option<Pointer> {
+        self.additive_addresses
+            .get(&self.root(id))
+            .and_then(|(_, wide)| wide.as_ref())
+            .map(|pointer| (**pointer).clone())
     }
 
     fn merge_additive_addresses(&mut self, moved: u64, kept: u64) {
-        if let Some((wide, pointer)) = self.additive_addresses.get(&moved).cloned()
-            && self
+        if let Some((narrow, wide)) = self.additive_addresses.get(&moved).cloned() {
+            let mut spellings = self
                 .additive_addresses
                 .get(&kept)
-                .is_none_or(|(prior_wide, _)| *prior_wide && !wide)
-        {
-            self.additive_addresses.insert(kept, (wide, pointer));
+                .cloned()
+                .unwrap_or_default();
+            if spellings.0.is_none() {
+                spellings.0 = narrow;
+            }
+            if let Some(wide) = wide
+                && spellings
+                    .1
+                    .as_ref()
+                    .is_none_or(|prior| Self::prefer_wide_offset(&wide.offset, &prior.offset))
+            {
+                spellings.1 = Some(wide);
+            }
+            self.additive_addresses.insert(kept, spellings);
         }
         self.additive_addresses.remove(&moved);
     }
@@ -994,10 +1110,12 @@ impl TermClasses {
         left: &PointerOffsetTerm,
         right: &PointerOffsetTerm,
     ) -> bool {
-        let left = self.intern(left);
-        let right = self.intern(right);
+        let left_id = self.intern(left);
+        let right_id = self.intern(right);
+        self.retain_additive_offset(left_id, left);
+        self.retain_additive_offset(right_id, right);
         self.register_pending_loads();
-        self.close(vec![(left, right)])
+        self.close(vec![(left_id, right_id)])
     }
 
     fn weight(&self, id: u64) -> usize {
@@ -1140,6 +1258,7 @@ impl TermClasses {
             self.merge_address_offsets(moved, kept, &mut pending);
             self.merge_storage_addresses(moved, kept);
             self.merge_additive_addresses(moved, kept);
+            self.merge_additive_offsets(moved, kept);
             self.merge_alignment_witnesses(moved, kept);
             if let Some((lower, upper)) = self.signed_int32_intervals.get(&moved).copied() {
                 crate::instrumentation::record_deterministic_work(1);

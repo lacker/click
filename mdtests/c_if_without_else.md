@@ -1,6 +1,6 @@
 # C `if` statements do not require padding branches
 
-This exercises realistic source syntax through the complete C0 and Click
+This exercises realistic source syntax through the complete C and Click
 pipeline: comments, a scalar declaration initializer, and an `if` without an
 invented `else` statement.
 

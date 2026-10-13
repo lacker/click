@@ -4,16 +4,21 @@ This assessment pins the unchanged Adler-32 implementations, build configuration
 and common mathematical specification selected by
 [the Rust roadmap](../issues/rust-support.md). Native Charon imports the Rust
 selection, and the [Adler trial](charon-trial/adler2/README.md) records its current
-checked computation bounds. Complete checksum correctness and C/Rust result
-equality remain unproved. Extend the proofs over the reachable original code.
+checked computation correctness over the explicit signed observation range.
+The unchanged public entry point composes the checked constructor, general
+computation and checksum getter over that range. A real client connects two
+actual updates at every valid split to the full-input specification. A second
+client saves the prefix checksum, restores the same canonical state through
+`from_checksum`, then proves the full-input result after updating the suffix.
+C correctness and C/Rust result equality remain unproved.
 
 The checked [common specification](adler32-spec.click) defines the unweighted
 byte sum, the byte-order-sensitive weighted sum, both canonical residues, and
 the packed checksum over a logical byte snapshot. Its lemmas prove the appended
 byte recurrence, weight shifts, nonnegative sums, residue uniqueness and
 addition, canonical output ranges, packing bounds, and empty-input seed
-preservation. Connecting the original implementation states to these sums
-remains a separate obligation; these lemmas assume no checksum body summary.
+preservation. The unchanged Rust computation is connected to these sums; the lemmas assume
+no checksum body summary. The C connection remains pending.
 
 ## Immutable inputs and configuration
 
@@ -96,11 +101,10 @@ than pretend the implementation is the textbook serial loop.
 | `mod`, `use`, inherent methods, `Default`, `Copy` derives | Crate-aware extraction and selected concrete reachable definitions |
 
 Native Charon imports this unchanged crate with its modules, derives, resolved
-methods, and concrete operators. The helper bodies, arithmetic lemmas, and
-small-batch computation and scalar-tail bounds have checked sidecars. General
-full-width partition and outer-iterator progress lemmas also verify. Full outer
-batch induction and the checksum identity remain proof work; successful extraction alone
-establishes none of those claims.
+methods, and concrete operators. The helper bodies and arithmetic libraries have checked sidecars. The general
+computation sidecar proves bounds, termination and both final fields against
+the common specification for canonical initial states and every input length
+through 2,147,483,647 bytes, including full batches and both remainders.
 
 Support the reachable concrete instantiations rather than promising arbitrary
 traits or generics. Slice and iterator operations need either checked lowering
@@ -149,13 +153,32 @@ native adapter. Variable-length memory contracts retain an explicit
 `INT32_MAX` range limit; slice metadata and native index checks keep their
 full target width.
 
-The computation proof covers arbitrary multiple-of-four lengths up to 22,204
-bytes from canonical initial states. It checks the lane-loop ceilings,
-termination, original reductions and recombination, scalar sums, and final
-16-bit stores. It does not yet establish the full mathematical checksum.
+The small-batch computation proof covers every length zero through 22,207
+bytes from canonical initial states, including the zero-to-three-byte tail.
+It checks the lane-loop ceilings, termination, original reductions and
+recombination, scalar sums, and final 16-bit stores. Both final fields equal
+the common mathematical specification on the entry input snapshot. The
+arbitrary-length computation has checked bounds and termination. Each full-batch
+and aligned-remainder vector step connects all four constructor lanes to exact
+absolute input-byte observations using actual iterator state. The remainder
+uses the constructor's call-entry Integer observations and preserves the input
+bytes with the entry snapshot. The full-batch loops preserve both
+residues against the common specification through their native additions and
+reductions. The B representative includes the deferred batch-local position
+times A contribution and remains nonnegative. Its entry seed stays fixed while
+Rust updates the working scalar B between batches. Actual outer exhaustion
+establishes both common checksum residues for the completed full-batch prefix.
+The aligned-remainder lane loop also preserves both residues through actual
+iterator exhaustion, including the deferred local-position times A contribution
+and the fixed entry B seed. The original remainder seed product and scalar
+addition, reductions, weighted B corrections and scalar recombination preserve
+both residues for the complete aligned prefix. The original scalar tail advances
+both residues at each actual byte position. Checked iterator exhaustion, byte
+extensionality, native reductions and 16-bit stores prove both final fields
+equal the specification on the entry input snapshot for all supported lengths.
 
-Follow the [current roadmap](../issues/rust-support.md) for the remaining outer
-batches, short tails, common specification, unchanged C proof, and architecture
+Follow the [current roadmap](../issues/rust-support.md) for implementation
+saved-checksum restoration, the unchanged C proof, and architecture
 requirements. Deliver coherent green proof and engine increments through pull
 requests. Repair checker and expansion defects before extending the examples;
 retain explicit bounds on intermediate evidence and meaningful negative tests.

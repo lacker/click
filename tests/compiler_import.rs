@@ -432,7 +432,7 @@ fn userspace_compiler_import_verifies_profile_and_expansion() {
 #if _POSIX_C_SOURCE != 200809L || _REENTRANT != 1
 #error wrong pthread profile
 #endif
-#if __CHAR_BIT__ != 8 || __SIZEOF_LONG__ != 8 || __SIZEOF_POINTER__ != 8 || !defined(__CHAR_UNSIGNED__)
+#if __CHAR_BIT__ != 8 || __SIZEOF_LONG__ != 8 || __SIZEOF_POINTER__ != 8 || defined(__CHAR_UNSIGNED__)
 #error wrong ABI
 #endif
 #include "profile.h"

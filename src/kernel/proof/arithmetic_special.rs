@@ -288,88 +288,6 @@ fn bitvector_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
                 }
             }
             (
-                Bitvector32Term::Add(left_first, left_second),
-                Bitvector32Term::Add(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::Int64Add(left_first, left_second),
-                Bitvector32Term::Int64Add(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::BitwiseXor(left_first, left_second),
-                Bitvector32Term::BitwiseXor(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::Subtract(left_first, left_second),
-                Bitvector32Term::Subtract(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64Add(left_first, left_second),
-                Bitvector32Term::UInt64Add(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64Subtract(left_first, left_second),
-                Bitvector32Term::UInt64Subtract(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64Multiply(left_first, left_second),
-                Bitvector32Term::UInt64Multiply(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64Divide(left_first, left_second),
-                Bitvector32Term::UInt64Divide(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64Remainder(left_first, left_second),
-                Bitvector32Term::UInt64Remainder(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64BitwiseAnd(left_first, left_second),
-                Bitvector32Term::UInt64BitwiseAnd(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::UInt64BitwiseOr(left_first, left_second),
-                Bitvector32Term::UInt64BitwiseOr(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::BitwiseAnd(left_first, left_second),
-                Bitvector32Term::BitwiseAnd(right_first, right_second),
-            )
-            | (
-                Bitvector32Term::BitwiseOr(left_first, left_second),
-                Bitvector32Term::BitwiseOr(right_first, right_second),
-            ) => {
-                pending.push((left_first, right_first));
-                pending.push((left_second, right_second));
-            }
-            (
-                Bitvector32Term::Float32Binary {
-                    operator: left_operator,
-                    left: left_first,
-                    right: left_second,
-                },
-                Bitvector32Term::Float32Binary {
-                    operator: right_operator,
-                    left: right_first,
-                    right: right_second,
-                },
-            )
-            | (
-                Bitvector32Term::Float64Binary {
-                    operator: left_operator,
-                    left: left_first,
-                    right: left_second,
-                },
-                Bitvector32Term::Float64Binary {
-                    operator: right_operator,
-                    left: right_first,
-                    right: right_second,
-                },
-            ) if left_operator == right_operator => {
-                pending.push((left_first, right_first));
-                pending.push((left_second, right_second));
-            }
-            (
                 Bitvector32Term::PureFunctionApplication {
                     name: left_name,
                     arguments: left_arguments,
@@ -386,7 +304,39 @@ fn bitvector_equal(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
                     return false;
                 }
             }
-            _ => return false,
+            _ => {
+                use crate::kernel::BitvectorBinaryOp as Op;
+                let (
+                    Some((operator, left_first, left_second)),
+                    Some((other, right_first, right_second)),
+                ) = (left.as_binary(), right.as_binary())
+                else {
+                    return false;
+                };
+                let compared = matches!(
+                    operator,
+                    Op::Add
+                        | Op::Subtract
+                        | Op::BitwiseAnd
+                        | Op::BitwiseOr
+                        | Op::BitwiseXor
+                        | Op::Int64Add
+                        | Op::UInt64Add
+                        | Op::UInt64Subtract
+                        | Op::UInt64Multiply
+                        | Op::UInt64Divide
+                        | Op::UInt64Remainder
+                        | Op::UInt64BitwiseAnd
+                        | Op::UInt64BitwiseOr
+                        | Op::Float32(_)
+                        | Op::Float64(_)
+                );
+                if operator != other || !compared {
+                    return false;
+                }
+                pending.push((left_first, right_first));
+                pending.push((left_second, right_second));
+            }
         }
     }
     true

@@ -1,6 +1,6 @@
 # C for loops
 
-This checks the first C0 `for` slice. A loop of the form
+This checks the first `for` slice. A loop of the form
 `for (i = init; condition; step) { body }` lowers to the existing checked
 `while` representation, with both normal completion and `continue` executing
 the step before the next condition check:

@@ -1,17 +1,9 @@
 //! Bound a truncating quotient by an exact Integer multiple of a positive divisor.
 //! Reads two named premises only; it infers no native safety or operand ranges.
 use super::arithmetic_special::SpecialArithmeticCheckError as Error;
-use crate::kernel::{ConditionTerm, IntegerTerm, Proposition, SharedIntegerTerm};
+use super::integer_product_bounds::order;
+use crate::kernel::{IntegerTerm, Proposition};
 use num_traits::{One, Zero};
-
-fn order(proposition: &Proposition) -> Option<(&SharedIntegerTerm, &SharedIntegerTerm)> {
-    match proposition {
-        Proposition::ConditionIs(ConditionTerm::IntegerLessEqual(left, right), true) => {
-            Some((left, right))
-        }
-        _ => None,
-    }
-}
 
 pub(super) fn check(
     node: usize,
@@ -76,6 +68,7 @@ pub(super) fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::ConditionTerm;
     use crate::kernel::{
         Variable,
         proof::arithmetic_special::{SpecialArithmeticCertificate, SpecialArithmeticNode},

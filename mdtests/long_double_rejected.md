@@ -1,4 +1,4 @@
-# C0 rejects extended-precision floating-point values
+# Click rejects extended-precision floating-point values
 
 The target ABI layout is known, but value operations still need an 80-bit
 floating-point model. A local declaration receives a focused diagnostic.

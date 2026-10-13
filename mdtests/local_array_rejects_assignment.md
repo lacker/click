@@ -1,6 +1,6 @@
 # local array rejects direct assignment
 
-This checks that C0 does not model a local array as a hidden pointer variable.
+This checks that Click does not model a local array as a hidden pointer variable.
 The array name can decay in rvalue contexts, but the array object itself cannot
 be assigned.
 

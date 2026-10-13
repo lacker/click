@@ -681,6 +681,68 @@ always wall clock. `CLICK_DISABLE_TACTIC_BUDGETS=1` remains a narrow A/B
 diagnostic escape hatch; it must not be used for the ordinary correctness
 gate.
 
+### The key benchmark
+
+`scripts/benchmark.sh` is Click's headline performance number: nonblank
+`.click` lines verified per CPU second over a small fixed set of examples,
+"Click verifies the key benchmark at N lines/s". It is the number to move
+when optimizing for general speed, and the one to report before and after a
+performance change. Scaling regressions say whether a cost grows with the
+wrong input; this says how fast ordinary proofs go.
+
+The members are `arena` (call-heavy resource and ownership proofs, mostly
+explicit steps), `rbtree-insert` (pointer-structure proofs), and
+`owned-vector` (loops and owned buffers). They are a fixed list rather than
+every example so that adding an example does not move the number; change
+the list deliberately, to make it more representative, and re-baseline when
+it or a member's proof changes substantially. `rbtree-erase` is measured as a
+stress member and printed beside the headline but kept out of it: it is
+three fifths of the corpus's verification time at about a third of the
+speed, and would make the headline a measurement of one outlier.
+
+Each member is verified with the optimized `profiling` build, fastest of
+three runs, and its time is user plus system CPU time: verification is
+single-threaded, and CPU time is far less noisy than wall time. `--work`
+also reports deterministic work units per line through the example harness;
+work is identical on any machine, so it is the figure to compare across
+machines, while lines per second is the figure a user feels.
+
+On 2026-10-12 at `0d2b58555`, on a 4-core cloud x86 machine, the key
+benchmark verified 9,796 lines in 19.98 s of CPU, 490 lines/s (`arena` 570,
+`rbtree-insert` 437, `owned-vector` 369); `rbtree-erase` ran at 159 lines/s.
+With `--work` the key benchmark charged 15,059,650 units, 1,537 units per
+line (`arena` 1,382, `rbtree-insert` 1,456, `owned-vector` 2,434;
+`rbtree-erase` 4,755).
+
+`scripts/benchmark-examples.sh` remains the whole-corpus survey: every
+example, wall time, so its number moves with the corpus.
+
+### Hunting for steps that grow
+
+The key benchmark measures ordinary proofs; it cannot show a program that
+makes `step` slow, because no member is such a program. A simple step must
+cost work proportional to the statement it checks
+(`docs/internals/verification-efficiency.md`), and a step has no expansion to
+fall back on, so a C shape that makes one grow is a function Click cannot
+check at the cost of its lines. `scripts/step-scaling-hunt.py` looks for
+them: each shape generates a natural C function with an explicit
+one-`step()`-per-statement proof at sizes 1 to 128 (more calls, more owned
+parameter objects, more stated aliases, longer order-fact chains, deeper
+pointer chains, longer increment chains, more sequential branches and loops,
+more constant-index stores, more callees, more unrelated facts, more live heap
+objects), verifies it, and reports each size's largest step in work units,
+its mean step time, and its largest `loop` or `branch` clause. A shape whose steps stay flat in both is fine.
+One that grows is filed in `bugs/` with the shape as its reproduction, and
+its fix lands with an ordinary multi-size regression. A step whose own input
+grows, such as one statement summing N fields or a `return` that releases N
+locals, grows linearly by design; read the per-size output before filing.
+
+Time is reported beside work because work counts only what is charged. The
+hunt's first finding was invisible to it: an atomic proposition hashed its
+debug text, which printed every memory snapshot it named, so each call in a
+long function paid more than the last while every step charged the same work
+(`hashing_a_memory_fact_is_constant_in_the_memory_size`).
+
 ### Surface throughput measurements
 
 Deterministic work curves remain the correctness authority, but they do not

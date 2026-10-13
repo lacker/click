@@ -18,6 +18,14 @@
 //!   ever rises from `Unknown` to `Known(c)` to `Ambiguous`, so each registered
 //!   term is re-folded at most twice per operand along one path.
 //!
+//! A signed byte read `int8(u)` (`Bitvector32Term::signed_byte`) is both
+//! folded and inverted. It folds from `u` like an arithmetic term, and when
+//! `u` is a byte load (`signed_byte_load_operand`) its class's constant also
+//! settles `u`: the conversion is a bijection from `0..=255` onto
+//! `-128..=127`, so `int8(u) == k` with `k` in that range means
+//! `u == k mod 256`. Both directions are the same index the checker and the
+//! search read, so neither tool decides a byte the other cannot.
+//!
 //! A query is then one lookup. Two things the index does not state are asked
 //! at query time, of the queried term's class only: a conditional member is
 //! decided under the whole context, and a load member of a class that is still
@@ -42,6 +50,9 @@ struct ConstantClass {
     loads: crate::persistent::PersistentMap<u64, crate::persistent::PersistentSet<Bitvector32Term>>,
     /// Members headed by a conditional, which only the whole context decides.
     conditionals: crate::persistent::PersistentSet<Bitvector32Term>,
+    /// Members that are signed reads of a byte load, whose constant also
+    /// settles the byte (`signed_byte_load_operand`).
+    signed_bytes: crate::persistent::PersistentSet<Bitvector32Term>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -63,7 +74,41 @@ fn arithmetic_operands(term: &Bitvector32Term) -> Option<Vec<&Bitvector32Term>> 
     match term {
         crate::kernel::binary_bitvector32_term!(left, right) => Some(vec![left, right]),
         Bitvector32Term::BitwiseNot(value) => Some(vec![value]),
-        _ => None,
+        term => term.signed_byte_operand().map(|value| vec![value]),
+    }
+}
+
+/// The byte load a signed byte read converts, when its operand is one.
+///
+/// Inverting `int8(u) == k` needs `u` in `0..=255`, the domain on which the
+/// conversion is injective. A `UInt8` memory load (or the registered
+/// variable naming one) holds exactly one byte, zero-extended, whatever
+/// produced the term, so its range is structural rather than a fact. Other
+/// operands are folded forward but never inverted.
+fn signed_byte_load_operand(term: &Bitvector32Term) -> Option<&Bitvector32Term> {
+    let operand = term.signed_byte_operand()?;
+    matches!(
+        crate::kernel::eval::viewed_as_memory_load(operand),
+        Some(Bitvector32Term::MemoryLoad(
+            _,
+            _,
+            crate::kernel::LoadKind::UInt8
+        ))
+    )
+    .then_some(operand)
+}
+
+/// The constant of the byte `u` given the constant of `int8(u)`. A known
+/// signed value `k` in `-128..=127` is the conversion of exactly one byte,
+/// `k mod 256`. A value outside that range is the conversion of no byte: the
+/// context is contradictory, and the byte is left as it was rather than given
+/// a value it cannot have. `Unknown` and `Ambiguous` add nothing.
+fn signed_byte_inverse(signed: SignedConstantResolution) -> SignedConstantResolution {
+    match signed {
+        SignedConstantResolution::Known(value @ -128..=127) => {
+            SignedConstantResolution::Known(i64::from(value as i8 as u8))
+        }
+        _ => SignedConstantResolution::Unknown,
     }
 }
 
@@ -74,71 +119,35 @@ pub(super) fn fold_arithmetic(
     term: &Bitvector32Term,
     mut operand: impl FnMut(&Bitvector32Term) -> SignedConstantResolution,
 ) -> SignedConstantResolution {
-    let binary =
-        |left: &Bitvector32Term,
-         right: &Bitvector32Term,
-         operand: &mut dyn FnMut(&Bitvector32Term) -> SignedConstantResolution,
-         operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term| {
-            let left = operand(left);
-            let right = operand(right);
-            match (left, right) {
-                (SignedConstantResolution::Ambiguous, _)
-                | (_, SignedConstantResolution::Ambiguous) => SignedConstantResolution::Ambiguous,
-                (SignedConstantResolution::Known(left), SignedConstantResolution::Known(right)) => {
-                    SignedConstantResolution::from_term(operation(
-                        Bitvector32Term::Constant(left as i32 as u32),
-                        Bitvector32Term::Constant(right as i32 as u32),
-                    ))
-                }
-                _ => SignedConstantResolution::Unknown,
+    if let Some((operator, left, right)) = term.as_binary()
+        && operator.is_bitvector32()
+    {
+        return match (operand(left), operand(right)) {
+            (SignedConstantResolution::Ambiguous, _) | (_, SignedConstantResolution::Ambiguous) => {
+                SignedConstantResolution::Ambiguous
             }
+            (SignedConstantResolution::Known(left), SignedConstantResolution::Known(right)) => {
+                SignedConstantResolution::from_term(operator.build(
+                    Bitvector32Term::Constant(left as i32 as u32),
+                    Bitvector32Term::Constant(right as i32 as u32),
+                ))
+            }
+            _ => SignedConstantResolution::Unknown,
         };
-    let operand: &mut dyn FnMut(&Bitvector32Term) -> SignedConstantResolution = &mut operand;
+    }
     match term {
-        Bitvector32Term::Add(left, right) => binary(left, right, operand, Bitvector32Term::add),
-        Bitvector32Term::Subtract(left, right) => {
-            binary(left, right, operand, Bitvector32Term::subtract)
-        }
-        Bitvector32Term::Multiply(left, right) => {
-            binary(left, right, operand, Bitvector32Term::multiply)
-        }
-        Bitvector32Term::Divide(left, right) => {
-            binary(left, right, operand, Bitvector32Term::divide)
-        }
-        Bitvector32Term::UnsignedDivide(left, right) => {
-            binary(left, right, operand, Bitvector32Term::unsigned_divide)
-        }
-        Bitvector32Term::Remainder(left, right) => {
-            binary(left, right, operand, Bitvector32Term::remainder)
-        }
-        Bitvector32Term::UnsignedRemainder(left, right) => {
-            binary(left, right, operand, Bitvector32Term::unsigned_remainder)
-        }
-        Bitvector32Term::ShiftLeft(left, right) => {
-            binary(left, right, operand, Bitvector32Term::shift_left)
-        }
-        Bitvector32Term::ArithmeticShiftRight(left, right) => binary(
-            left,
-            right,
-            operand,
-            Bitvector32Term::arithmetic_shift_right,
-        ),
-        Bitvector32Term::LogicalShiftRight(left, right) => {
-            binary(left, right, operand, Bitvector32Term::logical_shift_right)
-        }
-        Bitvector32Term::BitwiseAnd(left, right) => {
-            binary(left, right, operand, Bitvector32Term::bitwise_and)
-        }
-        Bitvector32Term::BitwiseOr(left, right) => {
-            binary(left, right, operand, Bitvector32Term::bitwise_or)
-        }
-        Bitvector32Term::BitwiseXor(left, right) => {
-            binary(left, right, operand, Bitvector32Term::bitwise_xor)
-        }
         Bitvector32Term::BitwiseNot(value) => operand(value).map(|value| {
             Bitvector32Term::bitwise_not(Bitvector32Term::Constant(value as i32 as u32))
         }),
-        _ => SignedConstantResolution::Unknown,
+        // The conversion's own constant fold: a byte constant `c` in
+        // `0..=255` converts to its two's-complement value, and a constant
+        // outside the byte range stays unfolded (`Unknown`).
+        term => match term.signed_byte_operand() {
+            Some(value) => operand(value).map(|value| {
+                Bitvector32Term::signed_byte(Bitvector32Term::Constant(value as i32 as u32))
+            }),
+            None => SignedConstantResolution::Unknown,
+        },
     }
 }
 
@@ -221,6 +230,11 @@ impl ConstantClasses {
         } else {
             crate::persistent::PersistentSet::default()
         };
+        let signed_bytes = if signed_byte_load_operand(term).is_some() {
+            crate::persistent::PersistentSet::default().with_value(term.clone())
+        } else {
+            crate::persistent::PersistentSet::default()
+        };
         self.classes = self.classes.with_inserted(
             id,
             ConstantClass {
@@ -229,6 +243,7 @@ impl ConstantClasses {
                 users: crate::persistent::PersistentSet::default(),
                 loads,
                 conditionals,
+                signed_bytes,
             },
         );
         self.class_of = self.class_of.with_inserted(term.clone(), id);
@@ -259,6 +274,7 @@ impl ConstantClasses {
             let was_unknown = class.constant == SignedConstantResolution::Unknown;
             class.constant = merged;
             let users = class.users.iter().cloned().collect::<Vec<_>>();
+            let inverted = self.signed_byte_inversions(&class.signed_bytes, merged);
             let loads = if was_unknown {
                 class
                     .loads
@@ -278,7 +294,30 @@ impl ConstantClasses {
                 let user_class = *self.class_of.get(&user).expect("registered user");
                 pending.push((user_class, folded));
             }
+            pending.extend(inverted);
         }
+    }
+
+    /// The byte classes settled by a class's signed byte members taking the
+    /// constant `signed`: one per member, each the class of the member's
+    /// byte load (registered with the member), raised to the byte's value.
+    fn signed_byte_inversions(
+        &self,
+        signed_bytes: &crate::persistent::PersistentSet<Bitvector32Term>,
+        signed: SignedConstantResolution,
+    ) -> Vec<(u64, SignedConstantResolution)> {
+        let byte = signed_byte_inverse(signed);
+        if byte == SignedConstantResolution::Unknown {
+            return Vec::new();
+        }
+        signed_bytes
+            .iter()
+            .filter_map(|member| {
+                crate::instrumentation::record_deterministic_work(1);
+                let operand = signed_byte_load_operand(member)?;
+                Some((*self.class_of.get(operand)?, byte))
+            })
+            .collect()
     }
 
     fn settle_load(&mut self, key: u64, term: Bitvector32Term, id: u64) {
@@ -329,6 +368,14 @@ impl ConstantClasses {
         for conditional in absorbed.conditionals.iter() {
             kept.conditionals = kept.conditionals.with_value(conditional.clone());
         }
+        // Signed byte members whose class constant this union raises settle
+        // their bytes, as a raised constant does in `raise_constant`.
+        let kept_signed_bytes = kept.signed_bytes.clone();
+        let absorbed_signed_bytes = absorbed.signed_bytes.clone();
+        for signed_byte in absorbed.signed_bytes.iter() {
+            crate::instrumentation::record_deterministic_work(1);
+            kept.signed_bytes = kept.signed_bytes.with_value(signed_byte.clone());
+        }
         let mut relabelled_loads = Vec::new();
         for (key, terms) in absorbed.loads.iter() {
             let mut merged = kept.loads.get(key).cloned().unwrap_or_default();
@@ -367,6 +414,16 @@ impl ConstantClasses {
             let folded = fold_arithmetic(&user, |operand| self.indexed_resolution(operand));
             let user_class = *self.class_of.get(&user).expect("registered user");
             self.raise_constant(user_class, folded);
+        }
+        let mut inverted = Vec::new();
+        if merged != kept_constant {
+            inverted.extend(self.signed_byte_inversions(&kept_signed_bytes, merged));
+        }
+        if merged != absorbed_constant {
+            inverted.extend(self.signed_byte_inversions(&absorbed_signed_bytes, merged));
+        }
+        for (byte_class, byte) in inverted {
+            self.raise_constant(byte_class, byte);
         }
     }
 

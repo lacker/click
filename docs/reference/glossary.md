@@ -157,8 +157,9 @@ C syntax embedded in a Click contract or tactic to identify an expression,
 
 ### C0
 
-Click's deliberately supported subset of C. It is the verification boundary,
-  not a claim to implement every ISO C behavior. See [Supported C0](language/c0.md).
+The historical name for the part of C that Click models. Documentation now says
+supported C; the C front end's Rust types, such as `C0Type` and
+`C0Expression`, keep the old name. See [Supported C](language/c.md).
 
 ### Canonical form
 
@@ -770,8 +771,8 @@ creates a proof-local name for a snapshot and does not create a C location.
 
 ### Program language
 
-The language of the program being verified. C0 is currently Click's only
-program language. Surface Click is the proof language, while Rust is Click's
+The language of the program being verified: C, C++, or Rust, each supported in
+part. Surface Click is the proof language, while Rust is Click's
 implementation language. A frontend is the parsing, validation, and lowering
 stage for either kind of language, not a synonym for *program language*.
 

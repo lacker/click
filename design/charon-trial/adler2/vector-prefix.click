@@ -2,20 +2,18 @@
 # Assemble after the common specification and lane-state.click.
 # The scalar B representative accounts for the deferred chunk contribution.
 
-theorem adler_four_lane_prefix_step(bytes: uint8[], n: int32, a_seed: Integer, b_seed: Integer, a: Integer, b: Integer, a0: Integer, a1: Integer, a2: Integer, a3: Integer, b0: Integer, b1: Integer, b2: Integer, b3: Integer) {
+# A is independent of the deferred scalar B contribution between full batches.
+theorem adler_four_lane_a_prefix_step(bytes: uint8[], n: int32, a_seed: Integer, a: Integer, a0: Integer, a1: Integer, a2: Integer, a3: Integer) {
  requires 0 <= n;
  requires n <= 2147483643;
  requires 0 <= a_seed;
  requires a_seed <= 65520;
- requires 0 <= b_seed;
  requires 0 <= a;
  requires 0 <= a0;
  requires 0 <= a1;
  requires 0 <= a2;
  requires 0 <= a3;
- requires 0 <= adler_lane_b(b, a1, a2, a3, b0, b1, b2, b3);
  requires truncating_remainder(adler_lane_a(a, a0, a1, a2, a3), 65521) == adler_spec_a(bytes, n, a_seed);
- requires truncating_remainder(adler_lane_b(b, a1, a2, a3, b0, b1, b2, b3), 65521) == adler_spec_b(bytes, n, a_seed, b_seed);
  ensures truncating_remainder(adler_lane_a(a, a0 + to_integer((int32)bytes[n]), a1 + to_integer((int32)bytes[n + 1]), a2 + to_integer((int32)bytes[n + 2]), a3 + to_integer((int32)bytes[n + 3])), 65521) == adler_spec_a(bytes, n + 4, a_seed) by {
   have n <= 2147483646 by arithmetic() using { n <= 2147483643; };
   have n <= 2147483645 by arithmetic() using { n <= 2147483643; };
@@ -35,11 +33,68 @@ theorem adler_four_lane_prefix_step(bytes: uint8[], n: int32, a_seed: Integer, b
     conclusion 8;
    }
   }
-  apply(adler_four_lane_state_step(a, b, a0, a1, a2, a3, b0, b1, b2, b3, to_integer((int32)bytes[n]), to_integer((int32)bytes[n + 1]), to_integer((int32)bytes[n + 2]), to_integer((int32)bytes[n + 3]))) using { 0 <= n; n <= 2147483646; n <= 2147483645; n <= 2147483644; };
+  apply(adler_four_lane_state_step(a, 0, a0, a1, a2, a3, 0, 0, 0, 0, to_integer((int32)bytes[n]), to_integer((int32)bytes[n + 1]), to_integer((int32)bytes[n + 2]), to_integer((int32)bytes[n + 3]))) using { 0 <= n; n <= 2147483646; n <= 2147483645; n <= 2147483644; };
   apply(adler_prefix_a_step_four(bytes, n, a_seed, adler_lane_a(a, a0, a1, a2, a3)));
   rewrite(adler_lane_a(a, a0 + to_integer((int32)bytes[n]), a1 + to_integer((int32)bytes[n + 1]), a2 + to_integer((int32)bytes[n + 2]), a3 + to_integer((int32)bytes[n + 3])) == adler_lane_a(a, a0, a1, a2, a3) + to_integer((int32)bytes[n]) + to_integer((int32)bytes[n + 1]) + to_integer((int32)bytes[n + 2]) + to_integer((int32)bytes[n + 3]));
   have adler_lane_a(a, a0, a1, a2, a3) + to_integer((int32)bytes[n]) + to_integer((int32)bytes[n + 1]) + to_integer((int32)bytes[n + 2]) + to_integer((int32)bytes[n + 3]) == adler_lane_a(a, a0, a1, a2, a3) + (to_integer((int32)bytes[n]) + to_integer((int32)bytes[n + 1]) + to_integer((int32)bytes[n + 2]) + to_integer((int32)bytes[n + 3])) by arithmetic() using {};
   rewrite(adler_lane_a(a, a0, a1, a2, a3) + to_integer((int32)bytes[n]) + to_integer((int32)bytes[n + 1]) + to_integer((int32)bytes[n + 2]) + to_integer((int32)bytes[n + 3]) == adler_lane_a(a, a0, a1, a2, a3) + (to_integer((int32)bytes[n]) + to_integer((int32)bytes[n + 1]) + to_integer((int32)bytes[n + 2]) + to_integer((int32)bytes[n + 3])));
+  assumption();
+ }
+}
+
+theorem adler_native_four_lane_a_prefix_step(bytes: uint8[], n: int32, a_seed: Integer, a: Integer, a0: uint32, a1: uint32, a2: uint32, a3: uint32, v0: uint32, v1: uint32, v2: uint32, v3: uint32) {
+ requires 0 <= n;
+ requires n <= 2147483643;
+ requires 0 <= a_seed;
+ requires a_seed <= 65520;
+ requires 0 <= a;
+ requires truncating_remainder(adler_lane_a(a, to_integer(a0), to_integer(a1), to_integer(a2), to_integer(a3)), 65521) == adler_spec_a(bytes, n, a_seed);
+ requires to_integer(v0) == to_integer((int32)bytes[n]);
+ requires to_integer(a0) + to_integer(v0) <= 4294967295;
+ requires to_integer(v1) == to_integer((int32)bytes[n + 1]);
+ requires to_integer(a1) + to_integer(v1) <= 4294967295;
+ requires to_integer(v2) == to_integer((int32)bytes[n + 2]);
+ requires to_integer(a2) + to_integer(v2) <= 4294967295;
+ requires to_integer(v3) == to_integer((int32)bytes[n + 3]);
+ requires to_integer(a3) + to_integer(v3) <= 4294967295;
+ ensures truncating_remainder(adler_lane_a(a, to_integer((a0 + v0)), to_integer((a1 + v1)), to_integer((a2 + v2)), to_integer((a3 + v3))), 65521) == adler_spec_a(bytes, n + 4, a_seed) by {
+  apply(uint32_to_integer_bounds(a0));
+  apply(uint32_add_to_integer(a0, v0));
+  apply(uint32_to_integer_bounds(a1));
+  apply(uint32_add_to_integer(a1, v1));
+  apply(uint32_to_integer_bounds(a2));
+  apply(uint32_add_to_integer(a2, v2));
+  apply(uint32_to_integer_bounds(a3));
+  apply(uint32_add_to_integer(a3, v3));
+  apply(adler_four_lane_a_prefix_step(bytes, n, a_seed, a, to_integer(a0), to_integer(a1), to_integer(a2), to_integer(a3)));
+  rewrite(to_integer(a0 + v0) == to_integer(a0) + to_integer(v0));
+  rewrite(to_integer(a1 + v1) == to_integer(a1) + to_integer(v1));
+  rewrite(to_integer(a2 + v2) == to_integer(a2) + to_integer(v2));
+  rewrite(to_integer(a3 + v3) == to_integer(a3) + to_integer(v3));
+  rewrite(to_integer(v0) == to_integer((int32)bytes[n]));
+  rewrite(to_integer(v1) == to_integer((int32)bytes[n + 1]));
+  rewrite(to_integer(v2) == to_integer((int32)bytes[n + 2]));
+  rewrite(to_integer(v3) == to_integer((int32)bytes[n + 3]));
+  assumption();
+ }
+}
+
+theorem adler_four_lane_prefix_step(bytes: uint8[], n: int32, a_seed: Integer, b_seed: Integer, a: Integer, b: Integer, a0: Integer, a1: Integer, a2: Integer, a3: Integer, b0: Integer, b1: Integer, b2: Integer, b3: Integer) {
+ requires 0 <= n;
+ requires n <= 2147483643;
+ requires 0 <= a_seed;
+ requires a_seed <= 65520;
+ requires 0 <= b_seed;
+ requires 0 <= a;
+ requires 0 <= a0;
+ requires 0 <= a1;
+ requires 0 <= a2;
+ requires 0 <= a3;
+ requires 0 <= adler_lane_b(b, a1, a2, a3, b0, b1, b2, b3);
+ requires truncating_remainder(adler_lane_a(a, a0, a1, a2, a3), 65521) == adler_spec_a(bytes, n, a_seed);
+ requires truncating_remainder(adler_lane_b(b, a1, a2, a3, b0, b1, b2, b3), 65521) == adler_spec_b(bytes, n, a_seed, b_seed);
+ ensures truncating_remainder(adler_lane_a(a, a0 + to_integer((int32)bytes[n]), a1 + to_integer((int32)bytes[n + 1]), a2 + to_integer((int32)bytes[n + 2]), a3 + to_integer((int32)bytes[n + 3])), 65521) == adler_spec_a(bytes, n + 4, a_seed) by {
+  apply(adler_four_lane_a_prefix_step(bytes, n, a_seed, a, a0, a1, a2, a3));
   assumption();
  }
  ensures truncating_remainder(adler_lane_b(b + 4 * a, a1 + to_integer((int32)bytes[n + 1]), a2 + to_integer((int32)bytes[n + 2]), a3 + to_integer((int32)bytes[n + 3]), b0 + a0 + to_integer((int32)bytes[n]), b1 + a1 + to_integer((int32)bytes[n + 1]), b2 + a2 + to_integer((int32)bytes[n + 2]), b3 + a3 + to_integer((int32)bytes[n + 3])), 65521) == adler_spec_b(bytes, n + 4, a_seed, b_seed) by {
@@ -96,34 +151,7 @@ theorem adler_native_four_lane_prefix_step(bytes: uint8[], n: int32, a_seed: Int
  requires to_integer(a3) + to_integer(v3) <= 4294967295;
  requires to_integer(b3) + (to_integer(a3) + to_integer(v3)) <= 4294967295;
  ensures truncating_remainder(adler_lane_a(a, to_integer((a0 + v0)), to_integer((a1 + v1)), to_integer((a2 + v2)), to_integer((a3 + v3))), 65521) == adler_spec_a(bytes, n + 4, a_seed) by {
-  have n <= 2147483646 by arithmetic() using { n <= 2147483643; };
-  have n <= 2147483645 by arithmetic() using { n <= 2147483643; };
-  have n <= 2147483644 by arithmetic() using { n <= 2147483643; };
-  apply(uint32_to_integer_bounds(a0));
-  apply(uint32_add_to_integer(a0, v0));
-  have to_integer(b0) + to_integer(a0 + v0) <= 4294967295 by { rewrite(to_integer(a0 + v0) == to_integer(a0) + to_integer(v0)); assumption(); }
-  apply(uint32_add_to_integer(b0, a0 + v0));
-  apply(uint32_to_integer_bounds(a1));
-  apply(uint32_add_to_integer(a1, v1));
-  have to_integer(b1) + to_integer(a1 + v1) <= 4294967295 by { rewrite(to_integer(a1 + v1) == to_integer(a1) + to_integer(v1)); assumption(); }
-  apply(uint32_add_to_integer(b1, a1 + v1));
-  apply(uint32_to_integer_bounds(a2));
-  apply(uint32_add_to_integer(a2, v2));
-  have to_integer(b2) + to_integer(a2 + v2) <= 4294967295 by { rewrite(to_integer(a2 + v2) == to_integer(a2) + to_integer(v2)); assumption(); }
-  apply(uint32_add_to_integer(b2, a2 + v2));
-  apply(uint32_to_integer_bounds(a3));
-  apply(uint32_add_to_integer(a3, v3));
-  have to_integer(b3) + to_integer(a3 + v3) <= 4294967295 by { rewrite(to_integer(a3 + v3) == to_integer(a3) + to_integer(v3)); assumption(); }
-  apply(uint32_add_to_integer(b3, a3 + v3));
-  apply(adler_four_lane_prefix_step(bytes, n, a_seed, b_seed, a, b, to_integer(a0), to_integer(a1), to_integer(a2), to_integer(a3), to_integer(b0), to_integer(b1), to_integer(b2), to_integer(b3)));
-  rewrite(to_integer(a0 + v0) == to_integer(a0) + to_integer(v0));
-  rewrite(to_integer(a1 + v1) == to_integer(a1) + to_integer(v1));
-  rewrite(to_integer(a2 + v2) == to_integer(a2) + to_integer(v2));
-  rewrite(to_integer(a3 + v3) == to_integer(a3) + to_integer(v3));
-  rewrite(to_integer(v0) == to_integer((int32)bytes[n]));
-  rewrite(to_integer(v1) == to_integer((int32)bytes[n + 1]));
-  rewrite(to_integer(v2) == to_integer((int32)bytes[n + 2]));
-  rewrite(to_integer(v3) == to_integer((int32)bytes[n + 3]));
+  apply(adler_native_four_lane_a_prefix_step(bytes, n, a_seed, a, a0, a1, a2, a3, v0, v1, v2, v3));
   assumption();
  }
  ensures truncating_remainder(adler_lane_b(b + 4 * a, to_integer((a1 + v1)), to_integer((a2 + v2)), to_integer((a3 + v3)), to_integer((b0 + (a0 + v0))), to_integer((b1 + (a1 + v1))), to_integer((b2 + (a2 + v2))), to_integer((b3 + (a3 + v3)))), 65521) == adler_spec_b(bytes, n + 4, a_seed, b_seed) by {

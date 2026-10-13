@@ -1,8 +1,8 @@
-# User-space system headers need the user-space target
+# The kernel target rejects user-space system headers
 
-The default `x86_64-linux-kernel` target has no `<stddef.h>` or `<pthread.h>`
-model, so the same source is rejected until the sidecar selects the user-space
-target with `target "x86_64-linux-userspace";`.
+The `x86_64-linux-kernel` target has no `<stddef.h>` or `<pthread.h>` model, so
+this source is rejected under it. The same source verifies under
+`target "x86_64-linux-userspace";` (`mdtests/userspace_target_directive.md`).
 
 ```c filename=null_pointer.c
 #include <stddef.h>
@@ -14,6 +14,7 @@ int32_t is_null(int32_t* p) {
 ```
 
 ```click
+target "x86_64-linux-kernel";
 verifying "null_pointer.c";
 
 int32 is_null(int32* p) {

@@ -543,10 +543,11 @@ pub(super) fn plan_explicit_named_signed_rule(
         .or_else(|| plan_explicit_negated_strict_successor_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_greater_equal_lower_bound(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs))
-        .or_else(|| plan_explicit_strict_transitive(goal, premise_pairs))
-        .or_else(|| plan_explicit_nonstrict_transitive(goal, premise_pairs))
-        .or_else(|| plan_explicit_nonstrict_then_strict_transitive(goal, premise_pairs))
-        .or_else(|| plan_explicit_strict_then_nonstrict_transitive(goal, premise_pairs))
+        .or_else(|| {
+            SIGNED_TRANSITIVE_CHAINS
+                .into_iter()
+                .find_map(|chain| plan_explicit_transitive(goal, premise_pairs, chain))
+        })
         .or_else(|| plan_explicit_constant_lower_bound_weakening(goal, premise_pairs))
         .or_else(|| plan_explicit_constant_strict_upper_bound_weakening(goal, premise_pairs))
         .or_else(|| plan_explicit_increment_constant_upper_bound(goal, premise_pairs))
@@ -2280,170 +2281,101 @@ pub(super) fn plan_explicit_increment_strict_greater_from_strict_lower(
     ])
 }
 
-/// `first <= middle` and `middle <= last` give `first <= last` through
-/// `int32_less_equal_transitive`; the non-strict counterpart of
-/// [`plan_explicit_strict_transitive`].
-fn plan_explicit_nonstrict_transitive(
-    goal: &Proposition,
-    premise_pairs: &[(Proposition, ClickProposition)],
-) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedLessEqual(goal_first, goal_last),
-        true,
-    ) = goal
-    else {
-        return None;
-    };
-    for (first_kernel, first_surface) in premise_pairs {
-        let Some((first, middle)) = signed_nonstrict_parts(first_kernel) else {
-            continue;
-        };
-        if first != goal_first.as_ref() {
-            continue;
-        }
-        for (second_kernel, second_surface) in premise_pairs {
-            let Some((second_middle, last)) = signed_nonstrict_parts(second_kernel) else {
-                continue;
-            };
-            if second_middle != middle || last != goal_last.as_ref() {
-                continue;
-            }
-            let (surface_first, surface_middle) = surface_nonstrict_parts(first_surface)?;
-            let (_, surface_last) = surface_nonstrict_parts(second_surface)?;
-            return Some(vec![
-                ProofTactic::ApplyTheoremUsing {
-                    application: TheoremApplication {
-                        name: "int32_less_equal_transitive".to_string(),
-                        arguments: vec![surface_first, surface_middle, surface_last],
-                    },
-                    premises: vec![first_surface.clone(), second_surface.clone()],
-                },
-                ProofTactic::Assumption,
-            ]);
-        }
-    }
-    None
+/// The order of one leg of a signed transitive chain.
+#[derive(Clone, Copy)]
+enum SignedOrder {
+    NonStrict,
+    Strict,
 }
 
-fn plan_explicit_strict_transitive(
-    goal: &Proposition,
-    premise_pairs: &[(Proposition, ClickProposition)],
-) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedLessThan(goal_first, goal_last),
-        true,
-    ) = goal
-    else {
-        return None;
-    };
-    for (first_kernel, first_surface) in premise_pairs {
-        let Some((first, middle)) = signed_strict_parts(first_kernel) else {
-            continue;
-        };
-        if first != goal_first.as_ref() {
-            continue;
-        }
-        for (second_kernel, second_surface) in premise_pairs {
-            let Some((second_middle, last)) = signed_strict_parts(second_kernel) else {
-                continue;
-            };
-            if second_middle != middle || last != goal_last.as_ref() {
-                continue;
-            }
-            let (surface_first, surface_middle) = surface_strict_parts(first_surface)?;
-            let (_, surface_last) = surface_strict_parts(second_surface)?;
-            return Some(vec![
-                ProofTactic::ApplyTheoremUsing {
-                    application: TheoremApplication {
-                        name: "int32_less_than_transitive".to_string(),
-                        arguments: vec![surface_first, surface_middle, surface_last],
-                    },
-                    premises: vec![first_surface.clone(), second_surface.clone()],
-                },
-                ProofTactic::Assumption,
-            ]);
+impl SignedOrder {
+    fn kernel_parts(
+        self,
+        proposition: &Proposition,
+    ) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+        match self {
+            Self::NonStrict => signed_nonstrict_parts(proposition),
+            Self::Strict => signed_strict_parts(proposition),
         }
     }
-    None
-}
 
-/// A non-strict leg followed by a strict leg is strict end to end:
-/// `first < last` follows from listed `first <= middle` and `middle < last`
-/// through `int32_less_equal_less_than_transitive`, mirroring the strict-then-nonstrict
-/// planner below.
-fn plan_explicit_nonstrict_then_strict_transitive(
-    goal: &Proposition,
-    premise_pairs: &[(Proposition, ClickProposition)],
-) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedLessThan(goal_first, goal_last),
-        true,
-    ) = goal
-    else {
-        return None;
-    };
-    for (first_kernel, first_surface) in premise_pairs {
-        let Some((first, middle)) = signed_nonstrict_parts(first_kernel) else {
-            continue;
-        };
-        if first != goal_first.as_ref() {
-            continue;
-        }
-        for (second_kernel, second_surface) in premise_pairs {
-            let Some((second_middle, last)) = signed_strict_parts(second_kernel) else {
-                continue;
-            };
-            if second_middle != middle || last != goal_last.as_ref() {
-                continue;
-            }
-            let (surface_first, surface_middle) = surface_nonstrict_parts(first_surface)?;
-            let (_, surface_last) = surface_strict_parts(second_surface)?;
-            return Some(vec![
-                ProofTactic::ApplyTheoremUsing {
-                    application: TheoremApplication {
-                        name: "int32_less_equal_less_than_transitive".to_string(),
-                        arguments: vec![surface_first, surface_middle, surface_last],
-                    },
-                    premises: vec![first_surface.clone(), second_surface.clone()],
-                },
-                ProofTactic::Assumption,
-            ]);
+    fn surface_parts(
+        self,
+        proposition: &ClickProposition,
+    ) -> Option<(ContractExpression, ContractExpression)> {
+        match self {
+            Self::NonStrict => surface_nonstrict_parts(proposition),
+            Self::Strict => surface_strict_parts(proposition),
         }
     }
-    None
 }
 
-fn plan_explicit_strict_then_nonstrict_transitive(
+/// The signed transitive chains the planner transcribes, tried in order:
+/// the order of each leg and the theorem that composes them. A chain is
+/// strict end to end when either leg is.
+const SIGNED_TRANSITIVE_CHAINS: [(SignedOrder, SignedOrder, &str); 4] = [
+    (
+        SignedOrder::Strict,
+        SignedOrder::Strict,
+        "int32_less_than_transitive",
+    ),
+    (
+        SignedOrder::NonStrict,
+        SignedOrder::NonStrict,
+        "int32_less_equal_transitive",
+    ),
+    (
+        SignedOrder::NonStrict,
+        SignedOrder::Strict,
+        "int32_less_equal_less_than_transitive",
+    ),
+    (
+        SignedOrder::Strict,
+        SignedOrder::NonStrict,
+        "int32_less_than_less_equal_transitive",
+    ),
+];
+
+/// Listed `first ~ middle` and `middle ~ last` give the goal `first ~ last`
+/// through the chain's named transitivity theorem.
+fn plan_explicit_transitive(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
+    (first_order, second_order, theorem): (SignedOrder, SignedOrder, &str),
 ) -> Option<Vec<ProofTactic>> {
-    let Proposition::ConditionIs(
-        ConditionTerm::Bitvector32SignedLessThan(goal_first, goal_last),
-        true,
-    ) = goal
-    else {
-        return None;
+    let strict =
+        matches!(first_order, SignedOrder::Strict) || matches!(second_order, SignedOrder::Strict);
+    let (goal_first, goal_last) = match goal {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(goal_first, goal_last),
+            true,
+        ) if strict => (goal_first, goal_last),
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(goal_first, goal_last),
+            true,
+        ) if !strict => (goal_first, goal_last),
+        _ => return None,
     };
     for (first_kernel, first_surface) in premise_pairs {
-        let Some((first, middle)) = signed_strict_parts(first_kernel) else {
+        let Some((first, middle)) = first_order.kernel_parts(first_kernel) else {
             continue;
         };
         if first != goal_first.as_ref() {
             continue;
         }
         for (second_kernel, second_surface) in premise_pairs {
-            let Some((second_middle, last)) = signed_nonstrict_parts(second_kernel) else {
+            let Some((second_middle, last)) = second_order.kernel_parts(second_kernel) else {
                 continue;
             };
             if second_middle != middle || last != goal_last.as_ref() {
                 continue;
             }
-            let (surface_first, surface_middle) = surface_strict_parts(first_surface)?;
-            let (_, surface_last) = surface_nonstrict_parts(second_surface)?;
+            let (surface_first, surface_middle) = first_order.surface_parts(first_surface)?;
+            let (_, surface_last) = second_order.surface_parts(second_surface)?;
             return Some(vec![
                 ProofTactic::ApplyTheoremUsing {
                     application: TheoremApplication {
-                        name: "int32_less_than_less_equal_transitive".to_string(),
+                        name: theorem.to_string(),
                         arguments: vec![surface_first, surface_middle, surface_last],
                     },
                     premises: vec![first_surface.clone(), second_surface.clone()],
@@ -3701,8 +3633,7 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
     lower_fixed_state_proposition_through_kernel(
         candidate,
         &assumptions,
-        &values,
-        &array_refs,
+        ContractEnvironment::new(&values, &array_refs),
         FixedStateFrame::new(
             view.old_reference_state(state),
             state,

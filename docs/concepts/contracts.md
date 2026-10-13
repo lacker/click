@@ -77,6 +77,9 @@ consumes p[0..1];
 
 These give the verifier permission to check external memory accesses. `views`
 permits loads; an owned element permits both loads and stores.
+`owns a[i]` and `views a[i]` cover one element at that index, using the
+element type and byte width of `a`, including 64-bit integers. They grant
+no access to neighboring elements.
 Resource facts are carried separately from pure facts.
 [Resources and memory permissions](resources.md) covers transfer through
 function calls and the distinction between viewability and authority.

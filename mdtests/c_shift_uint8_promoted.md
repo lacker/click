@@ -1,6 +1,6 @@
 # C uint8 shifts promoted
 
-This checks that C0 promotes `uint8` operands before shifting. The promoted
+This checks that Click promotes `uint8` operands before shifting. The promoted
 byte range also proves that shifting left by one does not overflow.
 
 ```c filename=shift_uint8_promoted.c

@@ -47,7 +47,10 @@ locations together and reuse that result for every step, including missing
 indices. Computing their line and character columns uses one source walk;
 reparsing the project or rescanning a long line for each location is not
 acceptable. The CLI cache and batch-position regressions cover 16, 64, and
-256 locations.
+256 locations. Rendering also shares one lexical source index for nested paths,
+line ambiguity, and target containment. Matching delimiters skip nested bodies,
+and direct tactic ranges are cached by body rather than rebuilt per child.
+Regressions cover siblings, long lines, deep nesting, and unrelated source text.
 
 ## Proof size and speed targets
 
@@ -107,6 +110,25 @@ a cell it cannot prove untouched stays at its pre-step snapshot; an explicit
 `transport` pays for anything more. Term comparison performs no
 frame reasoning. The user-facing statement of this rule is
 [What a step carries](../concepts/proof-state.md#what-a-step-carries).
+
+Observable resource compositions retain a persistent filtered storage root.
+After its first projection, resource producers advance only inserted or removed
+entries and affected support metadata. Private-local deltas reuse the exact
+observable root. Queries use maintained ownership counts rather than enumerate
+retained owners. The cache checks both the source storage identity and the
+addressability registry revision; a classification change or a whole-input
+rewrite rebuilds the projection. Returned compositions use current loan
+bindings, and cached storage never supplies a proof decision. Four-size
+regressions cover unchanged queries, private insertion/removal sequences,
+addressable deltas, and retained owners, with compatibility checks for supports,
+expansions, loans, forks, and registry changes.
+
+Fixed-state propositions select their referenced local bindings before
+elaboration. Recorded snapshots look up those names individually instead of
+rebuilding bindings for every local. The state and memory handles remain
+shared. Regressions vary unrelated bindings at four sizes and compare historical
+reads against full-context lowering, including entry values and names that keep
+their current value when absent from the recorded state.
 
 Logical reads through opaque pointers select an admitted footprint's address
 coordinates through the composition's existing class and interval indexes.
@@ -246,25 +268,23 @@ charged to visible semantic output rather than hidden ambient state:
   line of constant-index stores (`a[0] = …; a[1] = …`) costs 477 to 11,339
   units of store work at 4 to 64 stores in a debug build (467 to 8,959 in
   release), where it cost 445 to 46,017
-  (`stores_to_constant_indices_are_near_linear`). Symbolic indices are
-  still asked cell by cell, so that line is still `N^2/2` questions, but a
-  question no longer walks its own order path: when only a chain of order
-  facts separates the cells (`c0 < c1 < …`), each walk used to climb the
-  chain between its two indices and the line cost `N^3` (830 to 1,032,462).
-  The order walk now shares reachability across walks toward one target
-  (`OrderReachMemo` in
-  `src/kernel/assumptions/condition_reasoning/order_paths.rs`): a success
-  files the states on its path, a complete refusal every state it reached,
-  and only over terms that read no memory, where each test the walk applies
-  is a question about the fact set alone. The line now costs 738 to 123,290
-  in order and 900 to 149,372 in reverse order
-  (`stores_to_chain_ordered_indices_are_quadratic_not_cubic`, pinned below
-  the cubic curve), and
-  `memory_resolution_order_walk_memo_agrees_with_the_full_scan` compares the
-  memoized walk with the full scan on generated fact sets. The `N^2/2`
-  questions for symbolic indices remain a known violation of the contract;
-  removing them needs the cells indexed by the index terms the facts order,
-  which no rule has yet. Union views are still visited per candidate on
+  (`stores_to_constant_indices_are_near_linear`). Recorded strict signed
+  variable orders now also form incremental paths, with logical ranks from a
+  weighted union forest rather than variable identifiers. Exact order and
+  endpoint-bound queries use those paths without traversing the intervening
+  facts. Each cell snapshot files matching array cells by logical rank and
+  updates that derived index from persistent-map deltas. A store visits only
+  nearby ranks whose maximum scalar width may overlap, plus cells of other
+  bases, strides, or order paths. Branching edges never imply an order between
+  siblings; withdrawing an edge invalidates the path index. Implicit provenance
+  capture retains the ordinary reasoning and invalidation path.
+  `symbolic_index_store_work_is_flat_across_recorded_order_chains` verifies the
+  original symbolic-index source at 8, 16, 32, and 64 stores: the largest store
+  costs 232, 232, 232, and 241 units, and whole verification is near linear.
+  Scalar reference comparisons also cover shuffled variable identifiers,
+  wide neighboring cells, mixed strides, and removed order facts. General
+  symbolic shapes still use the ordinary order walk and alias checks. Union
+  views are still visited per candidate on
   every store. The initialization record (`InitializedBytes` in
   `src/kernel/primitives/initialized_bytes.rs`) is not visited by a store:
   a store only adds to it, merging constant-offset bytes into one run per
@@ -490,7 +510,12 @@ hold a violation, so a call composing its ensured resources into a caller
 frame never visits the caller's unrelated allocations
 (`src/kernel/tests/resource_scaling_tests.rs`).
 
-Within one block, an owned range is compared only with the owned ranges a
+Within one block, an owned range selects the smaller of the complete owned
+block and the candidates its same-block aliases nominate, retaining the
+indexed path for cross-block aliases. Every nominated pair still checks
+overlap. Containment queries try the written root before expanding equal
+spellings; a successful containment proof already selects its owned member.
+Otherwise, an owned range is compared with the owned ranges a
 fact could relate it to (`ResourceContext::owned_validity_candidates`). A
 base's *root* is its block and the first symbolic atom of its offset in
 canonical form (`p` for `p`, `p + 8`, and `p + 4*i`; nothing for a constant
@@ -690,7 +715,11 @@ carries the merge of its members' folded constants as `Known(c)`,
 different constants in one class are still ambiguous, and a class whose
 constant rises re-folds only the compound terms that use one of its members.
 A constant only rises, so each registered term is re-folded a bounded number
-of times along one path. A query no longer walks the facts connected to the
+of times along one path. A class also keeps its signed byte reads of byte
+loads, and a rise inverts each into its byte's class
+([byte representation](byte-representation.md#character-reads-of-one-byte-cells));
+that set is relabelled with the smaller class's members on a union, and its
+inversions are bounded by the same rises, so no class or fact is scanned. A query no longer walks the facts connected to the
 term: before, a counter advanced by `N` calls re-walked its whole chain at
 every call, deep-comparing every same-address load at another snapshot, so
 the `N`th call cost `O(N^2)`. Only an `Unknown` class does query-time work:
@@ -1020,3 +1049,16 @@ conditions about other cells in the supplied snapshot. Cold canonicalization
 may still charge the explicit snapshot input. Expanded proof bodies remain
 the same size as unrelated requirements grow; whole-source work scales with
 the input that must be parsed and checked.
+
+### Checked integer increment chains
+
+After checking each original `int32` addition's overflow guard, execution
+combines a trailing constant offset with the next constant when their sum
+fits `int32`. This keeps a chain of increment values shallow, so later
+overflow decisions do not walk every earlier increment. The source expression
+and intermediate guards remain intact. The multi-size
+`signed_increment_overflow_checks_stay_flat_per_assignment` regression checks
+assignment work and total verification work, and an unbounded increment is
+still rejected. `increment_chain_keeps_intermediate_overflow_guard.md` rejects
+a program whose final arithmetic value would match its input but whose
+intermediate addition overflows.

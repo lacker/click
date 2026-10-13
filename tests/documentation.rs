@@ -1112,7 +1112,7 @@ fn every_tactic_form_has_a_checked_positive_fixture() {
 }
 
 /// Proof-object operations with a canonical name but no surface spelling.
-const INTERNAL_TACTICS: &[&str] = &["choose"];
+const INTERNAL_TACTICS: &[&str] = &["auto", "choose"];
 
 #[test]
 fn cli_inventory_matches_argument_parsers() {
@@ -1531,5 +1531,267 @@ fn readme_versions_match_the_package_version() {
     assert!(
         stale.is_empty(),
         "README names versions {stale:?}; the package version is {version}"
+    );
+}
+
+const COVERAGE_STATUSES: [&str; 4] = ["Supported", "Partial", "Not supported", "Not applicable"];
+const COVERAGE_LANGUAGES: [&str; 3] = ["C", "C++", "Rust"];
+
+/// Splits a Markdown table row into trimmed cells, or `None` for a
+/// non-row or a delimiter row.
+fn table_cells(line: &str) -> Option<Vec<&str>> {
+    let inner = line.trim().strip_prefix('|')?.strip_suffix('|')?;
+    let cells: Vec<&str> = inner.split('|').map(str::trim).collect();
+    (!cells
+        .iter()
+        .all(|cell| cell.chars().all(|c| c == '-' || c == ' ')))
+    .then_some(cells)
+}
+
+/// Inline-code spans of a cell that name repository fixtures.
+fn cited_fixtures(cell: &str) -> Vec<&str> {
+    cell.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|code| {
+            ["mdtests/", "examples/", "integrations/", "tests/"]
+                .iter()
+                .any(|prefix| code.starts_with(prefix))
+        })
+        .collect()
+}
+
+/// Whether `source` defines `name` as a `#[test]` function. Attribute and
+/// comment lines may sit between the attribute and the `fn`.
+fn defines_test(source: &str, name: &str) -> bool {
+    let lines: Vec<&str> = source.lines().collect();
+    let signature = format!("fn {name}(");
+    lines.iter().enumerate().any(|(index, line)| {
+        line.trim_start().starts_with(&signature)
+            && lines[..index]
+                .iter()
+                .rev()
+                .map(|line| line.trim())
+                .take_while(|line| line.starts_with("#[") || line.starts_with("//"))
+                .any(|line| line == "#[test]")
+    })
+}
+
+enum Evidence {
+    Passing,
+    Refusal,
+}
+
+/// Resolves one cited fixture, reporting what kind of evidence it is.
+fn resolve_fixture(fixture: &str) -> Result<Evidence, String> {
+    if let Some((file, test)) = fixture.split_once("::") {
+        let source =
+            fs::read_to_string(root().join(file)).map_err(|error| format!("{file}: {error}"))?;
+        return defines_test(&source, test)
+            .then_some(Evidence::Passing)
+            .ok_or_else(|| format!("{file} has no #[test] fn {test}"));
+    }
+    if fixture.starts_with("mdtests/") && fixture.ends_with(".md") {
+        let source = fs::read_to_string(root().join(fixture))
+            .map_err(|error| format!("{fixture}: {error}"))?;
+        let expectation = source
+            .split("```expect\n")
+            .nth(1)
+            .and_then(|rest| rest.lines().next())
+            .ok_or_else(|| format!("{fixture} has no expect block"))?;
+        return Ok(if expectation.trim() == "pass" {
+            Evidence::Passing
+        } else {
+            Evidence::Refusal
+        });
+    }
+    if fixture.ends_with('/') {
+        let mut sidecars = Vec::new();
+        let directory = root().join(fixture);
+        if directory.is_dir() {
+            files_with_extension(&directory, "click", &mut sidecars);
+        }
+        return (!sidecars.is_empty())
+            .then_some(Evidence::Passing)
+            .ok_or_else(|| format!("{fixture} is not a directory with a Click sidecar"));
+    }
+    Err(format!(
+        "{fixture} is not an mdtest, fixture directory, or FILE::TEST"
+    ))
+}
+
+#[test]
+fn coverage_matrix_cells_cite_existing_fixtures() {
+    let page = "docs/reference/coverage.md";
+    let source = fs::read_to_string(root().join(page)).expect("read the coverage matrix");
+    let mut failures = Vec::new();
+    let mut section = String::new();
+    let mut in_matrix = false;
+    let mut rows = 0usize;
+
+    for (index, line) in source.lines().enumerate() {
+        let at = format!("{page}:{}", index + 1);
+        if let Some(heading) = line.strip_prefix("## ") {
+            section = heading.to_string();
+            in_matrix = false;
+            continue;
+        }
+        let Some(cells) = table_cells(line) else {
+            if !line.starts_with('|') {
+                in_matrix = false;
+            }
+            continue;
+        };
+        if cells[1..] == COVERAGE_LANGUAGES {
+            in_matrix = true;
+            continue;
+        }
+        if !in_matrix {
+            continue;
+        }
+        rows += 1;
+        if cells.len() != 1 + COVERAGE_LANGUAGES.len() {
+            failures.push(format!("{at}: row has {} cells", cells.len()));
+            continue;
+        }
+        for (language, cell) in COVERAGE_LANGUAGES.iter().zip(&cells[1..]) {
+            let Some(status) = COVERAGE_STATUSES
+                .iter()
+                .find(|status| cell.starts_with(*status))
+            else {
+                failures.push(format!("{at}: {language} cell has no status: {cell}"));
+                continue;
+            };
+            let fixtures = cited_fixtures(cell);
+            let needs_evidence = matches!(*status, "Supported" | "Partial");
+            if needs_evidence && fixtures.is_empty() {
+                failures.push(format!("{at}: {language} {status} cell cites no fixture"));
+            }
+            let mut passing = false;
+            for fixture in fixtures {
+                match resolve_fixture(fixture) {
+                    Ok(Evidence::Passing) => passing = true,
+                    Ok(Evidence::Refusal) => {}
+                    Err(error) => failures.push(format!("{at}: {language}: {error}")),
+                }
+            }
+            let refusals_suffice = section == "Runtime errors checked";
+            if needs_evidence && !refusals_suffice && !passing {
+                failures.push(format!(
+                    "{at}: {language} {status} cell needs a passing fixture outside the runtime-error table"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        rows >= 60,
+        "coverage matrix unexpectedly has only {rows} rows"
+    );
+    assert!(
+        failures.is_empty(),
+        "coverage matrix evidence is stale:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn language_support_summaries_link_to_the_coverage_matrix() {
+    let docs = root().join("docs");
+    let summaries = [
+        "index.md",
+        "concepts/what-click-proves.md",
+        "reference/language/limitations.md",
+        "reference/language/c.md",
+        "reference/rust.md",
+        "reference/cli/import.md",
+    ];
+    let no_type_lists = [
+        "concepts/what-click-proves.md",
+        "reference/language/limitations.md",
+    ];
+    let scalar_names = [
+        "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+    ];
+    let mut failures = Vec::new();
+
+    for page in summaries {
+        let source = fs::read_to_string(docs.join(page)).expect("read summary page");
+        if !markdown_links(&source).iter().any(|link| {
+            link.split('#')
+                .next()
+                .is_some_and(|path| path.ends_with("coverage.md"))
+        }) {
+            failures.push(format!("{page}: link to the language coverage matrix"));
+        }
+        if !no_type_lists.contains(&page) {
+            continue;
+        }
+        let mut in_code_fence = false;
+        for (line, text) in source.lines().enumerate() {
+            if text.starts_with("```") {
+                in_code_fence = !in_code_fence;
+                continue;
+            }
+            let named = scalar_names
+                .iter()
+                .filter(|name| text.contains(&format!("`{name}`")))
+                .count();
+            if !in_code_fence && named >= 3 {
+                failures.push(format!(
+                    "{page}:{}: scalar type list duplicates the coverage matrix",
+                    line + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "support summaries diverge from the coverage matrix:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn public_pages_say_supported_c_not_c0() {
+    let docs = root().join("docs");
+    let mut pages = vec![docs.join("index.md")];
+    markdown_files(&docs.join("concepts"), &mut pages);
+    markdown_files(&docs.join("reference"), &mut pages);
+    pages.sort();
+    let mut failures = Vec::new();
+    for page in pages {
+        // The glossary entry explains the historical name.
+        if page.ends_with("reference/glossary.md") {
+            continue;
+        }
+        let source = fs::read_to_string(&page).expect("read public page");
+        let mut in_code_fence = false;
+        for (line, text) in source.lines().enumerate() {
+            if text.starts_with("```") {
+                in_code_fence = !in_code_fence;
+                continue;
+            }
+            if in_code_fence {
+                continue;
+            }
+            // Drop inline code, then look for `C0` as a whole word.
+            let prose: String = text.split('`').step_by(2).collect::<Vec<_>>().join(" ");
+            let words = prose.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'));
+            if words.into_iter().any(|word| word == "C0") {
+                failures.push(format!(
+                    "{}:{}: say `supported C` instead of `C0`",
+                    page.strip_prefix(&docs)
+                        .expect("docs-relative path")
+                        .display(),
+                    line + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "retired term C0:\n{}",
+        failures.join("\n")
     );
 }

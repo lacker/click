@@ -192,60 +192,6 @@ pub fn c_function_outcomes_program_state_definitionally_equal(
     }
 }
 
-/// Proves two return outcomes equal from matching certified execution
-/// histories. This recognizes equal store chains and alpha-equivalent call
-/// havoc snapshots without treating unrelated fresh havoc identities as
-/// interchangeable.
-pub fn c_function_outcomes_equal_by_execution_provenance(
-    function: &CFunction,
-    left: &CFunctionOutcome,
-    left_facts: &(impl ExecutionFactSource + ?Sized),
-    right: &CFunctionOutcome,
-    right_facts: &(impl ExecutionFactSource + ?Sized),
-    assumptions: &PureFactContext,
-) -> bool {
-    if !c_function_outcomes_program_state_equal_by_execution_provenance(
-        left,
-        left_facts,
-        right,
-        right_facts,
-        assumptions,
-    ) {
-        return false;
-    }
-    let (
-        CFunctionOutcome::Return {
-            state: left_state, ..
-        },
-        CFunctionOutcome::Return {
-            state: right_state, ..
-        },
-    ) = (left, right)
-    else {
-        return false;
-    };
-    resource_context_definitionally_contains(
-        left_state.resources(),
-        right_state.resources(),
-        function.composite_resource_definitions(),
-        left_state.memory(),
-        assumptions,
-    ) || resource_context_definitionally_contains(
-        right_state.resources(),
-        left_state.resources(),
-        function.composite_resource_definitions(),
-        left_state.memory(),
-        assumptions,
-    ) || resource_contexts_definitionally_equal(
-        function,
-        left_state.memory(),
-        left_state.resources(),
-        right_state.memory(),
-        right_state.resources(),
-        assumptions,
-    )
-}
-
 /// Compares the observable program state of two return paths by matching their
 /// certified execution histories. Resource representation remains the
 /// responsibility of the separate resource certificate.
@@ -1562,6 +1508,17 @@ fn function_claim_holds_on_prepared_path(
             // its completion is found by the claim, not by re-deriving and
             // comparing the proposition.
             let claim_completion_certifies = || {
+                if let Some(key) = literal_completion_key(outcome)
+                    && checked_propositions
+                        .by_literal_outcome
+                        .get(claim.target())
+                        .and_then(|outcomes| outcomes.get(&key))
+                        .is_some_and(|proofs| proofs.iter().any(certifies))
+                {
+                    return true;
+                }
+                // Different syntax can denote the same outcome. The index is
+                // only a candidate accelerator, never evidence of inequality.
                 checked_propositions
                     .by_claim
                     .get(claim.target())
@@ -2419,6 +2376,15 @@ fn checked_proposition_index(
     let mut index = CheckedPropositionIndex::default();
     for checked in checked_propositions {
         if let Some(claim) = &checked.claim {
+            if let Some(key) = literal_completion_key(checked.specification.outcome()) {
+                index
+                    .by_literal_outcome
+                    .entry(claim.clone())
+                    .or_default()
+                    .entry(key)
+                    .or_default()
+                    .push(checked);
+            }
             index
                 .by_claim
                 .entry(claim.clone())
@@ -2433,6 +2399,44 @@ fn checked_proposition_index(
 #[derive(Default)]
 struct CheckedPropositionIndex<'a> {
     by_claim: BTreeMap<CFunctionContractClaimTarget, Vec<&'a CCheckedFunctionProposition>>,
+    by_literal_outcome: BTreeMap<
+        CFunctionContractClaimTarget,
+        BTreeMap<(bool, CValue), Vec<&'a CCheckedFunctionProposition>>,
+    >,
+}
+
+/// Index only bounded scalar payloads; hashing an arbitrary symbolic value or
+/// an outcome's state would traverse the execution history on every lookup.
+fn literal_completion_key(outcome: &CFunctionOutcome) -> Option<(bool, CValue)> {
+    let (exceptional, value) = match outcome {
+        CFunctionOutcome::Return { value, .. } => (false, value),
+        CFunctionOutcome::Throw { value, .. } => (true, value),
+        _ => return None,
+    };
+    let term = match value {
+        CValue::Void => return Some((exceptional, CValue::Void)),
+        CValue::Bool(term)
+        | CValue::Int8(term)
+        | CValue::Int16(term)
+        | CValue::Int32(term)
+        | CValue::UInt8(term)
+        | CValue::UInt16(term)
+        | CValue::UInt32(term)
+        | CValue::Int64(term)
+        | CValue::UInt64(term)
+        | CValue::Int128(term)
+        | CValue::UInt128(term)
+        | CValue::Float32(term)
+        | CValue::Float64(term) => term,
+        CValue::Pointer(_) | CValue::PointerInteger(_) => return None,
+    };
+    match term {
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Int64Constant(_)
+        | Bitvector32Term::UInt64Constant(_)
+        | Bitvector32Term::MachineIntegerConstant(_) => Some((exceptional, value.clone())),
+        _ => None,
+    }
 }
 
 /// Certifies contract claims while reusing proposition judgments already

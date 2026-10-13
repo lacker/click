@@ -1,5 +1,13 @@
 # Model concurrency and atomics
 
+Priority: P2.
+
+Soundness: incomplete. Concurrency beyond fork/join, mutexes and one-shot
+publication is refused. For example, `#include <stdatomic.h>` with
+`atomic_fetch_add` is rejected at include processing under the default
+target. The modeled pthread interface is a documented trusted specification
+in `docs/concepts/trust.md`, not an open gap of this issue.
+
 Proofs are stated against Click's own `<pthread.h>` and `<stdatomic.h>`
 interfaces and their [trusted specification](../src/languages/c/modeled_pthread_spec.md).
 This issue owns concurrency support beyond fork/join, mutexes, and one-shot

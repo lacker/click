@@ -353,30 +353,6 @@ pub fn format_fractional_duration(duration: Duration) -> String {
     }
 }
 
-/// Reads a duration from an environment variable, falling back to `default`
-/// when the variable is unset.
-///
-/// The variable is parsed by [`parse_duration`], so every caller accepts the
-/// same forms the binaries accept on the command line.
-pub fn duration_from_env(variable: &str, default: Duration) -> Result<Duration, String> {
-    let source = std::env::var_os(variable);
-    duration_from_optional_os(variable, source.as_deref(), default)
-}
-
-fn duration_from_optional_os(
-    variable: &str,
-    source: Option<&std::ffi::OsStr>,
-    default: Duration,
-) -> Result<Duration, String> {
-    let Some(source) = source else {
-        return Ok(default);
-    };
-    let source = source
-        .to_str()
-        .ok_or_else(|| format!("{variable} must be valid UTF-8"))?;
-    parse_duration(source).map_err(|message| format!("{variable}: {message}"))
-}
-
 /// Per-class tactic time *reporting* thresholds (owner ruling 2026-07-31): a
 /// slow SIMPLE tactic is an engine bug. A successful slow SMART tactic is an
 /// expansion candidate; a failed SMART search should be decomposed unless it
@@ -2735,29 +2711,6 @@ mod tests {
         let error = read_click_project(&a, "import \"b.click\";").unwrap_err();
         assert!(error.contains("a.click -> b.click -> a.click"), "{error}");
         fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn environment_durations_fall_back_and_report_their_variable() {
-        assert_eq!(
-            duration_from_optional_os("LIMIT", None, Duration::from_secs(3)),
-            Ok(Duration::from_secs(3))
-        );
-        assert_eq!(
-            duration_from_optional_os(
-                "LIMIT",
-                Some(std::ffi::OsStr::new("250ms")),
-                Duration::from_secs(3),
-            ),
-            Ok(Duration::from_millis(250))
-        );
-        let message = duration_from_optional_os(
-            "LIMIT",
-            Some(std::ffi::OsStr::new("later")),
-            Duration::from_secs(3),
-        )
-        .expect_err("an unparseable duration should be rejected");
-        assert!(message.starts_with("LIMIT: "), "{message}");
     }
 
     #[test]

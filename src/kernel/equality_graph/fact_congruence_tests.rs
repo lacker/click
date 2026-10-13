@@ -271,3 +271,94 @@ fn nested_application_registration_and_late_merge_scale_with_expression_size() {
         );
     }
 }
+
+#[test]
+fn signed_addition_definedness_follows_early_and_late_operand_equalities() {
+    let source = ConditionTerm::signed_add_overflows(var(60000), var(60001));
+    let target = ConditionTerm::signed_add_overflows(var(60002), var(60003));
+    let aliases = [eq(var(60000), var(60002)), eq(var(60001), var(60003))];
+    for early in [false, true] {
+        for truth in [false, true] {
+            let mut facts = PureFactContext::new();
+            if early {
+                for alias in &aliases {
+                    facts = facts.assume_proposition(alias.clone());
+                }
+            }
+            facts = facts.assume_condition(source.clone(), truth);
+            if !early {
+                assert_eq!(facts.decide(&target), None);
+                for alias in &aliases {
+                    facts = facts.assume_proposition(alias.clone());
+                }
+            }
+            assert_eq!(facts.decide(&target), Some(truth));
+            assert_eq!(
+                facts.decide(&ConditionTerm::signed_add_overflows(var(60003), var(60002))),
+                Some(truth)
+            );
+            assert!(facts.contains_known(&Proposition::ConditionIs(target.clone(), truth)));
+            assert!(!facts.contains_known(&Proposition::ConditionIs(target.clone(), !truth)));
+            assert_eq!(
+                facts.decide(&ConditionTerm::signed_subtract_overflows(
+                    var(60002),
+                    var(60003)
+                )),
+                None
+            );
+            assert_eq!(
+                facts.decide(&ConditionTerm::int64_signed_add_overflows(
+                    var(60002),
+                    var(60003)
+                )),
+                None
+            );
+        }
+    }
+}
+
+#[test]
+fn signed_addition_definedness_stays_scoped_and_withdrawable() {
+    let source = Proposition::ConditionIs(
+        ConditionTerm::signed_add_overflows(var(60100), var(60101)),
+        false,
+    );
+    let target = ConditionTerm::signed_add_overflows(var(60102), var(60101));
+    let alias = eq(var(60100), var(60102));
+    let parent = PureFactContext::new().assume_proposition(source.clone());
+    let child = parent.clone().assume_proposition(alias.clone());
+    assert_eq!(child.decide(&target), Some(false));
+    assert_eq!(parent.decide(&target), None);
+    assert_eq!(child.without_exact_fact(&alias).decide(&target), None);
+    assert_eq!(child.without_exact_fact(&source).decide(&target), None);
+}
+
+#[test]
+fn signed_addition_definedness_lookup_scales_with_alias_delta() {
+    let mut costs = Vec::new();
+    for size in [32u64, 64, 128] {
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            let mut facts = PureFactContext::new().assume_condition(
+                ConditionTerm::signed_add_overflows(var(61000), var(61001)),
+                false,
+            );
+            for index in 0..size {
+                facts = facts
+                    .assume_proposition(eq(var(61000), var(62000 + index)))
+                    .assume_condition(
+                        ConditionTerm::signed_add_overflows(var(63000 + index), var(64000 + index)),
+                        true,
+                    );
+                assert_eq!(
+                    facts.decide(&ConditionTerm::signed_add_overflows(
+                        var(62000 + index),
+                        var(61001)
+                    )),
+                    Some(false)
+                );
+            }
+        });
+        costs.push(work);
+    }
+    assert!(costs[2] < 6 * costs[0], "{costs:?}");
+}

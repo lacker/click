@@ -161,8 +161,7 @@ pub(in crate::surface) fn evaluate_requirement_segment(
     evaluate_segment_bounds(
         segment,
         &PureFactContext::new(),
-        &parameter_values,
-        &array_refs,
+        ContractEnvironment::new(&parameter_values, &array_refs),
         entry_state,
         contract_segment_element_width(parameter_binding.parameters, segment),
     )
@@ -173,8 +172,7 @@ pub(in crate::surface) fn evaluate_requirement_segment(
 fn evaluate_segment_bounds(
     segment: &ContractSegment,
     assumptions: &PureFactContext,
-    values: &BTreeMap<String, CValue>,
-    array_refs: &ClickArrayRefs,
+    contract_environment: ContractEnvironment<'_>,
     state: &CState,
     element_width: u32,
 ) -> Result<EvaluatedContractSegment, String> {
@@ -182,8 +180,7 @@ fn evaluate_segment_bounds(
         crate::surface::proof::evaluate_c_fragment_through_kernel(
             expression,
             assumptions,
-            values,
-            array_refs,
+            contract_environment,
             state,
             None,
         )

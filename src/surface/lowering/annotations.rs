@@ -1198,12 +1198,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             parsed_function
                 .string_literals()
                 .iter()
-                .map(|literal| {
-                    crate::kernel::CStringLiteral::new(
-                        literal.name().to_string(),
-                        literal.bytes().to_vec(),
-                    )
-                })
+                .map(syntax::C0StringLiteral::to_kernel)
                 .collect(),
         )
         .with_resource_summary(resource_requires, resource_ensures)
@@ -1484,6 +1479,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
     // This one source walk keeps nested binders from rescanning the context.
     let mut referenced = BTreeSet::new();
     collect_click_proposition_referenced_names(proposition, &mut referenced);
+    lowerer.capture_referenced_names = Some(referenced.clone());
     for name in referenced {
         if let Some(crate::kernel::SpecIntegerExpression::Term(term)) = integer_values.get(&name)
             && let Some(variable) = max_spec_integer_expression_variable(
@@ -3253,7 +3249,7 @@ impl AnnotationLowerer<'_> {
                 if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
                     return self.click_proposition_to_spec_proposition(proposition, &snapshot);
                 }
-                match self.resolve_visit_selector(selector)? {
+                match self.resolve_visit_selector(selector, environment)? {
                     ResolvedProgramPoint::Current => {
                         self.click_proposition_to_spec_proposition(proposition, environment)
                     }
@@ -3842,7 +3838,10 @@ impl AnnotationLowerer<'_> {
                                 )
                             })?;
                         let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
-                        if array_ref.element_type != expected_element_type {
+                        if !crate::surface::validation::array_ref_elements_compatible(
+                            array_ref.element_type,
+                            expected_element_type,
+                        ) {
                             return Err(format!(
                                 "predicate `{}` parameter `{}` expects {:?} array elements, got {:?}",
                                 definition.name(),
@@ -3851,9 +3850,27 @@ impl AnnotationLowerer<'_> {
                                 array_ref.element_type
                             ));
                         }
+                        // A character array of the other signedness is
+                        // passed as the predicate's own element pointer, so
+                        // the instance is the one its callers and callees
+                        // name; the bytes read the same either way.
+                        let pointer = if array_ref.element_type == expected_element_type {
+                            array_ref.pointer
+                        } else {
+                            SpecExpression::Cast(
+                                Box::new(array_ref.pointer),
+                                expected_element_type.pointer_to().ok_or_else(|| {
+                                    format!(
+                                        "predicate `{}` parameter `{}` has no element pointer type",
+                                        definition.name(),
+                                        parameter.name()
+                                    )
+                                })?,
+                            )
+                        };
                         lowered_arguments.push(SpecPredicateArgument::ArrayRef {
                             memory: array_ref.memory,
-                            pointer: array_ref.pointer,
+                            pointer,
                         });
                     } else {
                         lowered_arguments.push(SpecPredicateArgument::Value(
@@ -6306,7 +6323,7 @@ impl AnnotationLowerer<'_> {
                 if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
                     return self.lower_contract_sequence_to_spec(expression, &snapshot);
                 }
-                match self.resolve_visit_selector(selector)? {
+                match self.resolve_visit_selector(selector, environment)? {
                     ResolvedProgramPoint::Current => {
                         self.lower_contract_sequence_to_spec(expression, environment)
                     }
@@ -6510,7 +6527,7 @@ impl AnnotationLowerer<'_> {
                 "proof-local mark `{name}` cannot be used in a loop invariant; use `at(loop({loop_index}).entry, ...)` for that loop's entry state"
             ));
         }
-        match self.resolve_visit_selector(selector)? {
+        match self.resolve_visit_selector(selector, environment)? {
             ResolvedProgramPoint::Current => {
                 self.lower_contract_expression_to_spec(expression, environment)
             }
@@ -6535,6 +6552,7 @@ impl AnnotationLowerer<'_> {
     fn resolve_visit_selector(
         &self,
         selector: &SnapshotSelector,
+        environment: &SpecElaborationContext,
     ) -> Result<ResolvedProgramPoint, String> {
         match selector {
             SnapshotSelector::ProgramPoint(program_point)
@@ -6543,7 +6561,7 @@ impl AnnotationLowerer<'_> {
                 Ok(ResolvedProgramPoint::Current)
             }
             SnapshotSelector::ProgramPoint(program_point) => {
-                self.resolve_program_point_ref(program_point)
+                self.resolve_program_point_ref(program_point, environment)
             }
             SnapshotSelector::Mark(name) if self.snapshots.is_some() => Err(format!(
                 "unknown proof mark `{name}`; add `mark {name};` after the proof reaches that frontier"
@@ -6557,6 +6575,7 @@ impl AnnotationLowerer<'_> {
     fn resolve_program_point_ref(
         &self,
         program_point: &ProgramPointRef,
+        environment: &SpecElaborationContext,
     ) -> Result<ResolvedProgramPoint, String> {
         let region = self.resolve_code_region_ref(&program_point.region)?;
         match (region, program_point.kind) {
@@ -6566,9 +6585,18 @@ impl AnnotationLowerer<'_> {
             (CodeRegion::Loop(index), ProgramPointKind::Entry) => {
                 Ok(ResolvedProgramPoint::LoopEntry(index))
             }
-            (CodeRegion::Function, ProgramPointKind::Exit) => {
-                Err("`at(function.exit, ...)` is not supported yet".to_string())
+            // `result` is in scope only once the function has returned, in a
+            // postcondition or at a returned outcome: the state read there is
+            // the exit state. Before the return there is no exit to read.
+            (CodeRegion::Function, ProgramPointKind::Exit)
+                if environment.contract_result_in_scope =>
+            {
+                Ok(ResolvedProgramPoint::Current)
             }
+            (CodeRegion::Function, ProgramPointKind::Exit) => Err(
+                "`at(function.exit, ...)` is available only once the function has returned"
+                    .to_string(),
+            ),
             (CodeRegion::Loop(_), ProgramPointKind::Exit) | (CodeRegion::Statement(_), _)
                 if self.snapshots.is_some() =>
             {
@@ -7122,7 +7150,7 @@ impl AnnotationLowerer<'_> {
         if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
             return self.lower_array_ref_to_spec(expression, &snapshot);
         }
-        match self.resolve_visit_selector(selector)? {
+        match self.resolve_visit_selector(selector, environment)? {
             ResolvedProgramPoint::Current => self.lower_array_ref_to_spec(expression, environment),
             ResolvedProgramPoint::FunctionEntry => {
                 let old_environment =

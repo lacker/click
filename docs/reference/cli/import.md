@@ -4,7 +4,8 @@ Compiler imports let a sidecar verify the C selected by a configured compiler
 preprocessor. Click still parses and lowers the resulting C and independently
 checks its proofs. This mode is explicit and separate from the existing bounded
 source-bundle preprocessor. The same command also refreshes the preliminary
-typed C++ artifact described below.
+typed C++ artifact described below. [Language coverage](../coverage.md) summarizes
+what the C and C++ import paths admit.
 
 ```text
 usage: click import lock <sidecar.click>
@@ -19,7 +20,7 @@ system headers, or frontend toolchain.
   `<pthread.h>`, `<stdatomic.h>`, `<limits.h>`, `<string.h>`, or `<stdlib.h>`
   describes a library the program calls. Click supplies its own declarations
   and a specification of each call; see the
-  [C0 system headers](../language/c0.md#system-headers). Proofs assume a C
+  [C system headers](../language/c.md#system-headers). Proofs assume a C
   library that implements Click's interfaces as specified. Click does not
   import or verify a platform's library headers or bodies to supply an
   interface.
@@ -202,16 +203,17 @@ that exception while normal scalar statements continue. One object-free
 `try` with exactly one named by-value `catch (int name)` is also supported.
 The handler binds the thrown payload and resumes from the thrown state, so a
 caller can catch a verified helper's exception without declaring `throws`.
-One narrow unwinding case is also supported: a `try` block may construct one
-destructible automatic guard first, then call a potentially throwing helper.
-Its public, non-virtual constructor and destructor must be explicitly
+One narrow unwinding case is also supported: a `try` block may first
+construct destructible automatic guards, then call a potentially throwing
+helper. Each guard's public, non-virtual constructor and destructor must be explicitly
 `noexcept`; the destructor runs on both normal and exceptional exits before
 the handler observes state. The constructor's Click contract must establish
 any object invariant required by the destructor that is not already available
-from the checked execution state. The `cpp_one_guard_unwind` mdtest verifies
-both outcomes.
+from the checked execution state. The `cpp_one_guard_unwind` and
+`cpp_two_guard_unwind` mdtests verify both outcomes with one and two guards;
+the guards are destroyed in reverse construction order.
 The importer still rejects nested handlers, catch-all or non-`int` handlers,
-other local declarations inside either block, multiple or late guards, returns
+other local declarations inside either block, guards constructed after the call, returns
 from a guarded `try`, `noexcept` free functions (whose termination behavior is
 not modeled), and broader exceptional resource transfer. This is not general
 C++ unwinding support or an exception-ABI proof. Clang's typed
@@ -1276,8 +1278,9 @@ indexed native object-pointer slice, nonliteral null-pointer conversions, multip
 indirection, call results outside the supported initializer, return-call and direct Boolean
 condition slices,
 indirect calls, loops,
-external specifications, and broader C++ syntax also remain outside this
-end-to-end subset.
+external specifications other than the [standard-library
+contracts](#c-standard-library), and broader C++ syntax also remain outside
+this end-to-end subset.
 
 ## Validation and supported profile
 
@@ -1292,16 +1295,17 @@ about that new environment. A supplied digest alone does not authenticate who
 prepared a native-platform artifact.
 
 Compiler-backed C imports accept two explicit targets. The config target must
-match the sidecar's `target` directive; an omitted directive selects the kernel
-target. Prepared imports retain their target through verification and expansion.
+match the sidecar's target, from its `target` directive or `click.project.json`;
+without either the sidecar selects the default `x86_64-linux-userspace`, so a
+kernel-target config needs one of them. Prepared imports retain their target through verification and expansion.
 
 | Target | Fixed compiler profile |
 | --- | --- |
 | `x86_64-linux-kernel` | GCC, `-x c`, `-std=gnu11`, `-m64`, `-funsigned-char`, `-nostdinc`. |
-| `x86_64-linux-userspace` | GCC, `-x c`, `-std=c11`, `-m64`, `-funsigned-char`, `-nostdinc`, `-pthread`, `-D_POSIX_C_SOURCE=200809L`. |
+| `x86_64-linux-userspace` | GCC, `-x c`, `-std=c11`, `-m64`, `-fsigned-char`, `-nostdinc`, `-pthread`, `-D_POSIX_C_SOURCE=200809L`. |
 
 The user-space profile checks C11, POSIX and pthread feature macros as well as
-the LP64, eight-bit-byte, unsigned-char ABI. It does not define `__KERNEL__`.
+the LP64, eight-bit-byte, signed-char ABI: the probe requires that `__CHAR_UNSIGNED__` is not defined. It does not define `__KERNEL__`.
 Configuration cannot override its fixed standard or profile macros. Target and
 invocation identities distinguish locks even when the emitted C is identical.
 Selecting this profile grants no pthread contract or concurrency semantics.
@@ -1310,8 +1314,12 @@ Both profiles require explicit include directories: `-nostdinc` disables
 ambient system include search. Supply the program's own header roots with
 ordered `-isystem` or `-I` arguments; those roots and opened headers
 participate in the preparation inventory and lock identity. A standard
-library interface is not such a root: it comes from Click, per the
-[interface boundary](#interface-boundary). Lock preparation may succeed while
+library interface is not such a root, per the
+[interface boundary](#interface-boundary). Compiler mode does not supply
+Click's modeled system headers either, so a translation unit that includes
+`<string.h>`, `<stddef.h>`, `<stdint.h>`, or another system header fails at
+`click import lock` with the compiler's missing-header error; those headers
+are available only to sources Click reads directly. Lock preparation may succeed while
 Click's C parser still refuses an unsupported declaration in an included
 header.
 
@@ -1380,7 +1388,7 @@ in the imported source.
 | `-D<macro>` (5) | Base | Macro definition; its effect is in the artifact. |
 | `-nostdinc` | Fixed | The target's own argument. |
 | `-std=gnu11` | Fixed | The target's own argument; Click's kernel C is GNU C11. |
-| `-funsigned-char` | Fixed | The target's own argument; Click's plain `char` is unsigned. |
+| `-funsigned-char` | Fixed | The kernel target's own argument; its plain `char` is unsigned. |
 | `-m64` | Fixed | The target's own argument; Click's ABI is LP64. |
 | `-fmacro-prefix-map=./=` | Accepted | Rewrites the paths `__FILE__` expands to, in the artifact; Click refuses `__builtin_FILE`. |
 | `-Wall` | Accepted | Diagnostics only. |

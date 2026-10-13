@@ -283,6 +283,39 @@ impl PathSteps {
 }
 
 impl ProofNode {
+    /// A split or scope marker under `parent`: no step, the parent's depth,
+    /// opening `split_branches` for `focused_branch`.
+    pub(super) fn marker(
+        parent: &Arc<ProofNode>,
+        focused_branch: BranchId,
+        split_branches: Vec<BranchId>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            path_memo: Default::default(),
+            parent: Some(parent.clone()),
+            step: None,
+            focused_branch,
+            depth: parent.depth,
+            split_branches,
+        })
+    }
+
+    /// One recorded step under `parent`, advancing `focused_branch`.
+    pub(super) fn step_child(
+        parent: &Arc<ProofNode>,
+        focused_branch: BranchId,
+        step: Arc<ProofStep>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            path_memo: Default::default(),
+            parent: Some(parent.clone()),
+            step: Some(step),
+            focused_branch,
+            depth: parent.depth + 1,
+            split_branches: Vec::new(),
+        })
+    }
+
     fn memoized_path(&self, goal: BranchId) -> Option<Arc<PathSteps>> {
         self.path_memo
             .lock()

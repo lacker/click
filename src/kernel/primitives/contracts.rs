@@ -741,7 +741,19 @@ impl CStringLiteral {
         Self {
             name: name.into(),
             bytes,
+            element_type: CType::UInt8,
         }
+    }
+
+    /// A literal whose elements are plain `char` of the given signedness'
+    /// kernel type, `UInt8` or `Int8`.
+    pub fn with_element_type(mut self, element_type: CType) -> Self {
+        assert!(
+            matches!(element_type, CType::UInt8 | CType::Int8),
+            "C string literal elements are character cells"
+        );
+        self.element_type = element_type;
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -750,6 +762,18 @@ impl CStringLiteral {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub fn element_type(&self) -> CType {
+        self.element_type
+    }
+
+    /// The cell value the literal stores for byte `byte`.
+    pub(crate) fn element_value(&self, byte: u8) -> CValue {
+        match self.element_type {
+            CType::Int8 => CValue::Int8(Bitvector32Term::Constant(byte as i8 as i32 as u32)),
+            _ => CValue::UInt8(Bitvector32Term::Constant(u32::from(byte))),
+        }
     }
 }
 
@@ -2194,20 +2218,6 @@ impl CLoopEffectCheck {
         Self {
             effect,
             span: CLoopEffectSpan::Step,
-            context,
-            origin: CLoopEffectOrigin::Unspecified,
-            validated_ranges: None,
-        }
-    }
-
-    pub fn new_with_span(
-        effect: CLoopEffect,
-        span: CLoopEffectSpan,
-        context: Option<String>,
-    ) -> Self {
-        Self {
-            effect,
-            span,
             context,
             origin: CLoopEffectOrigin::Unspecified,
             validated_ranges: None,

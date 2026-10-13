@@ -462,8 +462,7 @@ fn one_heap_store_is_logarithmic_in_unrelated_allocations() {
                 &state,
                 &statement,
                 &PureFactContext::new(),
-                &CExecutionEnvironment::new(),
-                CExecutionSemantics::EXECUTE_BODIES,
+                CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
                 &mut ExecutionBudget::new(),
             )
             .unwrap()
@@ -1883,5 +1882,52 @@ fn wide_range_observer_transport_ignores_unrelated_equalities() {
     assert!(
         samples.windows(2).all(|pair| pair[0] == pair[1]),
         "observer transport scanned unrelated equalities: {samples:?}"
+    );
+}
+
+/// Counts the bytes a value feeds its hasher.
+#[derive(Default)]
+struct CountingHasher {
+    bytes: usize,
+}
+
+impl std::hash::Hasher for CountingHasher {
+    fn finish(&self) -> u64 {
+        self.bytes as u64
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.bytes += bytes.len();
+    }
+}
+
+/// Every call publishes an effect summary naming the memory before and after
+/// it, and facts are hashed whenever they are inserted or looked up. An atomic
+/// proposition used to hash its debug text, which printed every snapshot it
+/// names, so a fact about a memory cost the size of that memory and each call
+/// in a long function paid more than the last (512 calls: 7.3 s, 2.1 times
+/// the linear cost). The hasher is uncharged, so no work budget saw it. A
+/// proposition now hashes a snapshot by its cached content hash: the bytes it
+/// feeds a hasher do not depend on how much memory the snapshot holds.
+#[test]
+fn hashing_a_memory_fact_is_constant_in_the_memory_size() {
+    use std::hash::Hash;
+    let mut samples = Vec::new();
+    for size in HEAP_SIZES {
+        let _session = crate::kernel::VerificationSession::enter();
+        let after = memory_with_unrelated_allocations(size);
+        let fact = Proposition::CMemoryEffectSummary {
+            before: CMemory::new(),
+            after,
+            mutable_ranges: Vec::new(),
+        };
+        let mut hasher = CountingHasher::default();
+        fact.hash(&mut hasher);
+        samples.push((size, hasher.bytes));
+    }
+    let (_, smallest) = samples[0];
+    assert!(
+        samples.iter().all(|(_, bytes)| *bytes == smallest),
+        "hashing a memory fact fed its hasher bytes in proportion to the memory: {samples:?}"
     );
 }

@@ -1020,10 +1020,8 @@ impl MemoryDagCell {
         kind: LoadKind,
     ) -> Option<CValue> {
         match self {
-            Self::Stored { value, .. } => kind.reads_value(value).then(|| value.clone()),
-            Self::Unwritten { node, .. } => node
-                .known_value(pointer)
-                .filter(|value| kind.reads_value(value)),
+            Self::Stored { value, .. } => kind.read_cell(value),
+            Self::Unwritten { node, .. } => kind.read_cell(&node.known_value(pointer)?),
         }
     }
 

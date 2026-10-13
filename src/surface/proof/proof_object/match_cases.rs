@@ -193,8 +193,7 @@ impl<'a> Proof<'a> {
         let value = capture_fixed_state_algebraic_value(
             &expression,
             self.facts().assumptions(),
-            &values,
-            &array_refs,
+            ContractEnvironment::new(&values, &array_refs),
             BTreeMap::new(),
             context.old_reference_state(&execution.core.frontier, &execution.core.state),
             &execution.core.state,
@@ -622,18 +621,15 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: marker.context.clone(),
             state: self.state.clone(),
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(marker.node.clone()),
-                focused_branch: self.focused_branch_id(),
-                depth: marker.node.depth + 1,
-                split_branches: Vec::new(),
-                step: Some(Arc::new(ProofStep::Match {
+            node: ProofNode::step_child(
+                &marker.node,
+                self.focused_branch_id(),
+                Arc::new(ProofStep::Match {
                     scrutinee: source.scrutinee.clone(),
                     ensuring: source.ensuring.clone(),
                     arms,
-                })),
-            }),
+                }),
+            ),
         })
     }
 
@@ -658,14 +654,7 @@ impl<'a> Proof<'a> {
             site: self.site.clone(),
             context: self.context.clone(),
             state,
-            node: Arc::new(ProofNode {
-                path_memo: Default::default(),
-                parent: Some(self.node.clone()),
-                step: None,
-                focused_branch: self.focused_branch_id(),
-                depth: self.node.depth,
-                split_branches: ids.to_vec(),
-            }),
+            node: ProofNode::marker(&self.node, self.focused_branch_id(), ids.to_vec()),
         };
         let record = ExecutionProofCaseSplit {
             marker: successor.checkpoint(),

@@ -39,7 +39,7 @@ classification.
 The current `.click` language exposes function-level `requires` clauses and
 per-guarantee `ensures ... by auto;` clauses, backed by native C symbolic
 execution and specification-checking axioms in the kernel. Surface Click
-may contain **C fragments**: pieces of C0 syntax that keep C-like local syntax
+may contain **C fragments**: pieces of C syntax that keep C-like local syntax
 and typing but elaborate into explicit Kernel Click.
 
 ## Competitor families
@@ -82,9 +82,9 @@ new proof workflow concepts too early.
 | Stdlib folds and permutation | functional array specs, multiset proofs | `RangeFold`, finite forall/range facts, count-shaped fold reasoning | `unfold`, `simp`, loop invariants | `mdtests/compare_swap2_permutation.md`, `mdtests/bubble_sort3_loop_permutation.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
 | Pure-function induction | Lean/Coq/Isabelle strong and structural induction | nonnegative `int32` induction plus exhaustive constructor induction over recursive algebraic values, with exact local-hypothesis instantiation | `induct(n) as ih`, `induct(xs) as ih { ... }`, `apply(ih(m))` | `mdtests/pure_induction_countdown.md`, `mdtests/pure_induction_two_step.md`, `mdtests/algebraic_structural_induction.md` |
 
-## Current C0 boundary
+## Current C boundary
 
-The current C0 subset is enough to make the first several categories
+The current supported C subset is enough to make the first several categories
 executable: scalar code, signed undefined behavior, bitwise and shift
 operations, pointer range checks, bounded loops, known function calls, memory
 postconditions, old-memory postconditions, C-style array-parameter syntax, local
@@ -105,5 +105,5 @@ management, module/import support, and a real-C or pilot-driven frontend
 strategy.
 
 That is intentional. The mdtests should make the next missing piece obvious:
-when a proof pattern needs a new C0 feature, add the feature because the proof
+when a proof pattern needs a new C feature, add the feature because the proof
 capability demands it, not because C has it.

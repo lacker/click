@@ -1,4 +1,4 @@
-# C0 rejects unsupported floating-point literal forms
+# Click rejects unsupported floating-point literal forms
 
 ```c filename=c_double_rejected.c
 int32 c_double_rejected() {
@@ -16,5 +16,5 @@ int32 c_double_rejected() {
 ```
 
 ```expect
-fail: hexadecimal floating-point literals are not supported in C0
+fail: hexadecimal floating-point literals are not supported by Click
 ```

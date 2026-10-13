@@ -18,32 +18,7 @@ theorem pool_checkout_increment_bound(capacity: int32, used: int32, available: i
     requires 1 <= available;
     requires capacity == used + available;
     requires defined(used + available);
-    ensures to_integer(used) + 1 <= 2147483647 by {
-        apply(int32_add_to_integer(used, available)) using { defined(used + available); }
-        have to_integer(capacity) == to_integer(used) + to_integer(available) by {
-            rewrite(capacity == used + available);
-            simp();
-        }
-        have capacity <= 2147483647;
-        have to_integer(capacity) <= 2147483647 by {
-            apply(int32_less_equal_to_integer(capacity, 2147483647)) using { capacity <= 2147483647; }
-            simp();
-        }
-        have 1 <= to_integer(available) by {
-            apply(int32_less_equal_to_integer(1, available)) using { 1 <= available; }
-            simp();
-        }
-        arithmetic_certificate {
-            premise 0: to_integer(capacity) == to_integer(used) + to_integer(available) => to_integer(capacity) == to_integer(used) + to_integer(available);
-            scale 0 by -1 => -to_integer(capacity) == -to_integer(available) - to_integer(used);
-            less_equal_from_equal 1 => -to_integer(capacity) <= -to_integer(available) - to_integer(used);
-            premise 1: to_integer(capacity) <= 2147483647 => to_integer(capacity) <= 2147483647;
-            add 2, 3 => -to_integer(capacity) + to_integer(capacity) <= -to_integer(available) - to_integer(used) + 2147483647;
-            premise 2: 1 <= to_integer(available) => 1 <= to_integer(available);
-            add 4, 5 => -to_integer(capacity) + to_integer(capacity) + 1 <= -to_integer(available) - to_integer(used) + 2147483647 + to_integer(available);
-            conclusion 6;
-        }
-    }
+    ensures to_integer(used) + 1 <= 2147483647 by auto;
 }
 theorem pool_shrink_sum_defined(capacity: int32, used: int32, available: int32, amount: int32) {
     requires 0 <= used;
@@ -51,60 +26,7 @@ theorem pool_shrink_sum_defined(capacity: int32, used: int32, available: int32, 
     requires amount <= available;
     requires capacity == used + available;
     requires defined(used + available);
-    ensures defined(used + (available - amount)) by {
-        apply(int32_nonnegative_subtract_within_value_is_defined(available, amount)) using {
-            0 <= amount; amount <= available;
-        }
-        have defined(available - amount);
-        have 0 <= available - amount by {
-            arithmetic() using { 0 <= amount; amount <= available; }
-        }
-        apply(int32_add_to_integer(used, available)) using { defined(used + available); }
-        have to_integer(capacity) == to_integer(used) + to_integer(available) by {
-            rewrite(capacity == used + available); simp();
-        }
-        apply(int32_subtract_to_integer(available, amount)) using { defined(available - amount); }
-        have capacity <= 2147483647;
-        have to_integer(capacity) <= 2147483647 by {
-            apply(int32_less_equal_to_integer(capacity, 2147483647)) using { capacity <= 2147483647; }
-            simp();
-        }
-        have 0 <= to_integer(amount) by {
-            apply(int32_less_equal_to_integer(0, amount)) using { 0 <= amount; }
-            simp();
-        }
-        have to_integer(used) + to_integer(available - amount) <= 2147483647 by {
-            arithmetic_certificate {
-                premise 0: to_integer(capacity) == to_integer(used) + to_integer(available) => to_integer(capacity) == to_integer(used) + to_integer(available);
-                scale 0 by -1 => -to_integer(capacity) == -to_integer(used) - to_integer(available);
-                less_equal_from_equal 1 => -to_integer(capacity) <= -to_integer(used) - to_integer(available);
-                premise 1: to_integer(available - amount) == to_integer(available) - to_integer(amount) => to_integer(available - amount) == to_integer(available) - to_integer(amount);
-                less_equal_from_equal 3 => to_integer(available - amount) <= to_integer(available) - to_integer(amount);
-                premise 2: to_integer(capacity) <= 2147483647 => to_integer(capacity) <= 2147483647;
-                add 2, 5 => -to_integer(capacity) + to_integer(capacity) <= -to_integer(used) - to_integer(available) + 2147483647;
-                add 6, 4 => -to_integer(capacity) + to_integer(capacity) + to_integer(available - amount) <= -to_integer(used) - to_integer(available) + 2147483647 + to_integer(available) - to_integer(amount);
-                premise 3: 0 <= to_integer(amount) => 0 <= to_integer(amount);
-                add 7, 8 => -to_integer(capacity) + to_integer(capacity) + to_integer(available - amount) + 0 <= -to_integer(used) - to_integer(available) + 2147483647 + to_integer(available) - to_integer(amount) + to_integer(amount);
-                conclusion 9;
-            }
-        }
-        have 0 <= to_integer(used) by {
-            apply(int32_less_equal_to_integer(0, used)) using { 0 <= used; }
-            simp();
-        }
-        have 0 <= to_integer(available - amount) by {
-            apply(int32_less_equal_to_integer(0, available - amount)) using { 0 <= available - amount; }
-            simp();
-        }
-        have to_integer(used) + to_integer(available - amount) >= -2147483648 by {
-            arithmetic() using { 0 <= to_integer(used); 0 <= to_integer(available - amount); }
-        }
-        apply(int32_add_defined_by_integer_bounds(used, available - amount)) using {
-            to_integer(used) + to_integer(available - amount) >= -2147483648;
-            to_integer(used) + to_integer(available - amount) <= 2147483647;
-        }
-        simp();
-    }
+    ensures defined(used + (available - amount)) by auto;
 }
 theorem pool_shrink_conservation(capacity: int32, used: int32, available: int32, amount: int32) {
     requires 0 <= used;
@@ -113,42 +35,7 @@ theorem pool_shrink_conservation(capacity: int32, used: int32, available: int32,
     requires capacity == used + available;
     requires defined(used + available);
     requires defined(capacity - amount);
-    ensures capacity - amount == used + (available - amount) by {
-        apply(pool_shrink_sum_defined(capacity, used, available, amount)) using {
-            0 <= used; 0 <= amount; amount <= available;
-            capacity == used + available; defined(used + available);
-        }
-        have defined(used + (available - amount));
-        apply(int32_nonnegative_subtract_within_value_is_defined(available, amount)) using {
-            0 <= amount; amount <= available;
-        }
-        have defined(available - amount);
-        apply(int32_add_to_integer(used, available)) using { defined(used + available); }
-        have to_integer(capacity) == to_integer(used) + to_integer(available) by {
-            rewrite(capacity == used + available); assumption();
-        }
-        apply(int32_subtract_to_integer(capacity, amount)) using { defined(capacity - amount); }
-        apply(int32_subtract_to_integer(available, amount)) using { defined(available - amount); }
-        apply(int32_add_to_integer(used, available - amount)) using { defined(used + (available - amount)); }
-        have to_integer(capacity - amount) == to_integer(used + (available - amount)) by {
-            arithmetic_certificate {
-                premise 0: to_integer(capacity - amount) == to_integer(capacity) - to_integer(amount) => to_integer(capacity - amount) == to_integer(capacity) - to_integer(amount);
-                premise 1: to_integer(capacity) == to_integer(used) + to_integer(available) => to_integer(capacity) == to_integer(used) + to_integer(available);
-                add 0, 1 => to_integer(capacity - amount) == to_integer(used) + to_integer(available) - to_integer(amount);
-                premise 2: to_integer(available - amount) == to_integer(available) - to_integer(amount) => to_integer(available - amount) == to_integer(available) - to_integer(amount);
-                scale 3 by -1 => to_integer(available) - to_integer(amount) == to_integer(available - amount);
-                add 2, 4 => to_integer(capacity - amount) == to_integer(used) + to_integer(available - amount);
-                premise 3: to_integer(used + (available - amount)) == to_integer(used) + to_integer(available - amount) => to_integer(used + (available - amount)) == to_integer(used) + to_integer(available - amount);
-                scale 6 by -1 => to_integer(used) + to_integer(available - amount) == to_integer(used + (available - amount));
-                add 5, 7 => to_integer(capacity - amount) == to_integer(used + (available - amount));
-                conclusion 8;
-            }
-        }
-        apply(int32_to_integer_equal_implies_equal(capacity - amount, used + (available - amount))) using {
-            to_integer(capacity - amount) == to_integer(used + (available - amount));
-        }
-        assumption();
-    }
+    ensures capacity - amount == used + (available - amount) by auto;
 }
 theorem pool_grow_slots_defined(capacity: int32, used: int32, available: int32, amount: int32) {
     requires 0 <= used;
@@ -157,51 +44,7 @@ theorem pool_grow_slots_defined(capacity: int32, used: int32, available: int32, 
     requires capacity == used + available;
     requires defined(used + available);
     requires defined(capacity + amount);
-    ensures defined(available + amount) by {
-        apply(int32_add_to_integer(used, available)) using { defined(used + available); }
-        have to_integer(capacity) == to_integer(used) + to_integer(available) by {
-            rewrite(capacity == used + available); assumption();
-        }
-        apply(int32_add_to_integer(capacity, amount)) using { defined(capacity + amount); }
-        have capacity + amount <= 2147483647;
-        have to_integer(capacity + amount) <= 2147483647 by {
-            apply(int32_less_equal_to_integer(capacity + amount, 2147483647)) using { capacity + amount <= 2147483647; }
-            simp();
-        }
-        have 0 <= to_integer(used) by {
-            apply(int32_less_equal_to_integer(0, used)) using { 0 <= used; } simp();
-        }
-        have to_integer(available) + to_integer(amount) <= 2147483647 by {
-            arithmetic_certificate {
-                premise 0: to_integer(capacity) == to_integer(used) + to_integer(available) => to_integer(capacity) == to_integer(used) + to_integer(available);
-                scale 0 by -1 => -to_integer(capacity) == -to_integer(used) - to_integer(available);
-                less_equal_from_equal 1 => -to_integer(capacity) <= -to_integer(used) - to_integer(available);
-                premise 1: to_integer(capacity + amount) == to_integer(capacity) + to_integer(amount) => to_integer(capacity + amount) == to_integer(capacity) + to_integer(amount);
-                scale 3 by -1 => -to_integer(capacity + amount) == -to_integer(capacity) - to_integer(amount);
-                less_equal_from_equal 4 => -to_integer(capacity + amount) <= -to_integer(capacity) - to_integer(amount);
-                add 2, 5 => -to_integer(capacity + amount) <= -to_integer(used) - to_integer(available) - to_integer(amount);
-                premise 2: to_integer(capacity + amount) <= 2147483647 => to_integer(capacity + amount) <= 2147483647;
-                add 6, 7 => 0 <= 2147483647 - to_integer(used) - to_integer(available) - to_integer(amount);
-                premise 3: 0 <= to_integer(used) => 0 <= to_integer(used);
-                add 8, 9 => 0 <= 2147483647 - to_integer(available) - to_integer(amount);
-                conclusion 10;
-            }
-        }
-        have 0 <= to_integer(available) by {
-            apply(int32_less_equal_to_integer(0, available)) using { 0 <= available; } simp();
-        }
-        have 0 <= to_integer(amount) by {
-            apply(int32_less_equal_to_integer(0, amount)) using { 0 <= amount; } simp();
-        }
-        have to_integer(available) + to_integer(amount) >= -2147483648 by {
-            arithmetic() using { 0 <= to_integer(available); 0 <= to_integer(amount); }
-        }
-        apply(int32_add_defined_by_integer_bounds(available, amount)) using {
-            to_integer(available) + to_integer(amount) >= -2147483648;
-            to_integer(available) + to_integer(amount) <= 2147483647;
-        }
-        simp();
-    }
+    ensures defined(available + amount) by auto;
 }
 theorem pool_grow_conservation(capacity: int32, used: int32, available: int32, amount: int32) {
     requires 0 <= used;
@@ -211,78 +54,7 @@ theorem pool_grow_conservation(capacity: int32, used: int32, available: int32, a
     requires defined(used + available);
     requires defined(capacity + amount);
     ensures defined(used + (available + amount)) and
-        capacity + amount == used + (available + amount) by {
-        apply(pool_grow_slots_defined(capacity, used, available, amount)) using {
-            0 <= used; 0 <= available; 0 <= amount;
-            capacity == used + available; defined(used + available); defined(capacity + amount);
-        }
-        have defined(available + amount);
-        apply(int32_add_to_integer(used, available)) using { defined(used + available); }
-        have to_integer(capacity) == to_integer(used) + to_integer(available) by {
-            rewrite(capacity == used + available); assumption();
-        }
-        apply(int32_add_to_integer(capacity, amount)) using { defined(capacity + amount); }
-        apply(int32_add_to_integer(available, amount)) using { defined(available + amount); }
-        have to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount) by {
-            arithmetic_certificate {
-                premise 0: to_integer(capacity) == to_integer(used) + to_integer(available) => to_integer(capacity) == to_integer(used) + to_integer(available);
-                premise 1: to_integer(capacity + amount) == to_integer(capacity) + to_integer(amount) => to_integer(capacity + amount) == to_integer(capacity) + to_integer(amount);
-                add 0, 1 => to_integer(capacity + amount) == to_integer(used) + to_integer(available) + to_integer(amount);
-                premise 2: to_integer(available + amount) == to_integer(available) + to_integer(amount) => to_integer(available + amount) == to_integer(available) + to_integer(amount);
-                scale 3 by -1 => to_integer(available) + to_integer(amount) == to_integer(available + amount);
-                add 2, 4 => to_integer(capacity + amount) == to_integer(used) + to_integer(available + amount);
-                scale 5 by -1 => to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount);
-                conclusion 6;
-            }
-        }
-        have capacity + amount <= 2147483647;
-        have -2147483648 <= capacity + amount;
-        have to_integer(capacity + amount) <= 2147483647 by {
-            apply(int32_less_equal_to_integer(capacity + amount, 2147483647)) using { capacity + amount <= 2147483647; } simp();
-        }
-        have -2147483648 <= to_integer(capacity + amount) by {
-            apply(int32_less_equal_to_integer(-2147483648, capacity + amount)) using { -2147483648 <= capacity + amount; } simp();
-        }
-        have to_integer(used) + to_integer(available + amount) >= -2147483648 by {
-            arithmetic_certificate {
-                premise 0: to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount) => to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount);
-                scale 0 by -1 => to_integer(capacity + amount) == to_integer(used) + to_integer(available + amount);
-                less_equal_from_equal 1 => to_integer(capacity + amount) <= to_integer(used) + to_integer(available + amount);
-                premise 1: -2147483648 <= to_integer(capacity + amount) => -2147483648 <= to_integer(capacity + amount);
-                add 2, 3 => -2147483648 <= to_integer(used) + to_integer(available + amount);
-                conclusion 4;
-            }
-        }
-        have to_integer(used) + to_integer(available + amount) <= 2147483647 by {
-            arithmetic_certificate {
-                premise 0: to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount) => to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount);
-                less_equal_from_equal 0 => to_integer(used) + to_integer(available + amount) <= to_integer(capacity + amount);
-                premise 1: to_integer(capacity + amount) <= 2147483647 => to_integer(capacity + amount) <= 2147483647;
-                add 1, 2 => to_integer(used) + to_integer(available + amount) <= 2147483647;
-                conclusion 3;
-            }
-        }
-        apply(int32_add_defined_by_integer_bounds(used, available + amount)) using {
-            to_integer(used) + to_integer(available + amount) >= -2147483648;
-            to_integer(used) + to_integer(available + amount) <= 2147483647;
-        }
-        have defined(used + (available + amount));
-        apply(int32_add_to_integer(used, available + amount)) using { defined(used + (available + amount)); }
-        have to_integer(capacity + amount) == to_integer(used + (available + amount)) by {
-            arithmetic_certificate {
-                premise 0: to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount) => to_integer(used) + to_integer(available + amount) == to_integer(capacity + amount);
-                scale 0 by -1 => to_integer(capacity + amount) == to_integer(used) + to_integer(available + amount);
-                premise 1: to_integer(used + (available + amount)) == to_integer(used) + to_integer(available + amount) => to_integer(used + (available + amount)) == to_integer(used) + to_integer(available + amount);
-                scale 2 by -1 => to_integer(used) + to_integer(available + amount) == to_integer(used + (available + amount));
-                add 1, 3 => to_integer(capacity + amount) == to_integer(used + (available + amount));
-                conclusion 4;
-            }
-        }
-        apply(int32_to_integer_equal_implies_equal(capacity + amount, used + (available + amount))) using {
-            to_integer(capacity + amount) == to_integer(used + (available + amount));
-        }
-        assumption();
-    }
+        capacity + amount == used + (available + amount) by auto;
 }
 predicate valid_pool(pool: struct pool*) {
     0 <= pool->checked_out and
@@ -330,8 +102,6 @@ void pool_destroy(struct pool* pool) {
     ensures valid_pool(pool);
 } by {
     unfold(pool_control(pool));
-    have count(pool_object(pool, _)) == 0;
-    have pool->capacity == count(pool_slot(pool));
     unfold(pool->capacity of pool_slot(pool));
     have count(pool_slot(pool)) == 0;
     step();
@@ -352,8 +122,6 @@ void pool_zero_pipeline(struct pool* pool) {
 } by {
     step();
     unfold(pool_control(pool));
-    have pool->capacity == count(pool_slot(pool));
-    have count(pool_object(pool, _)) == 0;
     fold(pool_control(pool));
     step();
     execute(); unfold(valid_pool); simp();
@@ -372,7 +140,6 @@ void pool_checkout(struct pool* pool, struct object* object) {
     ensures object->value == old(object->value);
 } by {
     open(pool_control(pool)) {
-        have 1 <= count(pool_slot(pool));
         apply(int32_move_one_from_right_to_left_preserves_sum(
             pool->capacity, pool->checked_out, count(pool_slot(pool))
         )) using {
@@ -387,29 +154,15 @@ void pool_checkout(struct pool* pool, struct object* object) {
             pool->capacity == pool->checked_out + count(pool_slot(pool));
             defined(pool->checked_out + count(pool_slot(pool)));
         }
-        have 0 <= to_integer(pool->checked_out) by {
-            apply(int32_less_equal_to_integer(0, pool->checked_out)) using { 0 <= pool->checked_out; }
-            simp();
-        }
-        have to_integer(pool->checked_out) + 1 >= -2147483648 by {
-            arithmetic() using { 0 <= to_integer(pool->checked_out); }
-        }
+        have to_integer(pool->checked_out) + 1 >= -2147483648 by auto;
         apply(int32_add_defined_by_integer_bounds(pool->checked_out, 1)) using {
             to_integer(pool->checked_out) + 1 <= 2147483647;
             to_integer(pool->checked_out) + 1 >= -2147483648;
         }
-        have defined(pool->checked_out + 1);
-        have pool->checked_out >= 0 by {
-            arithmetic() using { 0 <= pool->checked_out; }
-        }
-        have defined(count(pool_object(pool, _)) + 1) by {
-            rewrite(count(pool_object(pool, _)) == pool->checked_out);
-            simp();
-        }
+        have defined(count(pool_object(pool, _)) + 1) by auto;
         unfold(pool_slot(pool));
         step();
         fold(pool_object(pool, object));
-        have pool->capacity == pool->checked_out + count(pool_slot(pool));
     }
     execute(); unfold(valid_pool); simp();
 }
@@ -430,11 +183,7 @@ void pool_return(struct pool* pool, struct object* object) {
     ensures object->value == old(object->value);
 } by {
     open(pool_control(pool)) {
-        have 1 <= count(pool_object(pool, _));
-        have 1 <= pool->checked_out by {
-            rewrite(pool->checked_out == count(pool_object(pool, _)));
-            assumption();
-        }
+        have 1 <= pool->checked_out by auto;
         have pool->capacity == count(pool_slot(pool)) + pool->checked_out;
         apply(int32_move_one_from_right_to_left_preserves_sum(
             pool->capacity, count(pool_slot(pool)), pool->checked_out
@@ -443,7 +192,6 @@ void pool_return(struct pool* pool, struct object* object) {
             1 <= pool->checked_out;
             pool->capacity == count(pool_slot(pool)) + pool->checked_out;
         }
-        have 0 < pool->checked_out;
         have defined(pool->checked_out + count(pool_slot(pool)));
         apply(int32_add_to_integer(pool->checked_out, count(pool_slot(pool)))) using {
             defined(pool->checked_out + count(pool_slot(pool)));
@@ -452,53 +200,14 @@ void pool_return(struct pool* pool, struct object* object) {
             rewrite(pool->capacity == pool->checked_out + count(pool_slot(pool)));
             assumption();
         }
-        have pool->capacity <= 2147483647;
-        have to_integer(pool->capacity) <= 2147483647 by {
-            apply(int32_less_equal_to_integer(pool->capacity, 2147483647)) using { pool->capacity <= 2147483647; }
-            simp();
-        }
-        have 1 <= to_integer(pool->checked_out) by {
-            apply(int32_less_equal_to_integer(1, pool->checked_out)) using { 1 <= pool->checked_out; }
-            simp();
-        }
-        have to_integer(count(pool_slot(pool))) + 1 <= 2147483647 by {
-            arithmetic_certificate {
-                premise 0: to_integer(pool->capacity) == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool))) => to_integer(pool->capacity) == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool)));
-                scale 0 by -1 => -to_integer(pool->capacity) == -to_integer(pool->checked_out) - to_integer(count(pool_slot(pool)));
-                less_equal_from_equal 1 => -to_integer(pool->capacity) <= -to_integer(pool->checked_out) - to_integer(count(pool_slot(pool)));
-                premise 1: to_integer(pool->capacity) <= 2147483647 => to_integer(pool->capacity) <= 2147483647;
-                add 2, 3 => -to_integer(pool->capacity) + to_integer(pool->capacity) <= -to_integer(pool->checked_out) - to_integer(count(pool_slot(pool))) + 2147483647;
-                premise 2: 1 <= to_integer(pool->checked_out) => 1 <= to_integer(pool->checked_out);
-                add 4, 5 => -to_integer(pool->capacity) + to_integer(pool->capacity) + 1 <= -to_integer(pool->checked_out) - to_integer(count(pool_slot(pool))) + 2147483647 + to_integer(pool->checked_out);
-                conclusion 6;
-            }
-        }
         have 0 <= to_integer(count(pool_slot(pool))) by {
             apply(int32_less_equal_to_integer(0, count(pool_slot(pool)))) using { 0 <= count(pool_slot(pool)); }
             simp();
         }
-        have to_integer(count(pool_slot(pool))) + 1 >= -2147483648 by {
-            arithmetic() using { 0 <= to_integer(count(pool_slot(pool))); }
-        }
-        have defined(count(pool_slot(pool)) + 1) by {
-            apply(int32_add_defined_by_integer_bounds(count(pool_slot(pool)), 1)) using {
-                to_integer(count(pool_slot(pool))) + 1 >= -2147483648;
-                to_integer(count(pool_slot(pool))) + 1 <= 2147483647;
-            }
-            simp();
-        }
+        have defined(count(pool_slot(pool)) + 1) by auto;
         unfold(pool_object(pool, object));
         step();
         fold(pool_slot(pool));
-        have pool->capacity == old(pool->capacity);
-        have pool->checked_out == old(pool->checked_out) - 1;
-        have count(pool_slot(pool)) == old(count(pool_slot(pool))) + 1;
-        have 0 <= pool->checked_out by {
-            rewrite(pool->checked_out == old(pool->checked_out) - 1);
-            apply(int32_positive_predecessor_is_nonnegative(old(pool->checked_out))) using { 0 < old(pool->checked_out); }
-            assumption();
-        }
-        have pool->checked_out == count(pool_object(pool, _));
         have pool->capacity == pool->checked_out + count(pool_slot(pool)) by {
             rewrite(pool->capacity == old(pool->capacity));
             rewrite(pool->checked_out == old(pool->checked_out) - 1);
@@ -526,21 +235,15 @@ void pool_pipeline(struct pool* pool, struct object* first, struct object* secon
     ensures valid_pool(pool);
 } by {
     step();
-    have count(pool_object(pool, _)) == 0;
     have defined(count(pool_object(pool, _)) + 1);
     step();
-    have count(pool_object(pool, _)) == 1;
     have defined(count(pool_object(pool, _)) + 1);
     step();
     open(pool_object(pool, first)) { step(); }
     open(pool_object(pool, second)) { step(); }
-    have count(pool_object(pool, second)) == 1;
     step();
-    have count(pool_object(pool, first)) == 1;
     step();
     unfold(pool_control(pool));
-    have pool->capacity == count(pool_slot(pool));
-    have count(pool_object(pool, _)) == 0;
     fold(pool_control(pool));
     step();
     execute(); unfold(valid_pool); simp();
@@ -577,16 +280,6 @@ void pool_shrink(struct pool* pool, int32 amount) {
         }
         unfold(amount of pool_slot(pool));
         step();
-        have defined(pool->checked_out + count(pool_slot(pool)));
-        have pool->capacity == old(pool->capacity) - amount;
-        have pool->checked_out == old(pool->checked_out);
-        have count(pool_slot(pool)) == old(count(pool_slot(pool))) - amount;
-        have pool->capacity == pool->checked_out + count(pool_slot(pool)) by {
-            rewrite(pool->capacity == old(pool->capacity) - amount);
-            rewrite(pool->checked_out == old(pool->checked_out));
-            rewrite(count(pool_slot(pool)) == old(count(pool_slot(pool))) - amount);
-            assumption();
-        }
     }
     execute(); unfold(valid_pool); simp();
 }
@@ -605,8 +298,6 @@ void pool_resize_pipeline(struct pool* pool) {
     step();
     step();
     unfold(pool_control(pool));
-    have pool->capacity == count(pool_slot(pool));
-    have count(pool_object(pool, _)) == 0;
     fold(pool_control(pool));
     step();
     execute(); unfold(valid_pool); simp();
@@ -625,13 +316,11 @@ void pool_grow(struct pool* pool, int32 amount) {
 } by {
     open(pool_control(pool)) {
         have defined(pool->checked_out + count(pool_slot(pool)));
-        have 0 <= count(pool_slot(pool));
         apply(pool_grow_slots_defined(pool->capacity, pool->checked_out, count(pool_slot(pool)), amount)) using {
             0 <= pool->checked_out; 0 <= count(pool_slot(pool)); 0 <= amount;
             pool->capacity == pool->checked_out + count(pool_slot(pool));
             defined(pool->checked_out + count(pool_slot(pool))); defined(pool->capacity + amount);
         }
-        have defined(count(pool_slot(pool)) + amount);
         apply(pool_grow_conservation(pool->capacity, pool->checked_out, count(pool_slot(pool)), amount)) using {
             0 <= pool->checked_out; 0 <= count(pool_slot(pool)); 0 <= amount;
             pool->capacity == pool->checked_out + count(pool_slot(pool));
@@ -639,16 +328,6 @@ void pool_grow(struct pool* pool, int32 amount) {
         }
         step();
         fold(amount of pool_slot(pool));
-        have pool->capacity == old(pool->capacity) + amount;
-        have pool->checked_out == old(pool->checked_out);
-        have count(pool_slot(pool)) == old(count(pool_slot(pool))) + amount;
-        have defined(pool->checked_out + count(pool_slot(pool)));
-        have pool->capacity == pool->checked_out + count(pool_slot(pool)) by {
-            rewrite(pool->capacity == old(pool->capacity) + amount);
-            rewrite(pool->checked_out == old(pool->checked_out));
-            rewrite(count(pool_slot(pool)) == old(count(pool_slot(pool))) + amount);
-            assumption();
-        }
     }
     execute(); unfold(valid_pool); simp();
 }
@@ -677,11 +356,7 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
 } by {
     open(pool_control(source)) {
         open(pool_control(destination)) {
-            have 1 <= count(pool_object(source, _));
-            have 1 <= source->checked_out by {
-                rewrite(source->checked_out == count(pool_object(source, _)));
-                assumption();
-            }
+            have 1 <= source->checked_out by auto;
             have source->capacity == count(pool_slot(source)) + source->checked_out;
             apply(int32_move_one_from_right_to_left_preserves_sum(
                 source->capacity, count(pool_slot(source)), source->checked_out
@@ -690,7 +365,6 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
                 1 <= source->checked_out;
                 source->capacity == count(pool_slot(source)) + source->checked_out;
             }
-            have 0 < source->checked_out;
             have defined(source->checked_out + count(pool_slot(source)));
             apply(int32_add_to_integer(source->checked_out, count(pool_slot(source)))) using {
                 defined(source->checked_out + count(pool_slot(source)));
@@ -699,42 +373,11 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
                 rewrite(source->capacity == source->checked_out + count(pool_slot(source)));
                 assumption();
             }
-            have source->capacity <= 2147483647;
-            have to_integer(source->capacity) <= 2147483647 by {
-                apply(int32_less_equal_to_integer(source->capacity, 2147483647)) using { source->capacity <= 2147483647; }
-                simp();
-            }
-            have 1 <= to_integer(source->checked_out) by {
-                apply(int32_less_equal_to_integer(1, source->checked_out)) using { 1 <= source->checked_out; }
-                simp();
-            }
-            have to_integer(count(pool_slot(source))) + 1 <= 2147483647 by {
-                arithmetic_certificate {
-                    premise 0: to_integer(source->capacity) == to_integer(source->checked_out) + to_integer(count(pool_slot(source))) => to_integer(source->capacity) == to_integer(source->checked_out) + to_integer(count(pool_slot(source)));
-                    scale 0 by -1 => -to_integer(source->capacity) == -to_integer(source->checked_out) - to_integer(count(pool_slot(source)));
-                    less_equal_from_equal 1 => -to_integer(source->capacity) <= -to_integer(source->checked_out) - to_integer(count(pool_slot(source)));
-                    premise 1: to_integer(source->capacity) <= 2147483647 => to_integer(source->capacity) <= 2147483647;
-                    add 2, 3 => -to_integer(source->capacity) + to_integer(source->capacity) <= -to_integer(source->checked_out) - to_integer(count(pool_slot(source))) + 2147483647;
-                    premise 2: 1 <= to_integer(source->checked_out) => 1 <= to_integer(source->checked_out);
-                    add 4, 5 => -to_integer(source->capacity) + to_integer(source->capacity) + 1 <= -to_integer(source->checked_out) - to_integer(count(pool_slot(source))) + 2147483647 + to_integer(source->checked_out);
-                    conclusion 6;
-                }
-            }
             have 0 <= to_integer(count(pool_slot(source))) by {
                 apply(int32_less_equal_to_integer(0, count(pool_slot(source)))) using { 0 <= count(pool_slot(source)); }
                 simp();
             }
-            have to_integer(count(pool_slot(source))) + 1 >= -2147483648 by {
-                arithmetic() using { 0 <= to_integer(count(pool_slot(source))); }
-            }
-            have defined(count(pool_slot(source)) + 1) by {
-                apply(int32_add_defined_by_integer_bounds(count(pool_slot(source)), 1)) using {
-                    to_integer(count(pool_slot(source))) + 1 >= -2147483648;
-                    to_integer(count(pool_slot(source))) + 1 <= 2147483647;
-                }
-                simp();
-            }
-            have 1 <= count(pool_slot(destination));
+            have defined(count(pool_slot(source)) + 1) by auto;
             apply(int32_move_one_from_right_to_left_preserves_sum(
                 destination->capacity, destination->checked_out, count(pool_slot(destination))
             )) using {
@@ -749,40 +392,18 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
                 destination->capacity == destination->checked_out + count(pool_slot(destination));
                 defined(destination->checked_out + count(pool_slot(destination)));
             }
-            have 0 <= to_integer(destination->checked_out) by {
-                apply(int32_less_equal_to_integer(0, destination->checked_out)) using { 0 <= destination->checked_out; }
-                simp();
-            }
-            have to_integer(destination->checked_out) + 1 >= -2147483648 by {
-                arithmetic() using { 0 <= to_integer(destination->checked_out); }
-            }
+            have to_integer(destination->checked_out) + 1 >= -2147483648 by auto;
             apply(int32_add_defined_by_integer_bounds(destination->checked_out, 1)) using {
                 to_integer(destination->checked_out) + 1 <= 2147483647;
                 to_integer(destination->checked_out) + 1 >= -2147483648;
             }
-            have defined(destination->checked_out + 1);
-            have destination->checked_out >= 0 by {
-                arithmetic() using { 0 <= destination->checked_out; }
-            }
-            have defined(count(pool_object(destination, _)) + 1) by {
-                rewrite(count(pool_object(destination, _)) == destination->checked_out);
-                simp();
-            }
+            have defined(count(pool_object(destination, _)) + 1) by auto;
             unfold(pool_object(source, object));
             unfold(pool_slot(destination));
             step();
             step();
             fold(pool_object(destination, object));
             fold(pool_slot(source));
-            have source->capacity == old(source->capacity);
-            have source->checked_out == old(source->checked_out) - 1;
-            have count(pool_slot(source)) == old(count(pool_slot(source))) + 1;
-            have 0 <= source->checked_out by {
-                rewrite(source->checked_out == old(source->checked_out) - 1);
-                apply(int32_positive_predecessor_is_nonnegative(old(source->checked_out))) using { 0 < old(source->checked_out); }
-                assumption();
-            }
-            have source->checked_out == count(pool_object(source, _));
             have source->capacity == source->checked_out + count(pool_slot(source)) by {
                 rewrite(source->capacity == old(source->capacity));
                 rewrite(source->checked_out == old(source->checked_out) - 1);
@@ -790,7 +411,6 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
                 rewrite(old(source->capacity) == (old(count(pool_slot(source))) + 1) + (old(source->checked_out) - 1));
                 normalize();
             }
-            have destination->capacity == destination->checked_out + count(pool_slot(destination));
         }
     }
     execute(); unfold(valid_pool); simp();
@@ -823,22 +443,12 @@ void pool_transfer_pipeline(struct pool* source, struct pool* destination, struc
 } by {
     open(pool_storage(source)) {
         open(pool_storage(destination)) {
-            have object->value == old(object->value);
         }
     }
     step();
-    have object->value == old(object->value);
     open(pool_control(source)) { step(); }
-    have object->value == old(object->value);
-    have count(pool_object(source, _)) == 0;
     have defined(count(pool_object(source, _)) + 1);
     open(pool_control(destination)) { step(); }
-    have object->value == old(object->value);
-    have count(pool_object(source, object)) == 1;
-    have count(pool_object(destination, object)) == 0;
-    have count(pool_slot(source)) == 0;
-    have count(pool_object(destination, _)) == 0;
-    have defined(count(pool_slot(source)) + 1);
     have defined(count(pool_object(destination, _)) + 1);
     step();
     execute(); unfold(valid_pool); simp();

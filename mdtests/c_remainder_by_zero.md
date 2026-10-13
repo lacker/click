@@ -1,6 +1,6 @@
 # C remainder by zero
 
-This checks that C0 signed `int32` remainder by zero follows the same undefined
+This checks that Click signed `int32` remainder by zero follows the same undefined
 behavior path as division by zero.
 
 ```c filename=remainder_by_zero.c

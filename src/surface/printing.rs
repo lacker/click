@@ -720,7 +720,10 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 None => line(output, &prefix, &format!("{instantiate};")),
             }
         }
-        ProofTactic::SmartExecute | ProofTactic::ExecuteUntil(_) | ProofTactic::Simp => {
+        ProofTactic::SmartExecute
+        | ProofTactic::ExecuteUntil(_)
+        | ProofTactic::Simp
+        | ProofTactic::AutoClose => {
             unreachable!("certificate validation rejects this tactic")
         }
     }

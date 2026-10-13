@@ -285,7 +285,7 @@ impl PureFactContext {
         }
         if memory
             .known_value(pointer)
-            .is_some_and(|value| value_type.accepts(&value))
+            .is_some_and(|value| value_type.read_cell(&value).is_some())
             && !memory.is_ended_local_address(pointer)
             && !memory.is_deallocated_heap_address(pointer, self)
             && !memory.is_uninitialized_heap_address(pointer, value_type.byte_width(), self)
@@ -345,9 +345,10 @@ impl PureFactContext {
         self.proves_memory_loadable(memory, pointer, &Bitvector32Term::Constant(byte_width))
     }
 
-    /// Carry one exact native liveness range through memory snapshots. This
-    /// neither changes its extent nor transports the bytes' values. Retirement
-    /// is checked at the evidence's address, just as for ordinary read ranges.
+    /// Carry a native liveness range, or a checked same-base prefix, through
+    /// memory snapshots. Counts are compared as complete unsigned 64-bit
+    /// values; this does not transport byte values. Retirement is checked at
+    /// the evidence's address, just as for ordinary read ranges.
     pub(crate) fn proves_native_memory_loadable(
         &self,
         memory: &CMemory,
@@ -406,7 +407,11 @@ impl PureFactContext {
                 };
                 crate::instrumentation::record_deterministic_work(1);
                 source_base == base
-                    && source_bytes == bytes
+                    && (source_bytes == bytes
+                        || self.decide(&ConditionTerm::uint64_less_equal(
+                            bytes.clone(),
+                            source_bytes.clone(),
+                        )) == Some(true))
                     && before.read_region_identity(source_base) == memory.read_region_identity(base)
                     && memory_range_still_available(before, memory, source_base, self)
             })

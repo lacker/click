@@ -1,6 +1,6 @@
 # Static inline helpers are verified from included headers
 
-Supported `static inline` definitions in a local header become ordinary C0
+Supported `static inline` definitions in a local header become ordinary C
 functions in each including translation unit. Whole-header guards still prevent
 repeated inclusion from defining the helper twice.
 

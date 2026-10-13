@@ -2,7 +2,7 @@ use super::*;
 use crate::kernel::ExecutionFactSource;
 use crate::kernel::SharedCMemory;
 use crate::kernel::resource_tracker;
-use crate::kernel::{CComparisonOperator, CFloatBinaryOperator, CFloatCondition, CUpdateOperator};
+use crate::kernel::{CComparisonOperator, CFloatCondition, CUpdateOperator};
 use crate::surface::validation::describe_click_type;
 
 mod cpp_model;
@@ -409,8 +409,20 @@ fn describe_context_pure_and_execution_facts(
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
+    describe_context_facts_with_result(pure_facts, execution_pure_facts, parameter_binding, None)
+}
+
+fn describe_context_facts_with_result(
+    pure_facts: &[Proposition],
+    execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
+    parameter_binding: ParameterBinding<'_>,
+    result: Option<&CValue>,
+) -> String {
     let mut labels =
         crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+    if let Some(result) = result {
+        labels.source_value_type(result);
+    }
     let text = describe_context_facts_labeled(pure_facts, execution_pure_facts, &mut labels);
     format!("{text}{}", labels.trace_legend())
 }
@@ -895,6 +907,7 @@ pub(super) fn describe_goal_proof_context(
     case_facts: &[Proposition],
     resource_facts: &[CResourceFact],
     parameter_binding: ParameterBinding<'_>,
+    result: Option<&CValue>,
 ) -> String {
     let mut relevant = match goal {
         Some(goal) => pure_facts_relevant_to(goal, pure_facts),
@@ -909,12 +922,12 @@ pub(super) fn describe_goal_proof_context(
     } else {
         format!(
             "\n  case: {}",
-            describe_context_pure_and_execution_facts(case_facts, &[], parameter_binding)
+            describe_context_facts_with_result(case_facts, &[], parameter_binding, result)
         )
     };
     format!(
         "{GOAL_PROOF_CONTEXT_HEADER}{case}\n  pure facts: {}\n  resource facts: {}",
-        describe_context_pure_and_execution_facts(&relevant, &[], parameter_binding),
+        describe_context_facts_with_result(&relevant, &[], parameter_binding, result),
         describe_resource_facts(resource_facts, parameter_binding)
     )
 }
@@ -1072,8 +1085,10 @@ pub(super) fn local_naming_tables_with_source(
                 .clone()
                 .with_pointee_struct_layout(name.clone(), layout.clone());
         } else if parameter.c_type().is_pointer() {
+            // Only the rendered cast matters here; the byte signedness is
+            // never read.
             *parameter = syntax::C0Parameter::new(
-                C0Type::CharPointer,
+                C0Type::CharPointer(syntax::PlainChar::Unsigned),
                 format!("((char *){})", parameter.name()),
                 None,
             );
@@ -2465,6 +2480,21 @@ pub(in crate::surface) fn describe_load_kind_mismatch(
         Some(cell) => format!("`{}`", cell.text()),
         None => "one address".to_string(),
     };
+    use crate::kernel::LoadKind;
+    if matches!(
+        (left_kind, right_kind),
+        (LoadKind::Int8, LoadKind::UInt8) | (LoadKind::UInt8, LoadKind::Int8)
+    ) {
+        // One byte, one name: the signed read is the unsigned read's
+        // two's-complement value, so the two agree exactly below 0x80.
+        return Some(format!(
+            "the two sides read {named} as different kinds of value, the left as {} and the right \
+             as {}. They read the same byte, and its signed value is its unsigned value only \
+             when the byte is below 0x80, so the two differ for every byte of 0x80 or more.",
+            describe_load_kind(left_kind),
+            describe_load_kind(right_kind),
+        ));
+    }
     Some(format!(
         "the two sides read {named} as different kinds of value, the left as {} and the right \
          as {}. A read's width and signedness are part of the value it names, so these are two \
@@ -2477,6 +2507,15 @@ pub(in crate::surface) fn describe_load_kind_mismatch(
 /// The kind of read a still-unresolved comparison side is, when that side is
 /// exactly one load.
 fn unresolved_load_kind(value: &CValue) -> Option<crate::kernel::LoadKind> {
+    if let CValue::Int8(term) = value
+        && let Some(unsigned) = term.signed_byte_operand()
+    {
+        return matches!(
+            unresolved_load_kind(&CValue::UInt8(unsigned.clone())),
+            Some(crate::kernel::LoadKind::UInt8)
+        )
+        .then_some(crate::kernel::LoadKind::Int8);
+    }
     let term = match value {
         CValue::Int8(term)
         | CValue::Bool(term)
@@ -2519,7 +2558,9 @@ fn describe_load_kind(kind: crate::kernel::LoadKind) -> &'static str {
 
 pub(super) fn unresolved_load(value: &CValue) -> Option<(SharedCMemory, Pointer)> {
     let term = match value {
-        CValue::Int8(term) => term,
+        // A signed byte read is the conversion of the byte's unsigned read,
+        // so it reads that read's address.
+        CValue::Int8(term) => term.signed_byte_operand().unwrap_or(term),
         CValue::Bool(term)
         | CValue::Int16(term)
         | CValue::Int32(term)
@@ -2579,7 +2620,7 @@ pub(super) fn describe_model_field_mismatch(
         resource_tracker::StatePoint::at(here),
         resource_tracker::StatePoint::at(there),
     );
-    describe_resource_version_mismatch(&explanation, since, parameter_binding)
+    describe_resource_version_mismatch(&explanation, since, &[], parameter_binding)
 }
 
 /// Names the write that stopped a comparison side from being carried across
@@ -2602,8 +2643,13 @@ pub(super) fn describe_unseparated_write(
         },
         &resource_tracker::ProgramPoint::at(&memory),
     );
-    describe_resource_version_mismatch(&explanation, "earlier in this function", parameter_binding)
-        .map(|mismatch| format!("; {mismatch}"))
+    describe_resource_version_mismatch(
+        &explanation,
+        "earlier in this function",
+        &[],
+        parameter_binding,
+    )
+    .map(|mismatch| format!("; {mismatch}"))
 }
 
 /// A `fold` field initializer that reads a model this state no longer holds.
@@ -2637,7 +2683,7 @@ pub(super) fn describe_unheld_model_field_initializer(
         resource_tracker::StatePoint::at(state),
         resource_tracker::StatePoint::at(entry_state),
     );
-    describe_resource_version_mismatch(&explanation, "function entry", parameter_binding)
+    describe_resource_version_mismatch(&explanation, "function entry", &[], parameter_binding)
 }
 
 /// The first model field in `expression` that `state` cannot resolve, skipping
@@ -2861,7 +2907,7 @@ pub(super) fn describe_two_sided_version_mismatch(
     } else {
         left_point
     };
-    describe_resource_version_mismatch(&explanation, since, parameter_binding)
+    describe_resource_version_mismatch(&explanation, since, &[], parameter_binding)
 }
 
 /// The explanation for a goal and an available fact that spell alike and
@@ -2884,6 +2930,7 @@ pub(super) fn describe_proposition_version_mismatch(
         } else {
             premise_point
         },
+        premises,
         parameter_binding,
     )
 }
@@ -2948,6 +2995,7 @@ pub(crate) fn proposition_version_explanation(
 pub(super) fn describe_resource_version_mismatch(
     explanation: &resource_tracker::Explanation,
     since: &str,
+    stated: &[&Proposition],
     parameter_binding: ParameterBinding<'_>,
 ) -> Option<String> {
     let (at, stop) = explanation.outcome.blocking_step()?;
@@ -2968,6 +3016,7 @@ pub(super) fn describe_resource_version_mismatch(
             },
             stop,
             since,
+            stated,
             parameter_binding,
         ),
         // No term names a memory footprint, so no goal or premise a refusal
@@ -3124,6 +3173,7 @@ fn describe_cell_version_stop(
     widths: AccessWidths,
     stop: &resource_tracker::Stop,
     since: &str,
+    stated: &[&Proposition],
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let cell = describe_source_cell(pointer, parameter_binding);
@@ -3152,7 +3202,14 @@ fn describe_cell_version_stop(
     };
     format!(
         "{named} {changed} since {since}: {}",
-        describe_cell_cause(cell.as_ref(), widths, stop, certain, parameter_binding)
+        describe_cell_cause(
+            cell.as_ref(),
+            widths,
+            stop,
+            certain,
+            stated,
+            parameter_binding
+        )
     )
 }
 
@@ -3162,11 +3219,12 @@ fn describe_cell_cause(
     widths: AccessWidths,
     stop: &resource_tracker::Stop,
     certain: bool,
+    stated: &[&Proposition],
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
     match &stop.change {
         resource_tracker::Change::Store { pointer } => {
-            describe_store_cause(cell, pointer, widths, certain, parameter_binding)
+            describe_store_cause(cell, pointer, widths, certain, stated, parameter_binding)
         }
         resource_tracker::Change::CellsSeeded { .. } => {
             "range contents were recorded; establish the index/address relation or preservation needed \
@@ -3256,6 +3314,7 @@ fn describe_store_cause(
     written: &Pointer,
     widths: AccessWidths,
     certain: bool,
+    stated: &[&Proposition],
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let store = describe_source_cell(written, parameter_binding);
@@ -3294,7 +3353,7 @@ fn describe_store_cause(
         );
     }
     if cell.object == store.object {
-        return describe_same_object_store_cause(cell, store, widths);
+        return describe_same_object_store_cause(cell, store, widths, stated);
     }
     let repair = match (cell.element_range(), store.element_range()) {
         (Some(read), Some(written)) => format!(" {}", spelled_separation_repair(&read, &written)),
@@ -3323,6 +3382,7 @@ fn describe_same_object_store_cause(
     cell: &SourceCell,
     store: &SourceCell,
     widths: AccessWidths,
+    stated: &[&Proposition],
 ) -> String {
     match (cell.named_index(), store.named_index()) {
         (Some(read), Some(written)) if read != written => {
@@ -3330,6 +3390,15 @@ fn describe_same_object_store_cause(
                 describe_wide_store_byte_reach(cell, store, read, written, widths)
             {
                 return byte_reach;
+            }
+            if let (Some(read_term), Some(written_term)) = (&cell.index_term, &store.index_term)
+                && states_terms_differ(stated, read_term, written_term)
+            {
+                return format!(
+                    "the store to `{}` may have written it. `{read} != {written}` is already \
+                     available, so stating it again will not help.",
+                    store.text()
+                );
             }
             format!(
                 "the store to `{}` may have written it. If `{read}` and `{written}` differ, state \
@@ -3347,6 +3416,29 @@ fn describe_same_object_store_cause(
             store.text()
         ),
     }
+}
+
+/// Whether a fact states that two index terms differ, as `i != j` lowers:
+/// their equality is false. Operand order is not significant.
+fn states_terms_differ(
+    stated: &[&Proposition],
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    stated.iter().any(|fact| {
+        let Proposition::ConditionIs(condition, false) = fact else {
+            return false;
+        };
+        matches!(
+            condition.as_bitvector_comparison(),
+            Some((
+                crate::kernel::BitvectorComparisonOp::Bitvector32Equal
+                    | crate::kernel::BitvectorComparisonOp::Bitvector64Equal,
+                a,
+                b,
+            )) if (a == left && b == right) || (a == right && b == left)
+        )
+    })
 }
 
 /// Exact named cell for a diagnostic. Never offer a verifier-owned index as
@@ -3435,10 +3527,34 @@ pub(in crate::surface) fn store_cause_between_indexes_for_tests(
     read_bytes: u32,
     store_bytes: Option<u32>,
 ) -> String {
-    let spelled = |index: &str| SourceCell {
+    store_cause_between_indexes_with_facts_for_tests(
+        object,
+        (read_index, None),
+        (written_index, None),
+        element_bytes,
+        read_bytes,
+        store_bytes,
+        &[],
+    )
+}
+
+/// [`store_cause_between_indexes_for_tests`] with each index's kernel term
+/// and the facts the refusal may consult.
+#[cfg(test)]
+pub(in crate::surface) fn store_cause_between_indexes_with_facts_for_tests(
+    object: &str,
+    read_index: (&str, Option<Bitvector32Term>),
+    written_index: (&str, Option<Bitvector32Term>),
+    element_bytes: Option<u32>,
+    read_bytes: u32,
+    store_bytes: Option<u32>,
+    stated: &[&Proposition],
+) -> String {
+    let spelled = |(index, index_term): (&str, Option<Bitvector32Term>)| SourceCell {
         object: object.to_string(),
         index: CellIndex::Named(index.to_string()),
         element_bytes,
+        index_term,
     };
     describe_same_object_store_cause(
         &spelled(read_index),
@@ -3447,6 +3563,7 @@ pub(in crate::surface) fn store_cause_between_indexes_for_tests(
             read: read_bytes,
             store: store_bytes,
         },
+        stated,
     )
 }
 
@@ -3664,6 +3781,9 @@ struct SourceCell {
     /// then no byte question is asked of it: a width nobody declared is not
     /// one a refusal may reason from.
     element_bytes: Option<u32>,
+    /// The kernel term the index was spelled from, where it came from a
+    /// typed base, so a refusal can ask whether the facts already relate it.
+    index_term: Option<Bitvector32Term>,
 }
 
 impl SourceCell {
@@ -3742,6 +3862,7 @@ fn describe_source_cell(
                 object: field,
                 index: CellIndex::Whole,
                 element_bytes: None,
+                index_term: None,
             });
         }
         if let Some(member) =
@@ -3751,6 +3872,7 @@ fn describe_source_cell(
                 object: member,
                 index: CellIndex::StructMember,
                 element_bytes: None,
+                index_term: None,
             });
         }
         let element_width = diagnostic_parameter_element_width(parameter);
@@ -3766,6 +3888,7 @@ fn describe_source_cell(
                 CellIndex::Unnamed
             },
             element_bytes: u32::try_from(element_width).ok(),
+            index_term: Some(index.clone()),
         };
         let mut index_variables = std::collections::BTreeSet::new();
         crate::kernel::collect_bitvector_variables(&index, &mut index_variables);
@@ -3791,16 +3914,19 @@ fn describe_source_cell(
             object: declared,
             index: CellIndex::Whole,
             element_bytes: None,
+            index_term: None,
         }),
         PointerOffsetTerm::Constant(0) => Some(SourceCell {
             object: declared,
             index: CellIndex::Named("0".to_string()),
             element_bytes: None,
+            index_term: None,
         }),
         PointerOffsetTerm::Constant(_) => Some(SourceCell {
             object: format!("{declared}+{}", describe_pointer_offset(&pointer.offset)),
             index: CellIndex::Whole,
             element_bytes: None,
+            index_term: None,
         }),
         // Any other offset is a term the lowering owns; the object is still
         // the reader's, so it is named and the index is not.
@@ -3808,6 +3934,7 @@ fn describe_source_cell(
             object: declared,
             index: CellIndex::Unnamed,
             element_bytes: None,
+            index_term: None,
         }),
     }
 }
@@ -3960,8 +4087,8 @@ fn describe_mutex_pointer(pointer: &Pointer, parameter_binding: ParameterBinding
 /// count for.
 fn scalar_element_width(c_type: C0Type) -> Option<i64> {
     match c_type {
-        C0Type::CharPointer
-        | C0Type::CharArray(_)
+        C0Type::CharPointer(_)
+        | C0Type::CharArray(_, _)
         | C0Type::Int8Pointer
         | C0Type::Int8Array(_)
         | C0Type::UInt8Pointer
@@ -4272,7 +4399,7 @@ fn describe_struct_member_from(
 
 fn diagnostic_c0_type_byte_width(c_type: C0Type, pointer_width: u32) -> i64 {
     match c_type {
-        C0Type::Bool | C0Type::Char | C0Type::UInt8 => 1,
+        C0Type::Bool | C0Type::Char(_) | C0Type::UInt8 => 1,
         C0Type::Int8 => 1,
         C0Type::Int16 | C0Type::UInt16 => 2,
         C0Type::Int32 | C0Type::UInt32 => 4,
@@ -4308,14 +4435,14 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         C0Type::Void => 0,
         C0Type::Bool => 1,
         C0Type::VoidPointer | C0Type::VoidPointerPointer => 8,
-        C0Type::CharPointer
-        | C0Type::CharArray(_)
+        C0Type::CharPointer(_)
+        | C0Type::CharArray(_, _)
         | C0Type::UInt8Pointer
         | C0Type::UInt8Array(_) => 1,
         C0Type::Int8 | C0Type::Int8Array(_) => 1,
         C0Type::Int16 | C0Type::UInt16 | C0Type::Int16Array(_) | C0Type::UInt16Array(_) => 2,
         C0Type::Int32
-        | C0Type::Char
+        | C0Type::Char(_)
         | C0Type::UInt8
         | C0Type::UInt32
         | C0Type::Int32Pointer
@@ -4335,7 +4462,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::Int16PointerPointer
         | C0Type::UInt16PointerPointer
         | C0Type::Int32PointerPointer
-        | C0Type::CharPointerPointer
+        | C0Type::CharPointerPointer(_)
         | C0Type::UInt8PointerPointer
         | C0Type::UInt32PointerPointer
         | C0Type::Int128PointerPointer
@@ -4974,6 +5101,108 @@ pub(super) fn describe_pointee_place(base: &str) -> String {
     }
 }
 
+/// A snapshot of `expression`. `result` exists only once the function
+/// returns, so a snapshot before the return cannot spell it; it has one
+/// value along a path, though, so the snapshot is written around the parts
+/// of a C fragment that do not mention it and `result` stays outside, as in
+/// `((uint64)result) + at(function.entry, node->word & 1)`.
+fn describe_snapshot_expression(
+    selector: Option<&SnapshotSelector>,
+    expression: &ContractExpression,
+) -> String {
+    let wrap = |text: String| match selector {
+        None => format!("old({text})"),
+        Some(selector) => format!("at({}, {text})", describe_snapshot_selector(selector)),
+    };
+    if crate::surface::snapshot_can_name_result(selector) {
+        return wrap(describe_contract_expression(expression));
+    }
+    describe_contract_snapshot(expression, &wrap)
+}
+
+fn describe_contract_snapshot(
+    expression: &ContractExpression,
+    wrap: &dyn Fn(String) -> String,
+) -> String {
+    let mut names = BTreeSet::new();
+    crate::surface::collect_current_contract_expression_variables(expression, &mut names);
+    if !names.contains("result") {
+        return wrap(describe_contract_expression(expression));
+    }
+    // A constant operand split off from `result` reads no state either.
+    let operand = |operand: &ContractExpression| match operand {
+        ContractExpression::IntegerLiteral(_)
+        | ContractExpression::CFragment(CExpression::Value(_)) => {
+            describe_contract_expression(operand)
+        }
+        operand => describe_contract_snapshot(operand, wrap),
+    };
+    let binary =
+        |left, operator, right| format!("({} {operator} {})", operand(left), operand(right));
+    match expression {
+        ContractExpression::CFragment(expression) => describe_c_snapshot(expression, wrap),
+        // `result` and a scalar cast of it read no state.
+        ContractExpression::Binding(_) => describe_contract_expression(expression),
+        ContractExpression::CUnary { operand, lowered }
+            if matches!(operand.as_ref(), ContractExpression::Binding(_))
+                && matches!(
+                    lowered,
+                    CExpression::Cast {
+                        pointee_struct: None,
+                        ..
+                    }
+                ) =>
+        {
+            describe_contract_expression(expression)
+        }
+        ContractExpression::Add(left, right) => binary(left, "+", right),
+        ContractExpression::Subtract(left, right) => binary(left, "-", right),
+        ContractExpression::Multiply(left, right) => binary(left, "*", right),
+        ContractExpression::BitwiseAnd(left, right) => binary(left, "&", right),
+        ContractExpression::BitwiseOr(left, right) => binary(left, "|", right),
+        ContractExpression::BitwiseXor(left, right) => binary(left, "^", right),
+        // Any other shape keeps its snapshot whole; the parser then names
+        // the snapshot that cannot hold `result`.
+        expression => wrap(describe_contract_expression(expression)),
+    }
+}
+
+fn describe_c_snapshot(expression: &CExpression, wrap: &dyn Fn(String) -> String) -> String {
+    let mut names = BTreeSet::new();
+    crate::surface::collect_c_expression_variables(expression, &mut names);
+    if !names.contains("result") {
+        return wrap(describe_c_expression(expression));
+    }
+    let operand = |operand: &CExpression| match operand {
+        CExpression::Value(_) => describe_c_expression(operand),
+        operand => describe_c_snapshot(operand, wrap),
+    };
+    let binary =
+        |left, operator, right| format!("({} {operator} {})", operand(left), operand(right));
+    match expression {
+        // `result` and a scalar cast of it read no state.
+        CExpression::Variable(_) => describe_c_expression(expression),
+        CExpression::Cast {
+            expression: inner,
+            pointee_struct: None,
+            ..
+        } if matches!(inner.as_ref(), CExpression::Variable(_)) => {
+            describe_c_expression(expression)
+        }
+        CExpression::Add(left, right) => binary(left, "+", right),
+        CExpression::Subtract(left, right) => binary(left, "-", right),
+        CExpression::Multiply(left, right) => binary(left, "*", right),
+        CExpression::BitwiseAnd(left, right) => binary(left, "&", right),
+        CExpression::BitwiseOr(left, right) => binary(left, "|", right),
+        CExpression::BitwiseXor(left, right) => binary(left, "^", right),
+        CExpression::Equal(left, right) => binary(left, "==", right),
+        CExpression::NotEqual(left, right) => binary(left, "!=", right),
+        // Any other shape keeps its snapshot whole; the parser then names
+        // the snapshot that cannot hold `result`.
+        expression => wrap(describe_c_expression(expression)),
+    }
+}
+
 pub(super) fn describe_binary_c_expression(
     left: &CExpression,
     operator: &str,
@@ -5340,17 +5569,11 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
                 _ => format!("count({})", describe_resource_clause(resource)),
             }
         }
-        ContractExpression::Old(expression) => {
-            format!("old({})", describe_contract_expression(expression))
-        }
+        ContractExpression::Old(expression) => describe_snapshot_expression(None, expression),
         ContractExpression::At {
             selector,
             expression,
-        } => format!(
-            "at({}, {})",
-            describe_snapshot_selector(selector),
-            describe_contract_expression(expression)
-        ),
+        } => describe_snapshot_expression(Some(selector), expression),
         ContractExpression::Negate(expression) => {
             format!("-{}", describe_contract_expression(expression))
         }
@@ -5939,45 +6162,6 @@ pub(super) fn describe_bitvector_with_context(
                 .expect("checked registered above")
         }
         Bitvector32Term::Variable(variable) => lowering_only_variable("v", variable.0),
-        Bitvector32Term::Add(left, right) => {
-            describe_binary_bitvector_with_context(left, "+", right, parameter_binding)
-        }
-        Bitvector32Term::Subtract(left, right) => {
-            describe_binary_bitvector_with_context(left, "-", right, parameter_binding)
-        }
-        Bitvector32Term::Multiply(left, right) => {
-            describe_binary_bitvector_with_context(left, "*", right, parameter_binding)
-        }
-        Bitvector32Term::Divide(left, right) => {
-            describe_binary_bitvector_with_context(left, "/", right, parameter_binding)
-        }
-        Bitvector32Term::UnsignedDivide(left, right) => {
-            describe_binary_bitvector_with_context(left, "/", right, parameter_binding)
-        }
-        Bitvector32Term::Remainder(left, right) => {
-            describe_binary_bitvector_with_context(left, "%", right, parameter_binding)
-        }
-        Bitvector32Term::UnsignedRemainder(left, right) => {
-            describe_binary_bitvector_with_context(left, "%", right, parameter_binding)
-        }
-        Bitvector32Term::ShiftLeft(left, right) => {
-            describe_binary_bitvector_with_context(left, "<<", right, parameter_binding)
-        }
-        Bitvector32Term::ArithmeticShiftRight(left, right) => {
-            describe_binary_bitvector_with_context(left, ">>", right, parameter_binding)
-        }
-        Bitvector32Term::LogicalShiftRight(left, right) => {
-            describe_binary_bitvector_with_context(left, ">>", right, parameter_binding)
-        }
-        Bitvector32Term::BitwiseAnd(left, right) => {
-            describe_binary_bitvector_with_context(left, "&", right, parameter_binding)
-        }
-        Bitvector32Term::BitwiseOr(left, right) => {
-            describe_binary_bitvector_with_context(left, "|", right, parameter_binding)
-        }
-        Bitvector32Term::BitwiseXor(left, right) => {
-            describe_binary_bitvector_with_context(left, "^", right, parameter_binding)
-        }
         Bitvector32Term::BitwiseNot(value) => {
             format!(
                 "~{}",
@@ -5989,24 +6173,6 @@ pub(super) fn describe_bitvector_with_context(
                 "-{}",
                 describe_bitvector_with_context(value, parameter_binding)
             )
-        }
-        Bitvector32Term::Float32Binary {
-            operator,
-            left,
-            right,
-        }
-        | Bitvector32Term::Float64Binary {
-            operator,
-            left,
-            right,
-        } => {
-            let symbol = match operator {
-                CFloatBinaryOperator::Add => "+",
-                CFloatBinaryOperator::Subtract => "-",
-                CFloatBinaryOperator::Multiply => "*",
-                CFloatBinaryOperator::Divide => "/",
-            };
-            describe_binary_bitvector_with_context(left, symbol, right, parameter_binding)
         }
         Bitvector32Term::Int64From32(value)
         | Bitvector32Term::UInt64From32(value)
@@ -6020,44 +6186,6 @@ pub(super) fn describe_bitvector_with_context(
             "truncate32({})",
             describe_bitvector_with_context(value, parameter_binding)
         ),
-        Bitvector32Term::Int64Add(left, right) | Bitvector32Term::UInt64Add(left, right) => {
-            describe_binary_bitvector_with_context(left, "+", right, parameter_binding)
-        }
-        Bitvector32Term::Int64Subtract(left, right)
-        | Bitvector32Term::UInt64Subtract(left, right) => {
-            describe_binary_bitvector_with_context(left, "-", right, parameter_binding)
-        }
-        Bitvector32Term::Int64Multiply(left, right)
-        | Bitvector32Term::UInt64Multiply(left, right) => {
-            describe_binary_bitvector_with_context(left, "*", right, parameter_binding)
-        }
-        Bitvector32Term::Int64Divide(left, right) | Bitvector32Term::UInt64Divide(left, right) => {
-            describe_binary_bitvector_with_context(left, "/", right, parameter_binding)
-        }
-        Bitvector32Term::Int64Remainder(left, right)
-        | Bitvector32Term::UInt64Remainder(left, right) => {
-            describe_binary_bitvector_with_context(left, "%", right, parameter_binding)
-        }
-        Bitvector32Term::Int64ShiftLeft(left, right)
-        | Bitvector32Term::UInt64ShiftLeft(left, right) => {
-            describe_binary_bitvector_with_context(left, "<<", right, parameter_binding)
-        }
-        Bitvector32Term::Int64ArithmeticShiftRight(left, right)
-        | Bitvector32Term::UInt64LogicalShiftRight(left, right) => {
-            describe_binary_bitvector_with_context(left, ">>", right, parameter_binding)
-        }
-        Bitvector32Term::Int64BitwiseAnd(left, right)
-        | Bitvector32Term::UInt64BitwiseAnd(left, right) => {
-            describe_binary_bitvector_with_context(left, "&", right, parameter_binding)
-        }
-        Bitvector32Term::Int64BitwiseOr(left, right)
-        | Bitvector32Term::UInt64BitwiseOr(left, right) => {
-            describe_binary_bitvector_with_context(left, "|", right, parameter_binding)
-        }
-        Bitvector32Term::Int64BitwiseXor(left, right)
-        | Bitvector32Term::UInt64BitwiseXor(left, right) => {
-            describe_binary_bitvector_with_context(left, "^", right, parameter_binding)
-        }
         Bitvector32Term::Int64BitwiseNot(value) | Bitvector32Term::UInt64BitwiseNot(value) => {
             format!(
                 "~{}",
@@ -6114,6 +6242,17 @@ pub(super) fn describe_bitvector_with_context(
             format!("address({})", describe_pointer(pointer, parameter_binding))
         }
         Bitvector32Term::IntegerToMachine { .. } => "integer-to-machine".to_string(),
+        term => {
+            let (operator, left, right) = term
+                .as_binary()
+                .expect("every other variant has its own arm");
+            describe_binary_bitvector_with_context(
+                left,
+                operator.c_symbol(),
+                right,
+                parameter_binding,
+            )
+        }
     }
 }
 
@@ -6133,12 +6272,14 @@ pub(super) fn describe_parameter_bitvector(
                 return Some(parameter.name().to_string());
             }
             CExpression::Value(CValue::UInt8(value))
-                if value == term && matches!(parameter.c_type(), C0Type::Char | C0Type::UInt8) =>
+                if value == term
+                    && parameter.c_type().to_kernel_type() == crate::kernel::CType::UInt8 =>
             {
                 return Some(parameter.name().to_string());
             }
             CExpression::Value(CValue::Int8(value))
-                if value == term && parameter.c_type() == C0Type::Int8 =>
+                if value == term
+                    && parameter.c_type().to_kernel_type() == crate::kernel::CType::Int8 =>
             {
                 return Some(parameter.name().to_string());
             }
@@ -6298,6 +6439,18 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
     if let Some(unsigned) = describe_unsigned_comparison(condition, ParameterBinding::default()) {
         return unsigned;
     }
+    if let Some((operator, left, right)) = condition.as_bitvector_comparison() {
+        return if operator.is_overflow() {
+            format!(
+                "overflow({} {} {})",
+                describe_bitvector(left),
+                operator.c_symbol(),
+                describe_bitvector(right)
+            )
+        } else {
+            describe_binary_condition(left, operator.c_symbol(), right)
+        };
+    }
     match condition {
         ConditionTerm::AlgebraicEqual(_, _) => "algebraic equality".to_string(),
         ConditionTerm::IntegerLessThan(left, right) => {
@@ -6318,110 +6471,6 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
         }
         ConditionTerm::Constant(value) => value.to_string(),
         ConditionTerm::Variable(variable) => lowering_only_variable("cond", variable.0),
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
-            describe_binary_condition(left, "<", right)
-        }
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
-            describe_binary_condition(left, "<=", right)
-        }
-        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
-            describe_binary_condition(left, ">", right)
-        }
-        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
-            describe_binary_condition(left, ">=", right)
-        }
-        ConditionTerm::Bitvector32Equal(left, right) => {
-            describe_binary_condition(left, "==", right)
-        }
-        ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
-            format!(
-                "overflow({} + {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
-            format!(
-                "overflow({} - {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right) => {
-            format!(
-                "overflow({} * {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector32SignedDivideOverflows(left, right) => {
-            format!(
-                "overflow({} / {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            format!(
-                "overflow({} << {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector64SignedLessThan(left, right)
-        | ConditionTerm::Bitvector64UnsignedLessThan(left, right) => {
-            describe_binary_condition(left, "<", right)
-        }
-        ConditionTerm::Bitvector64SignedLessEqual(left, right)
-        | ConditionTerm::Bitvector64UnsignedLessEqual(left, right) => {
-            describe_binary_condition(left, "<=", right)
-        }
-        ConditionTerm::Bitvector64SignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector64UnsignedGreaterThan(left, right) => {
-            describe_binary_condition(left, ">", right)
-        }
-        ConditionTerm::Bitvector64SignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector64UnsignedGreaterEqual(left, right) => {
-            describe_binary_condition(left, ">=", right)
-        }
-        ConditionTerm::Bitvector64Equal(left, right) => {
-            describe_binary_condition(left, "==", right)
-        }
-        ConditionTerm::Bitvector64SignedAddOverflows(left, right) => {
-            format!(
-                "overflow({} + {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector64SignedSubtractOverflows(left, right) => {
-            format!(
-                "overflow({} - {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector64SignedMultiplyOverflows(left, right) => {
-            format!(
-                "overflow({} * {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector64SignedDivideOverflows(left, right) => {
-            format!(
-                "overflow({} / {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
-        ConditionTerm::Bitvector64SignedShiftLeftOverflows(left, right) => {
-            format!(
-                "overflow({} << {})",
-                describe_bitvector(left),
-                describe_bitvector(right)
-            )
-        }
         ConditionTerm::Float32(float_condition) => describe_float_condition(float_condition),
         ConditionTerm::Float64(float_condition) => describe_float_condition(float_condition),
         ConditionTerm::PointerOffsetEqual(left, right) => format!(
@@ -6435,6 +6484,9 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
                 describe_pointer(left, ParameterBinding::default()),
                 describe_pointer(right, ParameterBinding::default())
             )
+        }
+        crate::kernel::binary_bitvector_condition!(_, _) => {
+            unreachable!("bitvector comparisons are described above")
         }
     }
 }

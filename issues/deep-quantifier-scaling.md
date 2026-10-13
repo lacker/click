@@ -1,5 +1,10 @@
 # Reduce repeated work in deeply nested `Integer` quantifiers
 
+Priority: P2.
+
+Soundness: not soundness. This is performance. The issue requires
+freshening and capture avoidance to remain checked.
+
 P2: a deferred tooling-scaling problem in an otherwise implemented
 `Integer` quantifier path. The current checked universal-introduction path
 freshens, substitutes, and copies the remaining proposition body at every

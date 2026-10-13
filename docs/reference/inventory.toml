@@ -3,463 +3,463 @@
 
 [[item]]
 id = "c0.type.void"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.int32"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.uint8"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.uint32"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.standard-spellings"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.typedef"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.enum"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.union"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.type.pointer"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.pointer-to-pointer"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.array-parameter"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.local-array"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.struct-array-parameter"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.type.struct-value"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.type.function-pointer"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.struct-pointer"
-path = "reference/language/c0.md#supported-types"
+path = "reference/language/c.md#supported-types"
 
 [[item]]
 id = "c0.type.typeof"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.declaration.function"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.declaration.struct"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.declaration.struct-field-list"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.declaration.enum"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.declaration.union"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.declaration.union-field-list"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.declaration.local"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.declaration.static-local"
-path = "reference/language/c0.md#function-local-scalar-statics"
+path = "reference/language/c.md#function-local-scalar-statics"
 
 [[item]]
 id = "c0.declaration.global-array"
-path = "reference/language/c0.md#file-scope-scalar-globals"
+path = "reference/language/c.md#file-scope-scalar-globals"
 
 [[item]]
 id = "c0.statement.struct-value-declaration"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.statement.empty"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.block"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.assignment"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.initializer"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.declaration-list"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.call"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.call-assignment"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.return"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.if"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.else-if"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.unbraced-body"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.switch"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.while"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.break"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.continue"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.do-while"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.for"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.for-step-list"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.for-omitted-clause"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.for-init-list"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.for-declaration-list"
-path = "reference/language/c0.md#loops"
+path = "reference/language/c.md#loops"
 
 [[item]]
 id = "c0.statement.store"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.sequential-kernel-store"
-path = "reference/language/c0.md#checked-sequential-kernel-access-primitives"
+path = "reference/language/c.md#checked-sequential-kernel-access-primitives"
 
 [[item]]
 id = "c0.statement.memory-lvalue-update"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.malloc"
-path = "reference/language/c0.md#heap-allocation"
+path = "reference/language/c.md#heap-allocation"
 
 [[item]]
 id = "c0.statement.calloc"
-path = "reference/language/c0.md#heap-allocation"
+path = "reference/language/c.md#heap-allocation"
 
 [[item]]
 id = "c0.statement.realloc"
-path = "reference/language/c0.md#heap-allocation"
+path = "reference/language/c.md#heap-allocation"
 
 [[item]]
 id = "c0.statement.free"
-path = "reference/language/c0.md#heap-allocation"
+path = "reference/language/c.md#heap-allocation"
 
 [[item]]
 id = "c0.statement.increment"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.decrement"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.prefix-increment"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.prefix-decrement"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.add-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.subtract-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.multiply-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.xor-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.divide-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.remainder-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.shift-left-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.shift-right-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.bitwise-and-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.statement.bitwise-or-assign"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.variable"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.int-literal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.hex-literal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.octal-literal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.integer-literal-suffix"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.char-literal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.string-literal"
-path = "reference/language/c0.md#string-literals"
+path = "reference/language/c.md#string-literals"
 
 [[item]]
 id = "c0.expression.null-pointer"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.address-of"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.cast"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.pointer-integer-cast"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.assignment"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.sequential-kernel-read"
-path = "reference/language/c0.md#checked-sequential-kernel-access-primitives"
+path = "reference/language/c.md#checked-sequential-kernel-access-primitives"
 
 [[item]]
 id = "c0.expression.sequential-kernel-write"
-path = "reference/language/c0.md#checked-sequential-kernel-access-primitives"
+path = "reference/language/c.md#checked-sequential-kernel-access-primitives"
 
 [[item]]
 id = "c0.expression.conditional"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.statement-expression"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.builtin-types-compatible"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.builtin-expect"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.sizeof-struct"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.sizeof-type"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.call"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.index"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.field"
-path = "reference/language/c0.md#struct-subset"
+path = "reference/language/c.md#struct-subset"
 
 [[item]]
 id = "c0.expression.dereference"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.pointer-arithmetic"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.logical-not"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.unary-plus"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.logical-and"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.logical-or"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.equal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.not-equal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.less-than"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.less-equal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.greater-than"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.greater-equal"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.add"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.subtract"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.multiply"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.divide"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.remainder"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.shift-left"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.shift-right"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.bitwise-and"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.bitwise-or"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.bitwise-xor"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.operator.bitwise-not"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 
 [[item]]
@@ -984,7 +984,7 @@ path = "reference/library/index.md#authority"
 
 [[item]]
 id = "language.target"
-path = "reference/language/c0.md#selecting-a-target"
+path = "reference/language/c.md#selecting-a-target"
 
 [[item]]
 id = "language.verifying"
@@ -1016,7 +1016,7 @@ path = "reference/language/index.md#file-shape"
 
 [[item]]
 id = "language.contract"
-path = "reference/language/c0.md#named-function-contracts"
+path = "reference/language/c.md#named-function-contracts"
 
 [[item]]
 id = "language.resource"
@@ -3229,6 +3229,14 @@ id = "stdlib.theorem.uint64_to_integer_bounds"
 path = "reference/library/index.md#uint64_to_integer_bounds"
 
 [[item]]
+id = "stdlib.theorem.int32_to_integer_bounds"
+path = "reference/library/index.md#int32_to_integer_bounds"
+
+[[item]]
+id = "stdlib.theorem.int64_to_integer_bounds"
+path = "reference/library/index.md#int64_to_integer_bounds"
+
+[[item]]
 id = "stdlib.theorem.int32_add_to_integer"
 path = "reference/library/index.md#int32_add_to_integer"
 
@@ -3509,6 +3517,14 @@ id = "stdlib.theorem.uint32_pack_uint16_high_first_to_integer"
 path = "reference/library/index.md#uint32_pack_uint16_high_first_to_integer"
 
 [[item]]
+id = "stdlib.theorem.uint32_unpack_uint16_low"
+path = "reference/library/index.md#uint32_unpack_uint16_low"
+
+[[item]]
+id = "stdlib.theorem.uint32_unpack_uint16_high"
+path = "reference/library/index.md#uint32_unpack_uint16_high"
+
+[[item]]
 id = "stdlib.theorem.uint64_pack_uint16_to_integer"
 path = "reference/library/index.md#uint64_pack_uint16_to_integer"
 
@@ -3518,8 +3534,8 @@ path = "reference/library/index.md#uint64_less_than_implies_not_greater_equal"
 
 [[item]]
 id = "c0.expression.builtin-offsetof"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.declaration.static-assert"
-path = "reference/language/c0.md#supported-expressions-and-statements"
+path = "reference/language/c.md#supported-expressions-and-statements"

@@ -15,8 +15,7 @@ pub(in crate::surface) fn evaluate_contract_expression_with_environment(
     crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
         expression,
         assumptions,
-        parameter_values,
-        array_refs,
+        ContractEnvironment::new(parameter_values, array_refs),
         FixedStateFrame::new(pre_state, post_state, result, recorded_snapshots),
         spec_definitions,
         opaque_click_functions,

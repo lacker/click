@@ -9,11 +9,12 @@ mod claim_proofs;
 #[cfg(test)]
 pub(in crate::surface) use claim_proofs::count_flat_proof_units;
 pub(in crate::surface) use fixed_state_proofs::{
-    evaluate_c_fragment_through_kernel, evaluate_fixed_state_array_ref_through_kernel,
-    evaluate_fixed_state_expression_through_kernel, evaluate_resource_argument_through_kernel,
-    evaluate_resource_fragment_through_kernel, lower_fixed_state_proposition_through_kernel,
-    lower_fixed_state_proposition_through_kernel_recording_introductions_with_bound_array_memories_and_facts,
-    lower_fixed_state_proposition_through_kernel_with_opaque_calls,
+    FixedStateLoweringOptions, evaluate_c_fragment_through_kernel,
+    evaluate_fixed_state_array_ref_through_kernel, evaluate_fixed_state_expression_through_kernel,
+    evaluate_resource_argument_through_kernel, evaluate_resource_fragment_through_kernel,
+    lower_fixed_state_proposition_through_kernel,
+    lower_fixed_state_proposition_through_kernel_with,
+    lower_fixed_state_proposition_through_kernel_with_facts,
 };
 mod cursor_execution;
 mod execution_planning;
@@ -562,8 +563,7 @@ mod certificate_tests {
         let goal = lower_pure_theorem_proposition(
             theorem.name(),
             surface_goal,
-            &context.values,
-            &context.array_refs,
+            ContractEnvironment::new(&context.values, &context.array_refs),
             &context.memory,
             spec_definitions,
         )
@@ -2594,7 +2594,7 @@ pub(super) fn prove_claim_by_auto(
     function_source_registry: Arc<FunctionSourceRegistry>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     // `auto` is exactly the script `execute(); simp();`.
-    let tactics = [ProofTactic::SmartExecute, ProofTactic::Simp];
+    let tactics = [ProofTactic::SmartExecute, ProofTactic::AutoClose];
     let mut theorems = prove_claim_by_tactics(
         expansion_capture,
         source_path,

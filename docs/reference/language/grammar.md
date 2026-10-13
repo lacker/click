@@ -42,7 +42,7 @@ documentation inventory keep the following accepted words synchronized.
 | `executes` | Gives a contract-refinement theorem an explicit one-call execution frontier, over the theorem's callback parameter or a named project function. |
 | `spec`, `enum`, `match` | Specification-only algebraic datatype declarations and exhaustive elimination. |
 | `abstract`, `resource`, `authorized` | Abstract and composite resource declarations. `authorized resource` (or `authorized abstract resource`) marks a family that takes part in population accounting, so `authority(...)` and `count(...)` may name it. |
-| `int8`, `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`, `short`, `int`, `signed int`, `long`, `long long`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `ssize_t`, `signed char`, `unsigned char`, `unsigned short`, `unsigned int`, `unsigned long`, `unsigned long long`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`, `size_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
+| `int8`, `int16`, `int32`, `uint8`, `uint16`, `uint32`, `int64`, `uint64`, `short`, `int`, `signed int`, `long`, `long long`, `int8_t`, `int16_t`, `int32_t`, `int64_t`, `ssize_t`, `signed char`, `unsigned char`, `unsigned short`, `unsigned int`, `unsigned long`, `unsigned long long`, `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t`, `size_t`, `void`, `struct` | Type words. The standard spellings alias the modeled Click's C types; `void` is available only where the detailed type rules allow it. |
 | `let`, `where` | Value abbreviation and existential-binding forms. |
 | `requires`, `ensures`, `exceptional`, `throws`, `decreases` | Contract, theorem, function-totality, exceptional-postcondition, and loop-termination clauses. The initial exceptional signature is `throws int32`, with clauses spelled `exceptional ensures`; a `decreases` clause is one expression, classified after name resolution as a numeric (int32, unsigned, or `Integer`) measure, a resource application, or a resource binder; there is no `decreases resource` spelling. |
 | `diverges` | Signature and `loop`-head marker declaring that the function or loop may not return. It follows the parameter list, after `throws` when a signature carries both, and excludes a `decreases` clause on the same function or loop. |
@@ -180,8 +180,10 @@ and `>=` tighter than `&`, `^` and `|`, so a comparison operand whose
 outermost operator is `&`, `^` or `|` must be parenthesized: `x & 1 == 0` is
 refused and `(x & 1) == 0` is accepted
 (`mdtests/bitwise_comparison_operand_needs_parentheses.md`,
-`mdtests/parenthesized_bitwise_comparison_operand_is_accepted.md`). Shifts and
-arithmetic group the same way in C and Click and need no parentheses. See
+`mdtests/parenthesized_bitwise_comparison_operand_is_accepted.md`). Rust binds
+`&`, `^` and `|` tighter than comparisons, as Click does, so a sidecar that
+verifies Rust is exempt. Shifts and arithmetic group the same way in C and
+Click and need no parentheses. See
 [Propositions](index.md#propositions) for their syntax and typing rules.
 
 ## Algebraic datatypes
@@ -351,7 +353,7 @@ propositions. The standard library also supplies the algebraic `List<T>` with
 that library type, general indexing, and projection of a symbolic memory range
 remain open.
 
-## C0-expression precedence
+## C-fragment precedence
 
 C fragments use C-like precedence. From lowest to highest:
 
@@ -370,7 +372,7 @@ C fragments use C-like precedence. From lowest to highest:
 | 11 | calls, indexing, member access | Left, postfix |
 
 This table describes the parser, not all of ISO C. The normative set of types,
-statements, and operators that Click accepts is in [Supported C0](c0.md).
+statements, and operators that Click accepts is in [Supported C](c.md).
 
 ## Ranges and binders
 

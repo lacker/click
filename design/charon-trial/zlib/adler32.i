@@ -78,7 +78,7 @@ typedef uLong uLongf;
 # 1 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 1 3 4
 # 33 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 3 4
 # 1 "/usr/include/features.h" 1 3 4
-# 415 "/usr/include/features.h" 3 4
+# 394 "/usr/include/features.h" 3 4
 # 1 "/usr/include/features-time64.h" 1 3 4
 # 20 "/usr/include/features-time64.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/wordsize.h" 1 3 4
@@ -88,24 +88,24 @@ typedef uLong uLongf;
 # 1 "/usr/include/x86_64-linux-gnu/bits/wordsize.h" 1 3 4
 # 20 "/usr/include/x86_64-linux-gnu/bits/timesize.h" 2 3 4
 # 22 "/usr/include/features-time64.h" 2 3 4
-# 416 "/usr/include/features.h" 2 3 4
-# 501 "/usr/include/features.h" 3 4
+# 395 "/usr/include/features.h" 2 3 4
+# 480 "/usr/include/features.h" 3 4
 # 1 "/usr/include/stdc-predef.h" 1 3 4
-# 502 "/usr/include/features.h" 2 3 4
-# 523 "/usr/include/features.h" 3 4
+# 481 "/usr/include/features.h" 2 3 4
+# 502 "/usr/include/features.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 1 3 4
-# 730 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 3 4
+# 576 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/wordsize.h" 1 3 4
-# 731 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
+# 577 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/long-double.h" 1 3 4
-# 732 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
-# 524 "/usr/include/features.h" 2 3 4
-# 547 "/usr/include/features.h" 3 4
+# 578 "/usr/include/x86_64-linux-gnu/sys/cdefs.h" 2 3 4
+# 503 "/usr/include/features.h" 2 3 4
+# 526 "/usr/include/features.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/gnu/stubs.h" 1 3 4
 # 10 "/usr/include/x86_64-linux-gnu/gnu/stubs.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/gnu/stubs-64.h" 1 3 4
 # 11 "/usr/include/x86_64-linux-gnu/gnu/stubs.h" 2 3 4
-# 548 "/usr/include/features.h" 2 3 4
+# 527 "/usr/include/features.h" 2 3 4
 # 34 "/usr/include/x86_64-linux-gnu/bits/libc-header-start.h" 2 3 4
 # 27 "/usr/include/limits.h" 2 3 4
 # 195 "/usr/include/limits.h" 3 4
@@ -485,12 +485,11 @@ struct __pthread_cond_s
 {
   __atomic_wide_counter __wseq;
   __atomic_wide_counter __g1_start;
-  unsigned int __g_size[2] ;
+  unsigned int __g_refs[2] ;
+  unsigned int __g_size[2];
   unsigned int __g1_orig_size;
   unsigned int __wrefs;
   unsigned int __g_signals[2];
-  unsigned int __unused_initialized_1;
-  unsigned int __unused_initialized_2;
 };
 
 typedef unsigned int __tss_t;
@@ -1119,12 +1118,12 @@ extern char *stpncpy (char *__restrict __dest,
 # 42 "/usr/include/stdlib.h" 2 3 4
 # 56 "/usr/include/stdlib.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/floatn.h" 1 3 4
-# 131 "/usr/include/x86_64-linux-gnu/bits/floatn.h" 3 4
+# 119 "/usr/include/x86_64-linux-gnu/bits/floatn.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/floatn-common.h" 1 3 4
 # 24 "/usr/include/x86_64-linux-gnu/bits/floatn-common.h" 3 4
 # 1 "/usr/include/x86_64-linux-gnu/bits/long-double.h" 1 3 4
 # 25 "/usr/include/x86_64-linux-gnu/bits/floatn-common.h" 2 3 4
-# 132 "/usr/include/x86_64-linux-gnu/bits/floatn.h" 2 3 4
+# 120 "/usr/include/x86_64-linux-gnu/bits/floatn.h" 2 3 4
 # 57 "/usr/include/stdlib.h" 2 3 4
 
 
@@ -1240,7 +1239,7 @@ extern void *aligned_alloc (size_t __alignment, size_t __size)
 
 
 
-extern void abort (void) __attribute__ ((__nothrow__ , __leaf__)) __attribute__ ((__noreturn__)) __attribute__ ((__cold__));
+extern void abort (void) __attribute__ ((__nothrow__ , __leaf__)) __attribute__ ((__noreturn__));
 
 
 

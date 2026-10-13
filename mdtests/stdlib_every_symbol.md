@@ -69,6 +69,14 @@ theorem use_uint32_to_integer_bounds(value: uint32) {
     ensures 0 <= to_integer(value) by apply(uint32_to_integer_bounds(value));
     ensures to_integer(value) <= 4294967295 by apply(uint32_to_integer_bounds(value));
 }
+theorem use_int32_to_integer_bounds(value: int32) {
+    ensures -2147483648 <= to_integer(value) by apply(int32_to_integer_bounds(value));
+    ensures to_integer(value) <= 2147483647 by apply(int32_to_integer_bounds(value));
+}
+theorem use_int64_to_integer_bounds(value: int64) {
+    ensures -9223372036854775808 <= to_integer(value) by apply(int64_to_integer_bounds(value));
+    ensures to_integer(value) <= 9223372036854775807 by apply(int64_to_integer_bounds(value));
+}
 theorem use_uint64_to_integer_bounds(value: uint64) {
     ensures 0 <= to_integer(value) by apply(uint64_to_integer_bounds(value));
     ensures to_integer(value) <= 18446744073709551615 by apply(uint64_to_integer_bounds(value));
@@ -186,6 +194,18 @@ theorem use_uint32_pack_u16_high_first_to_integer(low: uint32, high: uint32) {
     requires low <= 65535u32;
     requires high <= 65535u32;
     ensures to_integer((high << 16) | low) == to_integer(low) + 65536 * to_integer(high) by apply(uint32_pack_uint16_high_first_to_integer(low, high));
+}
+
+theorem use_uint32_unpack_u16_low(low: uint32, high: uint32) {
+    requires low <= 65535u32;
+    requires high <= 65535u32;
+    ensures (((high << 16) | low) & 65535u32) == low by apply(uint32_unpack_uint16_low(low, high));
+}
+
+theorem use_uint32_unpack_u16_high(low: uint32, high: uint32) {
+    requires low <= 65535u32;
+    requires high <= 65535u32;
+    ensures ((((high << 16) | low) >> 16) & 65535u32) == high by apply(uint32_unpack_uint16_high(low, high));
 }
 
 theorem use_uint64_pack_u16_to_integer(low: uint64, high: uint64) {

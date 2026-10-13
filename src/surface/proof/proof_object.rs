@@ -444,6 +444,12 @@ struct ProofLocals {
     values: PersistentMap<String, ContractExpression>,
     integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     algebraic_values: PersistentMap<String, crate::kernel::SpecAlgebraicExpression>,
+    /// The written forms of facts a pure proof introduced by `have` or a
+    /// proof `if`, which have no execution frontier or outcome to carry
+    /// them. Like every recorded spelling it is an index, not authority: a
+    /// lookup outside a C outcome lowers the form again and keeps it only
+    /// when it still denotes the fact.
+    surface_facts: SurfacePropositionMap,
     next_choice_variable: u64,
 }
 
@@ -453,6 +459,7 @@ impl Default for ProofLocals {
             values: PersistentMap::default(),
             integer_values: PersistentMap::default(),
             algebraic_values: PersistentMap::default(),
+            surface_facts: SurfacePropositionMap::default(),
             next_choice_variable: 3_000_000,
         }
     }
@@ -921,7 +928,7 @@ impl ProofExecutionView<'_> {
             .unwrap_or(&self.execution.presentation.branch_decisions)
             .iter();
         let mut path = Vec::new();
-        let mut current = steps;
+        let mut current = super::execution_state::through_single_arm_matches(steps);
         while let Some(ProofStep::If {
             condition,
             then_proof,
@@ -933,11 +940,11 @@ impl ProofExecutionView<'_> {
                 .find(|decision| decision.condition == *condition)?
                 .value;
             path.push(selected_then);
-            current = if selected_then {
+            current = super::execution_state::through_single_arm_matches(if selected_then {
                 then_proof.steps()
             } else {
                 else_proof.steps()
-            };
+            });
         }
         Some(path)
     }
@@ -1047,6 +1054,7 @@ struct ProofDiagnosticProofState(
     Option<crate::surface::proof_trace::ChildArgumentTrace>,
     Option<(&'static str, Box<Proposition>, Option<String>)>,
     Option<crate::surface::proof_diagnostics::MemoryHistoryDiagnostic>,
+    Option<(Variable, CType)>,
 );
 
 fn diagnostic_value_variable(value: &CValue) -> Option<Variable> {
@@ -1092,6 +1100,7 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
                 && let Some(variable) = diagnostic_value_variable(value)
             {
                 labels.source_name(variable, name.clone());
+                labels.source_type(variable, value.c_type());
             }
         }
         for (name, value) in self.0.state().locals().algebraic_values.iter() {
@@ -1101,6 +1110,9 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         }
         if let Some(state) = &self.3 {
             labels.register_current_state(state);
+        }
+        if let Some((variable, c_type)) = self.7 {
+            labels.source_type(variable, c_type);
         }
         if let Some(branch) = self.0.state().open_branches().get(self.0.focused_branch())
             && let Some(execution) = branch.state.execution.as_deref()
@@ -1523,6 +1535,15 @@ impl Proof<'_> {
             None,
             None,
             history,
+            match self.context.as_ref() {
+                ProofContext::FixedState(context) => context.fixed_state.result,
+                _ => self
+                    .outcome_fixed_state_view()
+                    .and_then(|view| view.fixed_state.result),
+            }
+            .and_then(|value| {
+                diagnostic_value_variable(value).map(|variable| (variable, value.c_type()))
+            }),
         )
     }
 }
@@ -1905,6 +1926,24 @@ impl<'a> Proof<'a> {
         &self,
     ) -> &PersistentMap<String, crate::kernel::SpecAlgebraicExpression> {
         &self.state().locals().algebraic_values
+    }
+
+    /// The written forms of facts a pure proof introduced; see
+    /// `ProofLocals::surface_facts`.
+    pub(super) fn local_surface_facts(&self) -> &SurfacePropositionMap {
+        &self.state().locals().surface_facts
+    }
+
+    /// Records `surface` as the written form of the checked `kernel` fact
+    /// for later premise lookups in a pure proof.
+    pub(super) fn with_local_surface_fact(
+        &self,
+        surface: &ClickProposition,
+        kernel: &Proposition,
+    ) -> Result<Self, ClickError> {
+        let mut locals = self.state.locals().clone();
+        locals.surface_facts.record_lowering(surface, kernel)?;
+        Ok(self.with_kernel_state(self.state.with_locals(locals)))
     }
 
     fn focused_branch_id(&self) -> BranchId {

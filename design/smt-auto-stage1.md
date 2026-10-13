@@ -308,7 +308,11 @@ Each milestone is one PR, green and useful on its own.
    time.
 4. **Equality.** Add EUF with constructors and the combination. Rewrite
    one arm of `rbtree_erase_color_flips_red_all.click` and record its size
-   and time.
+   and time. The first step, landed, is a bounded search for a chain of
+   checked `rewrite` steps over the connected equalities, closed by
+   `assumption`, `normalize` or a budgeted `simp`; the numbers are in
+   [smt-auto](../issues/smt-auto.md). Congruence closure, injectivity and
+   disjointness, and the combination with the simplex remain.
 5. **`auto` integration.** Make the solver the first closer in `auto`.
    Rewrite `bounded-pool` and record the numbers. Report the stage-1
    measurements in [smt-auto](../issues/smt-auto.md) and decide on stages

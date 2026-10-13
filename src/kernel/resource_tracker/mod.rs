@@ -1463,10 +1463,11 @@ fn collect_bitvector_reads(term: &Bitvector32Term, reads: &mut Vec<ResourceRead>
         | Bitvector32Term::UInt64FromInt32(inner)
         | Bitvector32Term::UInt64FromInt64(inner) => collect_bitvector_reads(inner, reads),
         Bitvector32Term::If {
+            condition,
             then_term,
             else_term,
-            ..
         } => {
+            collect_condition_reads(condition, reads);
             collect_bitvector_reads(then_term, reads);
             collect_bitvector_reads(else_term, reads);
         }

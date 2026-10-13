@@ -36,5 +36,5 @@ slow-timeout = { period = "60s", terminate-after = 120 }
 max-threads = 1
 
 [[profile.nightly.overrides]]
-filter = 'binary(rust_import) & test(/charon_adler2_(four_byte|general|small_batch)_compute/)'
+filter = 'binary(rust_import) & (test(/charon_adler2_(four_byte|general|small_batch)_compute/) | test(charon_adler2_general_public_checksum) | test(charon_adler2_incremental_client) | test(charon_adler2_resumed_client))'
 test-group = "adler-compute"

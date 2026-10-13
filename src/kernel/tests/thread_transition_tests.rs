@@ -170,8 +170,7 @@ fn modeled_pthread_calls_cannot_fall_back_to_ordinary_function_rules() {
             &CState::new(),
             &statement,
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::EXECUTE_BODIES,
+            CExecutionContext::execute_bodies(&environment),
             &mut ExecutionBudget::new(),
         )
         .unwrap();
@@ -220,8 +219,7 @@ fn completion_right_survives_an_unrelated_c_statement_in_path_state() {
         spawned.parent(),
         &c_declare("unrelated", CType::Int32),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -234,8 +232,7 @@ fn completion_right_survives_an_unrelated_c_statement_in_path_state() {
         carried.parent(),
         &c_return(c_int32_literal(0)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -273,8 +270,7 @@ fn completion_right_survives_an_unrelated_c_statement_in_path_state() {
         joined.parent(),
         &c_return(c_int32_literal(0)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -327,8 +323,7 @@ fn modeled_pthread_join_call_consumes_only_the_named_completion() {
             vec![c_uint64_literal(1), c_pointer_value(Pointer::null())],
         ),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -347,8 +342,7 @@ fn modeled_pthread_join_call_consumes_only_the_named_completion() {
             ],
         ),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -388,8 +382,7 @@ fn modeled_pthread_join_call_consumes_only_the_named_completion() {
         after_first,
         &join(first_handle),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -401,8 +394,7 @@ fn modeled_pthread_join_call_consumes_only_the_named_completion() {
         after_first,
         &join(second_handle),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -474,8 +466,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
             &state,
             &declaration,
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment),
             &mut ExecutionBudget::new(),
         )
         .unwrap();
@@ -488,8 +479,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         &state,
         &c_assign("thread", c_uint64_literal(999)),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -511,8 +501,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         &state,
         &create,
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -550,8 +539,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
             pending,
             &hostile,
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment),
             &mut ExecutionBudget::new(),
         )
         .unwrap();
@@ -561,8 +549,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         pending,
         &external_store(1, int32(7), CType::Int32, CType::Int32Pointer),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -580,8 +567,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
             &delayed,
             &statement,
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment),
             &mut ExecutionBudget::new(),
         )
         .unwrap();
@@ -598,8 +584,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
             c_skip(),
         ),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -639,8 +624,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         &failure,
         &c_assign("rc", c_variable("thread")),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -667,8 +651,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         &success,
         &join,
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -710,8 +693,7 @@ fn modeled_pthread_create_status_selects_the_checked_c_outcome() {
         &failure,
         &join,
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -741,8 +723,7 @@ fn modeled_pthread_create_refuses_a_wrong_worker_abi() {
             &state,
             &declaration,
             &PureFactContext::new(),
-            &environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            CExecutionContext::apply_verified_rules(&environment),
             &mut ExecutionBudget::new(),
         )
         .unwrap();
@@ -764,8 +745,7 @@ fn modeled_pthread_create_refuses_a_wrong_worker_abi() {
             ],
         ),
         &PureFactContext::new(),
-        &environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        CExecutionContext::apply_verified_rules(&environment),
         &mut ExecutionBudget::new(),
     )
     .unwrap();
@@ -1772,8 +1752,7 @@ fn thread_local_view_blocks_writes_and_all_scope_exits_until_join() {
         &CState::new().with_population_creation_tracking(),
         &c_declare("job", CType::Int32Array(2)),
         &PureFactContext::new(),
-        &CExecutionEnvironment::new(),
-        CExecutionSemantics::EXECUTE_BODIES,
+        CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
         &mut ExecutionBudget::new(),
     )
     .unwrap();

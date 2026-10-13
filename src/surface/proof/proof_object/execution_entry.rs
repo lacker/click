@@ -306,6 +306,7 @@ impl<'a> Proof<'a> {
                                     can_expand_execution_prefix: matches!(
                                         &tactic,
                                         PostExecutionTactic::Simp
+                                            | PostExecutionTactic::AutoClose
                                             | PostExecutionTactic::SimpUsing(_)
                                             | PostExecutionTactic::Have(_)
                                     ),
@@ -361,6 +362,7 @@ impl<'a> Proof<'a> {
                     can_expand_execution_prefix: matches!(
                         &tactic,
                         PostExecutionTactic::Simp
+                            | PostExecutionTactic::AutoClose
                             | PostExecutionTactic::SimpUsing(_)
                             | PostExecutionTactic::Have(_)
                     ),

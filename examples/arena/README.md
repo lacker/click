@@ -1,6 +1,6 @@
 # Arena
 
-This synthetic C0 project implements a first-fit arena over a runtime-sized
+This synthetic C project implements a first-fit arena over a runtime-sized
 `int32` allocation. An `arena` owns the backing storage and a parallel
 occupancy map. A `region` identifies one live half-open interval `[start, end)`
 inside that storage.

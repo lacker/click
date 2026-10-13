@@ -293,22 +293,25 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
         .map_err(|error| error.message)?
         .iter()
         .map(|requirement| {
-            let lowered = lower_fixed_state_proposition_through_kernel_with_bound_array_memories(
-                requirement,
-                assumptions,
-                &values,
-                &array_refs,
-                &algebraic_values,
-                &integer_values,
-                &bound_array_memories,
-                FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
-                spec_definitions,
-                &BTreeSet::new(),
+            let pointer_element_widths =
                 super::super::theorem_application::theorem_application_pointer_element_widths(
                     &theorem,
                     application,
                     context,
-                ),
+                );
+            let lowered = lower_fixed_state_proposition_through_kernel_with(
+                requirement,
+                assumptions,
+                ContractEnvironment::new(&values, &array_refs),
+                FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
+                spec_definitions,
+                FixedStateLoweringOptions {
+                    algebraic_values: Some(&algebraic_values),
+                    integer_values: Some(&integer_values),
+                    bound_array_memories: Some(&bound_array_memories),
+                    pointer_element_widths,
+                    ..Default::default()
+                },
             )?;
             unfold_predicates_in_proposition(
                 spec_definitions,

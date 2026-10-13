@@ -32,5 +32,5 @@ int read_unsigned(signed char* s, int i) {
 ```
 
 ```expect
-fail: the two sides read `s[i]` as different kinds of value, the left as an unsigned byte and the right as a signed byte
+fail: They read the same byte, and its signed value is its unsigned value only when the byte is below 0x80
 ```

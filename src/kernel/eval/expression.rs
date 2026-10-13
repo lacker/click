@@ -1,27 +1,5 @@
 use super::*;
 
-/// Round a nonnegative integer right shift to nearest, ties to even.
-///
-/// The floating-point conversions in this slice operate on the exact integer
-/// significands of IEEE values. Keeping the rounding here in integer space
-/// makes the result independent of the host floating-point environment.
-fn round_right_to_even(value: u128, shift: u32) -> u128 {
-    if shift == 0 {
-        return value;
-    }
-    if shift >= 128 {
-        return 0;
-    }
-    let truncated = value >> shift;
-    let remainder = value & ((1u128 << shift) - 1);
-    let halfway = 1u128 << (shift - 1);
-    if remainder > halfway || (remainder == halfway && truncated & 1 != 0) {
-        truncated + 1
-    } else {
-        truncated
-    }
-}
-
 fn integer_to_float_bits(
     negative: bool,
     magnitude: u128,
@@ -41,7 +19,7 @@ fn integer_to_float_bits(
     let mut significand = if highest_bit < precision - 1 {
         magnitude << (precision - 1 - highest_bit)
     } else {
-        round_right_to_even(magnitude, highest_bit - (precision - 1))
+        crate::kernel::primitives::round_right_to_even(magnitude, highest_bit - (precision - 1))
     };
 
     if significand == 1u128 << precision {
@@ -122,7 +100,7 @@ fn float64_to_float32_bits(bits: u64) -> u32 {
 
     if top_exponent >= -126 {
         let shift = (top_exponent - 23 - base) as u32;
-        let mut rounded = round_right_to_even(significand, shift);
+        let mut rounded = crate::kernel::primitives::round_right_to_even(significand, shift);
         let mut exponent = top_exponent;
         if rounded == 1u128 << 24 {
             rounded >>= 1;
@@ -135,7 +113,7 @@ fn float64_to_float32_bits(bits: u64) -> u32 {
     }
 
     let shift = (-149 - base) as u32;
-    let rounded = round_right_to_even(significand, shift);
+    let rounded = crate::kernel::primitives::round_right_to_even(significand, shift);
     if rounded >= 1u128 << 23 {
         sign | 0x0080_0000
     } else {
@@ -924,6 +902,14 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
             add_signed_narrowing_obligations(obligations, assumptions, &value, 0, 255, "uint8")?;
             Some(CValue::UInt8(value))
         }
+        (
+            target @ (CType::Int8 | CType::UInt8 | CType::Int16 | CType::UInt16),
+            value @ (CValue::Int16(_)
+            | CValue::UInt16(_)
+            | CValue::UInt32(_)
+            | CValue::Int64(_)
+            | CValue::UInt64(_)),
+        ) => narrow_to_subword_value(value, target, obligations, assumptions),
         (CType::Int64, CValue::UInt64(value)) => {
             add_narrowing_bound_obligation(
                 obligations,
@@ -1027,6 +1013,92 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
         }
         _ => None,
     }
+}
+
+/// Narrows a 16-, 32- or 64-bit integer into a one- or two-byte type that no
+/// earlier conversion arm covers. Each conversion owes the destination's range
+/// in the source's own interpretation; within that range the low word already
+/// is the destination's sign- or zero-extended carrier.
+fn narrow_to_subword_value(
+    value: CValue,
+    target: CType,
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Option<CValue> {
+    let (type_name, lower, upper) = match target {
+        CType::Int8 => ("int8", i32::from(i8::MIN), i32::from(i8::MAX)),
+        CType::UInt8 => ("uint8", 0, i32::from(u8::MAX)),
+        CType::Int16 => ("int16", i32::from(i16::MIN), i32::from(i16::MAX)),
+        CType::UInt16 => ("uint16", 0, i32::from(u16::MAX)),
+        _ => return None,
+    };
+    let word = match value {
+        // Both carriers hold the exact 16-bit value as a 32-bit integer.
+        CValue::Int16(value) | CValue::UInt16(value) => {
+            add_signed_narrowing_obligations(
+                obligations,
+                assumptions,
+                &value,
+                lower,
+                upper,
+                type_name,
+            )?;
+            value
+        }
+        // An unsigned source is never below a destination lower bound.
+        CValue::UInt32(value) => {
+            add_narrowing_bound_obligation(
+                obligations,
+                assumptions,
+                ConditionTerm::unsigned_less_equal(
+                    value.clone(),
+                    Bitvector32Term::Constant(upper as u32),
+                ),
+                narrowing_context(type_name, false),
+            )?;
+            value
+        }
+        CValue::Int64(value) => {
+            for (condition, is_lower) in [
+                (
+                    ConditionTerm::int64_signed_greater_equal(
+                        value.clone(),
+                        Bitvector32Term::Int64Constant(i64::from(lower)),
+                    ),
+                    true,
+                ),
+                (
+                    ConditionTerm::int64_signed_less_equal(
+                        value.clone(),
+                        Bitvector32Term::Int64Constant(i64::from(upper)),
+                    ),
+                    false,
+                ),
+            ] {
+                add_narrowing_bound_obligation(
+                    obligations,
+                    assumptions,
+                    condition,
+                    narrowing_context(type_name, is_lower),
+                )?;
+            }
+            Bitvector32Term::uint32_from_64(value)
+        }
+        CValue::UInt64(value) => {
+            add_narrowing_bound_obligation(
+                obligations,
+                assumptions,
+                ConditionTerm::uint64_less_equal(
+                    value.clone(),
+                    Bitvector32Term::UInt64Constant(upper as u64),
+                ),
+                narrowing_context(type_name, false),
+            )?;
+            Bitvector32Term::uint32_from_64(value)
+        }
+        _ => return None,
+    };
+    Some(MachineIntegerType::from_c_type(target)?.value_from_term(word))
 }
 
 fn add_signed_narrowing_obligations(
@@ -3134,62 +3206,39 @@ pub(in crate::kernel) fn c_expression_pointer_step_width(
     c_expression_pointee_type(state, expression).map(CType::byte_width)
 }
 
+/// The C `int` a condition evaluates to: `1` when it holds, `0` when it does
+/// not, one path per outcome the facts leave open.
 pub(in crate::kernel) fn condition_as_c_int32_paths(
     condition: ConditionTerm,
     facts: ExecutionFacts,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
-    match decide_with_facts(assumptions, &facts, &condition) {
-        Some(true) => vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(int32(1)),
-            facts,
-            obligations,
-        }],
-        Some(false) => vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(int32(0)),
-            facts,
-            obligations,
-        }],
-        None => {
-            let mut true_facts = facts.clone();
-            add_condition_path_fact(&mut true_facts, assumptions, condition.clone(), true)
-                .expect("unknown comparison fact should be consistent");
-
-            let mut false_facts = facts;
-            add_condition_path_fact(&mut false_facts, assumptions, condition, false)
-                .expect("unknown comparison fact should be consistent");
-
-            vec![
-                CExpressionPath {
-                    outcome: CExpressionOutcome::Value(int32(1)),
-                    facts: true_facts,
-                    obligations: obligations.clone(),
-                },
-                CExpressionPath {
-                    outcome: CExpressionOutcome::Value(int32(0)),
-                    facts: false_facts,
-                    obligations,
-                },
-            ]
-        }
-    }
+    condition_as_c_int32_paths_valued(condition, facts, obligations, assumptions, false)
 }
 
+/// [`condition_as_c_int32_paths`] for the condition's negation: `0` when it
+/// holds, `1` when it does not.
 pub(in crate::kernel) fn condition_as_c_int32_not_paths(
     condition: ConditionTerm,
     facts: ExecutionFacts,
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    condition_as_c_int32_paths_valued(condition, facts, obligations, assumptions, true)
+}
+
+pub(in crate::kernel) fn condition_as_c_int32_paths_valued(
+    condition: ConditionTerm,
+    facts: ExecutionFacts,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    negated: bool,
+) -> Vec<CExpressionPath> {
+    let value = |holds: bool| int32(u32::from(holds != negated));
     match decide_with_facts(assumptions, &facts, &condition) {
-        Some(true) => vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(int32(0)),
-            facts,
-            obligations,
-        }],
-        Some(false) => vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(int32(1)),
+        Some(holds) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value(holds)),
             facts,
             obligations,
         }],
@@ -3204,12 +3253,12 @@ pub(in crate::kernel) fn condition_as_c_int32_not_paths(
 
             vec![
                 CExpressionPath {
-                    outcome: CExpressionOutcome::Value(int32(0)),
+                    outcome: CExpressionOutcome::Value(value(true)),
                     facts: true_facts,
                     obligations: obligations.clone(),
                 },
                 CExpressionPath {
-                    outcome: CExpressionOutcome::Value(int32(1)),
+                    outcome: CExpressionOutcome::Value(value(false)),
                     facts: false_facts,
                     obligations,
                 },

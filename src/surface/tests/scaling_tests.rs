@@ -7633,3 +7633,173 @@ resource callbacks0(cb: const struct callbacks*) {
         );
     }
 }
+
+/// Repeated checked increments must not rederive ranges through the entire
+/// earlier expression chain. Measure the executed operations, not timings.
+#[test]
+fn signed_increment_overflow_checks_stay_flat_per_assignment() {
+    let mut peaks = Vec::new();
+    let mut totals = Vec::new();
+    for size in [16, 32, 64, 128] {
+        let mut c = String::from("int32 increment(int32 x0) {\n");
+        for i in 1..=size {
+            c.push_str(&format!("int32 x{i};\n"));
+        }
+        for i in 1..=size {
+            c.push_str(&format!("x{i} = x{} + 1;\n", i - 1));
+        }
+        c.push_str(&format!("return x{size};\n}}"));
+        let mut source = format!(
+            "verifying \"increment.c\"; int32 increment(int32 x0) {{ requires x0 >= 0; requires x0 <= 1000000; ensures result == x0 + {size}; }} by {{\n"
+        );
+        source.push_str(&"step();\n".repeat(size * 2 + 1));
+        source.push_str("simp();\n}");
+        let ((verified, work), events) = crate::instrumentation::collect(|| {
+            crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &[("increment.c", c.as_str())])
+            })
+        });
+        verified.unwrap_or_else(|error| panic!("size {size}: {}", error.message()));
+        let steps = events
+            .iter()
+            .filter_map(|event| match event {
+                crate::instrumentation::VerificationEvent::TacticFinished {
+                    tactic, work, ..
+                } if tactic.tactic_name == "step"
+                    && tactic.source_index >= size
+                    && tactic.source_index < size * 2 =>
+                {
+                    Some(*work)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(steps.len() >= size);
+        peaks.push(steps.iter().copied().max().unwrap());
+        eprintln!(
+            "increment size {size}: assignment peak {}, total work {work}",
+            peaks.last().unwrap()
+        );
+        totals.push(ScalingSample {
+            size,
+            work,
+            named_work: BTreeMap::new(),
+        });
+    }
+    assert!(
+        peaks.iter().all(|work| *work <= peaks[0] * 3),
+        "increment step work must stay flat: {peaks:?}"
+    );
+    assert_near_linear_scaling("checked increment chains", &totals);
+    let invalid = "verifying \"unbounded.c\"; int32 f(int32 x) { ensures result == x + 1; } by { step(); simp(); }";
+    assert!(
+        verify_c0_sources(
+            invalid,
+            &[("unbounded.c", "int32 f(int32 x) { return x + 1; }")]
+        )
+        .is_err(),
+        "an unbounded increment still has an overflow path"
+    );
+}
+
+#[test]
+fn unrelated_call_work_stays_flat_with_kept_pointer_aliases() {
+    let mut calls = Vec::new();
+    for size in [1, 8, 32, 64] {
+        let parameters = (0..size)
+            .map(|i| format!(", struct box* q{i}"))
+            .collect::<String>();
+        let sum = (0..size)
+            .map(|i| format!("q{i}->v"))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let c = format!(
+            "struct box {{ int32 v; }}; void touch(int32* flags, int32* data, int32 k) {{ return; }} int32 caller(int32* flags, int32* data, int32 k, struct box* b{parameters}) {{ int32 total; b->v = 1; touch(flags, data, k); total = {sum}; return total; }}"
+        );
+        let requirements = (0..size)
+            .map(|i| format!("requires q{i} == b;"))
+            .collect::<String>();
+        let source = format!(
+            "verifying \"aliases.c\"; void touch(int32* flags, int32* data, int32 k) {{ owns flags[0..k]; owns data[0..k]; }} by {{ execute(); simp(); }} int32 caller(int32* flags, int32* data, int32 k, struct box* b{parameters}) {{ owns flags[0..k]; owns data[0..k]; owns *b; {requirements} ensures result == {size}; }} by {{ step(); step(); step(); step(); step(); simp(); }}"
+        );
+        let (verified, events) = crate::instrumentation::collect(|| {
+            verify_c0_sources(&source, &[("aliases.c", c.as_str())])
+        });
+        verified.unwrap_or_else(|error| panic!("{size} aliases: {}", error.message()));
+        let call = events
+            .iter()
+            .filter_map(|event| match event {
+                crate::instrumentation::VerificationEvent::TacticFinished {
+                    tactic, work, ..
+                } if tactic.claim == "caller.contract"
+                    && tactic.tactic_name == "step"
+                    && tactic.source_index == 2 =>
+                {
+                    Some(*work)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(call.len(), 1, "one selected call step at size {size}");
+        calls.push(call[0]);
+    }
+    eprintln!("unrelated call work by alias count: {calls:?}");
+    assert!(
+        calls.iter().all(|work| *work <= calls[0] * 2),
+        "call work grew with irrelevant aliases: {calls:?}"
+    );
+}
+
+#[test]
+fn symbolic_index_store_work_is_flat_across_recorded_order_chains() {
+    let mut peaks = Vec::new();
+    let mut totals = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let parameters = (0..=size)
+            .map(|i| format!(", int32 x{i}"))
+            .collect::<String>();
+        let stores = (1..=size)
+            .map(|i| format!("data[x{i}] = {i};"))
+            .collect::<String>();
+        let c = format!(
+            "int32 caller(int32* data, int32 len{parameters}) {{ int32 first; data[x0] = 100; {stores} first = data[x0]; return first; }}"
+        );
+        let requirements = (0..size)
+            .map(|i| format!("requires x{i} < x{};", i + 1))
+            .collect::<String>();
+        let steps = "step();".repeat(size + 4);
+        let source = format!(
+            "verifying \"ordered.c\"; int32 caller(int32* data, int32 len{parameters}) {{ owns data[0..len]; requires 0 <= x0; {requirements} requires x{size} < len; ensures result == 100; }} by {{ {steps} simp(); }}"
+        );
+        let ((verified, work), events) = crate::instrumentation::collect(|| {
+            crate::instrumentation::measure_deterministic_work(|| {
+                verify_c0_sources(&source, &[("ordered.c", c.as_str())])
+            })
+        });
+        verified.unwrap_or_else(|error| panic!("size {size}: {}", error.message()));
+        let peak = events
+            .iter()
+            .filter_map(|event| match event {
+                crate::instrumentation::VerificationEvent::TacticFinished {
+                    tactic, work, ..
+                } if tactic.tactic_name == "step"
+                    && tactic.source_index >= 1
+                    && tactic.source_index <= size + 1 =>
+                {
+                    Some(*work)
+                }
+                _ => None,
+            })
+            .max()
+            .unwrap();
+        peaks.push(peak);
+        totals.push(ScalingSample {
+            size,
+            work,
+            named_work: BTreeMap::new(),
+        });
+    }
+    eprintln!("ordered store peaks: {peaks:?}");
+    assert!(peaks.iter().all(|work| *work <= peaks[0] * 2), "{peaks:?}");
+    assert_near_linear_scaling("symbolic ordered stores", &totals);
+}

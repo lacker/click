@@ -60,9 +60,9 @@ use super::{
     AliasCandidates, CType, CValue, Pointer, PointerBlock, PointerOffsetTerm, SharedCMemory,
     SnapshotMap, SnapshotMapChange, SnapshotSet,
 };
-use crate::kernel::Variable;
 use crate::kernel::primitives::Bitvector32Term;
 use crate::kernel::primitives::LoadKind;
+use crate::kernel::{PureFactContext, Variable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::ops::Bound;
@@ -1071,7 +1071,7 @@ pub(crate) struct DroppedRunSlots {
 
 /// A snapshot's cells: the concrete map and the seeded runs, in canonical
 /// form, the runs indexed by [`RunKey`] (see the module comment).
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct CellStore {
     concrete: SnapshotMap<Pointer, CValue>,
     runs: SnapshotMap<RunKey, CellRun>,
@@ -1088,6 +1088,32 @@ pub(crate) struct CellStore {
     /// single-cell mutation updates it in place; any other resets it. A
     /// function of the two maps above.
     logical: OnceLock<SnapshotMap<Pointer, CValue>>,
+    ordered_index: std::sync::Mutex<Option<OrderedIndexCache>>,
+}
+
+#[derive(Clone)]
+struct OrderedIndexCache {
+    cells: SnapshotMap<Pointer, CValue>,
+    chains: crate::kernel::assumptions::variable_chains::VariableChains,
+    block: PointerBlock,
+    base: PointerOffsetTerm,
+    stride: i64,
+    root: Variable,
+    known: SnapshotMap<usize, Pointer>,
+    unknown: SnapshotMap<Pointer, ()>,
+}
+
+impl Clone for CellStore {
+    fn clone(&self) -> Self {
+        Self {
+            concrete: self.concrete.clone(),
+            runs: self.runs.clone(),
+            span_cover: self.span_cover.clone(),
+            run_cells: self.run_cells,
+            logical: self.logical.clone(),
+            ordered_index: std::sync::Mutex::new(self.ordered_index.lock().unwrap().clone()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1189,6 +1215,126 @@ impl CellStore {
     #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// The ordinary candidate cells, omitting only array cells which the
+    /// recorded strict path places a full scalar width away from this store.
+    /// The derivative cache follows persistent-map deltas between stores.
+    pub(in crate::kernel) fn ordered_store_candidates(
+        &self,
+        pointer: &Pointer,
+        bytes: u32,
+        candidates: &AliasCandidates,
+        assumptions: &PureFactContext,
+    ) -> Option<Vec<Pointer>> {
+        use crate::kernel::assumptions::variable_chains::array_index;
+        if bytes == 0
+            || crate::kernel::reasoning::store_gap::store_gap_skip_disabled()
+            || crate::kernel::assumptions::implicit_reasoning_provenance_capturing()
+            || crate::kernel::assumptions::reasoning_interrupted()
+        {
+            return None;
+        }
+        let (base, variable, stride) = array_index(&pointer.offset)?;
+        if base.as_const().is_none()
+            && !crate::kernel::reasoning::store_gap::anchor_is_normal(base, assumptions)
+        {
+            return None;
+        }
+        let span = assumptions.signed_variable_chains.span(variable)?;
+        let mut guard = self.ordered_index.lock().unwrap();
+        let mut index = guard.take().filter(|index| {
+            index.block == pointer.block
+                && index.base == *base
+                && index.stride == stride
+                && index.root == span.root
+                && index
+                    .chains
+                    .shares_sources(&assumptions.signed_variable_chains)
+        });
+        let mut changes = Vec::new();
+        if let Some(previous) = &index {
+            for change in previous.cells.diff(&self.concrete) {
+                match change {
+                    super::persistent_map::SnapshotMapChange::Added(key) => {
+                        changes.push((key.clone(), true))
+                    }
+                    super::persistent_map::SnapshotMapChange::Removed(key) => {
+                        changes.push((key.clone(), false))
+                    }
+                    super::persistent_map::SnapshotMapChange::Changed(_) => {}
+                }
+            }
+        } else {
+            changes.extend(self.concrete.keys().cloned().map(|key| (key, true)));
+            index = Some(OrderedIndexCache {
+                cells: self.concrete.clone(),
+                chains: assumptions.signed_variable_chains.clone(),
+                block: pointer.block.clone(),
+                base: base.clone(),
+                stride,
+                root: span.root,
+                known: SnapshotMap::new(),
+                unknown: SnapshotMap::new(),
+            });
+        }
+        let mut index = index.unwrap();
+        for (key, added) in changes {
+            crate::instrumentation::record_deterministic_work(1);
+            let rank =
+                array_index(&key.offset).and_then(|(cell_base, cell_variable, cell_stride)| {
+                    if key.block != pointer.block || cell_base != base || cell_stride != stride {
+                        return None;
+                    }
+                    let cell_span = assumptions.signed_variable_chains.span(cell_variable)?;
+                    (cell_span.root == span.root).then_some(cell_span.rank)
+                });
+            if let Some(rank) = rank {
+                if added {
+                    index.known.insert(rank, key);
+                } else {
+                    index.known.remove(&rank);
+                }
+            } else if added {
+                index.unknown.insert(key, ());
+            } else {
+                index.unknown.remove(&key);
+            }
+        }
+        index.cells = self.concrete.clone();
+        let low_distance =
+            (crate::kernel::MAX_SCALAR_ACCESS_BYTES as u64).div_ceil(stride as u64) as usize;
+        let high_distance = u64::from(bytes).div_ceil(stride as u64) as usize;
+        let low = span.rank.saturating_sub(low_distance.saturating_sub(1));
+        let high = span.rank.saturating_add(high_distance);
+        let mut selected = candidates
+            .entries(&index.unknown)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        selected.extend(index.known.range(low..high).map(|(_, key)| key.clone()));
+        *guard = Some(index);
+        Some(selected)
+    }
+
+    pub(super) fn retain_selected_concrete_by(
+        &mut self,
+        selected: &[Pointer],
+        candidates: &AliasCandidates,
+        mut keep: impl FnMut(&Pointer, &CValue) -> bool,
+        mut run_rule: impl FnMut(&CellRun) -> (SlotSet, RuleAnswer),
+    ) -> Vec<DroppedRunSlots> {
+        self.reset();
+        for key in selected {
+            crate::instrumentation::record_deterministic_work(1);
+            if self
+                .concrete
+                .get(key)
+                .is_some_and(|value| !keep(key, value))
+            {
+                self.concrete.remove(key);
+            }
+        }
+        self.retain_runs_by(Some(candidates), keep, &mut run_rule)
     }
 
     /// The concrete cells alone, without any run: what a caller that only
