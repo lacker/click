@@ -58,5 +58,5 @@ uint64 read_terminator(uint8 bytes[], uint64 known_len) {
 ```
 
 ```expect
-fail: missing prerequisite (strlen precondition)
+fail: missing prerequisite (precondition clause 1 of `strlen`)
 ```

@@ -10588,11 +10588,16 @@ impl CState {
                         | CLocalBinding::ArrayObject { .. }
                         | CLocalBinding::AggregateObject { .. } => return None,
                     };
+                // A store through a pointer to the other signedness of the
+                // object's width wrote the same bits; the local reads them in
+                // its own type (`CType::read_cell`).
                 memory
                     .known_value(&slot)
-                    .filter(|value| {
-                        c_type.accepts(value)
-                            || !matches!(binding, CLocalBinding::UninitializedObject { .. })
+                    .and_then(|value| {
+                        c_type.read_cell(&value).or_else(|| {
+                            (!matches!(binding, CLocalBinding::UninitializedObject { .. }))
+                                .then_some(value)
+                        })
                     })
                     .map(|value| {
                         (

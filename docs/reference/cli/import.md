@@ -283,7 +283,17 @@ one-past addresses. This check neither reads nor initializes the referent and
 grants no access authority. Automatic `int&` and `const int&` locals can bind
 existing references, supported pointer dereferences, and direct calls with
 matching native reference results. Assignment through a mutable reference local
-writes its referent; it does not rebind the alias. Ending the local binding does
+writes its referent; it does not rebind the alias.
+
+Native element references are `int&`, `unsigned int&`, `unsigned char&` and
+`std::byte&`, each possibly `const`, written `int32&`, `uint32&` and `uint8&`
+in the sidecar. They are admitted as parameters, results and locals. A call
+that returns one can also be read or written directly, as in `return s[0];`
+and `s[0] = v;`. A read is a typed load of the returned address and needs a
+resource for the referent. A write needs a mutable referent and owns it; its
+value must be free of calls and is read before the call, as C++17 sequences
+an assignment's right operand first. Compound assignment through a returned
+reference remains unsupported. Ending the local binding does
 not end the backing object's lifetime. References to local objects, temporary
 lifetime extension, rvalue references and nested reference declarations remain
 unsupported.
@@ -307,11 +317,11 @@ into C text. The `const-reference-alias` fixture writes through an `int&` and
 reads through an aliased `const int&`, using one explicit `owns` resource.
 C++ `const` restricts access through that reference; it does not create a Click
 `views` resource or imply that aliases cannot write. Supported parameters are
-currently by-value `bool` or signed/unsigned 32/64/128-bit integers, `int&`, `const int&`,
+currently by-value `bool` or signed/unsigned 32/64/128-bit integers, native element references,
 mutable `int*`, `unsigned int*` or `unsigned char*`, one `const` signed-64 reference, and mutable or const references
 to supported simple record types with distinct proof-facing names. Selected functions return `int`,
 signed/unsigned 64/128-bit integers, `unsigned int`, `unsigned char`, `bool`, mutable `int*`, `unsigned int*` or `unsigned char*`,
-`int&`, `const int&`, or `void`.
+native element references, or `void`.
 
 Free and ordinary member functions also admit mutable by-value simple-record
 parameters with trivial copying and destruction, without base subobjects.
@@ -629,7 +639,9 @@ casts such as `result == (uint8*)p` express pointer identity across access
 types without granting authority. Dynamic-extent `std::span<std::byte>` now
 retains authenticated standard-byte template arguments, including their
 positions and locked declaration metadata even when fields do not mention
-the enum. Other enum template arguments remain refused. The catalog contract
+the enum. Other enum template arguments remain refused. A class template
+also takes `unsigned char` as a type argument, as in `std::span<unsigned char>`;
+integral template values remain 32/64-bit. The catalog contract
 for `std::as_writable_bytes(std::span<int>)` preserves the backing address and
 returns four times the native element count, without granting backing authority.
 Supported `const` and `constexpr` native integer locals now use shared scalar
@@ -1608,15 +1620,49 @@ through a library's private fields. `std_span_data(s)` and `std_span_size(s)`
 name the data pointer and size of a `std::span`, the view of
 `[data, data + size)`. The parser rewrites an accessor into the one field path
 of the library that was parsed (libstdc++'s `_M_ptr` and
-`_M_extent._M_extent_value`), and checks it like a written field access; an
-argument of another type is refused there. An accessor works wherever a field
+`_M_extent._M_extent_value`, or libc++'s `__data_` and `__size_`), and checks
+it like a written field access; an argument of another type is refused there.
+A layout that matches neither library, or matches both, binds no accessor, so
+an accessor is never misbound. The libc++ binding is checked against a layout with
+LLVM 19's field names; no libc++ program is imported end to end yet. An accessor works wherever a field
 does, as in `owns std_span_data(s);`. Diagnostics and expanded proofs print the
 accessor for its field path, so an expanded proof names no private field
 either.
 
-The catalog covers `std::span<int>`'s `size`, `data`, `front`, `back`,
-`operator[]` and `first`, plus dynamic-extent
-`std::as_writable_bytes(std::span<int>)`. The latter returns a byte view of the
+A refused catalog precondition reached after execution also names reads by
+these accessors. Historical reads keep their snapshot qualification, for
+example `at(<state A>, std_span_size(s))`, rather than a carrier-cell index.
+
+The `std::span<T>` entries are generic over the element type `T`, which may
+be `int`, `unsigned int`, `unsigned char` or `std::byte`. They cover a
+dynamic-extent span's `size`, `size_bytes`, `data`, `front`, `back`,
+`operator[]`, `first`, `last` and `subspan(offset, count)`:
+
+A dynamic-extent `subspan` retains the catalog's implication-shaped count
+precondition. Before recovering its returned view, implicit `auto` proves
+any pending call requirement at the caller's pre-state, including a count
+implication with a false antecedent. Expansion retains that proof as an
+explicit step requirement; recovery still refuses unproved requirements.
+
+| Member | Requires | Ensures |
+| --- | --- | --- |
+| `size()` | | `result == std_span_size(s)` |
+| `size_bytes()` | | `result == std_span_size(s) * sizeof(T)` |
+| `data()` | | `result == std_span_data(s)` |
+| `front()`, `back()` | `1 <= size` | the first or last element's address |
+| `operator[]`, index `i` | `i < size` | `&result == std_span_data(s) + i` |
+| `first(n)` | `n <= size` | data unchanged, size `n` |
+| `last(n)` | `n <= size` | data `+ (size - n)`, size `n` |
+| `subspan(o, n)` | `o <= size`; `n != std::dynamic_extent implies n <= size - o` | data `+ o`; size `n`, or `size - o` for `std::dynamic_extent` |
+
+An element type outside that list matches no entry, so its calls are refused
+by name. Element accessors (`front`, `back`, `operator[]`) return native
+element references, which a caller may bind, read or write directly.
+A `std::dynamic_extent` count to `subspan` is refused by a kernel defect
+(`bugs/a-view-returning-call-refuses-a-deferred-precondition.md`).
+
+The catalog also covers dynamic-extent
+`std::as_writable_bytes(std::span<int>)`. It returns a byte view of the
 same storage: its data is `(uint8*)std_span_data(input)` and its native uint64
 length is `std_span_size(input) * 4u64`. It copies no backing bytes, requires no
 backing ownership, and establishes no backing initialization or write permission.

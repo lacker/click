@@ -677,6 +677,12 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
     /// `step()` uses this boundary; smart execution may answer the refusal by
     /// retaining a checked `have` and retrying the same simple step.
     Retained,
+    /// `Retained` without either search (`issues/simplify-step.md`): an
+    /// obligation no fact states and no local kernel decision closes is
+    /// refused with its structured requirement. A step written with a `by`
+    /// body or `requires` entries uses it to find the obligations those
+    /// proofs answer.
+    Fast,
 }
 
 /// The source-backed retry admits pure condition/logical trees and the

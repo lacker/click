@@ -808,6 +808,38 @@ fn expand_declared_resource_tactic(
         tactic @ (ProofTactic::Both(_) | ProofTactic::CloseInvariantsBy(_)) => {
             expand_declared_resource_tactic_with_plain_scripts(tactic, resource_definitions)
         }
+        ProofTactic::StepProved { step, proof } => {
+            let step = Box::new(expand_declared_resource_tactic(
+                *step,
+                resource_definitions,
+            )?);
+            let proof = match proof {
+                StepProof::By(body) => StepProof::By(
+                    body.into_iter()
+                        .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+                        .collect::<Result<_, _>>()?,
+                ),
+                StepProof::Requires(entries) => StepProof::Requires(
+                    entries
+                        .into_iter()
+                        .map(|entry| {
+                            let ProofTactic::Have(have) = expand_declared_resource_tactic(
+                                ProofTactic::Have(entry.have),
+                                resource_definitions,
+                            )?
+                            else {
+                                unreachable!("a `have` expands to a `have`")
+                            };
+                            Ok(StepRequirement {
+                                label: entry.label,
+                                have,
+                            })
+                        })
+                        .collect::<Result<_, ClickError>>()?,
+                ),
+            };
+            Ok(ProofTactic::StepProved { step, proof })
+        }
         ProofTactic::StepCall(transport) => {
             Ok(ProofTactic::StepCall(transport.try_map_type_arguments(
                 |resource| expand_declared_resource_clause(resource, resource_definitions),

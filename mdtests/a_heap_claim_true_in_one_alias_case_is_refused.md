@@ -37,5 +37,5 @@ int32 read_back(int32 u) {
 ```
 
 ```expect
-fail: `ensures (result == 0 || result == 7)` failed for `read_back.ensures_0` path 2: unclosed goal
+fail: `ensures result == 0 or result == 7` failed for `read_back.ensures_0` path 2: unclosed goal
 ```

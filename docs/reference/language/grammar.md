@@ -5,7 +5,7 @@ reference](index.md). It describes Surface Click, the syntax accepted in
 `.click` files. Kernel Click is an internal representation and has no textual
 user syntax.
 
-The recursive parser currently bounds nested parentheses, `match` expressions,
+The recursive parser bounds nested parentheses, `match` expressions,
 conditional expressions, quantifier bodies, proof blocks, and sequence
 brackets. Algebraic generic applications and fields have a separate type
 nesting budget. Excessive nesting is rejected with a source diagnostic rather
@@ -275,7 +275,7 @@ spec enum Envelope<T> {
 Datatype fields may recursively refer to their own declaration or to another
 datatype in the same recursive group. Recursive occurrences are strictly
 positive because field types contain values rather than functions, and the
-currently supported regular form must preserve the enclosing type parameters
+supported regular form must preserve the enclosing type parameters
 exactly. Every recursive group must have a finite constructor path. Schemas
 remain finite nominal descriptions: `TestList<T>` in the `Cons` field refers back
 to the same instantiated schema rather than expanding it.
@@ -323,7 +323,7 @@ explicitly unfolded. A pure theorem may use constructor-branching
 `induct(value) as ih { Type::Variant(fields) => { ... } ... }`; it requires one
 arm per constructor and permits `ih(field)` for immediate fields of the same
 recursive datatype. Mutual induction across distinct datatype families is not
-yet generated. Reusing one constructor refinement across repeated matches is
+generated. Reusing one constructor refinement across repeated matches is
 tracked separately in the algebraic match path-correlation issue.
 
 ## Specification sequences
@@ -347,11 +347,11 @@ ensures [destination[0], destination[1], destination[2]]
     == old([source[0], source[1], source[2]]);
 ```
 
-This initial slice exposes literal sequence values in equality and membership
-propositions. The standard library also supplies the algebraic `List<T>` with
-`Nil`, `Cons`, append, and membership. Migration of the literal operators to
-that library type, general indexing, and projection of a symbolic memory range
-remain open.
+Literal sequence values appear in equality and membership propositions. The
+standard library also supplies the algebraic `List<T>` with `Nil`, `Cons`,
+append, and membership. The literal operators are not defined over that
+library type, and sequences have no general indexing and no projection of a
+symbolic memory range.
 
 ## C-fragment precedence
 
@@ -359,17 +359,19 @@ C fragments use C-like precedence. From lowest to highest:
 
 | Precedence | Operators | Associativity |
 | --- | --- | --- |
-| 1 | `||` | Left |
-| 2 | `&&` | Left |
-| 3 | `\|` | Left |
-| 4 | `^` | Left |
-| 5 | `&` | Left |
-| 6 | `<`, `<=`, `>`, `>=`, `==`, `!=` | Left |
-| 7 | `<<`, `>>` | Left |
-| 8 | `+`, `-` | Left |
-| 9 | `*`, `/`, `%` | Left |
-| 10 | supported unary operators | Prefix |
-| 11 | calls, indexing, member access | Left, postfix |
+| 1 | `\|` | Left |
+| 2 | `^` | Left |
+| 3 | `&` | Left |
+| 4 | `<`, `<=`, `>`, `>=`, `==`, `!=` | Left |
+| 5 | `<<`, `>>` | Left |
+| 6 | `+`, `-` | Left |
+| 7 | `*`, `/`, `%` | Left |
+| 8 | supported unary operators | Prefix |
+| 9 | calls, indexing, member access | Left, postfix |
+
+A sidecar has no `&&` or `||`: conjunction and disjunction are the
+proposition connectives `and` and `or`, and a sidecar that writes `&&` or
+`||` is refused with that spelling.
 
 This table describes the parser, not all of ISO C. The normative set of types,
 statements, and operators that Click accepts is in [Supported C](c.md).
@@ -404,15 +406,21 @@ tactic statements. Tactic arguments use the expression and proposition forms
 documented for that tactic. The exhaustive surface-spelling inventory is in
 [Tactics](../tactics/index.md).
 
-One tactic carries syntax beyond an argument list: a `step` on an ordinary C
+One tactic carries syntax beyond an argument list. A `step` on an ordinary C
 call writes the call as it appears in the source, maps the callee's instance
 binders to the caller's instances, and introduces a produced instance with
-`let`.
+`let`. Any `step` form may end with proofs of the obligations its fast path
+leaves open: a plain `by` for exactly one, or a block of `requires` entries.
 
 ```text
-call-step  := ("let" identifier "=")? "step" "(" c-call "," binder-map ")" ";"
-binder-map := "{" (identifier ":" identifier
-               ("," identifier ":" identifier)* ","?)? "}"
+step-tactic    := step-head step-proof
+step-head      := ("let" output-pattern "=")? "step" "(" step-args? ")"
+step-args      := contract-name ("(" resource-args ")")? | c-call "," binder-map
+binder-map     := "{" (identifier ":" identifier
+                   ("," identifier ":" identifier)* ","?)? "}"
+step-proof     := ";" | "by" proof-body | "{" requires-entry+ "}"
+requires-entry := "requires" (identifier ":")? proposition "by" proof-body
+proof-body     := tactic-call ";" | "simp" ";" | "{" tactic-statement+ "}"
 ```
 
 Omitting a proof and writing `by auto` request smart proof construction. Smart

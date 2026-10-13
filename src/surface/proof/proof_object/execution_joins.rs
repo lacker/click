@@ -35,6 +35,17 @@ fn join_arm_loan_evidence(
 use crate::kernel::proof::PropositionIdentityKey;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A frontier condition's checked split and its feasible transitions.
+pub(super) type ConditionSplit = (CheckedBranchSplit, Vec<CertifiedProofConditionTransition>);
+
+/// How a planner `if` at the frontier splits.
+enum FrontierCases {
+    /// Path cases a C `branch` cannot represent: a proof-level case split.
+    PathCases,
+    /// A C branch, with the condition's checked split when it was computed.
+    Branch(Option<ConditionSplit>),
+}
+
 impl<'a> Proof<'a> {
     /// Opens the C `if` at an execution frontier into its kernel-feasible
     /// checked arms.
@@ -112,7 +123,12 @@ impl<'a> Proof<'a> {
         Ok(false)
     }
 
-    pub(super) fn prepare_execution_branch(&self) -> Result<PreparedExecutionBranch, ClickError> {
+    /// `split` is the frontier condition's checked split when the caller
+    /// already computed it for this frontier; otherwise it is computed here.
+    pub(super) fn prepare_execution_branch(
+        &self,
+        split: Option<ConditionSplit>,
+    ) -> Result<PreparedExecutionBranch, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
@@ -174,17 +190,20 @@ impl<'a> Proof<'a> {
                 kind: ProgramPointKind::Entry,
             },
         )?;
-        let (checked_condition_split, transitions) = certified_proof_condition_split(
-            &current_state,
-            self.facts(),
-            &branch_statement,
-            remaining.as_ref(),
-            &format!(
-                "`{}` tactic {}: `branch`",
-                context.claim_label, context.tactic_index
-            ),
-            Some(context.parsed_function),
-        )?;
+        let (checked_condition_split, transitions) = match split {
+            Some(split) => split,
+            None => certified_proof_condition_split(
+                &current_state,
+                self.facts(),
+                &branch_statement,
+                remaining.as_ref(),
+                &format!(
+                    "`{}` tactic {}: `branch`",
+                    context.claim_label, context.tactic_index
+                ),
+                Some(context.parsed_function),
+            )?,
+        };
         // A `branch` has one arm per truth value. A condition that reaches one
         // value along several checked paths -- a short-circuit, or a load
         // that may read a cell an earlier store wrote -- has more cases than
@@ -485,15 +504,6 @@ impl<'a> Proof<'a> {
                 != parent_execution.core.frontier_loop_rules.len() + arm.introduced_loop_rules.len()
             || arm.execution.core.unfolded_predicates.len()
                 != parent_execution.core.unfolded_predicates.len() + arm.introduced_unfolds.len()
-            || arm
-                .execution
-                .presentation
-                .planned_statement_transitions
-                .len()
-                != parent_execution
-                    .presentation
-                    .planned_statement_transitions
-                    .len()
         {
             return Err(self.step_error(format!(
                 "{name} execution arm changed check metadata that the checked {variant} has not migrated"
@@ -2629,15 +2639,6 @@ impl<'a> Proof<'a> {
                 || !arm.introduced_derivations.is_empty()
                 || !arm.introduced_loop_clauses.is_empty()
                 || !arm.introduced_loop_rules.is_empty()
-                || arm
-                    .execution
-                    .presentation
-                    .planned_statement_transitions
-                    .len()
-                    != parent_execution
-                        .presentation
-                        .planned_statement_transitions
-                        .len()
         }) {
             return Ok(None);
         }
@@ -3674,10 +3675,19 @@ impl<'a> Proof<'a> {
         // the same question decides every nested planner `if` here as well.
         // An expanded `if` is the C branch exactly when it spells the C
         // condition, as at the top level; otherwise it is a case split.
+        let mut split = None;
         let case_split = if expanded {
             !self.frontier_is_execution_branch(condition)?
+        } else if self.execution_frontier_is_switch()? {
+            true
         } else {
-            self.execution_frontier_is_switch()? || self.execution_frontier_has_path_cases()?
+            match self.execution_frontier_cases()? {
+                FrontierCases::PathCases => true,
+                FrontierCases::Branch(computed) => {
+                    split = computed;
+                    false
+                }
+            }
         };
         if case_split {
             return self.clone().apply_execution_if_with(
@@ -3686,11 +3696,14 @@ impl<'a> Proof<'a> {
                 |proof| proof.apply_execution_steps_within(enclosing, else_steps, expanded),
             );
         }
-        self.apply_execution_branch_within(enclosing, condition, then_steps, else_steps, expanded)
+        self.apply_execution_branch_within(
+            enclosing, condition, then_steps, else_steps, expanded, split,
+        )
     }
 
     /// Splits the C `if` at the frontier and applies each arm's steps inside
-    /// `enclosing` and the new split, then joins.
+    /// `enclosing` and the new split, then joins. `condition_split` is the
+    /// frontier condition's checked split if the caller already has it.
     fn apply_execution_branch_within(
         &self,
         enclosing: &[&ExecutionSplit<'a>],
@@ -3698,8 +3711,9 @@ impl<'a> Proof<'a> {
         then_steps: &[ProofStep],
         else_steps: &[ProofStep],
         expanded: bool,
+        condition_split: Option<ConditionSplit>,
     ) -> Result<Self, ClickError> {
-        let (split, record) = self.split_focused_execution_branch()?;
+        let (split, record) = self.split_focused_execution_branch_with(condition_split)?;
         let mut arm_enclosing: Vec<&ExecutionSplit<'a>> = enclosing.to_vec();
         arm_enclosing.push(&record);
         let mut advanced = split;
@@ -3747,19 +3761,21 @@ impl<'a> Proof<'a> {
     /// Whether the next C operation at the focused frontier has path cases a
     /// C `branch` cannot represent: a plain statement (whose cases a planner
     /// `if` can only select by their facts), or a C `if` whose condition
-    /// reaches one truth value along several checked paths.
-    fn execution_frontier_has_path_cases(&self) -> Result<bool, ClickError> {
+    /// reaches one truth value along several checked paths. A C `if` that
+    /// a branch can represent carries its checked condition split, so the
+    /// branch does not evaluate the condition again.
+    fn execution_frontier_cases(&self) -> Result<FrontierCases, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
-            return Ok(false);
+            return Ok(FrontierCases::Branch(None));
         };
         let Some(execution) = self.execution() else {
-            return Ok(false);
+            return Ok(FrontierCases::Branch(None));
         };
         if matches!(
             execution.core.frontier.position,
             FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary
         ) {
-            return Ok(false);
+            return Ok(FrontierCases::Branch(None));
         }
         let Ok((_, current_state, statement, remaining)) =
             next_top_level_statement_from_frontier_position(
@@ -3773,12 +3789,12 @@ impl<'a> Proof<'a> {
                 self.facts().assumptions(),
             )
         else {
-            return Ok(false);
+            return Ok(FrontierCases::Branch(None));
         };
         let CStatement::If { .. } = &statement else {
-            return Ok(true);
+            return Ok(FrontierCases::PathCases);
         };
-        let (_, transitions) = certified_proof_condition_split(
+        let (checked_split, transitions) = certified_proof_condition_split(
             &current_state,
             self.facts(),
             &statement,
@@ -3789,13 +3805,18 @@ impl<'a> Proof<'a> {
             ),
             Some(context.parsed_function),
         )?;
-        Ok([true, false].into_iter().any(|value| {
+        let path_cases = [true, false].into_iter().any(|value| {
             transitions
                 .iter()
                 .filter(|transition| transition.is_true == value)
                 .count()
                 > 1
-        }))
+        });
+        Ok(if path_cases {
+            FrontierCases::PathCases
+        } else {
+            FrontierCases::Branch(Some((checked_split, transitions)))
+        })
     }
 
     fn execution_frontier_is_switch(&self) -> Result<bool, ClickError> {
@@ -3828,7 +3849,7 @@ impl<'a> Proof<'a> {
         then_steps: &[ProofStep],
         else_steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
-        self.apply_execution_branch_within(&[], condition, then_steps, else_steps, true)
+        self.apply_execution_branch_within(&[], condition, then_steps, else_steps, true, None)
     }
 
     /// Restores the parent frontier around a decided arm that rests at its
@@ -4063,7 +4084,14 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn split_focused_execution_branch(
         &self,
     ) -> Result<(Self, ExecutionSplit<'a>), ClickError> {
-        let prepared = self.prepare_execution_branch()?;
+        self.split_focused_execution_branch_with(None)
+    }
+
+    fn split_focused_execution_branch_with(
+        &self,
+        split: Option<ConditionSplit>,
+    ) -> Result<(Self, ExecutionSplit<'a>), ClickError> {
+        let prepared = self.prepare_execution_branch(split)?;
         let Some(Obligation::Frontier(_)) = self.focused_obligation() else {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         };

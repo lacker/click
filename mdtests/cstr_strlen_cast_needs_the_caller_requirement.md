@@ -23,5 +23,5 @@ uint64 unproved(uint8 bytes[]) {
 ```
 
 ```expect
-fail: strlen precondition
+fail: precondition clause 1 of `strlen`
 ```

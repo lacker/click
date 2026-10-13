@@ -7,6 +7,10 @@ applies to a codebase before reading the per-language references:
 and [Rust import](rust.md). Those pages define the exact forms; this page is
 the single summary, and other pages link here instead of repeating it.
 
+C is Click's primary language. C++ and Rust support is experimental: each
+covers a small subset and needs a repository checkout and a separately built
+importer (Click's C++ exporter, or pinned Charon for Rust).
+
 C, C++, and Rust share one proof language, one execution and memory model, and
 one kernel. Coverage differs only in which source constructs each frontend
 admits. Anything outside the admitted subset is refused with a diagnostic; it
@@ -64,6 +68,9 @@ verification then runs offline.
 > warning, an uncast conversion between `char *`, `signed char *`, and
 > `unsigned char *` is accepted and reads the bytes as the explicit cast
 > would; `mdtests/a_uint8_pointer_passed_as_a_char_pointer_reads_signed_bytes.md`.
+> The same holds between pointers to the signed and unsigned integer types of
+> one wider width, such as `int *` and `unsigned int *`;
+> `mdtests/integer_pointers_of_either_signedness_read_the_same_bits.md`.
 
 ## Scalar types
 

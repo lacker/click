@@ -77,6 +77,77 @@ fn missing_prerequisite_error(
     }
 }
 
+/// What a probing `Fast` step met while [`probe_open_obligations`] ran.
+#[derive(Default)]
+pub(in crate::surface) struct OpenObligationProbe {
+    /// The open obligations that carry a structured requirement, in order.
+    pub(in crate::surface) recorded: Vec<UnresolvedRequirement>,
+    /// Whether the step was refused at a search site for an obligation with
+    /// no structured requirement. Only then can the former search-backed
+    /// checking succeed where the probe failed.
+    pub(in crate::surface) refused_where_search_ran: bool,
+}
+
+thread_local! {
+    static OPEN_OBLIGATION_PROBE: std::cell::RefCell<Option<OpenObligationProbe>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `operation` with every `Fast` refusal that carries a structured
+/// requirement recorded instead of returned, and returns what the step met.
+/// What `operation` produces is a checked step only when nothing was
+/// recorded: otherwise it skipped the recorded obligations, so callers
+/// discard it and use only the list.
+pub(in crate::surface) fn probe_open_obligations<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, OpenObligationProbe) {
+    struct Restore(Option<OpenObligationProbe>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            OPEN_OBLIGATION_PROBE.with(|probe| *probe.borrow_mut() = previous);
+        }
+    }
+    let previous = OPEN_OBLIGATION_PROBE
+        .with(|probe| probe.borrow_mut().replace(OpenObligationProbe::default()));
+    let restore = Restore(previous);
+    let result = operation();
+    let met = OPEN_OBLIGATION_PROBE
+        .with(|probe| probe.borrow_mut().take())
+        .unwrap_or_default();
+    drop(restore);
+    (result, met)
+}
+
+/// Returns `error`, or, while a `Fast` step is being probed, records its
+/// structured requirement and lets checking continue past it.
+fn refuse_or_probe(
+    policy: StatementPrerequisitePolicy,
+    error: ClickError,
+) -> Result<(), ClickError> {
+    if !matches!(policy, StatementPrerequisitePolicy::Fast) {
+        return Err(error);
+    }
+    let recorded = OPEN_OBLIGATION_PROBE.with(|probe| {
+        let mut probe = probe.borrow_mut();
+        let probe = probe.as_mut()?;
+        match error.unresolved_requirement() {
+            Some(requirement) => {
+                probe.recorded.push(requirement.clone());
+                Some(true)
+            }
+            None => {
+                probe.refused_where_search_ran = true;
+                Some(false)
+            }
+        }
+    });
+    if recorded == Some(true) {
+        return Ok(());
+    }
+    Err(error)
+}
+
 /// A condition's unmet prerequisite, spelled as a proof would state it over
 /// `state`'s locals rather than as the kernel's term.
 fn missing_condition_prerequisite_error(
@@ -87,8 +158,7 @@ fn missing_condition_prerequisite_error(
     missing_prerequisite_error(
         format!(
             "{context_label} is missing condition prerequisite{}: `{}`",
-            obligation
-                .context()
+            crate::surface::diagnostics::describe_proof_obligation_context(obligation)
                 .map(|context| format!(" ({context})"))
                 .unwrap_or_default(),
             crate::surface::diagnostics::describe_stated_fact_over_locals(
@@ -260,7 +330,8 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
         StatementPrerequisitePolicy::Exact
         | StatementPrerequisitePolicy::Explicit
         | StatementPrerequisitePolicy::Contextual
-        | StatementPrerequisitePolicy::Retained => context.cloned().unwrap_or_else(pure_context),
+        | StatementPrerequisitePolicy::Retained
+        | StatementPrerequisitePolicy::Fast => context.cloned().unwrap_or_else(pure_context),
     };
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
         assumptions = assumptions.defer_non_exact_loadability_obligations();
@@ -326,7 +397,8 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                     }
                     StatementPrerequisitePolicy::Explicit
                     | StatementPrerequisitePolicy::Contextual
-                    | StatementPrerequisitePolicy::Retained => {
+                    | StatementPrerequisitePolicy::Retained
+                    | StatementPrerequisitePolicy::Fast => {
                         if matches!(
                             prerequisite_policy,
                             StatementPrerequisitePolicy::Retained
@@ -339,13 +411,18 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         if exact_fact_is_available(obligation.proposition(), pure_facts)
                             || prerequisite_assumptions.states_required_goal(obligation.proposition())
                         {
-                        } else if prerequisite_assumptions.proves(obligation.proposition()) {
+                        } else if !matches!(prerequisite_policy, StatementPrerequisitePolicy::Fast)
+                            && prerequisite_assumptions.proves(obligation.proposition())
+                        {
                             crate::instrumentation::record_hidden_prerequisite(
                                 hidden_prerequisite_route(prerequisite_policy, true),
                                 "proves",
                             );
                         } else {
-                            return Err(missing_condition_prerequisite_error(context_label, obligation, state));
+                            refuse_or_probe(
+                                prerequisite_policy,
+                                missing_condition_prerequisite_error(context_label, obligation, state),
+                            )?;
                         }
                     }
                 }
@@ -709,6 +786,15 @@ fn certified_transitions_from_execution(
                 None => successor_facts.context(),
             };
             let mut prerequisite_derivations = Vec::new();
+            let rejected_contract_call = matches!(
+                implication_body(path.theorem().proposition()),
+                Proposition::CStatementVerifies {
+                    outcome: CStatementOutcome::RuntimeError(
+                        crate::kernel::CRuntimeError::FunctionContract(_)
+                    ),
+                    ..
+                }
+            );
             for obligation in path.obligations() {
                 let proposition = obligation.proposition();
                 let derivation = match prerequisite_policy {
@@ -766,8 +852,7 @@ fn certified_transitions_from_execution(
                             exact_derivation.ok_or_else(|| {
                                     ClickError::new(format!(
                                         "{context_label} is missing exact prerequisite{}: {}",
-                                        obligation
-                                            .context()
+                                        crate::surface::diagnostics::describe_proof_obligation_context(obligation)
                                             .map(|context| format!(" ({context})"))
                                             .unwrap_or_default(),
                                         describe_statement_prerequisite_failure(
@@ -786,8 +871,7 @@ fn certified_transitions_from_execution(
                             return Err(missing_prerequisite_error(
                                 format!(
                                     "{context_label} is missing certified prerequisite{}: {}",
-                                    obligation
-                                        .context()
+                                    crate::surface::diagnostics::describe_proof_obligation_context(obligation)
                                         .map(|context| format!(" ({context})"))
                                         .unwrap_or_default(),
                                     describe_statement_prerequisite_failure(
@@ -805,7 +889,8 @@ fn certified_transitions_from_execution(
                         }
                     }
                     StatementPrerequisitePolicy::Contextual
-                    | StatementPrerequisitePolicy::Retained => {
+                    | StatementPrerequisitePolicy::Retained
+                    | StatementPrerequisitePolicy::Fast => {
                         // A refusal lists the facts this check consulted.
                         // Over a proof context `pure_facts` is only the
                         // statement-local delta, and the context itself
@@ -853,8 +938,7 @@ fn certified_transitions_from_execution(
                             return Err(missing_prerequisite_error(
                                 format!(
                                     "{context_label} is missing prerequisite{}: {}",
-                                    obligation
-                                        .context()
+                                    crate::surface::diagnostics::describe_proof_obligation_context(obligation)
                                         .map(|context| format!(" ({context})"))
                                         .unwrap_or_default(),
                                     describe_statement_prerequisite_failure(
@@ -884,7 +968,15 @@ fn certified_transitions_from_execution(
                             )
                             || directly_matching_separation_fact(proposition, pure_facts).is_some()
                             || directly_covering_loadability_fact(proposition, pure_facts).is_some()
-                            || matches!(normalize_proposition(proposition), SimpProposition::True)
+                            // Stable-view recovery requires the kernel to see
+                            // the precondition already proved. A probe must
+                            // retain even a trivially true pending clause so
+                            // implicit auto proves it at the pre-state, then
+                            // retries the call with that checked evidence.
+                            || (matches!(normalize_proposition(proposition), SimpProposition::True)
+                                && !(matches!(prerequisite_policy, StatementPrerequisitePolicy::Fast)
+                                    && obligation.call_requirement_site().is_some()
+                                    && rejected_contract_call))
                             || (matches!(
                                 proposition,
                                 Proposition::CResourceContains { .. }
@@ -895,9 +987,13 @@ fn certified_transitions_from_execution(
                                 .is_some())
                         {
                             None
-                        } else if let Some(derivation) = prerequisite_assumptions
-                            .derive_proposition(proposition)
-                            .filter(|derivation| derivation.check(&prerequisite_assumptions))
+                        } else if let Some(derivation) = (!matches!(
+                            prerequisite_policy,
+                            StatementPrerequisitePolicy::Fast
+                        ))
+                        .then(|| prerequisite_assumptions.derive_proposition(proposition))
+                        .flatten()
+                        .filter(|derivation| derivation.check(&prerequisite_assumptions))
                         {
                             crate::instrumentation::record_hidden_prerequisite(
                                 hidden_prerequisite_route(prerequisite_policy, false),
@@ -905,25 +1001,28 @@ fn certified_transitions_from_execution(
                             );
                             Some(derivation)
                         } else {
-                            return Err(missing_prerequisite_error(
-                                format!(
-                                    "{context_label} is missing prerequisite{}: {}",
-                                    obligation
-                                        .context()
-                                        .map(|context| format!(" ({context})"))
-                                        .unwrap_or_default(),
-                                    describe_statement_prerequisite_failure(
-                                proposition,
-                                &consulted_facts(),
-                                &statement_facts,
-                                state,
-                                statement,
-                                environment,
-                                predicate_environment,
-                            ),
+                            refuse_or_probe(
+                                prerequisite_policy,
+                                missing_prerequisite_error(
+                                    format!(
+                                        "{context_label} is missing prerequisite{}: {}",
+                                        crate::surface::diagnostics::describe_proof_obligation_context(obligation)
+                                            .map(|context| format!(" ({context})"))
+                                            .unwrap_or_default(),
+                                        describe_statement_prerequisite_failure(
+                                            proposition,
+                                            &consulted_facts(),
+                                            &statement_facts,
+                                            state,
+                                            statement,
+                                            environment,
+                                            predicate_environment,
+                                        ),
+                                    ),
+                                    obligation,
                                 ),
-                                obligation,
-                            ));
+                            )?;
+                            None
                         }
                     }
                 };

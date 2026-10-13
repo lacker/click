@@ -163,9 +163,6 @@ int32 owned_string_len(struct owned_string* owner) {
 
     ensures result == owner->len by {
         step();
-        have result == owner->len by {
-            normalize();
-        }
         assumption();
     }
 }
@@ -177,9 +174,6 @@ int32 owned_string_get(struct owned_string* owner, int32 index) {
 
     ensures result == owner->data[index] by {
         step();
-        have result == owner->data[index] by {
-            normalize();
-        }
         assumption();
     }
 }
@@ -198,20 +192,7 @@ int32 owned_string_set(
 } by {
     unfold(owned_string(owner));
     unfold(terminated_at);
-    have index < owner->cap by {
-        apply(int32_less_than_transitive(index, owner->len, owner->cap)) using {
-            index < owner->len;
-            owner->len < owner->cap;
-        }
-        assumption();
-    }
     step();
-    have terminated_at(owner->data, owner->len) by {
-        unfold(terminated_at);
-        assumption();
-    }
-    have 0 <= owner->len;
-    have owner->len < owner->cap;
     have separate(
         memory(*owner),
         memory(owner->data[0..owner->cap])
@@ -220,20 +201,6 @@ int32 owned_string_set(
     }
     fold(owned_string(owner));
     step();
-    have index <= index by normalize();
-    have index < (index + 1) by {
-        unfold(terminated_at);
-        apply(int32_increment_strictly_increases(at(statement(1).entry, index), at(statement(1).entry, owner->len))) using {
-            at(statement(1).entry, index) < at(statement(1).entry, owner->len);
-        }
-        assumption();
-    }
-    have result == value by {
-        normalize();
-    }
-    have owner->data[index] == value by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();
@@ -255,183 +222,15 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     step();
     step();
     step();
-    have at(statement(4).entry, owner->data) == old(owner->data) by {
-        normalize();
-    }
-    have owner->data == old(owner->data) by {
-        transport(
-            at(statement(4).entry, owner->data) == old(owner->data),
-            owner->data == old(owner->data)
-        ) using {
-            at(statement(4).entry, owner->data) == old(owner->data);
-            at(statement(4).entry, separate(
-                memory(*owner),
-                memory(owner->data[0..owner->cap])
-            ));
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
-            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
-        }
-        assumption();
-    }
-    have owner->data == at(statement(4).entry, owner->data) by {
-        assumption();
-    }
-    have owner->len == at(statement(4).entry, (index + 1)) by {
-        transport(
-            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1)),
-            owner->len == at(statement(4).entry, (index + 1))
-        ) using {
-            at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
-            at(statement(4).entry, separate(
-                memory(owner->len),
-                memory(owner->data[0..owner->cap])
-            ));
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
-        }
-        assumption();
-    }
-    have 0 <= at(statement(4).entry, index) by {
-        assumption();
-    }
-    have 0 <= owner->len by {
-        apply(int32_increment_lower_bound(
-            at(statement(4).entry, index),
-            0,
-            at(statement(4).entry, owner->cap)
-        )) using {
-            0 <= at(statement(4).entry, index);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-        }
-        rewrite(owner->len == at(statement(4).entry, (index + 1)));
-        assumption();
-    }
-    have owner->data[owner->len] == 0 by {
-        rewrite(owner->data == at(statement(4).entry, owner->data));
-        rewrite(owner->len == at(statement(4).entry, (index + 1)));
-        normalize();
-    }
+    have owner->len == at(statement(4).entry, (index + 1)) by auto;
     step();
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
         assumption();
     }
-    have owner->len < owner->cap by {
-        have at(statement(4).entry, owner->len) ==
-            at(statement(4).entry, (index + 1)) by {
-            normalize();
-        }
-        have at(statement(4).entry, owner->len) <
-            at(statement(4).entry, owner->cap) by {
-            assumption();
-        }
-        transport(
-            at(statement(4).entry, owner->len) <
-                at(statement(4).entry, owner->cap),
-            owner->len < owner->cap
-        ) using {
-            at(statement(4).entry, owner->len) <
-                at(statement(4).entry, owner->cap);
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(4).entry, separate(
-                memory(owner->len),
-                memory(owner->data[0..owner->cap])
-            ));
-            at(statement(4).entry, separate(
-                memory(owner->cap),
-                memory(owner->data[0..owner->cap])
-            ));
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
-        }
-        assumption();
-    }
-    have separate(memory(*owner), memory(owner->data[0..owner->cap])) by {
-        transport(
-            at(statement(4).entry, separate(
-                memory(*owner),
-                memory(owner->data[0..owner->cap])
-            )),
-            separate(memory(*owner), memory(owner->data[0..owner->cap]))
-        ) using {
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(4).entry, separate(memory(*owner), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
-            at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->len)));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->cap)));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->data)));
-            at(statement(4).entry, contains(owned_string(owner), memory(owner->data[0..owner->cap])));
-            terminated_at(at(statement(0).entry, owner->data), at(statement(0).entry, owner->len));
-            terminated_at(owner->data, owner->len);
-            0 <= owner->len;
-            owner->len < owner->cap;
-        }
-        assumption();
-    }
-    have at(statement(4).entry, owner->cap) == old(owner->cap) by {
-        normalize();
-    }
-    have owner->cap == old(owner->cap) by {
-        transport(
-            at(statement(4).entry, owner->cap) == old(owner->cap),
-            owner->cap == old(owner->cap)
-        ) using {
-            at(statement(4).entry, owner->cap) == old(owner->cap);
-            at(statement(4).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(4).entry, separate(
-                memory(owner->cap),
-                memory(owner->data[0..owner->cap])
-            ));
-        }
-        assumption();
-    }
     fold(owned_string(owner));
-    have at(statement(3).entry, index) == old(owner->len) by {
-        normalize();
-    }
     have owner->len == (old(owner->len) + 1) by {
-        have owner->len == at(statement(3).entry, (index + 1)) by {
-            transport(
-                at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1)),
-                owner->len == at(statement(3).entry, (index + 1))
-            ) using {
-                at(statement(3).exit, owner->len) == at(statement(3).entry, (index + 1));
-                at(statement(4).entry, separate(
-                    memory(owner->len),
-                    memory(owner->data[0..owner->cap])
-                ));
-                at(statement(4).entry, separate(memory(owner->len), memory(owner->data)));
-                at(statement(4).entry, (index + 1)) < at(statement(4).entry, owner->cap);
-                at(statement(4).entry, index) < at(statement(4).entry, owner->cap);
-                at(statement(3).entry, 0) <= at(statement(3).entry, owner->len);
-            }
-            assumption();
-        }
         rewrite(owner->len == at(statement(3).entry, (index + 1)));
-        assumption();
-    }
-    have result == (old(owner->len) + 1) by {
-        assumption();
-    }
-    have owner->data[old(owner->len)] == value by {
-        rewrite(owner->data == old(owner->data));
-        normalize();
-    }
-    have owner->data[owner->len] == 0 by {
-        rewrite(owner->len == (old(owner->len) + 1));
-        rewrite(owner->data == old(owner->data));
         assumption();
     }
     assumption();
@@ -459,18 +258,6 @@ int32 owned_string_push_preserves_first(
     step();
     step();
     step();
-    have owner->data[owner->len] == 0 by {
-        assumption();
-    }
-    have 0 == 0 by {
-        normalize();
-    }
-    have result == (old(owner->len) + 1) by {
-        assumption();
-    }
-    have (let data = old(owner->data); old(owner->data)[0]) == (let data = old(owner->data); old(old(owner->data)[0])) by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();
@@ -486,25 +273,8 @@ int32 owned_string_pop(struct owned_string* owner) {
     ensures owner->data[owner->len] == 0;
 } by {
     unfold(owned_string(owner));
-    have 0 <= (owner->len - 1) by {
-        have 0 < owner->len by {
-            apply(int32_increment_less_equal_implies_less_than(0, owner->len)) using {
-                1 <= owner->len;
-            }
-            assumption();
-        }
-        apply(int32_positive_predecessor_is_nonnegative(owner->len)) using {
-            0 < owner->len;
-        }
-        assumption();
-    }
     have (owner->len - 1) < owner->len by {
-        have 0 < owner->len by {
-            apply(int32_increment_less_equal_implies_less_than(0, owner->len)) using {
-                1 <= owner->len;
-            }
-            assumption();
-        }
+        have 0 < owner->len by auto;
         apply(int32_positive_predecessor_strictly_decreases(owner->len)) using {
             0 < owner->len;
         }
@@ -521,35 +291,8 @@ int32 owned_string_pop(struct owned_string* owner) {
         unfold(terminated_at);
         normalize();
     }
-    have 0 <= owner->len by {
-        assumption();
-    }
-    have owner->len < owner->cap by {
-        apply(int32_less_than_transitive(at(statement(5).entry, (owner->len - 1)), at(statement(5).entry, owner->len), at(statement(5).entry, owner->cap))) using {
-            at(statement(5).entry, (owner->len - 1)) < at(statement(5).entry, owner->len);
-            at(statement(5).entry, owner->len) < at(statement(5).entry, owner->cap);
-        }
-        assumption();
-    }
-    have separate(memory(*owner), memory(owner->data[0..owner->cap])) by {
-        assumption();
-    }
     fold(owned_string(owner));
-    have result == old(owner->data[(owner->len - 1)]) by {
-        normalize();
-    }
-    have owner->len == (old(owner->len) - 1) by {
-        normalize();
-    }
-    have owner->cap == old(owner->cap) by {
-        normalize();
-    }
-    have owner->data == old(owner->data) by {
-        normalize();
-    }
-    have owner->data[owner->len] == 0 by {
-        normalize();
-    }
+    have owner->data[owner->len] == 0 by auto;
     assumption();
     assumption();
     assumption();
@@ -570,15 +313,6 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
     step();
     step();
     step();
-    have 0 == 0 by {
-        normalize();
-    }
-    have result == old(owner->data[(owner->len - 1)]) by {
-        assumption();
-    }
-    have (let data = old(owner->data); old(owner->data)[0]) == (let data = old(owner->data); old(old(owner->data)[0])) by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();
@@ -594,18 +328,8 @@ int32 owned_string_clear(struct owned_string* owner) {
     step();
     step();
     step();
-    have terminated_at(owner->data, owner->len) by {
-        unfold(terminated_at);
-        normalize();
-    }
+    have terminated_at(owner->data, owner->len) by auto;
     have 0 <= owner->len;
-    have owner->len < owner->cap by {
-        apply(int32_less_equal_less_than_transitive(at(statement(0).entry, 0), at(statement(0).entry, owner->len), at(statement(0).entry, owner->cap))) using {
-            at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
-            at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap);
-        }
-        assumption();
-    }
     have separate(
         memory(*owner),
         memory(owner->data[0..owner->cap])
@@ -613,15 +337,6 @@ int32 owned_string_clear(struct owned_string* owner) {
         simp();
     }
     fold(owned_string(owner));
-    have result == 0 by {
-        normalize();
-    }
-    have owner->len == 0 by {
-        normalize();
-    }
-    have owner->data[0] == 0 by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();

@@ -710,6 +710,15 @@ pub(super) fn plan_explicit_loadability_transport(
         Proposition::CMemoryReadDefined { .. } => (0, 0),
         _ => unreachable!(),
     });
+    if sources.is_empty() {
+        super::attempt::record_search_note(
+            "simp view transport planning",
+            format!(
+                "no memory-view premise has a checked source spelling ({} resolved premises)",
+                premise_pairs.len()
+            ),
+        );
+    }
     for (source, surface_source) in sources {
         let mut selected = premise_pairs
             .iter()
@@ -732,6 +741,13 @@ pub(super) fn plan_explicit_loadability_transport(
                 .is_some()
         };
         if !proves_goal(&selected) {
+            super::attempt::record_search_note(
+                "simp view transport planning",
+                format!(
+                    "the resolved memory-view and condition premises do not produce a retained-premise derivation of the requested view ({} resolved transport premises)",
+                    selected.len()
+                ),
+            );
             continue;
         }
         let mut index = 0;

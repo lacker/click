@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -476,7 +476,66 @@ pub fn within_run_limits<R>(limits: RunLimits, operation: impl FnOnce() -> R) ->
 /// itself (`click profile`, which contains a whole project while each
 /// sidecar spends its own [`within_work_limit`]).
 pub fn within_containment_bound<R>(time: Duration, operation: impl FnOnce() -> R) -> R {
+    let _watchdog = PROCESS_CRASH_CONTAINMENT
+        .load(Ordering::Relaxed)
+        .then(|| ProcessWatchdog::start(time));
+    // The debug CLI regression deliberately stops polling. Library callers
+    // never enable process containment, and release builds omit this hook.
+    #[cfg(debug_assertions)]
+    if _watchdog.is_some() && std::env::var_os("CLICK_DEBUG_BLOCK_VERIFIER").is_some() {
+        loop {
+            thread::park();
+        }
+    }
     crate::instrumentation::with_deadline(time, operation)
+}
+
+static PROCESS_CRASH_CONTAINMENT: AtomicBool = AtomicBool::new(false);
+
+/// Enable the CLI process's noncooperative crash-containment backup.
+/// Library verification keeps cooperative limits and never exits its host.
+#[doc(hidden)]
+pub fn enable_process_crash_containment() {
+    PROCESS_CRASH_CONTAINMENT.store(true, Ordering::Relaxed);
+}
+
+struct ProcessWatchdog {
+    cancel: std::sync::mpsc::Sender<()>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl ProcessWatchdog {
+    fn start(time: Duration) -> Self {
+        let (cancel, receiver) = std::sync::mpsc::channel();
+        let worker = thread::Builder::new()
+            .name("click-containment".to_string())
+            .spawn(move || {
+                if matches!(
+                    receiver.recv_timeout(time),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    eprintln!(
+                        "click: stopped by wall-clock crash-containment bound after {}",
+                        format_fractional_duration(time)
+                    );
+                    std::process::exit(1);
+                }
+            })
+            .expect("could not start process containment watchdog");
+        Self {
+            cancel,
+            worker: Some(worker),
+        }
+    }
+}
+
+impl Drop for ProcessWatchdog {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 /// Runs `operation` under its own deterministic whole-run work budget of

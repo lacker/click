@@ -778,6 +778,35 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .ok_or(PropositionCloseError::DoesNotNormalize)
     }
 
+    /// Allocate a logical choice witness outside every execution, load and
+    /// binder producer's namespace. Facts reserve earlier witnesses; the
+    /// current goal and source body can also name witnesses not yet facts.
+    pub(crate) fn fresh_existential_witness(
+        &self,
+        body: &Proposition,
+        hint: Variable,
+    ) -> Result<Variable, PropositionCloseError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let mut excluded = crate::kernel::proposition_variables(body);
+        if let ProofObligation::Proposition(goal) = &branch.obligation {
+            excluded.extend(crate::kernel::proposition_variables(goal.proposition()));
+        }
+        let fresh = branch
+            .state
+            .facts
+            .fresh_universal_witness(&excluded)
+            .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?;
+        let variable = Variable(fresh.0.max(hint.0));
+        if !crate::kernel::ExecutionBudget::is_universal_witness_variable(variable) {
+            return Err(PropositionCloseError::IntegerChoiceFresheningExhausted);
+        }
+        Ok(variable)
+    }
+
     /// Checks and instantiates an Integer existential fact for a checked proof
     /// transition. The returned witness proposition is the only fact the
     /// surface driver may publish; freshness is checked against the complete
@@ -787,7 +816,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         source: &Proposition,
         hint: Variable,
     ) -> Result<(Proposition, Variable), PropositionCloseError> {
-        let (goal, facts) = self
+        let (_, facts) = self
             .focused_proposition()
             .ok_or(PropositionCloseError::NotProposition)?;
         if !facts.contains_top_level(source) {
@@ -802,23 +831,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         else {
             return Err(PropositionCloseError::IntegerChoiceWrongSort);
         };
-        let goal_variables = crate::kernel::proposition_variables(goal.proposition());
-        let body_variables = crate::kernel::proposition_variables(body);
-        let mut variable = hint;
-        loop {
-            if !facts.reserves_variable(variable)
-                && !goal_variables.contains(&variable)
-                && !body_variables.contains(&variable)
-            {
-                break;
-            }
-            variable = Variable(
-                variable
-                    .0
-                    .checked_add(1)
-                    .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?,
-            );
-        }
+        let variable = self.fresh_existential_witness(body, hint)?;
         let witness = crate::kernel::IntegerTerm::var(variable);
         let fact = super::super::reasoning::substitute_integer_variable_in_pure_proposition(
             body, *var, &witness,
@@ -853,17 +866,8 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 .matching_quantified_fact(source)
                 .ok_or(PropositionCloseError::IntegerChoiceSourceUnavailable)?
         };
-        let goal_variables = match &branch.obligation {
-            ProofObligation::Proposition(goal) => {
-                crate::kernel::proposition_variables(goal.proposition())
-            }
-            ProofObligation::Frontier(_) | ProofObligation::FunctionOutcome(_) => {
-                Default::default()
-            }
-        };
         let mut current = available;
         let mut next = hint;
-        let mut selected = std::collections::BTreeSet::new();
         let mut opened = Vec::with_capacity(count);
         for _ in 0..count {
             let Proposition::Exists {
@@ -883,20 +887,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             ) {
                 return Err(PropositionCloseError::IntegerChoiceWrongSort);
             }
-            let body_variables = crate::kernel::proposition_variables(&body);
-            while facts.reserves_variable(next)
-                || goal_variables.contains(&next)
-                || body_variables.contains(&next)
-                || selected.contains(&next)
-            {
-                next = Variable(
-                    next.0
-                        .checked_add(1)
-                        .ok_or(PropositionCloseError::IntegerChoiceFresheningExhausted)?,
-                );
-            }
-            let chosen = next;
-            selected.insert(chosen);
+            let chosen = self.fresh_existential_witness(&body, next)?;
             current = match &sort {
                 Sort::Integer => {
                     super::super::reasoning::substitute_integer_variable_in_pure_proposition(
@@ -1084,6 +1075,10 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 return Err(PropositionCloseError::ExpectedIntroduction(other.clone()));
             }
         };
+        let witness = match &introduction {
+            PropositionIntroduction::Universal { variable, .. } => Some(*variable),
+            _ => None,
+        };
         let presentation = presentation(&goal.presentation, introduction, introduced.as_ref());
         let obligation = match goal.outcome.clone() {
             Some(outcome) => {
@@ -1092,7 +1087,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             None => super::PropositionObligation::new(proposition, presentation),
         };
         let added_facts = introduced.into_iter().collect::<Vec<_>>();
-        let mut facts = facts.clone();
+        let mut facts = facts.clone().with_reserved_variables(witness);
         for fact in &added_facts {
             facts = facts.with_fact(fact.clone());
         }
@@ -2417,9 +2412,152 @@ mod tests {
     use crate::kernel::proof::PropositionObligation;
     use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
 
+    fn integer_choice_proof(
+        source: Proposition,
+        facts: ProofFacts,
+        goal: Proposition,
+    ) -> ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> {
+        assert!(facts.contains_top_level(&source));
+        ProofObject::root(
+            (),
+            ProofBranch::new(
+                ProofObligation::Proposition(PropositionObligation::new(goal, ())),
+                ProofBranchState {
+                    facts,
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: None,
+                },
+            ),
+        )
+    }
+
+    fn unused_integer_existential() -> Proposition {
+        Proposition::Exists {
+            name: "unused".into(),
+            var: Variable(42),
+            sort: Sort::Integer,
+            body: Box::new(Proposition::ConditionIs(
+                crate::kernel::ConditionTerm::Constant(true),
+                true,
+            )),
+        }
+    }
+
+    #[test]
+    fn integer_choices_and_obtain_stay_in_the_witness_band() {
+        let source = unused_integer_existential();
+        let goal = Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true);
+        let proof = integer_choice_proof(
+            source.clone(),
+            ProofFacts::from_ordered(std::slice::from_ref(&source)),
+            goal,
+        );
+        for hint in [Variable(3_000_000), Variable((1 << 40) + 8)] {
+            let (_, chosen) = proof
+                .check_integer_exists_choice(&source, hint)
+                .ok()
+                .expect("choice");
+            assert!(crate::kernel::ExecutionBudget::is_universal_witness_variable(chosen));
+            let opened = proof
+                .check_exists_bindings(&source, 1, hint)
+                .ok()
+                .expect("obtain");
+            assert!(crate::kernel::ExecutionBudget::is_universal_witness_variable(opened[0].1));
+        }
+        let ceiling = crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_CEILING;
+        let (_, last) = proof
+            .check_integer_exists_choice(&source, Variable(ceiling - 1))
+            .ok()
+            .expect("last witness");
+        assert_eq!(last, Variable(ceiling - 1));
+        assert!(matches!(
+            proof.check_integer_exists_choice(&source, Variable(ceiling)),
+            Err(PropositionCloseError::IntegerChoiceFresheningExhausted)
+        ));
+        assert!(matches!(
+            proof.check_exists_bindings(&source, 1, Variable(ceiling)),
+            Err(PropositionCloseError::IntegerChoiceFresheningExhausted)
+        ));
+        let exhausted = integer_choice_proof(
+            source.clone(),
+            ProofFacts::from_ordered(std::slice::from_ref(&source))
+                .with_reserved_variables([Variable(ceiling - 1)]),
+            Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true),
+        );
+        assert!(matches!(
+            exhausted.check_integer_exists_choice(&source, Variable(3_000_000)),
+            Err(PropositionCloseError::IntegerChoiceFresheningExhausted)
+        ));
+    }
+
+    #[test]
+    fn unused_universal_witness_is_reserved_before_a_choice() {
+        let binder = Variable(3_200_000);
+        let source = unused_integer_existential();
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&source))
+            .with_reserved_variables([binder]);
+        let proof = integer_choice_proof(
+            source.clone(),
+            facts,
+            Proposition::ForAll {
+                var: binder,
+                sort: Sort::Integer,
+                body: Box::new(Proposition::ConditionIs(
+                    crate::kernel::ConditionTerm::Constant(true),
+                    true,
+                )),
+            },
+        );
+        let mut introduced = None;
+        let proof = proof
+            .apply_intro(|_, intro, _| {
+                if let PropositionIntroduction::Universal { variable, .. } = intro {
+                    introduced = Some(variable);
+                }
+            })
+            .ok()
+            .expect("intro");
+        let introduced = introduced.expect("universal witness");
+        let (_, chosen) = proof
+            .check_integer_exists_choice(&source, Variable(3_000_000))
+            .ok()
+            .expect("choice");
+        assert_ne!(chosen, introduced);
+        assert!(crate::kernel::ExecutionBudget::is_universal_witness_variable(chosen));
+    }
+
+    #[test]
+    fn obtain_assigns_distinct_witnesses_to_unused_mixed_bindings() {
+        let inner = unused_integer_existential();
+        let source = Proposition::Exists {
+            name: "machine".into(),
+            var: Variable(43),
+            sort: Sort::CInt32,
+            body: Box::new(inner),
+        };
+        let proof = integer_choice_proof(
+            source.clone(),
+            ProofFacts::from_ordered(std::slice::from_ref(&source)),
+            Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(true), true),
+        );
+        let opened = proof
+            .check_exists_bindings(&source, 2, Variable(3_000_000))
+            .ok()
+            .expect("mixed obtain");
+        assert_ne!(opened[0].1, opened[1].1);
+        assert!(opened.iter().all(|(_, var, _)| {
+            crate::kernel::ExecutionBudget::is_universal_witness_variable(*var)
+        }));
+        let ceiling = crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_CEILING;
+        assert!(matches!(
+            proof.check_exists_bindings(&source, 2, Variable(ceiling - 1)),
+            Err(PropositionCloseError::IntegerChoiceFresheningExhausted)
+        ));
+    }
+
     #[test]
     fn integer_choice_freshens_against_focused_goal_binding() {
-        let collision = Variable(3_000_000);
+        let collision = Variable(crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE);
         let source = Proposition::Exists {
             name: "source".into(),
             var: Variable(41),
@@ -2458,7 +2596,7 @@ mod tests {
 
     #[test]
     fn integer_choice_freshens_against_unused_ambient_binding() {
-        let ambient = Variable(3_000_000);
+        let ambient = Variable(crate::kernel::ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE);
         let source = Proposition::Exists {
             name: "source".into(),
             var: Variable(51),

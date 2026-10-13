@@ -4840,10 +4840,12 @@ fn refresh_scalar_local_binding(
 ) {
     let had_pointer_designation = matches!(state.locals.get(&name),
         Some(CValue::Pointer(pointer)) if pointer.designation().is_some());
+    // A store through a pointer to the other signedness of the object's
+    // width wrote the same bits; the local reads them in its own type.
     let current = state
         .memory
         .known_value(&slot)
-        .filter(|value| c_type.accepts(value));
+        .and_then(|value| c_type.read_cell(&value));
     let refreshed = if current.is_some() {
         current
     } else if state.locals.is_uninitialized_object(&name)

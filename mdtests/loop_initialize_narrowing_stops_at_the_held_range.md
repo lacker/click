@@ -50,5 +50,5 @@ int32 count_up(int32 *a, int32 n) {
 ```
 
 ```expect
-fail: `viewable(a[0..k])` was not proved
+fail: no retained-premise derivation was produced for the requested view
 ```

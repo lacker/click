@@ -70,5 +70,5 @@ int32 run() {
 ```
 
 ```expect
-fail: missing resource fact `owns …[0..4]`
+fail: missing resource fact `owns *shared`
 ```

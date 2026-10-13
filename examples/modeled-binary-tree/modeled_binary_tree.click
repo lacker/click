@@ -187,10 +187,7 @@ theorem heap_member_nonzero_is_one(tree: HeapTree, target: struct tree_node*) {
         induct(tree) as ih {
             HeapTree::Empty => {
                 intro();
-                have heap_member(HeapTree::Empty, target) == 0 by {
-                    unfold(heap_member(HeapTree::Empty, target));
-                    normalize();
-                }
+                have heap_member(HeapTree::Empty, target) == 0 by auto;
                 contradiction(heap_member(HeapTree::Empty, target) == 0);
             }
             HeapTree::Node(node, value, left, right) => {
@@ -218,18 +215,9 @@ theorem heap_member_nonzero_is_one(tree: HeapTree, target: struct tree_node*) {
                             rewrite(heap_member(left, target) == 0);
                             normalize() using { not(node == target); }
                         }
-                        have heap_member(right, target) != 0 by {
-                            rewrite(heap_member(right, target)
-                                == heap_member(HeapTree::Node(node, value, left, right), target));
-                            assumption();
-                        }
+                        have heap_member(right, target) != 0 by auto;
                         apply(ih(right));
                         extract(heap_member(right, target) == 1);
-                        have heap_member(HeapTree::Node(node, value, left, right), target) == 1 by {
-                            rewrite(heap_member(HeapTree::Node(node, value, left, right), target)
-                                == heap_member(right, target));
-                            assumption();
-                        }
                         assumption();
                     } else {
                         apply(ih(left));
@@ -442,15 +430,8 @@ struct tree_node* tree_rotate_left(struct tree_node* root) {
     match t.model {
         HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
         HeapTree::Node(node, value, left_model, right_model) => {
-            have heap_right(t.model) == right_model by {
-                rewrite(t.model == HeapTree::Node(node, value, left_model, right_model));
-                unfold(heap_right(HeapTree::Node(node, value, left_model, right_model)));
-                normalize();
-            }
-            have right_model != HeapTree::Empty by {
-                rewrite(right_model == heap_right(t.model));
-                assumption();
-            }
+            have heap_right(t.model) == right_model by auto;
+            have right_model != HeapTree::Empty by auto;
             match right_model {
                 HeapTree::Empty => { contradiction(right_model == HeapTree::Empty); },
                 HeapTree::Node(pivot_node, pivot_value, middle_model, far_right_model) => {
@@ -482,15 +463,8 @@ struct tree_node* tree_rotate_right(struct tree_node* root) {
     match t.model {
         HeapTree::Empty => { contradiction(t.model == HeapTree::Empty); },
         HeapTree::Node(node, value, left_model, right_model) => {
-            have heap_left(t.model) == left_model by {
-                rewrite(t.model == HeapTree::Node(node, value, left_model, right_model));
-                unfold(heap_left(HeapTree::Node(node, value, left_model, right_model)));
-                normalize();
-            }
-            have left_model != HeapTree::Empty by {
-                rewrite(left_model == heap_left(t.model));
-                assumption();
-            }
+            have heap_left(t.model) == left_model by auto;
+            have left_model != HeapTree::Empty by auto;
             match left_model {
                 HeapTree::Empty => { contradiction(left_model == HeapTree::Empty); },
                 HeapTree::Node(pivot_node, pivot_value, far_left_model, middle_model) => {
@@ -522,11 +496,6 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
             unfold(t);
             execute();
             let t = fold(tree_at(root), { model: HeapTree::Empty });
-            have result == heap_member(old(t.model), target) by {
-                rewrite(old(t.model) == HeapTree::Empty);
-                unfold(heap_member(HeapTree::Empty, target));
-                normalize();
-            }
             simp();
         },
         HeapTree::Node(node, value, left_model, right_model) => {
@@ -535,17 +504,7 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
             branch then {
                 step();
                 let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
-                have node == target by {
-                    rewrite(node == root);
-                    normalize() using { root == target; }
-                }
-                have result == heap_member(old(t.model), target) by {
-                    rewrite(old(t.model)
-                        == HeapTree::Node(node, value, left_model, right_model));
-                    unfold(heap_member(
-                        HeapTree::Node(node, value, left_model, right_model), target));
-                    normalize() using { node == target; }
-                }
+                have node == target by auto;
                 simp();
             } else {}
             have not(node == target) by {
@@ -556,49 +515,22 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
             branch then {
                 step();
                 have heap_member(left_model, target) == 1 by {
-                    have heap_member(left_model, target) != 0 by {
-                        simp() using {
-                            found_left != 0;
-                            found_left == heap_member(left_model, target);
-                        }
-                    }
                     have left_model == l.model by {
                         rewrite(l.model == left_model);
                         normalize();
                     }
-                    have heap_member(l.model, target) != 0 by {
-                        rewrite(l.model == left_model);
-                        assumption();
-                    }
+                    have heap_member(l.model, target) != 0 by auto;
                     apply(heap_member_nonzero_is_one(l.model, target));
                     extract(heap_member(l.model, target) == 1);
                     rewrite(left_model == l.model);
                     assumption();
                 }
                 let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
-                have result == heap_member(old(t.model), target) by {
-                    rewrite(old(t.model)
-                        == HeapTree::Node(node, value, left_model, right_model));
-                    unfold(heap_member(
-                        HeapTree::Node(node, value, left_model, right_model), target));
-                    rewrite(heap_member(left_model, target) == 1);
-                    normalize() using { not(node == target); }
-                }
                 simp();
             } else {}
-            have heap_member(left_model, target) == 0 by {
-                simp() using {
-                    found_left == 0;
-                    found_left == heap_member(left_model, target);
-                }
-            }
             let found_right = step(tree_contains(root->right, target), { t: r });
             step();
             let t = fold(tree_at(root), { model: old(t.model) }, { left: l, right: r });
-            have result == heap_member(right_model, target) by {
-                rewrite(found_right == heap_member(right_model, target));
-                normalize();
-            }
             have result == heap_member(old(t.model), target) by {
                 rewrite(old(t.model)
                     == HeapTree::Node(node, value, left_model, right_model));
@@ -624,11 +556,6 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
     step();
     step();
     let ctx = fold(ctx_at(root), { model: Context::Top });
-    have plug(ctx.model, t.model) == old(t.model) by {
-        rewrite(ctx.model == Context::Top);
-        unfold(plug(Context::Top, t.model));
-        normalize();
-    }
     loop {
         owns ctx: ctx_at(root);
         owns t: tree_at(root);
@@ -680,16 +607,6 @@ struct tree_node* tree_leftmost(struct tree_node* root) {
             let sub = fold(tree_at(root), {
                 model: HeapTree::Node(identity, value, left_model, right_model)
             }, { left: l, right: rt });
-            have heap_left(sub.model) == HeapTree::Empty by {
-                rewrite(sub.model == HeapTree::Node(identity, value, left_model, right_model));
-                rewrite(heap_left(HeapTree::Node(identity, value, left_model, right_model))
-                    == left_model);
-                assumption();
-            }
-            have plug(ctx.model, sub.model) == old(t.model) by {
-                rewrite(sub.model == HeapTree::Node(identity, value, left_model, right_model));
-                assumption();
-            }
             step();
             simp();
         },
@@ -707,11 +624,6 @@ struct tree_node* tree_rightmost(struct tree_node* root) {
     step();
     step();
     let ctx = fold(ctx_at(root), { model: Context::Top });
-    have plug(ctx.model, t.model) == old(t.model) by {
-        rewrite(ctx.model == Context::Top);
-        unfold(plug(Context::Top, t.model));
-        normalize();
-    }
     loop {
         owns ctx: ctx_at(root);
         owns t: tree_at(root);
@@ -763,16 +675,6 @@ struct tree_node* tree_rightmost(struct tree_node* root) {
             let sub = fold(tree_at(root), {
                 model: HeapTree::Node(identity, value, left_model, right_model)
             }, { left: l, right: rt });
-            have heap_right(sub.model) == HeapTree::Empty by {
-                rewrite(sub.model == HeapTree::Node(identity, value, left_model, right_model));
-                rewrite(heap_right(HeapTree::Node(identity, value, left_model, right_model))
-                    == right_model);
-                assumption();
-            }
-            have plug(ctx.model, sub.model) == old(t.model) by {
-                rewrite(sub.model == HeapTree::Node(identity, value, left_model, right_model));
-                assumption();
-            }
             step();
             simp();
         },

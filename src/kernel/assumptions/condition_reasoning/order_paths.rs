@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::equality_graph::{Int32AtomClass, Int32MergeToken};
 
 impl PureFactContext {
     #[cfg(test)]
@@ -596,8 +597,299 @@ impl PureFactContext {
         right: &Bitvector32Term,
         require_strict: bool,
     ) -> bool {
+        let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
         let order_facts = self.condition_order_facts();
-        self.has_order_path_in_facts(left, right, require_strict, &order_facts)
+        if order_walk_full_scan_forced() {
+            return self.has_order_path_in_facts(left, right, require_strict, &order_facts);
+        }
+        // A collection a limit cut short is filed for this walk only.
+        let complete = crate::kernel::assumptions::incomplete_reasoning_epoch() == epoch_before;
+        let index = self.transport_edge_index(order_facts, complete);
+        if let Some(reach) = self.transport_reach(left, &index) {
+            return self.transport_reach_passes(&reach, &index, right, require_strict);
+        }
+        self.has_order_path_in_filed_facts(left, right, require_strict, &index)
+    }
+
+    /// Every state the walk of [`Self::has_order_path_in_filed_facts`] from
+    /// `source` reaches, when the walk is memory-free and can be shared:
+    /// a context answers the walks from one source toward many targets
+    /// (each candidate bound of one decision asks from the same term) from
+    /// one exploration. `None` when the exploration cannot be shared; the
+    /// caller then walks.
+    ///
+    /// Shared only when every state and every open edge's lower endpoint is
+    /// integer arithmetic over constants and variables that name no load,
+    /// as for `OrderReachMemo`: the edge tests are then questions about the
+    /// fact set and the graph alone, which the memo key names. An
+    /// exploration a limit cut short is not kept.
+    fn transport_reach(
+        &self,
+        source: &Bitvector32Term,
+        index: &TransportEdgeIndex,
+    ) -> Option<std::rc::Rc<TransportReach>> {
+        if !index.complete || !index.open_memory_free || !order_reach_memory_free(source) {
+            return None;
+        }
+        let key = (
+            super::super::dag_memo_assumptions_id(self),
+            index.token.clone(),
+            source.clone(),
+        );
+        if let Some(hit) = TRANSPORT_REACH_MEMO.with(|memo| memo.borrow().get(&key).cloned()) {
+            return Some(hit);
+        }
+        let epoch_before = crate::kernel::assumptions::incomplete_reasoning_epoch();
+        let order_facts = &index.facts;
+        let mut stack = vec![(source.clone(), false)];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far)) = stack.pop() {
+            // Unchecked and uncharged, as the walk it replaces: a run's work
+            // is its edge tests', whether or not an earlier run explored.
+            if !order_reach_memory_free(&current) {
+                return None;
+            }
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            let edges = self
+                .transport_filed_edges(index, &current)
+                .unwrap_or_else(|| (0..order_facts.len()).collect());
+            for edge in edges {
+                let (edge_left, edge_right, edge_strict) = &order_facts[edge];
+                count_order_walk_edge_visit();
+                if self.bitvector_terms_equal_for_transport(&current, edge_left) {
+                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
+                }
+            }
+        }
+        // An edge test that registered terms can merge classes: what this
+        // exploration found then describes a graph the key no longer names.
+        if crate::kernel::assumptions::incomplete_reasoning_epoch() != epoch_before
+            || self.equality_graph.int32_merge_token() != index.token
+        {
+            return None;
+        }
+        let mut by_class = std::collections::HashMap::<Int32AtomClass, (bool, bool)>::new();
+        let mut unclassed = Vec::new();
+        for (term, strict) in &seen {
+            match transport_atom(term)
+                .then(|| {
+                    self.equality_graph
+                        .int32_atom_class(&index.token, &index.merged, term)
+                })
+                .flatten()
+            {
+                Some(class) => {
+                    let reached = by_class.entry(class).or_default();
+                    if *strict {
+                        reached.1 = true;
+                    } else {
+                        reached.0 = true;
+                    }
+                }
+                None => unclassed.push((term.clone(), *strict)),
+            }
+        }
+        let reach = std::rc::Rc::new(TransportReach {
+            states: seen.into_iter().collect(),
+            by_class,
+            unclassed,
+        });
+        TRANSPORT_REACH_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.len() >= TRANSPORT_REACH_MEMO_LIMIT {
+                memo.clear();
+            }
+            memo.insert(key, reach.clone());
+        });
+        Some(reach)
+    }
+
+    /// Whether some state of `reach` passes the walk's target test for
+    /// `right`: the answer the walk from the same source gives. Between two
+    /// [`transport_atom`]s the test's equality is class equality
+    /// ([`Self::transport_filed_edges`]), so an atom target reads its own
+    /// class, the reached constants (which can also pass by order) and the
+    /// unclassed states; any other target tests every state.
+    fn transport_reach_passes(
+        &self,
+        reach: &TransportReach,
+        index: &TransportEdgeIndex,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        let passes = |current: &Bitvector32Term, strict_so_far: bool| {
+            let constant_connection = signed_bitvector_constant(current)
+                .zip(signed_bitvector_constant(right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            (self.bitvector_terms_equal_for_transport(current, right)
+                || constant_connection.is_some())
+                && (!require_strict || strict_so_far || constant_connection == Some(true))
+        };
+        let right_class = transport_atom(right)
+            .then(|| {
+                self.equality_graph
+                    .int32_atom_class(&index.token, &index.merged, right)
+            })
+            .flatten();
+        let Some(right_class) = right_class else {
+            return reach
+                .states
+                .iter()
+                .any(|(current, strict)| passes(current, *strict));
+        };
+        if let Some((non_strict, strict)) = reach.by_class.get(&right_class)
+            && (*strict || (*non_strict && !require_strict))
+        {
+            return true;
+        }
+        if signed_bitvector_constant(right).is_some()
+            && reach.states.iter().any(|(current, strict)| {
+                matches!(current, Bitvector32Term::Constant(_)) && passes(current, *strict)
+            })
+        {
+            return true;
+        }
+        reach
+            .unclassed
+            .iter()
+            .any(|(current, strict)| passes(current, *strict))
+    }
+
+    /// [`Self::has_order_path_in_facts`] over this context's own order
+    /// facts, reading at each node only the edges [`TransportEdgeIndex`]
+    /// says it can match. The answer is the full scan's: every edge the
+    /// scan would follow is read, and each is followed by the unchanged
+    /// test, in fact order.
+    fn has_order_path_in_filed_facts(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+        index: &TransportEdgeIndex,
+    ) -> bool {
+        let order_facts = &index.facts;
+        let mut stack = vec![(left.clone(), false)];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far)) = stack.pop() {
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            let constant_connection = signed_bitvector_constant(&current)
+                .zip(signed_bitvector_constant(right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            if (self.bitvector_terms_equal_for_transport(&current, right)
+                || constant_connection.is_some())
+                && (!require_strict || strict_so_far || constant_connection == Some(true))
+            {
+                return true;
+            }
+            let edges = self
+                .transport_filed_edges(index, &current)
+                .unwrap_or_else(|| (0..order_facts.len()).collect());
+            for edge in edges {
+                let (edge_left, edge_right, edge_strict) = &order_facts[edge];
+                count_order_walk_edge_visit();
+                if self.bitvector_terms_equal_for_transport(&current, edge_left) {
+                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
+                }
+            }
+        }
+        false
+    }
+
+    /// The filing of this context's order facts by the transport class of
+    /// their lower endpoint, shared by fact-set and graph-merge identity.
+    /// `facts` is [`Self::condition_order_facts`], and `complete` whether a
+    /// limit left it whole. Filing adds no charge: a run's work does not
+    /// depend on what an earlier run in the process filed.
+    fn transport_edge_index(
+        &self,
+        facts: std::rc::Rc<Vec<super::bounds::OrderFact>>,
+        complete: bool,
+    ) -> std::rc::Rc<TransportEdgeIndex> {
+        let memo_id = super::super::dag_memo_assumptions_id(self);
+        let token = self.equality_graph.int32_merge_token();
+        if let Some(hit) = TRANSPORT_EDGE_INDEX_MEMO
+            .with(|memo| memo.borrow().get(&(memo_id, token.clone())).cloned())
+        {
+            return hit;
+        }
+        let (token, merged) = self.equality_graph.int32_merged_nodes();
+        let mut by_class = std::collections::HashMap::<Int32AtomClass, Vec<usize>>::new();
+        let mut open = Vec::new();
+        for (edge, (lower, _, _)) in facts.iter().enumerate() {
+            match transport_atom(lower)
+                .then(|| self.equality_graph.int32_atom_class(&token, &merged, lower))
+                .flatten()
+            {
+                Some(class) => by_class.entry(class).or_default().push(edge),
+                None => open.push(edge),
+            }
+        }
+        if !complete {
+            open = (0..facts.len()).collect();
+            by_class.clear();
+        }
+        let open_memory_free = open
+            .iter()
+            .all(|edge| order_reach_memory_free(&facts[*edge].0));
+        let index = std::rc::Rc::new(TransportEdgeIndex {
+            facts,
+            token,
+            merged,
+            by_class,
+            open,
+            open_memory_free,
+            complete,
+        });
+        if complete {
+            TRANSPORT_EDGE_INDEX_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= TRANSPORT_EDGE_INDEX_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert((memo_id, index.token.clone()), index.clone());
+            });
+        }
+        index
+    }
+
+    /// The edges of `index` whose lower endpoint the walk's node `current`
+    /// can match, ascending, or `None` when the node must read every edge.
+    ///
+    /// The edge test is `bitvector_terms_equal_for_transport(current,
+    /// lower)`. When `current` and `lower` are each a [`transport_atom`],
+    /// that test has exactly two routes: structural identity and the
+    /// trusted graph (`int32_values_known_equal`). Every other route needs
+    /// a conditional, a sum, a fold, a load (or a load variable's load
+    /// view), or two applications of one operator, and neither side is
+    /// one. Between two such atoms the graph's answer is their
+    /// [`Int32AtomClass`]es' equality. So an atom node reads the open edges,
+    /// whose lower endpoint is anything else, and the edges filed under its
+    /// own class.
+    fn transport_filed_edges(
+        &self,
+        index: &TransportEdgeIndex,
+        current: &Bitvector32Term,
+    ) -> Option<Vec<usize>> {
+        if !transport_atom(current) {
+            return None;
+        }
+        // Uncharged, as the full scan this replaces was: the walk charges
+        // only what its tests charge, so filing changes no budget.
+        let class = self
+            .equality_graph
+            .int32_atom_class(&index.token, &index.merged, current)?;
+        let Some(filed) = index.by_class.get(&class) else {
+            return Some(index.open.clone());
+        };
+        let mut edges = Vec::with_capacity(index.open.len() + filed.len());
+        edges.extend_from_slice(&index.open);
+        edges.extend_from_slice(filed);
+        edges.sort_unstable();
+        Some(edges)
     }
 
     /// Retain the exact signed-order edges selected by a deterministic path
@@ -803,6 +1095,7 @@ impl PureFactContext {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in order_facts {
+                count_order_walk_edge_visit();
                 if self.bitvector_terms_equal_for_transport(&current, edge_left) {
                     stack.push((edge_right.clone(), strict_so_far || *edge_strict));
                 }
@@ -1944,6 +2237,64 @@ impl PureFactContext {
     }
 }
 
+/// [`PureFactContext::condition_order_facts`] filed by the transport class
+/// of each edge's lower endpoint ([`PureFactContext::transport_filed_edges`]).
+/// It decides nothing: a node reads a superset of the edges that could
+/// match it and applies the unchanged test to each, in fact order.
+pub(in crate::kernel) struct TransportEdgeIndex {
+    facts: std::rc::Rc<Vec<super::bounds::OrderFact>>,
+    /// The graph-merge identity `merged` and the classes were taken under.
+    token: Int32MergeToken,
+    merged: std::collections::HashSet<u64>,
+    /// Edges whose lower endpoint is a [`transport_atom`], by its class.
+    by_class: std::collections::HashMap<Int32AtomClass, Vec<usize>>,
+    /// Every other edge, ascending: read at every node.
+    open: Vec<usize>,
+    /// Whether no open edge's lower endpoint reads memory.
+    open_memory_free: bool,
+    /// Whether `facts` is the complete collection; an index over a
+    /// collection a limit cut short serves its own walk and is not shared.
+    complete: bool,
+}
+
+/// The states one transport walk source reaches
+/// ([`PureFactContext::transport_reach`]).
+pub(in crate::kernel) struct TransportReach {
+    /// Every reached state, as `(term, strict so far)`.
+    states: Vec<(Bitvector32Term, bool)>,
+    /// The [`transport_atom`] states by class, as whether the class was
+    /// reached non-strictly and strictly.
+    by_class: std::collections::HashMap<Int32AtomClass, (bool, bool)>,
+    /// Every other state.
+    unclassed: Vec<(Bitvector32Term, bool)>,
+}
+
+thread_local! {
+    static TRANSPORT_REACH_MEMO: std::cell::RefCell<
+        std::collections::HashMap<
+            (u64, Int32MergeToken, Bitvector32Term),
+            std::rc::Rc<TransportReach>,
+        >,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+const TRANSPORT_REACH_MEMO_LIMIT: usize = 20_000;
+
+/// A term the transport walk files by its graph class: a constant, or a
+/// variable that cannot name a load. Both are opaque to the equality graph,
+/// and no transport rule but identity and the graph relates two of them.
+fn transport_atom(term: &Bitvector32Term) -> bool {
+    matches!(term, Bitvector32Term::Constant(_)) || order_walk_plain_variable(term)
+}
+
+thread_local! {
+    static TRANSPORT_EDGE_INDEX_MEMO: std::cell::RefCell<
+        std::collections::HashMap<(u64, Int32MergeToken), std::rc::Rc<TransportEdgeIndex>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+const TRANSPORT_EDGE_INDEX_MEMO_LIMIT: usize = 20_000;
+
 thread_local! {
     static ORDER_WALK_INDEX_MEMO: std::cell::RefCell<
         std::collections::HashMap<u64, std::rc::Rc<OrderWalkIndex>>,
@@ -2176,6 +2527,29 @@ fn order_walk_keyable(term: &Bitvector32Term) -> bool {
 #[cfg(test)]
 thread_local! {
     static ORDER_WALK_FULL_SCAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+thread_local! {
+    static ORDER_WALK_EDGE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts one order edge a [`PureFactContext::has_order_path`] walk tests.
+fn count_order_walk_edge_visit() {
+    #[cfg(test)]
+    ORDER_WALK_EDGE_VISITS.with(|visits| visits.set(visits.get() + 1));
+}
+
+/// The order edges `has_order_path` walks have tested since
+/// [`reset_order_walk_edge_visits`].
+#[cfg(test)]
+pub(in crate::kernel) fn order_walk_edge_visits() -> usize {
+    ORDER_WALK_EDGE_VISITS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(in crate::kernel) fn reset_order_walk_edge_visits() {
+    ORDER_WALK_EDGE_VISITS.with(|visits| visits.set(0));
 }
 
 /// Runs `body` with the order walk reading every fact at every node, as it

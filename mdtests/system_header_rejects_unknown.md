@@ -17,5 +17,5 @@ int32 run() {
 ```
 
 ```expect
-fail: system header `<stdio.h>` is not supported
+fail: system header `<stdio.h>` is not supported for x86_64-linux-userspace; the modeled headers for x86_64-linux-userspace are <inttypes.h>, <limits.h>, <pthread.h>, <stdatomic.h>, <stdbool.h>, <stddef.h>, <stdint.h>, <stdlib.h>, <string.h> (see docs/reference/language/c.md#system-headers)
 ```

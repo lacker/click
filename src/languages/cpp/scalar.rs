@@ -3,7 +3,7 @@
 use super::CppType;
 use crate::kernel;
 use crate::kernel::{CExpression, CType, MachineIntegerConstant, MachineIntegerType};
-use crate::languages::c::syntax::C0Type;
+use crate::languages::c::syntax::{C0Type, LongRank};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ScalarKind {
@@ -141,9 +141,9 @@ impl ScalarKind {
             Self::Bool => C0Type::Bool,
             Self::UInt8 => C0Type::UInt8,
             Self::Int32 => C0Type::Int32,
-            Self::Int64 => C0Type::Int64,
+            Self::Int64 => C0Type::Int64(LongRank::Long),
             Self::UInt32 => C0Type::UInt32,
-            Self::UInt64 => C0Type::UInt64,
+            Self::UInt64 => C0Type::UInt64(LongRank::Long),
             Self::Int128 => C0Type::Int128,
             Self::UInt128 => C0Type::UInt128,
         }
@@ -229,6 +229,23 @@ pub(super) fn scalar_value_type(value: &CppType) -> CppType {
         *is_const = false;
     }
     value
+}
+
+/// A native reference binds an object of its own type, possibly adding const
+/// but never removing it.
+pub(super) fn reference_binds(object: &CppType, referent: &CppType) -> bool {
+    same_scalar_type(&scalar_value_type(object), &scalar_value_type(referent))
+        && (Scalar::of(referent).is_some_and(|scalar| scalar.is_const)
+            || !Scalar::of(object).is_some_and(|scalar| scalar.is_const))
+}
+
+/// The element a native reference refers to: an `int`, `unsigned int`,
+/// `unsigned char` or `std::byte`, possibly const.
+pub(super) fn reference_element(value: &CppType) -> Option<Scalar> {
+    match value {
+        CppType::LvalueReference { pointee } => Scalar::pointer_element(pointee, true),
+        _ => None,
+    }
 }
 
 pub(super) fn same_scalar_type(left: &CppType, right: &CppType) -> bool {

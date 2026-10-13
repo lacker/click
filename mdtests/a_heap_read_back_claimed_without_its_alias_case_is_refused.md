@@ -38,5 +38,5 @@ int32 read_back(int32 u) {
 ```
 
 ```expect
-fail: `ensures (result == 0 || result == 3)` failed for `read_back.ensures_0` path 1
+fail: `ensures result == 0 or result == 3` failed for `read_back.ensures_0` path 1
 ```

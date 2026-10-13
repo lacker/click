@@ -623,8 +623,7 @@ private:
         reference != nullptr &&
         !reference->getPointeeType().isVolatileQualified() &&
         !reference->getPointeeType().isRestrictQualified() &&
-        (context_.hasSameType(reference->getPointeeType().getUnqualifiedType(),
-                              context_.IntTy) ||
+        (supported_pointer_element(reference->getPointeeType()) ||
          (reference->getPointeeType()->isSignedIntegerType() &&
           reference->getPointeeType().isConstQualified() &&
           context_.getTypeSize(reference->getPointeeType()) == 64));
@@ -664,8 +663,8 @@ private:
       fail(parameter->getLocation(),
            "the supported C++ parameter must be a by-value bool or "
            "signed/unsigned "
-           "32/64/128-bit integer or unsigned char, int&, const "
-           "int&, const signed-64 reference, or mutable int* parameter, mutable unsigned int*/unsigned char* parameter, or a "
+           "32/64/128-bit integer or unsigned char, a native element "
+           "reference (int, unsigned int, unsigned char or std::byte, possibly const), a const signed-64 reference, or mutable int* parameter, mutable unsigned int*/unsigned char* parameter, or a "
            "mutable or const simple-record reference parameter, or a trivially copied simple-record value");
       return std::nullopt;
     }
@@ -1304,7 +1303,29 @@ private:
         sum["span"] = span(binary->getSourceRange());
         value = Json(std::move(sum));
       }
-      if (const auto *member = llvm::dyn_cast<clang::MemberExpr>(left)) {
+      if (const auto *call = llvm::dyn_cast<clang::CallExpr>(left);
+          call != nullptr && binary->getOpcode() == clang::BO_Assign) {
+        // A store through a returned native reference, as in `s[i] = v`.
+        const auto *callee = call->getDirectCallee();
+        const auto *reference = callee == nullptr
+            ? nullptr
+            : callee->getReturnType()->getAs<clang::LValueReferenceType>();
+        if (reference == nullptr || !call->isLValue() ||
+            reference->getPointeeType().isConstQualified() ||
+            !supported_pointer_element(reference->getPointeeType())) {
+          fail(call->getExprLoc(), "C++ call stores require a returned mutable native element reference");
+          return std::nullopt;
+        }
+        auto operation = lower_call_operation(call, function, true);
+        auto value_type = lower_type(callee->getReturnType(), call->getExprLoc());
+        if (!operation || !value_type) {
+          return std::nullopt;
+        }
+        result["kind"] = "call_store";
+        result["callee"] = std::move(operation->callee);
+        result["arguments"] = std::move(operation->arguments);
+        result["value_type"] = std::move(*value_type);
+      } else if (const auto *member = llvm::dyn_cast<clang::MemberExpr>(left)) {
         auto lowered = lower_member(member, function);
         if (!lowered) {
           return std::nullopt;
@@ -1745,6 +1766,21 @@ private:
           break;
         case clang::CK_IntegralToBoolean: kind = "integral_to_boolean"; break;
         case clang::CK_BooleanToSignedIntegral: kind = "boolean_to_signed_integral"; break;
+        case clang::CK_LValueToRValue: {
+          // Reading a returned native reference: only the call's own
+          // result, before any other conversion, and never volatile.
+          const auto *callee = call->getDirectCallee();
+          const auto *reference = callee == nullptr
+              ? nullptr
+              : callee->getReturnType()->getAs<clang::LValueReferenceType>();
+          if (it != casts.rbegin() || !call->isLValue() || reference == nullptr ||
+              !supported_pointer_element(reference->getPointeeType())) {
+            fail(cast->getExprLoc(), "unsupported C++ call-result conversion");
+            return std::nullopt;
+          }
+          kind = "reference_load";
+          break;
+        }
         default:
           fail(cast->getExprLoc(), "unsupported C++ call-result conversion");
           return std::nullopt;
@@ -1758,8 +1794,10 @@ private:
             return direct_source_alias(call->getDirectCallee()->getTypeSourceInfo());
           return static_cast<const clang::TypedefNameDecl *>(nullptr);
         };
-        auto source_type = lower_type(cast->getSubExpr()->getType().getUnqualifiedType(), cast->getExprLoc(),
-                                      source_alias(cast->getSubExpr()));
+        auto source_type = kind == "reference_load"
+            ? lower_type(call->getDirectCallee()->getReturnType(), cast->getExprLoc())
+            : lower_type(cast->getSubExpr()->getType().getUnqualifiedType(), cast->getExprLoc(),
+                         source_alias(cast->getSubExpr()));
         auto value_type = lower_type(cast->getType().getUnqualifiedType(), cast->getExprLoc(), source_alias(cast));
         if (!source_type || !value_type) return std::nullopt;
         llvm::json::Object conversion;
@@ -1803,7 +1841,7 @@ private:
         !local_pointer->getPointeeType().hasQualifiers() && supported_pointer_element(local_pointer->getPointeeType());
     const auto *local_reference = local->getType()->getAs<clang::LValueReferenceType>();
     const bool int_reference = local_reference != nullptr &&
-        context_.hasSameType(local_reference->getPointeeType().getUnqualifiedType(), context_.IntTy);
+        supported_pointer_element(local_reference->getPointeeType());
     const auto *record_type = local->getType()->getAs<clang::RecordType>();
     const auto *record =
         record_type == nullptr
@@ -1822,7 +1860,7 @@ private:
       fail(local->getLocation(),
            "the supported automatic C++ local must resolve to "
            "signed/unsigned "
-           "32/64/128-bit integer or unsigned char, an initialized native object pointer, an int lvalue reference, or one simple record object");
+           "32/64/128-bit integer or unsigned char, an initialized native object pointer, a native element lvalue reference, or one simple record object");
       return std::nullopt;
     }
     if (!local->hasInit() && !mutable_int) {
@@ -2540,8 +2578,8 @@ private:
                           const clang::FunctionDecl *function) {
     const auto *reference = reference_type->getAs<clang::LValueReferenceType>();
     if (reference == nullptr || !expression->isLValue() ||
-        !context_.hasSameType(reference->getPointeeType().getUnqualifiedType(), context_.IntTy)) {
-      fail(expression->getExprLoc(), "C++ reference results require an int lvalue");
+        !supported_pointer_element(reference->getPointeeType())) {
+      fail(expression->getExprLoc(), "C++ reference results require a native element lvalue");
       return std::nullopt;
     }
     const auto *source = expression->IgnoreParenImpCasts();
@@ -2557,10 +2595,10 @@ private:
           parameter->getType()->getAs<clang::LValueReferenceType>();
       const bool member = llvm::isa<clang::MemberExpr>(source);
       const bool scalar_object = parameter != nullptr && parameter->hasLocalStorage() &&
-          context_.hasSameType(parameter->getType().getUnqualifiedType(), context_.IntTy);
+          supported_pointer_element(parameter->getType());
       if (!member && (parameter == nullptr || parameter->getDeclContext() != function ||
           (parameter_reference == nullptr && !scalar_object))) {
-        fail(expression->getExprLoc(), "C++ references currently bind existing references, automatic int32 objects, int32 fields, or pointer dereferences");
+        fail(expression->getExprLoc(), "C++ references currently bind existing references, automatic native element objects, native element fields, or pointer dereferences");
         return std::nullopt;
       }
       auto place = lower_place_reference(source, function);
@@ -4042,6 +4080,11 @@ private:
           suffix += function_template_record_token(index, declaration_id(record));
           continue;
         }
+        // A byte-sized element, as in `std::span<unsigned char>`, names a
+        // class template instance; integral template values stay 32/64-bit.
+        if (name == nullptr && allow_tags &&
+            context_.hasSameType(type, context_.UnsignedCharTy))
+          name = "unsigned_char";
         if (name == nullptr && allow_tags && supported_byte_enum(type)) {
           const auto *enumeration = type->getAs<clang::EnumType>()->getDecl();
           if (declaration_id(enumeration) == "c:@N@std@E@byte" &&

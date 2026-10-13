@@ -140,7 +140,7 @@ theorem rb_min_list_nonempty_left(node: struct rb_node*, parent: struct rb_node*
     ensures rb_min_list(RbTree::Node(node, parent, color, left, right)) == rb_min_list(left) by {
         induct(left) as ih {
             RbTree::Empty => {
-                have RbTree::Empty == RbTree::Empty by normalize();
+                have RbTree::Empty == RbTree::Empty by auto;
                 contradiction(RbTree::Empty == RbTree::Empty);
             }
             RbTree::Node(a, b, c, l, r) => {
@@ -160,7 +160,7 @@ theorem rb_remove_min_nonempty_left(node: struct rb_node*, parent: struct rb_nod
         color, rb_remove_min(left), right) by {
         induct(left) as ih {
             RbTree::Empty => {
-                have RbTree::Empty == RbTree::Empty by normalize();
+                have RbTree::Empty == RbTree::Empty by auto;
                 contradiction(RbTree::Empty == RbTree::Empty);
             }
             RbTree::Node(a, b, c, l, r) => {
@@ -179,7 +179,7 @@ theorem rb_minimum_nonempty_left(node: struct rb_node*, parent: struct rb_node*,
     ensures rb_minimum(RbTree::Node(node, parent, color, left, right)) == rb_minimum(left) by {
         induct(left) as ih {
             RbTree::Empty => {
-                have RbTree::Empty == RbTree::Empty by normalize();
+                have RbTree::Empty == RbTree::Empty by auto;
                 contradiction(RbTree::Empty == RbTree::Empty);
             }
             RbTree::Node(a, b, c, l, r) => {
@@ -199,7 +199,7 @@ theorem rb_min_context_nonempty_left(node: struct rb_node*, parent: struct rb_no
         Context::Left(node, parent, color, right, up)) by {
         induct(left) as ih {
             RbTree::Empty => {
-                have RbTree::Empty == RbTree::Empty by normalize();
+                have RbTree::Empty == RbTree::Empty by auto;
                 contradiction(RbTree::Empty == RbTree::Empty);
             }
             RbTree::Node(a, b, c, l, r) => {
@@ -217,10 +217,7 @@ theorem rb_minimum_list(tree: RbTree, successor: struct rb_node*, color: Color, 
     ensures rb_min_list(tree) == List<struct rb_node*>::Cons(successor, List<struct rb_node*>::Nil) by {
         induct(tree) as ih {
             RbTree::Empty => {
-                have rb_minimum(RbTree::Empty) != RbMinimum::Found(successor, color, child) by {
-                    unfold(rb_minimum(RbTree::Empty));
-                    normalize();
-                }
+                have rb_minimum(RbTree::Empty) != RbMinimum::Found(successor, color, child) by auto;
                 contradiction(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, color, child));
             }
             RbTree::Node(node, parent, ncolor, left, right) => {
@@ -248,11 +245,7 @@ theorem rb_minimum_list(tree: RbTree, successor: struct rb_node*, color: Color, 
                         apply(rb_minimum_nonempty_left(node, parent, ncolor, left, right));
                         assumption();
                     }
-                    have rb_minimum(left) == RbMinimum::Found(successor, color, child) by {
-                        rewrite(rb_minimum(left)
-                            == rb_minimum(RbTree::Node(node, parent, ncolor, left, right)));
-                        assumption();
-                    }
+                    have rb_minimum(left) == RbMinimum::Found(successor, color, child) by auto;
                     apply(ih(left, successor, color, child));
                     apply(rb_min_list_nonempty_left(node, parent, ncolor, left, right));
                     rewrite(rb_min_list(RbTree::Node(node, parent, ncolor, left, right))
@@ -384,16 +377,8 @@ theorem rb_min_context_child(tree: RbTree, up: Context, successor: struct rb_nod
                         unfold(black_height(RbTree::Empty));
                         normalize();
                     }
-                    have rb_color(RbTree::Node(node, parent, color, left, right)) == min_color by {
-                        unfold(rb_color(RbTree::Node(node, parent, color, left, right)));
-                        assumption();
-                    }
-                    have ctx_rb(up, frame_black_height(min_color, Nat::Zero), min_color) == 1 by {
-                        rewrite(frame_black_height(min_color, Nat::Zero)
-                            == black_height(RbTree::Node(node, parent, color, left, right)));
-                        rewrite(min_color == rb_color(RbTree::Node(node, parent, color, left, right)));
-                        assumption();
-                    }
+                    have rb_color(RbTree::Node(node, parent, color, left, right)) == min_color by auto;
+                    have ctx_rb(up, frame_black_height(min_color, Nat::Zero), min_color) == 1 by auto;
                     rewrite(left == RbTree::Empty);
                     unfold(rb_min_context(RbTree::Node(node, parent, color, RbTree::Empty, right), up));
                     assumption();
@@ -418,12 +403,7 @@ theorem rb_min_context_child(tree: RbTree, up: Context, successor: struct rb_nod
                         rewrite(rb_color(RbTree::Node(node, parent, color, left, right)) == color);
                         normalize();
                     }
-                    have ctx_rb(up, frame_black_height(color, black_height(left)), color) == 1 by {
-                        rewrite(ctx_rb(up, frame_black_height(color, black_height(left)), color)
-                            == ctx_rb(up, black_height(RbTree::Node(node, parent, color, left, right)),
-                                rb_color(RbTree::Node(node, parent, color, left, right))));
-                        assumption();
-                    }
+                    have ctx_rb(up, frame_black_height(color, black_height(left)), color) == 1 by auto;
                     apply(ctx_rb_left_frame(node, parent, color, right, up, black_height(left),
                         rb_color(left)));
                     apply(ih(left, Context::Left(node, parent, color, right, up), successor, min_color, child));
@@ -530,10 +510,7 @@ theorem ctx_rb_successor_right(erased: struct rb_node*, successor: struct rb_nod
         apply(rb_reparent_preserves_black_height(right, successor));
         apply(rb_reparent_preserves_color(left, successor));
         apply(rb_reparent_preserves_color(right, successor));
-        have is_rb(rb_reparent(left, successor)) == 1 by {
-            rewrite(is_rb(rb_reparent(left, successor)) == is_rb(left));
-            assumption();
-        }
+        have is_rb(rb_reparent(left, successor)) == 1 by auto;
         have black_height(rb_reparent(left, successor)) == black_height(rb_reparent(right, successor)) by {
             rewrite(black_height(rb_reparent(left, successor)) == black_height(left));
             rewrite(black_height(rb_reparent(right, successor)) == black_height(right));
@@ -602,10 +579,7 @@ theorem rb_erase_black_successor_splice(erased: struct rb_node*, successor: stru
         apply(ctx_rb_successor_right(erased, successor, parent, color, left, right, up));
         apply(is_rb_node_right(erased, parent, color, left, right));
         apply(rb_reparent_preserves_is_rb(right, successor));
-        have is_rb(rb_reparent(right, successor)) == 1 by {
-            rewrite(is_rb(rb_reparent(right, successor)) == is_rb(right));
-            assumption();
-        }
+        have is_rb(rb_reparent(right, successor)) == 1 by auto;
         apply(rb_minimum_reparent(right, successor));
         have rb_minimum(rb_reparent(right, successor))
             == RbMinimum::Found(successor, Color::Black, RbTree::Empty) by {
@@ -677,9 +651,7 @@ theorem rb_erase_red_successor_splice(erased: struct rb_node*, successor: struct
         apply(ctx_rb_successor_right(erased, successor, parent, color, left, right, up));
         apply(is_rb_node_right(erased, parent, color, left, right));
         apply(rb_reparent_preserves_is_rb(right, successor));
-        have is_rb(rb_reparent(right, successor)) == 1 by {
-            rewrite(is_rb(rb_reparent(right, successor)) == is_rb(right)); assumption();
-        }
+        have is_rb(rb_reparent(right, successor)) == 1 by auto;
         apply(rb_minimum_reparent(right, successor));
         have rb_minimum(rb_reparent(right, successor))
             == RbMinimum::Found(successor, Color::Red, RbTree::Empty) by {
@@ -770,7 +742,7 @@ theorem rb_min_parent_nonempty_left(node: struct rb_node*, parent: struct rb_nod
     ensures rb_min_parent(RbTree::Node(node, parent, color, left, right)) == rb_min_parent(left) by {
         induct(left) as cases {
             RbTree::Empty => {
-                have RbTree::Empty == RbTree::Empty by normalize();
+                have RbTree::Empty == RbTree::Empty by auto;
                 contradiction(RbTree::Empty == RbTree::Empty);
             }
             RbTree::Node(a, b, c, l, r) => {
@@ -789,9 +761,7 @@ theorem rb_min_context_cut_child(tree: RbTree, up: Context, successor: struct rb
         == plug(up, rb_remove_min(tree)) by {
         induct(tree) as ih {
             RbTree::Empty => {
-                have not(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child)) by {
-                    unfold(rb_minimum(RbTree::Empty)); normalize();
-                }
+                have not(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child)) by auto;
                 contradiction(rb_minimum(RbTree::Empty) == RbMinimum::Found(successor, min_color, child));
             }
             RbTree::Node(node, parent, color, left, right) => {

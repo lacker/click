@@ -109,8 +109,9 @@ Keep these distinctions explicit:
 - `let` is an immutable abbreviation, not mutable spec state.
 - `viewable` proves memory safety and bounds; it does not grant access
   authority.
-- `owns` bounds a function's writes; it does not grant permission to access
-  or free the named memory.
+- `owns` grants read and write access to the named cells and bounds the
+  function's writes to the cells it owns; freeing memory also needs the
+  `allocation(base, bytes)` resource.
 - A pure fact can be reused. An owned resource fact cannot be copied freely.
 - Ownership protocols are expressible through resources, but arbitrary mutable
   ghost variables aren't supported.

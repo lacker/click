@@ -31,5 +31,5 @@ int32 fill_too_many_heap_fields(struct point* p) {
 ```
 
 ```expect
-fail: missing resource fact `owns p[…].y`
+fail: missing resource fact `owns p[i].y`
 ```

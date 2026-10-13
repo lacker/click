@@ -56,5 +56,5 @@ int32 run() {
 ```
 
 ```expect
-fail: Requires owns control(…)
+fail: Requires owns control(obj)
 ```

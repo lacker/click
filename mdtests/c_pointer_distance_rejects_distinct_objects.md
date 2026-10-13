@@ -29,5 +29,5 @@ int32 distance_locals() {
 ```
 
 ```expect
-fail: missing prerequisite (distance precondition)
+fail: missing prerequisite (precondition clause 1 of `distance`)
 ```

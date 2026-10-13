@@ -42,13 +42,11 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 /// not retain, over the whole unfiltered corpus, by route and top rule. A
 /// count may only fall; `issues/simplify-step.md` drives it to zero.
 const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] = &[
-    ((HiddenPrerequisiteRoute::StepObligation, "And"), 22),
+    ((HiddenPrerequisiteRoute::StepObligation, "And"), 2),
     (
         (HiddenPrerequisiteRoute::StepObligation, "ContextualAtomic"),
-        12,
+        3,
     ),
-    ((HiddenPrerequisiteRoute::StepObligation, "FiniteForAll"), 1),
-    ((HiddenPrerequisiteRoute::StepObligation, "Implies"), 12),
 ];
 
 #[test]

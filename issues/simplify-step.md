@@ -47,39 +47,65 @@ or, with maintainer approval, by adding syntax that names the value.
 
 ### Syntax
 
-A tactic whose requirements leave exactly one obligation after the fast path
-takes a plain `by`, as `close_invariants by` does:
+Decided 2026-10-13. The syntax applies to every `step` form; other simple
+tactics adopt the same shape when the requirement driver reaches them.
 
-```click
-step() by { arithmetic() using { ... }; }
+```text
+step-tactic    := step-head step-proof?
+step-head      := ("let" output-pattern "=")? "step" "(" step-args? ")"
+step-proof     := ";"
+                | "by" proof-body
+                | "{" requires-entry+ "}"
+requires-entry := "requires" (identifier ":")? proposition "by" proof-body
+proof-body     := tactic-call ";" | "simp" ";" | "{" tactic-statement+ "}"
 ```
 
-When several remain, the tactic takes a block with one `requires` entry per
-obligation, the way `loop { ... }` takes `initialize by` and `preserve by`:
+`step-head` is every existing `step` form, unchanged. `proof-body` is the body
+`have` and `close_invariants by` already accept.
 
 ```click
+step() by arithmetic() using { 0 <= i; i < n; };
+
+let r = step(push(v, x), { vec: v }) by { unfold(has_room); simp(); }
+
 step() {
     requires p != null by auto;
-    requires i < len by arithmetic() using { ... };
+    requires room: v.len < v.cap by arithmetic() using { v.len < v.cap; };
 }
 ```
 
-- Each `requires P by ...` must match exactly one remaining obligation; a
-  proposition that matches none or more than one fails where it is written.
-- An obligation not written is closed by the fast path, then implicit `auto`.
-- A plain `by` when more than one obligation remains fails and lists each
-  remaining obligation in Surface syntax, ready to copy into `requires` lines.
-  A plain `by` or `requires` entry when the fast path already closes every
-  obligation fails as superfluous, as an unneeded `close_invariants by` does.
-- `requires name: P by ...` is accepted where a label helps; no obligation
-  needs one.
-- Expansion prints plain `by` when exactly one obligation needed `auto`, and
-  `requires` entries when several did.
+Semantics:
 
-Which obligations remain depends on the context, so a context change can turn
-a plain `by` into a refusal. That failure is prompt and names the new
-obligation; the meaning of a proof never changes silently. This fragility is
-accepted.
+1. A step's *obligations* are its requirements the fast path leaves open, in a
+   fixed order: callee contract clause order, then source order of the
+   statement's accesses.
+2. Plain `by` is valid when exactly one obligation remains; its body's goal is
+   that obligation. With none it fails as superfluous. With more than one it
+   fails and prints the complete `step() { requires ... by auto; ... }` block
+   in Surface syntax.
+3. `requires P by ...` writes `P` at the step's pre-state, over the caller's
+   locals and the call's actual arguments. It lowers there and must equal
+   exactly one remaining obligation up to bound-variable renaming. One that
+   matches none, matches more than one, or repeats an earlier entry fails
+   where it is written. Entries may appear in any order.
+4. An entry for an obligation the fast path already closes is an error, so a
+   stale entry is reported rather than kept. A context change that closes an
+   obligation therefore refuses an older proof that wrote it; that is
+   accepted.
+5. An obligation not written is closed by the fast path, then implicit `auto`.
+6. Each body runs at the pre-state and cannot advance C; it makes only its
+   obligation available. `let` and `have` inside a body stay inside it.
+7. `requires P by auto` is accepted and documents the obligation `auto`
+   proves. Plain `step() by auto` is refused: it means `step()`.
+8. Expansion prints plain `by` when exactly one obligation needed `auto`, and
+   otherwise one `requires` entry per such obligation in the fixed order,
+   each `P` in its canonical spelling.
+9. `requires name: P` labels the entry, as `ensures name:` does; no
+   obligation needs a label.
+
+Which obligations remain depends on the context, so a context change can
+refuse a plain `by` or an entry. That failure is prompt and names the
+obligation; the meaning of a proof never changes silently.
 
 ## Current state
 
@@ -146,11 +172,40 @@ prerequisites, loop-phase `Contextual` checking, and the retained-`have`
 re-run record none. Still uncounted: the kernel's own condition evaluation
 under `Retained`, which does not defer non-exact condition reasoning
 (`certified_condition_transitions`), and the spellability and work of each
-derivation. Add those before cutting over the routes they affect.
+derivation. Add those before cutting over the routes they affect. The fast
+path that condition evaluation needs is
+[difference-logic.md](difference-logic.md).
 
 ### 2. Requirement driver and syntax
 
-One shared driver per simple tactic: build each obligation with its Surface
+**2a, the syntax for `step` (landed).** Every `step` form accepts `by` and
+`requires` entries. `StatementPrerequisitePolicy::Fast` is `Retained` without
+either search. A probe runs the step under `Fast`, records every obligation it
+leaves open instead of stopping at the first
+(`probe_open_obligations`), and discards that run; the written proofs are
+matched against that list, checked as `have`s, and the step then runs.
+Expansion keeps the forms and prints each body's checked steps
+(`mdtests/step_by_*`, `mdtests/step_requires_*`,
+`step_requires_entries_expand_in_place_and_are_needed`). Not yet: implicit
+`auto` for unwritten obligations (they keep the bare step's checking), the
+forms inside `branch` and other structured drivers, and labels beyond
+documentation.
+
+**2b, implicit `auto` for `step` (landed).** A bare step, and every
+obligation a `requires` block leaves unwritten, now goes fast path then
+implicit `auto`: each open obligation is spelled with `requirement_surface`
+and proved as a `have` by `close_requirement_have_by_auto`, the closure smart
+execution's retry already used, and the step records it so expansion prints
+`step() by { ... }` or `step() { requires P by ...; }`. When the probe meets a
+refusal it cannot record, or `auto` cannot spell or prove an obligation, the
+step falls back to its former checking, so diagnostics are unchanged; the
+census counts what remains. Tests check expanded proofs cold with
+`without_implicit_auto`, under which a step gets only its fast path and
+written proofs. The mdtest census fell from 47 to 26 (`And` 22 to 2,
+`FiniteForAll` 1 to 0, `Implies` 12 to 11, `ContextualAtomic` unchanged at
+12); the examples' 4 `And` are unchanged.
+
+**2c, the driver.** One shared driver per simple tactic: build each obligation with its Surface
 spelling where the obligation is created (a callee clause with the call's
 argument expressions substituted, an access expression at its program point),
 try the fast path, then implicit `auto`, and record the expandable proof.
@@ -159,24 +214,33 @@ Implement `Tactic() by { ... }` and `Tactic() { requires P by ...; }` for
 `Contextual` re-run move onto this driver. A debug assertion checks that each
 spelling re-lowers exactly.
 
-### 3. Cut over by shape
+### 3. Remove the step fallback search
 
-Most frequent census shapes first. Each shape that moves to the driver
-lowers the census baseline. A shape without a spelling is a bug fixed as
-described above. Extend the driver to the other simple tactics with
-prerequisites.
+Decided 2026-10-13. Make every remaining census case go through the fast path
+and implicit `auto`, either by teaching `auto` the proof or by building the
+missing Surface spelling (a missing spelling is a bug), then delete the
+fallback: the former `Retained` search, the compatibility escape hatch in
+smart execution's retry, and the in-step re-run. Lower each pin as its cases
+move; the step census reaches zero.
 
-### 4. Remove the hidden search
+### 4. Check expansion cold
 
-Delete the remaining hidden derivation from simple checking, the
-compatibility escape hatch, and the in-step re-run. Add deterministic scaling
-regressions showing simple-tactic cost does not grow with unrelated context
-facts. Cold-check the expanded corpus with implicit `auto` disabled, and run
-`scripts/check.sh` unfiltered.
+`click expand` already checks its output before writing it. Run that check,
+and `click audit`'s, with the implicit `auto` off, so every expansion is
+proven self-contained when it is produced. There is no user-facing
+cold-check option; the check belongs to expansion. Add deterministic scaling
+regressions showing step cost does not grow with unrelated context facts.
 
 Implicit `auto` has its own budget, and profiling attributes its work to
 `auto`, not to the simple tactic, so a slow `auto` is not reported as a slow
 step.
+
+### 5. Other simple tactics
+
+Extend the census to every simple tactic's prerequisite checks, run it on the
+corpus, and give the fast path, implicit `auto`, and `by`/`requires` forms
+only to the tactics it shows searching. Tactics whose premises are already
+cited exactly, with a smart sibling that finds them, need no change.
 
 ## Acceptance criteria
 

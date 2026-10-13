@@ -4224,9 +4224,10 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> bool {
         [start, end].into_iter().any(|bound| {
-            self.contract_expression_click_type(bound, environment)
-                == Some(ClickType::C(C0Type::UInt64))
-                || matches!(bound, ContractExpression::CFragment(CExpression::Variable(name))
+            matches!(
+                self.contract_expression_click_type(bound, environment),
+                Some(ClickType::C(C0Type::UInt64(_)))
+            ) || matches!(bound, ContractExpression::CFragment(CExpression::Variable(name))
                     if self.c_variable_type(name) == Some(CType::UInt64))
                 || matches!(bound, ContractExpression::CFragment(CExpression::Value(value))
                     if value.c_type() == CType::UInt64)
@@ -4895,8 +4896,10 @@ impl AnnotationLowerer<'_> {
                 // cast to the parameter's type.
                 let is_uint64 = |expression: &SpecExpression| {
                     matches!(expression, SpecExpression::Cast(_, CType::UInt64))
-                        || spec_expression_click_type(expression)
-                            == Some(ClickType::C(syntax::C0Type::UInt64))
+                        || matches!(
+                            spec_expression_click_type(expression),
+                            Some(ClickType::C(syntax::C0Type::UInt64(_)))
+                        )
                 };
                 let as_uint64 = |expression: SpecExpression| match &expression {
                     SpecExpression::Value(CValue::Int32(Bitvector32Term::Constant(value)))

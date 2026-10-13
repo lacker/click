@@ -1,5 +1,38 @@
 use super::*;
 
+#[test]
+fn auto_have_budget_failure_keeps_the_exhaustion_reason() {
+    let source = r#"
+        verifying "bound.c";
+        uint64 bound(uint64 a, uint64 b) { ensures result == a; } by {
+            have a <= b - b % 4u64 by auto;
+            execute(); simp();
+        }
+    "#;
+    let error = crate::instrumentation::with_tactic_work_limits(
+        crate::instrumentation::TacticWorkLimits {
+            simple: 1_000_000,
+            smart: 1,
+            control: 1_000_000,
+        },
+        || {
+            verify_c0_sources(
+                source,
+                &[(
+                    "bound.c",
+                    "unsigned long bound(unsigned long a, unsigned long b) { return a; }",
+                )],
+            )
+        },
+    )
+    .expect_err("auto must report its exhausted budget");
+    assert!(error.message().contains("budget exhausted"), "{error:?}");
+    assert!(
+        !error.message().contains("`auto` could not prove"),
+        "{error:?}"
+    );
+}
+
 /// The uint64 bridge creates nested `have` proofs. A missing listed premise
 /// must return the arithmetic goal's diagnostic, not panic while wrapping
 /// the nested bridge's already-rendered diagnostic inside a new summary.
@@ -2746,4 +2779,293 @@ fn loop_have_budget_refusal_retains_checked_store_trace() {
         assert!(trace.contains("steps through: *cell = value"), "{trace}");
         assert!(!trace.contains("adds: cell[0] == value + 1"), "{trace}");
     });
+}
+
+#[test]
+fn ordinary_concise_diagnostics_bound_late_requirement_context() {
+    let error = ClickError::new("required fact unavailable")
+        .with_missing_tactic_requirement("資源".repeat(DEFAULT_DIAGNOSTIC_BYTE_LIMIT));
+    let (summary, context) = error.concise_report_parts();
+    assert!(
+        summary.len() + context.iter().map(String::len).sum::<usize>()
+            > DEFAULT_DIAGNOSTIC_BYTE_LIMIT
+    );
+    let report = error.concise_report();
+    assert!(report.len() <= DEFAULT_DIAGNOSTIC_BYTE_LIMIT);
+    assert!(report.starts_with("proof error:"));
+    assert!(report.contains("requirement"));
+    assert!(report.contains("diagnostic truncated"));
+}
+
+#[test]
+fn ordinary_legacy_diagnostics_bound_late_context_but_traces_remain_full() {
+    let error = ClickError::with_diagnostic(
+        "required fact unavailable",
+        proof_diagnostics::ProofFailureDiagnostic {
+            origin: proof_diagnostics::ProofDiagnosticOrigin {
+                stage: "simple checking".into(),
+                location: "資源".repeat(DEFAULT_DIAGNOSTIC_BYTE_LIMIT),
+                source_tactic_path: None,
+            },
+            claim_label: "late_context.ensures_0".into(),
+            reason: "required fact unavailable".into(),
+            state: None,
+        },
+    );
+    assert!(error.message().len() <= DEFAULT_DIAGNOSTIC_BYTE_LIMIT);
+    assert!(error.message().contains("diagnostic truncated"));
+    assert!(error.report().len() <= DEFAULT_DIAGNOSTIC_BYTE_LIMIT);
+    assert!(error.report().starts_with("required fact unavailable"));
+    assert!(error.report().contains("diagnostic truncated"));
+    with_proof_trace("late_context", || {
+        assert!(error.report().len() > DEFAULT_DIAGNOSTIC_BYTE_LIMIT);
+    });
+}
+
+const CLOSURE_TRACE_C: &str = r#"unsigned long drain(unsigned long len) {
+    while (len >= 16) { len -= 16; }
+    return len;
+}
+"#;
+
+const CLOSURE_TRACE_CLICK: &str = r#"target "x86_64-linux-userspace";
+verifying "loop.c";
+uint64 drain(uint64 len) {
+ requires len == 16u64;
+ ensures result == 0u64;
+} by {
+ loop {
+  decreases to_integer(len);
+  invariant len == 0u64 or len == 16u64;
+  initialize by { simp(); }
+  preserve by {
+   have len == 16u64 by {
+    cases {
+     len == 0u64 => {
+      have not (len >= 16u64) by { rewrite(len == 0u64); normalize(); }
+      contradiction(len >= 16u64);
+     }
+     len == 16u64 => { assumption(); }
+    }
+   }
+   step();
+   have len == 0u64 by simp();
+   have to_integer(len) == 0 by simp() using { len == 0u64; };
+   close_invariants by assumption();
+  }
+ }
+ execute(); simp();
+}
+"#;
+
+#[test]
+fn failed_invariant_closure_retains_body_trace_and_focused_fact() {
+    with_proof_trace("drain", || {
+        let error = verify_c0_sources(CLOSURE_TRACE_CLICK, &[("loop.c", CLOSURE_TRACE_C)])
+            .expect_err("the incomplete ranking proof must remain refused");
+        assert!(error.message().contains("assumption"));
+        let trace = error.trace_context_report().unwrap();
+        assert!(trace.contains("steps through:"), "{trace}");
+        assert!(trace.contains("have len == 0u64"), "{trace}");
+        assert!(trace.contains("have to_integer(len) == 0"), "{trace}");
+        assert!(!trace.contains("no checked simple steps"), "{trace}");
+        let index = ProofSourceIndex::new(CLOSURE_TRACE_CLICK).unwrap();
+        let project = ClickProject::new(
+            "entry.click",
+            [ClickModuleSource::new(
+                "entry.click",
+                CLOSURE_TRACE_CLICK,
+                [],
+            )],
+        );
+        let positions = index
+            .project_tactic_positions(
+                &project,
+                &ProgramInputs::Bundle(vec![("loop.c", CLOSURE_TRACE_C)]),
+                error.proof_claim_label().unwrap(),
+            )
+            .unwrap();
+        let locate = |path: &[usize]| {
+            let outer = positions.get(*path.first()?)?;
+            let position = if path.len() == 1 {
+                outer.clone()
+            } else {
+                index.nested_position(outer, &path[1..]).ok()?
+            };
+            Some((
+                format!("tactic@{}:{}", position.line, position.column),
+                position,
+            ))
+        };
+        let line = CLOSURE_TRACE_CLICK
+            .lines()
+            .position(|line| line.contains("have to_integer(len) == 0"))
+            .unwrap()
+            + 1;
+        let target = SourcePosition::new(line, 4);
+        let focused = error
+            .trace_context_report_with_tactic_locations(
+                &locate,
+                &|path, target| {
+                    index
+                        .arm_containing(&locate(path)?.1, target)
+                        .ok()
+                        .flatten()
+                },
+                &|path, target| {
+                    locate(path).is_some_and(|(_, at)| {
+                        index.have_body_contains(&at, target).unwrap_or(false)
+                    })
+                },
+                Some(&target),
+            )
+            .unwrap();
+        assert!(focused.contains("have to_integer(len) == 0"), "{focused}");
+        assert!(!focused.contains("no recorded checked step"), "{focused}");
+    });
+}
+
+#[test]
+fn failed_invariant_closure_trace_prefix_is_lazy_and_scales() {
+    for size in [16, 32, 64] {
+        let repeated = "   have len == len by normalize();\n".repeat(size);
+        let source = CLOSURE_TRACE_CLICK.replace(
+            "   close_invariants by assumption();",
+            &format!("{repeated}   close_invariants by assumption();"),
+        );
+        with_proof_trace("drain", || {
+            let error = verify_c0_sources(&source, &[("loop.c", CLOSURE_TRACE_C)])
+                .expect_err("a trace cannot make the ranking proof valid");
+            let before = crate::surface::proof_trace::lineage_visits();
+            assert!(
+                before <= 4 * size + 100,
+                "{size} tactics eagerly walked {before} nodes"
+            );
+            let trace = error.trace_context_report().unwrap();
+            let visits = crate::surface::proof_trace::lineage_visits() - before;
+            assert!(
+                visits <= 8 * size + 200,
+                "{size} tactics walked {visits} nodes"
+            );
+            assert_eq!(trace.matches("have len == len").count(), size, "{trace}");
+            assert!(trace.contains("have len == 0u64"), "{trace}");
+        });
+    }
+}
+
+#[test]
+fn failed_invariant_closure_trace_keeps_its_branch_guard() {
+    let c = "unsigned long branch_drain(unsigned long len, int flag) { while (len >= 16) { if (flag == 0) { len -= 16; } else { len -= 8; } } return len; }";
+    let source = r#"target "x86_64-linux-userspace";
+        verifying "loop.c";
+        uint64 branch_drain(uint64 len, int32 flag) {
+            requires len == 16u64;
+            ensures result <= 16u64;
+        } by {
+            loop {
+                invariant len == 16u64;
+                initialize by assumption();
+                preserve by {
+                    branch then {
+                        step();
+                        have len == 0u64 by simp();
+                        close_invariants by assumption();
+                    } else {
+                        step();
+                        close_invariants by assumption();
+                    }
+                }
+            }
+            execute(); simp();
+        }
+    "#;
+    with_proof_trace("branch_drain", || {
+        let error = verify_c0_sources(source, &[("loop.c", c)])
+            .expect_err("the deliberately invalid invariant must fail in the then arm");
+        let trace = error.trace_context_report().unwrap();
+        assert!(trace.contains("then arm"), "{trace}");
+        assert!(trace.contains("flag"), "{trace}");
+        assert!(trace.contains("have len == 0u64"), "{trace}");
+        assert!(!trace.contains("else arm"), "{trace}");
+    });
+}
+
+/// A positive kernel view query must not be reported as a missing extent.
+/// Exercise the presentation boundary and retain its exact stage and counts
+/// in both ordinary CLI reports and traces, including a nested written simp.
+#[test]
+fn native_view_simp_reports_the_actual_premise_spelling_limit() {
+    let source = |extra_bounds: usize, body: &str| {
+        let mut source = String::from(
+            "target \"x86_64-linux-userspace\"; theorem broad_view(p: uint8[], n: uint64) { views p[0u64..n]; requires 1u64 <= n;",
+        );
+        for bound in 2..2 + extra_bounds {
+            source.push_str(&format!(" requires n <= {bound}u64;"));
+        }
+        source.push_str(&format!(
+            " ensures viewable(p[0u64..1u64]) by {{ {body} }} }}"
+        ));
+        source
+    };
+    for extra_bounds in [29, 30] {
+        verify_c0_sources(&source(extra_bounds, "simp();"), &[])
+            .expect("a derivation within the 64-premise spelling budget should check");
+    }
+    for body in [
+        "simp();",
+        "have viewable(p[0u64..1u64]) by { simp(); } assumption();",
+    ] {
+        let source = source(31, body);
+        let check = |error: &ClickError| {
+            for report in [error.message().to_owned(), error.concise_report()] {
+                assert!(
+                    report.contains("accepted by the kernel native view checker"),
+                    "{report}"
+                );
+                assert!(report.contains("simp view premise spelling"), "{report}");
+                assert!(
+                    report.contains("contains 66 premises; source spelling permits at most 64"),
+                    "{report}"
+                );
+                assert!(!report.contains("what is left"), "{report}");
+                assert!(!report.contains("valid 32-bit byte extent"), "{report}");
+                assert!(report.len() <= 16 * 1024, "ordinary report is bounded");
+            }
+        };
+        let error =
+            verify_c0_sources(&source, &[]).expect_err("the existing budget must remain in force");
+        check(&error);
+        with_proof_trace("broad_view", || {
+            let error = verify_c0_sources(&source, &[]).unwrap_err();
+            check(&error);
+            let trace = error.trace_context_report().expect("requested proof trace");
+            assert!(
+                trace.contains("contains 66 premises; source spelling permits at most 64"),
+                "{trace}"
+            );
+            assert!(trace.contains("bytes:uint64=1u64"), "{trace}");
+        });
+    }
+    verify_c0_sources(
+        &source(31, "simp() using { 1u64 <= n; viewable(p[0u64..n]); };"),
+        &[],
+    )
+    .expect("the same view checks with its two relevant explicit premises");
+}
+
+#[test]
+fn native_view_simp_distinguishes_a_rejected_kernel_query() {
+    let source = "target \"x86_64-linux-userspace\"; theorem false_view(p: uint8[], n: uint64) { views p[0u64..n]; requires n == 0u64; ensures viewable(p[0u64..1u64]) by { simp(); } }";
+    let error = verify_c0_sources(source, &[]).expect_err("an empty view cannot cover one byte");
+    let report = error.concise_report();
+    assert!(
+        report.contains("kernel native view checker did not establish"),
+        "{report}"
+    );
+    assert!(
+        report.contains("simp view derivation selection"),
+        "{report}"
+    );
+    assert!(!report.contains("accepted by the kernel"), "{report}");
+    assert!(!report.contains("valid 32-bit byte extent"), "{report}");
 }

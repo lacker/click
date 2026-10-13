@@ -21,6 +21,28 @@ Surface Click is closed under expansion: every expression printed by
 `click-expand`, the profiler, or a diagnostic is ordinary documented `.click`
 syntax accepted by the same parser. Generated text is not a private dialect.
 
+## Core forms
+
+The forms most sidecars use, with the section that defines each. The rest of
+this page covers each form's full rules and edge cases.
+
+| Form | Meaning | Section |
+| --- | --- | --- |
+| `verifying "file.c";` | Names the C source the sidecar's contracts describe | [File shape](#file-shape) |
+| `int32 f(int32 x) { requires P; ensures Q; }` | A C function's contract; omitted proofs use `auto` | [File shape](#file-shape), [Requirements](#requirements) |
+| `} by { step(); simp(); }` | An explicit proof script for the contract | [Tactics](../tactics/index.md) |
+| `views p[0..n];`, `owns p[0..n];` | Read and write resources a call needs and keeps | [Read and write resources](#read-and-write-resources) |
+| `decreases e;` | Termination measure of a recursive function or a loop | [C termination](#c-termination) |
+| `old(e)`, `at(statement(N).entry, e)` | A value in the entry state or another recorded state | [`old(...)`](#old), [`at(...)`](#at) |
+| `P and Q`, `P or Q`, `P implies Q`, `not P` | Proposition connectives (C's `&&` and `\|\|` are not Click syntax) | [Propositions](#propositions) |
+| `forall (k: int32) { P }`, `(lo..hi).all(\|k\| { P })` | Quantified propositions; the range form guards memory reads | [Propositions](#propositions) |
+| `Integer`, `to_integer(x)` | Unbounded mathematical integers | [Mathematical integers](#mathematical-integers) |
+| `function f(x: int32) -> int32 { ... }` | A pure Click function | [Pure Click functions](#pure-click-functions) |
+| `predicate p(...) { ... }` | A named proposition, possibly over resources | [Predicates](#predicates) |
+| `theorem t() { requires P; ensures Q; }` | A pure theorem | [Pure theorems](#pure-theorems) |
+| `extern int32 g(int32 x) { ... }` | A contract for a C function outside the verified sources | [External function contracts](c.md#external-function-contracts) |
+| `tactic name(...) { ... }` | A user-defined tactic | [User-defined tactics](#user-defined-tactics) |
+
 ## File shape
 
 <!-- verified-example: mdtests/argument_result.md -->
@@ -41,15 +63,20 @@ binders introduced by Click itself use `name: type`: theorem and resource
 parameters, pure-function and predicate parameters, typed `let` bindings, and
 `forall`/`exists` variables.
 
-Click signatures currently understand `void` C return types, `int32`/`int`/
-`int32_t`, `int8`/`signed char`/`int8_t`, `uint8`/`unsigned char`/`uint8_t`, and scalar `uint32`/
-`unsigned int`/`uint32_t` forms, plus the existing pointer forms, pilot
-`struct name*` parameters, and array-parameter spellings such as `int32 p[]`
-and `uint8 bytes[]`. C typedefs may alias these modeled types. `uint32` is
-currently scalar-only: pointers, arrays, and struct fields of that type remain
-unsupported. `void` is not an object or parameter type. A `void` contract has
+### Signature types
+
+A signature uses the C types Click models, by their C spellings (`int`,
+`unsigned char`, `size_t`, `int32_t`, ...) or Click's own names (`int8`,
+`uint16`, `int32`, `uint64`, ...), with pointers, `struct name*` parameters,
+and array-parameter spellings such as `int32 p[]` and `uint8 bytes[]`; the
+complete list is [Supported C](c.md). C typedefs may alias these modeled
+types. `void` is not an object or parameter type. A `void` contract has
 no `result` binding; it may still state resource transfer and return-state
 propositions that do not mention a result.
+Unsigned `uint32` literals retain their nonnegative decimal value and `u32`
+suffix in failed claim labels, including values at and above `2147483648u32`;
+see [`failed_uint32_claim_preserves_the_high_bit.md`](https://github.com/clicklang/click/blob/master/mdtests/failed_uint32_claim_preserves_the_high_bit.md).
+
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
@@ -58,12 +85,21 @@ operators, assignments, and returns. `uint32` addition, subtraction, and
 multiplication wrap at 2^32; division and remainder use unsigned arithmetic,
 bitwise operators use the raw 32-bit pattern, and right shifts are logical.
 Equality compares the bit pattern and ordered comparisons use unsigned order.
+Closed unsigned left shifts also evaluate after rewriting their shift count
+through casts, unsigned subtraction, and a bitwise mask. Raw 32-bit shift
+terms fold their bit pattern; signed C overflow and counts outside `0..31`
+remain separate checked obligations. Residual theorem goals retain machine
+parameter types in diagnostics. See
+[`uint32_shift_by_a_folded_mask.md`](https://github.com/clicklang/click/blob/master/mdtests/uint32_shift_by_a_folded_mask.md)
+and its negative and unsigned residual companions.
 Assigning
 or returning an `int32` into `uint8` is checked narrowing: the current pure
 facts must prove `0 <= value <= 255`.
 
+### Postconditions
+
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
-`label:`. Omitting a proof clause uses the default prover, currently `auto`.
+`label:`. Omitting a proof clause uses the default prover, `auto`.
 
 An `ensures` clause describes every return state, and a C contract also
 asserts that a return state exists: every verified C function returns unless
@@ -71,6 +107,8 @@ its signature says `diverges`. See [C termination](#c-termination). Checked
 undefined behavior, resource authority, and declared write footprints remain
 safety properties of every finite execution prefix, including prefixes of an
 execution that never returns, which is what a `diverges` contract keeps.
+
+### Exceptional results
 
 A function may declare one checked exceptional result channel by placing
 `throws int32` after its parameter list. Its `exceptional ensures` clauses are
@@ -89,10 +127,9 @@ Ordinary `ensures` is owed only by normal returns and may use `result`;
 payload name is available in the opposite family. Omitting `throws int32`
 declares a nonthrowing interface.
 
-This first exceptional-contract slice is deliberately pure and direct. The
-exceptional family cannot carry resources or mutable effects, and named
-contracts, external contracts, callbacks, indirect calls, handlers, and
-unwinding do not yet support it. A separate, object-free C++ scalar-exception
+Exceptional contracts are pure and direct: the exceptional family cannot
+carry resources or mutable effects, and named contracts, external contracts,
+callbacks, indirect calls, handlers, and unwinding do not support it. A separate, object-free C++ scalar-exception
 import profile accepts typed `throw int32`, one typed `try`/`catch (int name)`
 with a fresh payload binding, and the narrow single-guard cleanup shape
 documented by the import reference. It still rejects nested handlers and other
@@ -122,6 +159,8 @@ int32 caller(int32 x) throws int32 {
 The scalar C++ profile can turn a caught `int32` exception into a normal
 return without a `throws` declaration on the catching function. This does not
 model general object unwinding or exceptional resource transfer.
+
+### Recursion
 
 C functions may call themselves or participate in mutual recursion without a
 special Click keyword. Their ordinary contracts are the modular interfaces for
@@ -249,7 +288,7 @@ A loop whose verified rule was certified without the anchor is refused by
 name rather than summarized past: the summary would answer for a call that
 owed nothing.
 
-An expression measure currently ranks **direct self-recursion only**. The
+An expression measure ranks **direct self-recursion only**. The
 descent is owed at a call to the function that declared the measure, so a
 recursive component with more than one function would leave its other edges
 ranked by nothing; Click refuses such a declaration by name
@@ -292,8 +331,7 @@ consume or mutate resources; postorder recursive deallocation is supported.
 This proves descent of the finite resource witness, not descent of a pointer
 value.
 
-The numeric proof shape is deliberately small but a loop measure is one
-component, or a nonempty lexicographic tuple of components, and each component
+A loop measure is one component, or a nonempty lexicographic tuple of components, and each component
 is any pure `int32`, unsigned, or mathematical `Integer` expression: a C
 fragment, a
 memory read, an application of
@@ -471,7 +509,7 @@ Mutually recursive functions all declare their corresponding numeric
 parameter. Every variable mentioned by a numeric measure must also remain
 unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
-ranked update, so the plan is rejected. Structural measures do not yet support
+ranked update, so the plan is rejected. Structural measures do not support
 mutual C recursion.
 
 A loop may name one of its own resource binders instead of int32 components:
@@ -535,6 +573,8 @@ responsible, and offers the two repairs: a `decreases` clause, or the
 `diverges` marker. The kernel records termination evidence separately from
 `CVerifiedFunctionRule`, so an ordinary `ensures` is still exactly a statement
 about return states.
+
+### Functions that may not return
 
 A perpetual service loop is the exception, and it says so in the contract.
 The `diverges` marker sits after the parameter list, beside `throws` and after
@@ -601,6 +641,8 @@ allocation failure, or local-storage limits. A verified function can still
 run out of those host resources; the worker's stack size and verifier budgets
 are not program guarantees. The perpetual-loop regressions in the [examples
 reference](../examples.md) pin what a `diverges` contract still promises.
+
+### Grouped proofs
 
 A function with several postcondition clauses may instead use one grouped
 execution proof after the contract block:
@@ -1085,9 +1127,9 @@ the continuation after an inner `if` must check in every reachable case.
 See the [nested status cases](https://github.com/clicklang/click/blob/master/mdtests/c_contract_executes_status_nested.md),
 including an impossible arm and a shared continuation containing another case.
 
-This slice supports one nongeneric callback theorem parameter, one
+A callback theorem has one nongeneric callback parameter, one
 target-contract conclusion, and one or more source-contract premises for that
-same pointer. Additional theorem parameters remain outside this slice.
+same pointer; additional theorem parameters are refused.
 Const-qualified pointer returns and parameters use the same C spelling in
 callbacks, named contracts, and execution proofs.
 
@@ -1173,7 +1215,7 @@ and the call is the ordinary C call of
 [Read and write resources](#read-and-write-resources). The written parameter
 list restates the C signature as well as the target contract's interface, and
 the callee must be verified or explicitly external in the project. Extra
-theorem parameters stay outside this slice, and every feasible proof case must
+theorem parameters are refused, and every feasible proof case must
 execute exactly one call, as in the abstract form.
 `apply(increment_is_exact())` then introduces `Exact(&increment)` at a call site
 exactly like a concrete `unfold(Name)` refinement theorem. This is the explicit
@@ -1263,9 +1305,9 @@ proposition, such as a composite resource `fact`.
 `defined(expression)` is a pure proposition stating that evaluating the C
 expression reaches a value rather than undefined behavior. Click elaborates it
 with the kernel's C expression semantics, so signed overflow, division, shifts,
-and memory-load obligations share the same rules as execution. It currently
-accepts C expression fragments; `old`, `at`, folds, lets, and Click function
-calls inside `defined(...)` are not yet supported.
+and memory-load obligations share the same rules as execution. It accepts C
+expression fragments; `old`, `at`, folds, lets, and Click function calls
+inside `defined(...)` are refused.
 
 For two object pointers, `defined(right - left)` includes both the
 `same_object(right, left)` provenance condition and the requirement that their
@@ -1350,7 +1392,7 @@ A callee's constant range at a pointer into such a range, the `chunk[0..4]`
 of `first_of_four(bytes + index)`, is covered by it when `index <= length`
 and `4 <= length - index`
 (`mdtests/a_callee_takes_a_window_of_a_64_bit_range.md`). This holds for
-`views`; an owned window is not yet split out of an owned 64-bit range.
+`views`; an owned window is not split out of an owned 64-bit range.
 A window two `size_t` offsets deep, `first_of_four(chunk + index)` with
 `chunk` at `bytes + start`, is at index `start + index` when each offset is
 at most `9223372036854775807`; a call that leaves fewer than four elements
@@ -1524,7 +1566,7 @@ types: supported unqualified C scalar/pointer types or algebraic types,
 including instantiated generic types. Field names must be distinct from one
 another, resource parameters, and body witnesses. Fields precede any guard
 and cannot be declared inside it. Qualified C types, struct types/pointers,
-arrays, and function-pointer field types are not supported in this slice.
+arrays, and function-pointer field types are not supported.
 
 Resources with fields are intended for exclusive instance-based ownership:
 each member is a separately named instance, so quantities such as
@@ -2489,8 +2531,8 @@ elaborator assumes the item is inside the range, so bodies such as `p[k] == x`
 can use `viewable(p[lo..hi])` for memory safety.
 
 Prefer these range combinators for guarded memory reads. A plain proposition
-such as `exists (k: int32) { lo <= k and k < hi and p[k] == x }` does not
-currently let the earlier conjunct guard the later memory read during lowering.
+such as `exists (k: int32) { lo <= k and k < hi and p[k] == x }` does not let
+the earlier conjunct guard the later memory read during lowering.
 
 Existential goals are proved explicitly in proof scripts with `witness`.
 The witness name must match the existential binder. Pure theorem scripts also
@@ -2769,16 +2811,15 @@ snapshot. Inside `at(...)`, reassigned parameters and declared scalar, pointer,
 and array locals resolve to their values in that snapshot. Outside `at(...)`,
 function parameter names retain their ordinary contract meaning.
 
-`at(loop_label.entry, expression)` is currently supported inside invariants for
-that same labeled loop code region. It evaluates `expression` at the visit just
+`at(loop_label.entry, expression)` is supported inside invariants for that
+same labeled loop code region. It evaluates `expression` at the visit just
 before the loop region starts, then reuses that snapshot for invariant entry and
 preservation checks. Inside an explicit `preserve` proof, the same spelling
 continues to denote that pre-loop snapshot; the current arbitrary loop-head
 visit is available through the ordinary unwrapped expression.
 
 The expression and proposition forms of `at(statement(N).entry, ...)` and
-`at(statement(N).exit, ...)` are currently supported in explicit proof-script
-claims after deterministic execution records that statement snapshot.
+`at(statement(N).exit, ...)` are supported in explicit proof-script claims after deterministic execution records that statement snapshot.
 `step()`, `execute_until(...)`, and `execute()` all record every
 deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`
@@ -2872,7 +2913,7 @@ induct(xs) as ih {
 
 Constructor arities and exhaustiveness are checked, arm bindings are lexical,
 and multiple recursive fields each receive an induction-hypothesis instance.
-Mutual induction across different datatype families is not yet generated.
+Mutual induction across different datatype families is not generated.
 `simp` does not invent induction, and a pure function's `decreases` clause
 remains definition-totality evidence rather than a theorem about the result.
 
@@ -2930,9 +2971,9 @@ Click function or predicate parameter declared as `uint8[]` is rejected.
 The same typed array-ref model is used by loop-invariant spec lowering, so a
 pure helper over `uint8[]` can appear in an invariant or inside `old(...)`.
 
-The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
+The prelude provides byte-slice helpers over `uint8[]`: `byte_count`,
 `bytes_equal`, `bytes_equal_range`, `bytes_all_equal`, `bytes_contains`, and
-`bytes_all_not_equal`. It also provides first-pass C-string predicates:
+`bytes_all_not_equal`. It also provides C-string predicates:
 `cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`, whose lengths and bounds
 are `size_t` (`uint64`) values as C measures them. These are ordinary Click
 functions and predicates, not built-in kernel concepts.

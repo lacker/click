@@ -1033,16 +1033,98 @@ fn character_loads_read_a_one_byte_cell_of_the_other_signedness_as_its_bits() {
     };
     assert_eq!(round_trip, variable);
     // No other cell gains a character view: wider integers go through the
-    // byte view, and bool, pointer, and float cells stay refused.
+    // byte view, and bool, pointer, and float cells stay refused. A wider
+    // load reads only a cell of its own width.
     for (load, stored) in [
         (CType::UInt8, CValue::Int16(Bitvector32Term::Constant(1))),
         (CType::Int8, CValue::Bool(Bitvector32Term::Constant(1))),
         (CType::UInt8, CValue::Float32(Bitvector32Term::Constant(0))),
-        (CType::Int16, CValue::UInt16(Bitvector32Term::Constant(1))),
+        (CType::Int16, CValue::UInt8(Bitvector32Term::Constant(1))),
+        (CType::Int32, CValue::Int16(Bitvector32Term::Constant(1))),
+        (CType::UInt64, CValue::UInt32(Bitvector32Term::Constant(1))),
         (CType::UInt16, CValue::Int8(Bitvector32Term::Constant(1))),
     ] {
         assert_eq!(load.read_cell(&stored), None, "{load:?} of {stored:?}");
     }
+}
+
+/// C11 6.5p7 and GCC's `-Wpointer-sign`: a 16-, 32-, or 64-bit load of a
+/// cell of the same width and the other signedness reads the same bits.
+/// Constants fold in both directions; a symbolic 16-bit cell keeps an
+/// explicit modular conversion, a 32-bit word is the same term under the
+/// other tag, and a 64-bit word uses the bit-preserving carrier conversion.
+#[test]
+fn integer_loads_read_a_cell_of_the_other_signedness_as_its_bits() {
+    let int16 = |value: i16| CValue::Int16(Bitvector32Term::Constant(value as i32 as u32));
+    let uint16 = |value: u16| CValue::UInt16(Bitvector32Term::Constant(u32::from(value)));
+    for half in [0u16, 1, 0x7FFF, 0x8000, 0xFFC8, 0xFFFF] {
+        assert_eq!(
+            CType::UInt16.read_cell(&int16(half as i16)),
+            Some(uint16(half))
+        );
+        assert_eq!(
+            CType::Int16.read_cell(&uint16(half)),
+            Some(int16(half as i16))
+        );
+        assert_eq!(
+            LoadKind::UInt16.read_cell(&int16(half as i16)),
+            Some(uint16(half))
+        );
+        assert_eq!(
+            LoadKind::Int16.read_cell(&uint16(half)),
+            Some(int16(half as i16))
+        );
+    }
+    for word in [0u32, 1, 0x7FFF_FFFF, 0x8000_0000, 0xFFFF_FFFF] {
+        let bits = Bitvector32Term::Constant(word);
+        assert_eq!(
+            CType::UInt32.read_cell(&CValue::Int32(bits.clone())),
+            Some(CValue::UInt32(bits.clone()))
+        );
+        assert_eq!(
+            CType::Int32.read_cell(&CValue::UInt32(bits.clone())),
+            Some(CValue::Int32(bits))
+        );
+    }
+    for word in [
+        0u64,
+        1,
+        0x7FFF_FFFF_FFFF_FFFF,
+        0x8000_0000_0000_0000,
+        u64::MAX,
+    ] {
+        assert_eq!(
+            CType::UInt64.read_cell(&CValue::Int64(Bitvector32Term::Int64Constant(word as i64))),
+            Some(CValue::UInt64(Bitvector32Term::UInt64Constant(word)))
+        );
+        assert_eq!(
+            CType::Int64.read_cell(&CValue::UInt64(Bitvector32Term::UInt64Constant(word))),
+            Some(CValue::Int64(Bitvector32Term::Int64Constant(word as i64)))
+        );
+    }
+    let variable = Bitvector32Term::Variable(Variable(613_002));
+    assert_eq!(
+        CType::UInt16.read_cell(&CValue::Int16(variable.clone())),
+        Some(CValue::UInt16(Bitvector32Term::machine_integer_cast(
+            MachineIntegerType::Int16,
+            MachineIntegerType::UInt16,
+            variable.clone(),
+        )))
+    );
+    let Some(CValue::Int16(round_trip)) = CType::UInt16
+        .read_cell(&CValue::Int16(variable.clone()))
+        .and_then(|value| CType::Int16.read_cell(&value))
+    else {
+        panic!("a halfword round trip reads a signed halfword");
+    };
+    assert_eq!(round_trip, variable);
+    let Some(CValue::Int64(round_trip)) = CType::UInt64
+        .read_cell(&CValue::Int64(variable.clone()))
+        .and_then(|value| CType::Int64.read_cell(&value))
+    else {
+        panic!("a 64-bit round trip reads a signed word");
+    };
+    assert_eq!(round_trip, variable);
 }
 
 /// The execution load path applies the rule: a cell stored as `signed char`

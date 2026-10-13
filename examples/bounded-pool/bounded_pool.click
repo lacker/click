@@ -196,10 +196,7 @@ void pool_return(struct pool* pool, struct object* object) {
         apply(int32_add_to_integer(pool->checked_out, count(pool_slot(pool)))) using {
             defined(pool->checked_out + count(pool_slot(pool)));
         }
-        have to_integer(pool->capacity) == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool))) by {
-            rewrite(pool->capacity == pool->checked_out + count(pool_slot(pool)));
-            assumption();
-        }
+        have to_integer(pool->capacity) == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool))) by auto;
         have 0 <= to_integer(count(pool_slot(pool))) by {
             apply(int32_less_equal_to_integer(0, count(pool_slot(pool)))) using { 0 <= count(pool_slot(pool)); }
             simp();
@@ -208,13 +205,6 @@ void pool_return(struct pool* pool, struct object* object) {
         unfold(pool_object(pool, object));
         step();
         fold(pool_slot(pool));
-        have pool->capacity == pool->checked_out + count(pool_slot(pool)) by {
-            rewrite(pool->capacity == old(pool->capacity));
-            rewrite(pool->checked_out == old(pool->checked_out) - 1);
-            rewrite(count(pool_slot(pool)) == old(count(pool_slot(pool))) + 1);
-            rewrite(old(pool->capacity) == (old(count(pool_slot(pool))) + 1) + (old(pool->checked_out) - 1));
-            normalize();
-        }
     }
     execute(); unfold(valid_pool); simp();
 }
@@ -369,10 +359,7 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
             apply(int32_add_to_integer(source->checked_out, count(pool_slot(source)))) using {
                 defined(source->checked_out + count(pool_slot(source)));
             }
-            have to_integer(source->capacity) == to_integer(source->checked_out) + to_integer(count(pool_slot(source))) by {
-                rewrite(source->capacity == source->checked_out + count(pool_slot(source)));
-                assumption();
-            }
+            have to_integer(source->capacity) == to_integer(source->checked_out) + to_integer(count(pool_slot(source))) by auto;
             have 0 <= to_integer(count(pool_slot(source))) by {
                 apply(int32_less_equal_to_integer(0, count(pool_slot(source)))) using { 0 <= count(pool_slot(source)); }
                 simp();
@@ -404,13 +391,6 @@ void pool_transfer(struct pool* source, struct pool* destination, struct object*
             step();
             fold(pool_object(destination, object));
             fold(pool_slot(source));
-            have source->capacity == source->checked_out + count(pool_slot(source)) by {
-                rewrite(source->capacity == old(source->capacity));
-                rewrite(source->checked_out == old(source->checked_out) - 1);
-                rewrite(count(pool_slot(source)) == old(count(pool_slot(source))) + 1);
-                rewrite(old(source->capacity) == (old(count(pool_slot(source))) + 1) + (old(source->checked_out) - 1));
-                normalize();
-            }
         }
     }
     execute(); unfold(valid_pool); simp();

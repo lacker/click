@@ -29,5 +29,5 @@ int32 run() { ensures result == 0; } by { execute(); simp(); }
 ```
 
 ```expect
-fail: Requires separate(…[0..48], …[0..40])
+fail: Requires separate(*holder, alias->mu)
 ```

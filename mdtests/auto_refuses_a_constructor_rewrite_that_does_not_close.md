@@ -44,5 +44,5 @@ void touch(int32 n) {
 ```
 
 ```expect
-fail: did not close its checked nested goal
+fail: `auto` could not prove `black(Walk::At(wd, rest)) == 0`
 ```

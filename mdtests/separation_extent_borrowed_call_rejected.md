@@ -22,5 +22,5 @@ int32 caller(int32 n) {
 ```
 
 ```expect
-fail: missing prerequisite (read precondition)
+fail: missing prerequisite (precondition clause 2 of `read`)
 ```

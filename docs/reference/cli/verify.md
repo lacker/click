@@ -200,8 +200,12 @@ work units (the units `click profile` reports), decide:
   certification, and lowering work outside any tactic, and names what was
   running when exhausted.
 
-`--time-limit` is only crash containment. It stops a genuinely hung or
-CPU-starved run, and a run it stops says it was stopped by the
+`--time-limit` is only crash containment. It stops a genuinely hung,
+nonpolling, or CPU-starved run through a CLI process watchdog as well as the
+cooperative deadline. A watchdog stop exits with a containment message and no
+proof verdict. Successful operations cancel their watchdog. Library
+verification keeps cooperative limits and does not terminate its host process.
+A run stopped by containment says it was stopped by the
 crash-containment bound and that this is not a verdict about the proof. No
 tactic has a wall-clock limit. Verifier work that is slow but charges few
 units is a Click defect, not a slow proof: `click profile` shows it as a

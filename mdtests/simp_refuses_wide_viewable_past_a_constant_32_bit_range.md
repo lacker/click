@@ -1,8 +1,9 @@
 # A `size_t`-bounded viewable range past a constant 32-bit one is refused
 
 With `n == 4u64`, `viewable(bytes[0..n])` reaches one byte past the stated
-`viewable(bytes[0..3])`. The refusal names the stated range and the
-comparison that would close the goal.
+`viewable(bytes[0..3])`. The refusal records that the native
+view checker did not establish the goal, instead of inferring which missing
+comparison caused a failed smart construction.
 
 ```c filename=simp_refuses_wide_viewable_past_a_constant_32_bit_range.c
 uint64 f(uint8 bytes[], uint64 n) {
@@ -31,5 +32,5 @@ uint64 f(uint8 bytes[], uint64 n) {
 ```
 
 ```expect
-fail: only when `n <= 3u64`, which is not an available fact
+fail: kernel native view checker did not establish
 ```

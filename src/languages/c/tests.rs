@@ -26,7 +26,11 @@ fn struct_pointer_arrays_keep_element_types_layout_and_incomplete_tags() {
     assert_eq!(layout.field("tail").unwrap().offset_bytes(), 56);
     assert!(matches!(
         layout.field("values").unwrap().c_type(),
-        syntax::C0Type::PointerArray(crate::kernel::CPointerArrayElement::Int32, 2)
+        syntax::C0Type::PointerArray(
+            crate::kernel::CPointerArrayElement::Int32,
+            syntax::LongRank::Long,
+            2
+        )
     ));
 }
 
@@ -149,7 +153,7 @@ fn modeled_userspace_pthread_declarations_parse_the_frozen_probe() {
     assert_eq!(create.parameters().len(), 4);
     assert_eq!(
         create.parameters()[0].c_type(),
-        syntax::C0Type::UInt64Pointer
+        syntax::C0Type::UInt64Pointer(syntax::LongRank::Long)
     );
     assert_eq!(
         create.parameters()[1].c_type(),
@@ -181,7 +185,10 @@ fn modeled_userspace_pthread_declarations_parse_the_frozen_probe() {
             .iter()
             .map(|p| p.c_type())
             .collect::<Vec<_>>(),
-        vec![syntax::C0Type::UInt64, syntax::C0Type::VoidPointerPointer]
+        vec![
+            syntax::C0Type::UInt64(syntax::LongRank::Long),
+            syntax::C0Type::VoidPointerPointer
+        ]
     );
     assert_eq!(unit.functions.len(), 2);
 }
@@ -5133,7 +5140,7 @@ fn c0_syntax_parses_object_pointer_casts_with_struct_tags() {
                 if matches!(
                     value,
                     syntax::C0Expression::Cast {
-                        c_type: syntax::C0Type::UInt64,
+                        c_type: syntax::C0Type::UInt64(_),
                         struct_name: None,
                         ..
                     }
@@ -8475,7 +8482,10 @@ fn c0_struct_layout_preserves_wide_scalar_field_types_and_lp64_offsets() {
     );
 
     let total = layout.field("total").expect("total field");
-    assert_eq!(total.c_type(), syntax::C0Type::Int64);
+    assert_eq!(
+        total.c_type(),
+        syntax::C0Type::Int64(syntax::LongRank::Long)
+    );
     assert_eq!(total.byte_width(), 8);
     assert_eq!(
         total.offset_bytes() as usize,
@@ -8483,7 +8493,10 @@ fn c0_struct_layout_preserves_wide_scalar_field_types_and_lp64_offsets() {
     );
 
     let mask = layout.field("mask").expect("mask field");
-    assert_eq!(mask.c_type(), syntax::C0Type::UInt64);
+    assert_eq!(
+        mask.c_type(),
+        syntax::C0Type::UInt64(syntax::LongRank::Long)
+    );
     assert_eq!(mask.byte_width(), 8);
     assert_eq!(
         mask.offset_bytes() as usize,
@@ -12875,7 +12888,10 @@ fn c0_conditional_call_temporary_keeps_its_common_type() {
     // The unselected branch contains the only ordinary call; the indirect
     // call in the selected branch drives the lowering either way.
     let temporary_type = declared_temporary_type(lowered.body());
-    assert_eq!(temporary_type, Some(syntax::C0Type::UInt64));
+    assert_eq!(
+        temporary_type,
+        Some(syntax::C0Type::UInt64(syntax::LongRank::Long))
+    );
 
     let error = syntax::parse_functions(
         r#"
@@ -12935,10 +12951,13 @@ fn c0_body_call_updates_a_local_array_without_rebinding_it_as_a_scalar() {
 fn standard_integer_widths_accept_trailing_int_without_changing_type() {
     use syntax::C0Type;
     for (spelling, expected) in [
-        ("long unsigned int", C0Type::UInt64),
-        ("long int unsigned", C0Type::UInt64),
-        ("int unsigned long", C0Type::UInt64),
-        ("long unsigned long int", C0Type::UInt64),
+        ("long unsigned int", C0Type::UInt64(syntax::LongRank::Long)),
+        ("long int unsigned", C0Type::UInt64(syntax::LongRank::Long)),
+        ("int unsigned long", C0Type::UInt64(syntax::LongRank::Long)),
+        (
+            "long unsigned long int",
+            C0Type::UInt64(syntax::LongRank::LongLong),
+        ),
         ("signed int short", C0Type::Int16),
         ("char signed", C0Type::Int8),
         ("signed", C0Type::Int32),
@@ -12947,12 +12966,18 @@ fn standard_integer_widths_accept_trailing_int_without_changing_type() {
         ("short int", C0Type::Int16),
         ("signed short int", C0Type::Int16),
         ("unsigned short int", C0Type::UInt16),
-        ("long int", C0Type::Int64),
-        ("signed long int", C0Type::Int64),
-        ("unsigned long int", C0Type::UInt64),
-        ("long long int", C0Type::Int64),
-        ("signed long long int", C0Type::Int64),
-        ("unsigned long long int", C0Type::UInt64),
+        ("long int", C0Type::Int64(syntax::LongRank::Long)),
+        ("signed long int", C0Type::Int64(syntax::LongRank::Long)),
+        ("unsigned long int", C0Type::UInt64(syntax::LongRank::Long)),
+        ("long long int", C0Type::Int64(syntax::LongRank::LongLong)),
+        (
+            "signed long long int",
+            C0Type::Int64(syntax::LongRank::LongLong),
+        ),
+        (
+            "unsigned long long int",
+            C0Type::UInt64(syntax::LongRank::LongLong),
+        ),
     ] {
         let source = format!("{spelling} identity({spelling} value) {{ return value; }}");
         let function = syntax::parse_function(&source).expect(&source);
@@ -13177,12 +13202,12 @@ fn struct_wide_array_layout_and_size_overflow() {
     assert_eq!(layout.field("signed_values").unwrap().offset_bytes(), 8);
     assert_eq!(
         layout.field("signed_values").unwrap().c_type(),
-        C0Type::Int64Array(2)
+        C0Type::Int64Array(syntax::LongRank::Long, 2)
     );
     assert_eq!(layout.field("words").unwrap().offset_bytes(), 24);
     assert_eq!(
         layout.field("words").unwrap().c_type(),
-        C0Type::UInt64Array(6)
+        C0Type::UInt64Array(syntax::LongRank::Long, 6)
     );
     assert_eq!(layout.field("tail").unwrap().offset_bytes(), 72);
     for declaration in [
@@ -13713,7 +13738,7 @@ fn c0_wide_address_types_preserve_abi_and_exact_kernel_identity_without_source_a
             Some(pointer.to_kernel_type())
         );
         assert_eq!(array.to_kernel_type().byte_width(), 48);
-        let slots = C0Type::PointerArray(element, 3);
+        let slots = C0Type::PointerArray(element, syntax::LongRank::Long, 3);
         assert_eq!(slots.pointee_type(), Some(pointer));
         assert_eq!(slots.abi_size_bytes(), 24);
         assert_eq!(
@@ -13749,14 +13774,26 @@ fn c0_wide_address_types_preserve_abi_and_exact_kernel_identity_without_source_a
 #[test]
 fn c0_gnu_word_mode_preserves_signedness_and_lp64_layout() {
     for (base, expected) in [
-        ("signed char", syntax::C0Type::Int64),
-        ("short", syntax::C0Type::Int64),
-        ("int", syntax::C0Type::Int64),
-        ("long", syntax::C0Type::Int64),
-        ("unsigned char", syntax::C0Type::UInt64),
-        ("unsigned short", syntax::C0Type::UInt64),
-        ("unsigned int", syntax::C0Type::UInt64),
-        ("unsigned long", syntax::C0Type::UInt64),
+        ("signed char", syntax::C0Type::Int64(syntax::LongRank::Long)),
+        ("short", syntax::C0Type::Int64(syntax::LongRank::Long)),
+        ("int", syntax::C0Type::Int64(syntax::LongRank::Long)),
+        ("long", syntax::C0Type::Int64(syntax::LongRank::Long)),
+        (
+            "unsigned char",
+            syntax::C0Type::UInt64(syntax::LongRank::Long),
+        ),
+        (
+            "unsigned short",
+            syntax::C0Type::UInt64(syntax::LongRank::Long),
+        ),
+        (
+            "unsigned int",
+            syntax::C0Type::UInt64(syntax::LongRank::Long),
+        ),
+        (
+            "unsigned long",
+            syntax::C0Type::UInt64(syntax::LongRank::Long),
+        ),
     ] {
         for (attribute, mode) in [("mode", "word"), ("__mode__", "__word__")] {
             let source = format!(
@@ -14614,7 +14651,6 @@ fn c0_builtin_types_compatible_refuses_erased_or_unsupported_identity() {
         "typeof(p), struct A*", // Nested qualifiers are not all retained by typeof.
         "typeof(*p)*, struct A*", // A new pointer must not erase source qualifiers.
         "typeof(cells), int*", // Array decay is not type compatibility.
-        "uint64, unsigned long",
         "enum E, int",
         "int[3], int[4]",
         "int(), int()",
@@ -14725,4 +14761,108 @@ fn returned_expression(statement: &syntax::C0Statement) -> Option<&syntax::C0Exp
         syntax::C0Statement::Return(expression, _) => Some(expression),
         _ => None,
     }
+}
+
+/// A declaration of a library function Click specifies must have a type
+/// compatible with the library's prototype: a pointee's qualifiers and plain
+/// `char` count, a parameter's own qualifiers do not, and a declaration
+/// without a prototype need only agree on the result. A program definition
+/// with external linkage is refused, and one with internal linkage is the
+/// program's own. A compiler-prepared source follows the same rule.
+#[test]
+fn library_function_declarations_must_match_the_library_prototype() {
+    let caller = "unsigned long last_index(const char *s) { return 0; }\n";
+    let compatible = [
+        "unsigned long strlen(const char *s);",
+        "unsigned long strlen(const char *const s);",
+        "unsigned long strlen(const char s[]);",
+        "extern unsigned long strlen(const char *);",
+        "unsigned long strlen();",
+        "void *memcpy(void *restrict d, const void *restrict s, unsigned long n);",
+        "int memcmp(const void *a, const void *b, unsigned long n);",
+        "void *memset(void *s, int c, unsigned long n);",
+        "void *malloc(unsigned long n);",
+        "void *calloc(unsigned long count, unsigned long size);",
+        "void *realloc(void *p, unsigned long n);",
+        "void free(void *const p);",
+        "static unsigned long strlen(const char *s) { return 0; }",
+        "static void *malloc(int n) { return 0; }",
+    ];
+    for declaration in compatible {
+        let source = format!("{declaration}\n{caller}");
+        syntax::parse_functions(&source)
+            .unwrap_or_else(|error| panic!("`{declaration}` is compatible: {error}"));
+    }
+    let incompatible = [
+        ("int strlen(int s);", "`int32 (int32)`"),
+        ("int strlen(const char *s);", "`int32 (const char *)`"),
+        ("int strlen();", "`int32 ()`"),
+        ("unsigned long strlen(char *s);", "`uint64 (char *)`"),
+        (
+            "unsigned long strlen(const unsigned char *s);",
+            "`uint64 (const uint8 *)`",
+        ),
+        (
+            "unsigned long strlen(const volatile char *s);",
+            "`uint64 (const volatile char *)`",
+        ),
+        (
+            "unsigned long strlen(const char *s, ...);",
+            "`uint64 (const char *, ...)`",
+        ),
+        (
+            "unsigned long strlen(const char *s, int n);",
+            "`uint64 (const char *, int32)`",
+        ),
+        (
+            "void *memcpy(void *d, void *s, unsigned long n);",
+            "`void * (void *, void *, uint64)`",
+        ),
+        (
+            "const void *memset(void *s, int c, unsigned long n);",
+            "`const void * (void *, int32, uint64)`",
+        ),
+        ("void free(int *p);", "`void (int32 *)`"),
+        ("void *malloc(int n);", "`void * (int32)`"),
+    ];
+    for (declaration, described) in incompatible {
+        let source = format!("{declaration}\n{caller}");
+        let error = syntax::parse_functions(&source)
+            .expect_err(&format!("`{declaration}` is incompatible"))
+            .to_string();
+        assert!(
+            error.contains(&format!("has type {described}, which is incompatible"))
+                && error.contains("C library's")
+                && error.starts_with("line 1, column "),
+            "{declaration}: {error}"
+        );
+    }
+    let definition = format!("void *malloc(unsigned long n) {{ return 0; }}\n{caller}");
+    let error = syntax::parse_functions(&definition)
+        .expect_err("a program definition of a library function")
+        .to_string();
+    assert!(
+        error.contains(
+            "definition of the C library function `malloc` is not supported: the name is reserved"
+        ),
+        "{error}"
+    );
+
+    let (source, map) = provenance::CSourceMap::decode(
+        "# 1 \"main.c\"\nint strlen(int s);\nunsigned long last_index(const char *s) { return 0; }\n",
+    )
+    .unwrap();
+    let error = match syntax::parse_translation_unit_for_import(
+        &source,
+        "main.c",
+        &map,
+        syntax::PromiseAttributes::Accept,
+    ) {
+        Ok(_) => panic!("an imported incompatible declaration is refused"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.starts_with("main.c:1:") && error.contains("`int32 (int32)`, which is incompatible"),
+        "{error}"
+    );
 }

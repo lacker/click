@@ -1374,7 +1374,7 @@ impl ExecutionBudget {
             .contains(&variable.0)
     }
 
-    /// The first identity a universal introduction's witness may use.
+    /// The first identity a universal introduction or existential choice may use.
     ///
     /// `intro()` on `forall v. body` replaces `v` by a *free* identity that
     /// stands for an arbitrary value, so it must name nothing the surrounding
@@ -1382,7 +1382,7 @@ impl ExecutionBudget {
     /// also carries program variables, a symbolic store, a memory snapshot and a
     /// resource context, and an identity that occurs in none of the facts can
     /// still be the identity of a live C variable. Picking the witness from a
-    /// range no other producer mints makes the distinction structural instead
+    /// shared by logical witnesses and no other producer makes the distinction structural instead
     /// of leaving it to whichever variables happen to appear in a fact.
     ///
     /// The range overlaps none of the reserved ones: the C identities run
@@ -1403,7 +1403,7 @@ impl ExecutionBudget {
     /// [`Self::KERNEL_VARIABLE_CEILING`].
     pub(in crate::kernel) const UNIVERSAL_WITNESS_VARIABLE_CEILING: u64 = 1 << 43;
 
-    /// Whether `variable` is a universal-introduction witness identity.
+    /// Whether `variable` is a universal-introduction or existential-choice witness identity.
     pub(in crate::kernel) fn is_universal_witness_variable(variable: Variable) -> bool {
         (Self::UNIVERSAL_WITNESS_VARIABLE_BASE..Self::UNIVERSAL_WITNESS_VARIABLE_CEILING)
             .contains(&variable.0)

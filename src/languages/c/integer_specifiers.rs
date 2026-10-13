@@ -1,6 +1,6 @@
 //! Shared normalization of contiguous standard C integer specifiers.
 
-use super::syntax::{C0Type, PlainChar};
+use super::syntax::{C0Type, LongRank, PlainChar};
 
 /// The refusal when plain `char` is spelled where no C target fixes its
 /// signedness.
@@ -66,10 +66,16 @@ pub(crate) fn parse<'a>(
             C0Type::Int16
         }
     } else if longs > 0 {
-        if unsigned {
-            C0Type::UInt64
+        // `long` and `long long` share a representation but stay distinct.
+        let rank = if longs == 2 {
+            LongRank::LongLong
         } else {
-            C0Type::Int64
+            LongRank::Long
+        };
+        if unsigned {
+            C0Type::UInt64(rank)
+        } else {
+            C0Type::Int64(rank)
         }
     } else if unsigned {
         C0Type::UInt32
@@ -109,12 +115,12 @@ mod tests {
             ("unsigned short int", C0Type::UInt16),
             ("signed int", C0Type::Int32),
             ("unsigned int", C0Type::UInt32),
-            ("long int", C0Type::Int64),
-            ("signed long int", C0Type::Int64),
-            ("unsigned long int", C0Type::UInt64),
-            ("long long int", C0Type::Int64),
-            ("signed long long int", C0Type::Int64),
-            ("unsigned long long int", C0Type::UInt64),
+            ("long int", C0Type::Int64(LongRank::Long)),
+            ("signed long int", C0Type::Int64(LongRank::Long)),
+            ("unsigned long int", C0Type::UInt64(LongRank::Long)),
+            ("long long int", C0Type::Int64(LongRank::LongLong)),
+            ("signed long long int", C0Type::Int64(LongRank::LongLong)),
+            ("unsigned long long int", C0Type::UInt64(LongRank::LongLong)),
         ] {
             permutations(
                 &mut spelling.split_whitespace().collect::<Vec<_>>(),
@@ -150,7 +156,7 @@ mod tests {
         );
         assert_eq!(
             parse(["long", "value"].into_iter(), Some(PlainChar::Unsigned)),
-            Ok(Some((C0Type::Int64, 1)))
+            Ok(Some((C0Type::Int64(LongRank::Long), 1)))
         );
     }
 

@@ -38,5 +38,5 @@ uint64 outer(const char* src) {
 `measure` verifies; `outer` is refused at the call:
 
 ```expect
-fail: measure precondition
+fail: precondition clause 1 of `measure`
 ```

@@ -522,12 +522,6 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// explicit closer above, this is expansion and timing attribution only;
     /// the kernel-owned invariant-closure flag carries semantic authority.
     pub(in crate::surface::proof) region_simp: Option<(usize, usize)>,
-    /// Semantic transition evidence recorded by planning so the surface step
-    /// constructed for a statement move can consult the certified transition.
-    /// It is deliberately separate from `ProofTactic` so internal execution
-    /// artifacts cannot masquerade as proof steps.
-    pub(in crate::surface::proof) planned_statement_transitions:
-        SharedVec<PlannedStatementTransition>,
     /// Whether this execution lineage has explicitly unfolded a composite
     /// resource. Only that checked operation opts a frontier `have` into
     /// materializing one selected relation from the compact composition;
@@ -739,7 +733,6 @@ impl ExecutionProofState {
                 surface_record: SurfaceRecord::default(),
                 invariant_closer_step: Default::default(),
                 region_simp: None,
-                planned_statement_transitions: Default::default(),
                 resource_unfolded: false,
                 expansion: ExpansionCursor::default(),
                 branch_path,
@@ -1054,7 +1047,7 @@ struct ProofDiagnosticProofState(
     Option<crate::surface::proof_trace::ChildArgumentTrace>,
     Option<(&'static str, Box<Proposition>, Option<String>)>,
     Option<crate::surface::proof_diagnostics::MemoryHistoryDiagnostic>,
-    Option<(Variable, CType)>,
+    Vec<(Variable, CType)>,
 );
 
 fn diagnostic_value_variable(value: &CValue) -> Option<Variable> {
@@ -1077,6 +1070,56 @@ fn diagnostic_value_variable(value: &CValue) -> Option<Variable> {
             _ => None,
         },
         CValue::Void => None,
+    }
+}
+
+/// How many recorded snapshots a failure report consults for names.
+const NAMED_SNAPSHOT_LIMIT: usize = 32;
+
+/// A value no current name holds, but a scalar local held at a recorded
+/// snapshot this path can cite, spells as `at(statement(N).entry, x)`:
+/// exactly the value `x` had there. The value a loop havocked for `i` is `i`
+/// at the loop's own entry, so a body goal names it as the iteration's entry
+/// value. Names the current state gives were registered first and win. Among
+/// snapshots, the oldest of the most recent [`NAMED_SNAPSHOT_LIMIT`] wins,
+/// which for a loop-carried value is the head that minted it. Diagnostics
+/// only: this runs when a failure is printed, never while checking.
+pub(in crate::surface::proof) fn register_recorded_snapshot_names(
+    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    snapshots: &crate::surface::RecordedSnapshots,
+) {
+    use crate::surface::{CodeRegionRef, ProgramPointRef, SnapshotSelector};
+    let recent = snapshots.recent(NAMED_SNAPSHOT_LIMIT);
+    for (selector, state) in recent.into_iter().rev() {
+        // Only points `at(...)` resolves from recorded snapshots.
+        let citable = match selector {
+            SnapshotSelector::Mark(_) => true,
+            SnapshotSelector::ProgramPoint(ProgramPointRef { region, .. }) => matches!(
+                region,
+                CodeRegionRef::Statement(_) | CodeRegionRef::Loop(_) | CodeRegionRef::Label(_)
+            ),
+        };
+        if !citable {
+            continue;
+        }
+        let point = crate::surface::diagnostics::describe_snapshot_selector(selector);
+        for (name, value) in state.locals().object_values() {
+            // A pointer's offset variable is not the pointer; only a scalar
+            // local's value is exactly the local.
+            // A temporary the translation introduced has no source spelling.
+            if name.starts_with("__click")
+                || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            if let crate::kernel::arithmetic_c_value!(Bitvector32Term::Variable(variable)) = value {
+                labels.fallback_source_name(
+                    *variable,
+                    format!("at({point}, {name})"),
+                    value.c_type(),
+                );
+            }
+        }
     }
 }
 
@@ -1111,8 +1154,8 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         if let Some(state) = &self.3 {
             labels.register_current_state(state);
         }
-        if let Some((variable, c_type)) = self.7 {
-            labels.source_type(variable, c_type);
+        for (variable, c_type) in &self.7 {
+            labels.source_type(*variable, *c_type);
         }
         if let Some(branch) = self.0.state().open_branches().get(self.0.focused_branch())
             && let Some(execution) = branch.state.execution.as_deref()
@@ -1123,6 +1166,7 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
                     labels.source_name(variable, name.to_string());
                 }
             }
+            register_recorded_snapshot_names(labels, &execution.presentation.recorded_snapshots);
         }
     }
 
@@ -1456,6 +1500,28 @@ impl Proof<'_> {
 
 impl Proof<'_> {
     fn diagnostic_state(&self) -> ProofDiagnosticProofState {
+        // Pure theorem names have no CState from which the renderer can
+        // recover their signedness. Retain types alongside those names.
+        let mut source_types = match self.context.as_ref() {
+            ProofContext::Pure(context) => context
+                .theorem_context
+                .values
+                .values()
+                .filter_map(|value| {
+                    diagnostic_value_variable(value).map(|variable| (variable, value.c_type()))
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let result = match self.context.as_ref() {
+            ProofContext::FixedState(context) => context.fixed_state.result,
+            _ => self
+                .outcome_fixed_state_view()
+                .and_then(|view| view.fixed_state.result),
+        };
+        source_types.extend(result.and_then(|value| {
+            diagnostic_value_variable(value).map(|variable| (variable, value.c_type()))
+        }));
         let source_names = match self.context.as_ref() {
             ProofContext::Pure(context) => {
                 let mut names: Vec<_> = context
@@ -1536,15 +1602,7 @@ impl Proof<'_> {
             None,
             None,
             history,
-            match self.context.as_ref() {
-                ProofContext::FixedState(context) => context.fixed_state.result,
-                _ => self
-                    .outcome_fixed_state_view()
-                    .and_then(|view| view.fixed_state.result),
-            }
-            .and_then(|value| {
-                diagnostic_value_variable(value).map(|variable| (variable, value.c_type()))
-            }),
+            source_types,
         )
     }
 }
@@ -2725,7 +2783,8 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::Step
         | ProofStep::StepBind(_)
         | ProofStep::StepContract(_)
-        | ProofStep::StepCall(_) => "step",
+        | ProofStep::StepCall(_)
+        | ProofStep::StepProved { .. } => "step",
         ProofStep::UserTactic(_) => "tactic application",
         ProofStep::ApplyTheoremUsing { .. } => "apply",
         ProofStep::ApplyInduction { .. } => "apply",
@@ -2765,6 +2824,8 @@ pub(in crate::surface::proof) use match_cases::ExecutionMatchPlan;
 mod execution_entry;
 mod execution_joins;
 mod execution_statements;
+#[cfg(test)]
+pub(crate) use execution_statements::without_implicit_auto;
 mod fact_index;
 mod fixed_state_steps;
 mod outcomes_and_focus;

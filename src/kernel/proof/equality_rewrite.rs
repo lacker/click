@@ -23,6 +23,19 @@ impl CheckedEqualityRewrite {
         if proposed == &self.proposition {
             return true;
         }
+        // Surface lowering folds constant Integer expressions while an
+        // exact substitution can leave their arithmetic structure intact.
+        // Accept only the same normalized claim used by the checked Integer
+        // certificate rules; this compares the selected propositions alone
+        // and neither imports ambient facts nor transports different reads.
+        if let (Some(original), Some(candidate)) = (
+            super::integer_arithmetic::integer_affine_claim(&self.proposition),
+            super::integer_arithmetic::integer_affine_claim(proposed),
+        ) && original == candidate
+        {
+            self.proposition = proposed.clone();
+            return true;
+        }
         let Some(facts) = self
             .facts
             .with_checked_rewritten_loads(&self.proposition, proposed)
@@ -1409,6 +1422,10 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 rewrite_term(left, from, to),
                 rewrite_term(right, from, to),
             ),
+            Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::bitwise_and(
+                rewrite_term(left, from, to),
+                rewrite_term(right, from, to),
+            ),
             Bitvector32Term::ShiftLeft(left, right) => {
                 // The term denotes the shifted bits; signed C overflow is
                 // checked separately during expression evaluation. Preserve
@@ -1806,6 +1823,66 @@ mod tests {
 
     fn integer_equality(a: IntegerTerm, b: IntegerTerm) -> Proposition {
         Proposition::ConditionIs(ConditionTerm::IntegerEqual(a.into(), b.into()), true)
+    }
+
+    #[test]
+    fn integer_rewrite_presentation_accepts_only_the_same_normalized_claim() {
+        let index = Bitvector32Term::Variable(Variable(9901));
+        let value = IntegerTerm::from_machine(
+            MachineIntegerType::UInt64,
+            Bitvector32Term::Variable(Variable(9902)),
+        )
+        .unwrap();
+        let other = IntegerTerm::from_machine(
+            MachineIntegerType::UInt64,
+            Bitvector32Term::Variable(Variable(9903)),
+        )
+        .unwrap();
+        let observed = IntegerTerm::from_machine(MachineIntegerType::Int32, index.clone()).unwrap();
+        let rhs = IntegerTerm::add(
+            IntegerTerm::constant_i64(1),
+            IntegerTerm::multiply(IntegerTerm::constant_i64(255), observed),
+        );
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(value.clone().into(), rhs.into()),
+            true,
+        );
+        let cited = equality(index, Bitvector32Term::Constant(16));
+        let facts = ProofFacts::default().with_fact(cited.clone());
+        let mut rewrite = facts.check_equality_rewrite(&goal, &cited).unwrap();
+        let raw = rewrite.proposition().clone();
+        let folded = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(
+                value.clone().into(),
+                IntegerTerm::constant_i64(4081).into(),
+            ),
+            true,
+        );
+        assert_ne!(
+            raw, folded,
+            "substitution retains constant-expression structure"
+        );
+        let wrong_bound = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(
+                value.clone().into(),
+                IntegerTerm::constant_i64(4082).into(),
+            ),
+            true,
+        );
+        let wrong_atom = Proposition::ConditionIs(
+            ConditionTerm::IntegerLessEqual(other.into(), IntegerTerm::constant_i64(4081).into()),
+            true,
+        );
+        let wrong_relation = Proposition::ConditionIs(
+            ConditionTerm::IntegerEqual(value.into(), IntegerTerm::constant_i64(4081).into()),
+            true,
+        );
+        for forged in [wrong_bound, wrong_atom, wrong_relation] {
+            assert!(!rewrite.try_present_as(&forged));
+            assert_eq!(rewrite.proposition(), &raw);
+        }
+        assert!(rewrite.try_present_as(&folded));
+        assert_eq!(rewrite.proposition(), &folded);
     }
 
     #[test]

@@ -37,6 +37,74 @@ impl Drop for ModelAccessorScope {
     }
 }
 
+/// Names a read address through a bound model accessor only when the
+/// receiver's own layout identifies the exact scalar field at that address.
+pub(super) fn describe_model_field_at(
+    pointer: &Pointer,
+    parameter_binding: ParameterBinding<'_>,
+) -> Option<(String, CType)> {
+    MODEL_ACCESSORS.with(|bound| {
+        let bound = bound.borrow();
+        if bound.is_empty() {
+            return None;
+        }
+        for (parameter, argument) in parameter_binding
+            .parameters
+            .iter()
+            .zip(parameter_binding.arguments)
+        {
+            let source = parameter
+                .struct_name()
+                .is_none()
+                .then(|| {
+                    crate::surface::proof_diagnostics::render::ambient_source_parameter(
+                        parameter.name(),
+                    )
+                })
+                .flatten();
+            let parameter = source.as_ref().unwrap_or(parameter);
+            if !parameter
+                .struct_name()
+                .is_some_and(|name| name.starts_with("span__"))
+            {
+                continue;
+            }
+            let CExpression::Value(CValue::Pointer(base)) = argument else {
+                continue;
+            };
+            let Some(layout) = parameter
+                .pointee_struct_layout()
+                .or_else(|| parameter.struct_layout())
+            else {
+                continue;
+            };
+            let fields = layout.to_kernel_aggregate_layout();
+            for (accessor, path) in bound.iter() {
+                let field_path = path.join(".");
+                let Some(field) = fields
+                    .fields()
+                    .iter()
+                    .find(|field| field.name() == field_path)
+                else {
+                    continue;
+                };
+                let expected = base.pointer().offset_by_bytes(field.offset_bytes());
+                if expected.block != pointer.block
+                    || !crate::kernel::offsets_have_same_canonical_form(
+                        &expected.offset,
+                        &pointer.offset,
+                    )
+                {
+                    continue;
+                }
+                let receiver = object_at_address(parameter.name()).unwrap_or(parameter.name());
+                return Some((format!("{accessor}({receiver})"), field.c_type()));
+            }
+        }
+        None
+    })
+}
+
 /// `std_span_size(span)` for the field chain `span._M_extent._M_extent_value`
 /// when that chain is a bound accessor's path: a written proof names the
 /// standard type's model, and the parse rewrites it back to the same path.

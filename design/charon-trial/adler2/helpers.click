@@ -61,7 +61,42 @@ impl adler2::algo::U32X4 {
         have to_integer(result.0[2]) == old(to_integer((bytes[2] as i32))) by { rewrite(result.0[2] == old((bytes[2] as u32))); assumption(); }
         have result.0[3] == old((bytes[3] as u32));
         have to_integer(result.0[3]) == old(to_integer((bytes[3] as i32))) by { rewrite(result.0[3] == old((bytes[3] as u32))); assumption(); }
-        simp();
+        # Establish the byte ranges independently of the ensures clauses, then
+        # close from those checked witnesses so false bounds fail without search.
+        have 255u32 >= result.0[0];
+        have to_integer(result.0[0]) >= 0;
+        have 255 >= to_integer(result.0[0]);
+        have 255u32 >= result.0[1];
+        have to_integer(result.0[1]) >= 0;
+        have 255 >= to_integer(result.0[1]);
+        have 255u32 >= result.0[2];
+        have to_integer(result.0[2]) >= 0;
+        have 255 >= to_integer(result.0[2]);
+        have 255u32 >= result.0[3];
+        have to_integer(result.0[3]) >= 0;
+        have 255 >= to_integer(result.0[3]);
+        simp() using {
+            result.0[0] == old((bytes[0] as u32));
+            to_integer(result.0[0]) == old(to_integer((bytes[0] as i32)));
+            255u32 >= result.0[0];
+            to_integer(result.0[0]) >= 0;
+            255 >= to_integer(result.0[0]);
+            result.0[1] == old((bytes[1] as u32));
+            to_integer(result.0[1]) == old(to_integer((bytes[1] as i32)));
+            255u32 >= result.0[1];
+            to_integer(result.0[1]) >= 0;
+            255 >= to_integer(result.0[1]);
+            result.0[2] == old((bytes[2] as u32));
+            to_integer(result.0[2]) == old(to_integer((bytes[2] as i32)));
+            255u32 >= result.0[2];
+            to_integer(result.0[2]) >= 0;
+            255 >= to_integer(result.0[2]);
+            result.0[3] == old((bytes[3] as u32));
+            to_integer(result.0[3]) == old(to_integer((bytes[3] as i32)));
+            255u32 >= result.0[3];
+            to_integer(result.0[3]) >= 0;
+            255 >= to_integer(result.0[3]);
+        }
     }
 }
 

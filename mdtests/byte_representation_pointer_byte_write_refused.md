@@ -71,5 +71,5 @@ int f() {
 ```
 
 ```expect
-fail: a 8-byte load at `…` did not fit the cell's value
+fail: a 8-byte load at `dst->target` did not fit the cell's value
 ```

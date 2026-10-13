@@ -2075,6 +2075,37 @@ pub(super) fn execute_step_successor_from_frontier_position(
     })
 }
 
+/// A refused C operation spelled over the parameters' entry values; where
+/// they leave a place unnamed (`…`), over them and then the locals live
+/// before the operation, so an address no parameter reaches but a local
+/// holds, such as a heap block or a pointer a call returned, reads as that
+/// local and, through its declared struct type, as the field the source
+/// names. A place the parameters name keeps the spelling the held resources
+/// it is compared with use.
+fn describe_runtime_error_before_statement(
+    error: &crate::kernel::CRuntimeError,
+    state: &CState,
+    function: &syntax::C0Function,
+    parameter_binding: ParameterBinding<'_>,
+) -> String {
+    let over_parameters = describe_runtime_error(error, parameter_binding);
+    if !over_parameters.contains('…') {
+        return over_parameters;
+    }
+    let (locals, local_values) =
+        crate::surface::diagnostics::local_naming_tables_with_source(state, Some(function));
+    let mut names = parameter_binding.parameters.to_vec();
+    let mut values = parameter_binding.arguments.to_vec();
+    names.extend(locals);
+    values.extend(local_values);
+    let over_locals = describe_runtime_error(error, ParameterBinding::new(&names, &values));
+    if over_locals.matches('…').count() < over_parameters.matches('…').count() {
+        over_locals
+    } else {
+        over_parameters
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_step_from_frontier_position_selecting_path(
     execution: &mut ExecutionProofState,
@@ -2806,7 +2837,12 @@ fn execute_step_from_frontier_position_selecting_path(
             };
             let detail = format!(
                 "{}{}",
-                describe_runtime_error(error, parameter_binding),
+                describe_runtime_error_before_statement(
+                    error,
+                    &current_state,
+                    proof_context.parsed_function,
+                    parameter_binding,
+                ),
                 describe_missing_range_end_note(error, &current_resources, parameter_binding)
             );
             if matches!(
@@ -3456,7 +3492,12 @@ fn execute_step_from_frontier_position_selecting_path(
             };
             let detail = format!(
                 "{}{}",
-                describe_runtime_error(&error, parameter_binding),
+                describe_runtime_error_before_statement(
+                    &error,
+                    &current_state,
+                    proof_context.parsed_function,
+                    parameter_binding,
+                ),
                 describe_missing_range_end_note(&error, &current_resources, parameter_binding)
             );
             if matches!(

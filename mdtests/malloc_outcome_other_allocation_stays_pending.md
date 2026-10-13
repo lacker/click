@@ -32,5 +32,5 @@ int f() {
 ```
 
 ```expect
-fail: missing resource fact `owns …[0..1]`
+fail: missing resource fact `owns ((char *)q)[0..4]`
 ```

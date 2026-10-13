@@ -6484,9 +6484,12 @@ fn simp_snapshot_transport_search_is_linear_in_early_returns() {
 }
 
 /// The `execute(); simp();` proof of [`early_return_fan_out`] written with
-/// simple tactics only, as `click expand` writes it: the steps and C
-/// branches of `execute`, then one closer per path under the same nested
-/// conditions.
+/// simple tactics only, as `click expand` writes it when it expands
+/// `execute()` and then `simp()`: the steps and C branches of `execute`, then
+/// one closer per path under the same nested conditions. A returned constant
+/// closes by `assumption`; the two `-1` returns transport the postcondition
+/// from `function.exit`, since `result` cannot be named in an earlier
+/// snapshot.
 fn early_return_fan_out_explicit_proof(returns: usize) -> String {
     fn indent(depth: usize) -> String {
         "    ".repeat(depth + 1)
@@ -6495,7 +6498,7 @@ fn early_return_fan_out_explicit_proof(returns: usize) -> String {
         let statement = 7 + 3 * index;
         format!("at(statement({statement}).entry, a) == at(statement({statement}).entry, {index})")
     };
-    let transported = "have result == a or result == -1 by {\n{i}    transport(at(function.entry, result == a or result == -1), result == a or result == -1) using {\n{i}    }\n{i}}\n{i}assumption();\n";
+    let transported = "have result == a or result == -1 by {\n{i}    transport(at(function.exit, result == a or result == -1), result == a or result == -1) using {\n{i}    }\n{i}}\n{i}assumption();\n";
     let mut proof = String::from(
         "verifying \"fan_out.c\";\n\nint g(int a) {\n    ensures result == a or result == -1;\n} by {\n    step();\n    step();\n    if at(statement(2).entry, p) == at(statement(2).entry, 0) {\n        step();\n        step();\n    } else {\n        step();\n        step();\n        step();\n        step();\n",
     );
@@ -6518,9 +6521,8 @@ fn early_return_fan_out_explicit_proof(returns: usize) -> String {
     proof.push_str("    } else {\n");
     for index in 0..returns {
         let i = indent(index + 1);
-        let statement = 7 + 3 * index;
         proof.push_str(&format!(
-            "{i}if {} {{\n{i}    have result == a or result == -1 by {{\n{i}        have result == a by {{\n{i}            rewrite(at(statement({statement}).entry, {index}) == at(statement({statement}).entry, a));\n{i}            normalize();\n{i}        }}\n{i}        assumption();\n{i}    }}\n{i}    assumption();\n{i}}} else {{\n",
+            "{i}if {} {{\n{i}    have result == a or result == -1 by {{\n{i}        assumption();\n{i}    }}\n{i}    assumption();\n{i}}} else {{\n",
             condition(index)
         ));
     }

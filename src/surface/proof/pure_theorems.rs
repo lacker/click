@@ -664,8 +664,8 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::UInt8 => C0Type::UInt8,
             CType::UInt16 => C0Type::UInt16,
             CType::UInt32 => C0Type::UInt32,
-            CType::Int64 => C0Type::Int64,
-            CType::UInt64 => C0Type::UInt64,
+            CType::Int64 => C0Type::Int64(LongRank::Long),
+            CType::UInt64 => C0Type::UInt64(LongRank::Long),
             CType::Int128 => C0Type::Int128,
             CType::UInt128 => C0Type::UInt128,
             CType::Float32 => C0Type::Float32,
@@ -676,9 +676,9 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Int32Pointer => C0Type::Int32Pointer,
             CType::UInt8Pointer => C0Type::UInt8Pointer,
             CType::UInt32Pointer => C0Type::UInt32Pointer,
-            CType::Int64Pointer => C0Type::Int64Pointer,
+            CType::Int64Pointer => C0Type::Int64Pointer(LongRank::Long),
             CType::Int128Pointer => C0Type::Int128Pointer,
-            CType::UInt64Pointer => C0Type::UInt64Pointer,
+            CType::UInt64Pointer => C0Type::UInt64Pointer(LongRank::Long),
             CType::UInt128Pointer => C0Type::UInt128Pointer,
             CType::Float32Pointer => C0Type::Float32Pointer,
             CType::Float64Pointer => C0Type::Float64Pointer,
@@ -688,9 +688,9 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
             CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
             CType::UInt32PointerPointer => C0Type::UInt32PointerPointer,
-            CType::Int64PointerPointer => C0Type::Int64PointerPointer,
+            CType::Int64PointerPointer => C0Type::Int64PointerPointer(LongRank::Long),
             CType::Int128PointerPointer => C0Type::Int128PointerPointer,
-            CType::UInt64PointerPointer => C0Type::UInt64PointerPointer,
+            CType::UInt64PointerPointer => C0Type::UInt64PointerPointer(LongRank::Long),
             CType::UInt128PointerPointer => C0Type::UInt128PointerPointer,
             CType::Float32PointerPointer => C0Type::Float32PointerPointer,
             CType::Float64PointerPointer => C0Type::Float64PointerPointer,
@@ -701,10 +701,12 @@ pub(super) fn click_type_from_algebraic_value_type(
             CType::Int32Array(length) => C0Type::Int32Array(*length),
             CType::UInt8Array(length) => C0Type::UInt8Array(*length),
             CType::UInt32Array(length) => C0Type::UInt32Array(*length),
-            CType::PointerArray(element, length) => C0Type::PointerArray(*element, *length),
-            CType::Int64Array(length) => C0Type::Int64Array(*length),
+            CType::PointerArray(element, length) => {
+                C0Type::PointerArray(*element, LongRank::Long, *length)
+            }
+            CType::Int64Array(length) => C0Type::Int64Array(LongRank::Long, *length),
             CType::Int128Array(length) => C0Type::Int128Array(*length),
-            CType::UInt64Array(length) => C0Type::UInt64Array(*length),
+            CType::UInt64Array(length) => C0Type::UInt64Array(LongRank::Long, *length),
             CType::UInt128Array(length) => C0Type::UInt128Array(*length),
             CType::Float32Array(length) => C0Type::Float32Array(*length),
             CType::Float64Array(length) => C0Type::Float64Array(*length),
@@ -1483,8 +1485,12 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 }
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt16 => CValue::UInt16(Bitvector32Term::Variable(Variable(index as u64))),
-                C0Type::Int64 => CValue::Int64(Bitvector32Term::Variable(Variable(index as u64))),
-                C0Type::UInt64 => CValue::UInt64(Bitvector32Term::Variable(Variable(index as u64))),
+                C0Type::Int64(_) => {
+                    CValue::Int64(Bitvector32Term::Variable(Variable(index as u64)))
+                }
+                C0Type::UInt64(_) => {
+                    CValue::UInt64(Bitvector32Term::Variable(Variable(index as u64)))
+                }
                 C0Type::Float32 => {
                     CValue::Float32(Bitvector32Term::Variable(Variable(index as u64)))
                 }
@@ -1566,7 +1572,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::UInt32Pointer,
                 ),
-                C0Type::Int64Pointer | C0Type::Int64Array(_) => CValue::typed_pointer(
+                C0Type::Int64Pointer(_) | C0Type::Int64Array(_, _) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
                         offset: scale_int32_offset(
@@ -1590,7 +1596,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     },
                     CType::Int128Pointer,
                 ),
-                C0Type::UInt64Pointer | C0Type::UInt64Array(_) => CValue::typed_pointer(
+                C0Type::UInt64Pointer(_) | C0Type::UInt64Array(_, _) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
                         offset: scale_int32_offset(
@@ -1664,9 +1670,9 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                 | C0Type::UInt16PointerPointer
                 | C0Type::UInt32PointerPointer
                 | C0Type::Int128PointerPointer
-                | C0Type::Int64PointerPointer
+                | C0Type::Int64PointerPointer(_)
                 | C0Type::UInt128PointerPointer
-                | C0Type::UInt64PointerPointer
+                | C0Type::UInt64PointerPointer(_)
                 | C0Type::Float32PointerPointer
                 | C0Type::Float64PointerPointer => {
                     let element_width = c_type
@@ -1691,7 +1697,7 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     Pointer::symbolic_function(Variable(index as u64)),
                     c_type.to_kernel_type(),
                 ),
-                C0Type::PointerArray(_, _) => CValue::typed_pointer(
+                C0Type::PointerArray(_, _, _) => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,
                         offset: scale_int32_offset(

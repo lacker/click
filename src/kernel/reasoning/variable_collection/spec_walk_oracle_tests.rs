@@ -695,7 +695,11 @@ fn old_collect_spec_function_argument_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match argument {
-        SpecPureFunctionArgument::Integer(_) => {}
+        // Correct the historical omission alongside the production collector:
+        // Integer arguments carry free identities regardless of the result type.
+        SpecPureFunctionArgument::Integer(expression) => {
+            old_collect_spec_integer_variables(expression, variables)
+        }
         SpecPureFunctionArgument::Value(expression) => {
             old_collect_spec_expression_bitvector_variables(expression, variables)
         }

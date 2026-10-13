@@ -39,7 +39,7 @@ Most projects in this tree are synthetic. In particular, `jsonc-refcount/` is
 deliberately **json-c-shaped**, not copied from json-c. The
 `jsonc-existing-source/` project is the first unchanged-source fixture; its
 SHA-256 manifest is checked by the examples gate before verifying its numeric
-version and version-string bytes under the explicit kernel target.
+version and version-string bytes under the default user-space target.
 
 Current projects:
 

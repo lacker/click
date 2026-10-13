@@ -13,17 +13,12 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
     ensures after.model == old(before.model);
     ensures old->__rb_parent_color == old(old->__rb_parent_color);
 } by {
-    have old != 0 by assumption();
     match before.model {
         Context::Top => {
             have parent == 0 by {
-                have ctx_node_is(Context::Top, parent) == 1 by {
-                    rewrite(Context::Top == before.model); assumption();
-                }
+                have ctx_node_is(Context::Top, parent) == 1 by auto;
                 if parent == 0 { assumption(); } else {
-                    have ctx_node_is(Context::Top, parent) != 1 by {
-                        unfold(ctx_node_is(Context::Top, parent)); normalize() using { not(parent == 0); };
-                    }
+                    have ctx_node_is(Context::Top, parent) != 1 by auto;
                     contradiction(ctx_node_is(Context::Top, parent) == 1);
                 }
             }
@@ -34,9 +29,7 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
         },
         Context::Left(identity, grandparent, color, sibling_model, outer_model) => {
             have parent == identity by {
-                have ctx_node_is(Context::Left(identity, grandparent, color, sibling_model, outer_model), parent) == 1 by {
-                    rewrite(Context::Left(identity, grandparent, color, sibling_model, outer_model) == before.model); assumption();
-                }
+                have ctx_node_is(Context::Left(identity, grandparent, color, sibling_model, outer_model), parent) == 1 by auto;
                 if parent == identity { assumption(); } else {
                     have ctx_node_is(Context::Left(identity, grandparent, color, sibling_model, outer_model), parent) != 1 by {
                         unfold(ctx_node_is(Context::Left(identity, grandparent, color, sibling_model, outer_model), parent)); normalize() using { not(parent == identity); };
@@ -53,9 +46,7 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
         },
         Context::Right(identity, grandparent, color, sibling_model, outer_model) => {
             have parent == identity by {
-                have ctx_node_is(Context::Right(identity, grandparent, color, sibling_model, outer_model), parent) == 1 by {
-                    rewrite(Context::Right(identity, grandparent, color, sibling_model, outer_model) == before.model); assumption();
-                }
+                have ctx_node_is(Context::Right(identity, grandparent, color, sibling_model, outer_model), parent) == 1 by auto;
                 if parent == identity { assumption(); } else {
                     have ctx_node_is(Context::Right(identity, grandparent, color, sibling_model, outer_model), parent) != 1 by {
                         unfold(ctx_node_is(Context::Right(identity, grandparent, color, sibling_model, outer_model), parent)); normalize() using { not(parent == identity); };
@@ -67,15 +58,6 @@ void __rb_change_child(struct rb_node* old, struct rb_node* new,
             match sibling.model {
                 RbTree::Empty => {
                     unfold(sibling);
-                    have identity->rb_left == 0;
-                    have parent->rb_left == 0;
-                    have old != 0 by assumption();
-                    have parent->rb_left != old by {
-                        if parent->rb_left == old {
-                            have old == 0 by { normalize() using { parent->rb_left == old; parent->rb_left == 0; } }
-                            contradiction(old != 0);
-                        } else { assumption(); }
-                    }
                     execute();
                     let sibling = fold(rb_at(parent->rb_left), { model: RbTree::Empty });
                     let after = fold(ctx_at(new, root), {

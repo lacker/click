@@ -165,10 +165,39 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Synthetic(inner) => write_tactic(output, inner, indent),
         ProofTactic::Mark(name) => line(output, &prefix, &format!("mark {name};")),
         ProofTactic::Sorry => line(output, &prefix, "sorry();"),
-        ProofTactic::Step => line(output, &prefix, "step();"),
-        ProofTactic::StepContract(name) => line(output, &prefix, &format!("step({name});")),
-        ProofTactic::StepBind(name) => line(output, &prefix, &format!("let {name} = step();")),
-        ProofTactic::StepCall(transport) => line(output, &prefix, &format!("{transport};")),
+        ProofTactic::Step
+        | ProofTactic::StepContract(_)
+        | ProofTactic::StepBind(_)
+        | ProofTactic::StepCall(_) => {
+            line(output, &prefix, &format!("{};", step_head_spelling(tactic)))
+        }
+        ProofTactic::StepProved { step, proof } => {
+            let head = step_head_spelling(step);
+            match proof {
+                StepProof::By(body) => {
+                    line(output, &prefix, &format!("{head} by {{"));
+                    write_tactics(output, body, indent + 1);
+                    line(output, &prefix, "}");
+                }
+                StepProof::Requires(entries) => {
+                    line(output, &prefix, &format!("{head} {{"));
+                    let entry_prefix = "    ".repeat(indent + 1);
+                    for entry in entries {
+                        output.push_str(&entry_prefix);
+                        output.push_str("requires ");
+                        if let Some(label) = &entry.label {
+                            output.push_str(label);
+                            output.push_str(": ");
+                        }
+                        output.push_str(&source_click_proposition(&entry.have.proposition));
+                        output.push(' ');
+                        write_proof(output, &entry.have.proof, indent + 1);
+                        output.push('\n');
+                    }
+                    line(output, &prefix, "}");
+                }
+            }
+        }
         ProofTactic::UserTactic(application) => line(
             output,
             &prefix,
@@ -1286,6 +1315,17 @@ fn signed_comparison_name(comparison: SignedInt32Comparison) -> &'static str {
         SignedInt32Comparison::LessEqual => "le",
         SignedInt32Comparison::Equal => "eq",
         SignedInt32Comparison::Disequal => "ne",
+    }
+}
+
+/// The spelling of a `step` form without its terminating `;`.
+fn step_head_spelling(step: &ProofTactic) -> String {
+    match step {
+        ProofTactic::Step => "step()".to_string(),
+        ProofTactic::StepContract(name) => format!("step({name})"),
+        ProofTactic::StepBind(name) => format!("let {name} = step()"),
+        ProofTactic::StepCall(transport) => transport.to_string(),
+        _ => unreachable!("a step proof wraps a `step` form"),
     }
 }
 

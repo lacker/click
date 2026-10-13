@@ -26,5 +26,5 @@ int32 first(uint8 *a, int32 n, int32 k) {
 ```
 
 ```expect
-fail: `viewable(a[0..k])` was not proved
+fail: no retained-premise derivation was produced for the requested view
 ```

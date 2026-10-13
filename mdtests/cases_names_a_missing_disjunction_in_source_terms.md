@@ -14,5 +14,5 @@ theorem reflexive(x: int32) {
 ```
 
 ```expect
-fail: `cases` requires its exact disjunction as an available fact: `(x > 0 || x < 0)`
+fail: `cases` requires its exact disjunction as an available fact: `x > 0 or x < 0`
 ```

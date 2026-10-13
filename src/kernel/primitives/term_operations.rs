@@ -343,7 +343,12 @@ impl Bitvector32Term {
                 checked_unsigned_remainder_const(left.as_const()?, right.as_const()?)
             }
             Self::ShiftLeft(left, right) => {
-                checked_signed_shift_left_const(left.as_const()?, right.as_const()?)
+                // This untyped term denotes the shifted 32-bit pattern.
+                // Signed C overflow is a separate expression obligation.
+                Some(
+                    left.as_const()?
+                        .wrapping_shl(checked_shift_count_const(right.as_const()?)?),
+                )
             }
             Self::ArithmeticShiftRight(left, right) => {
                 checked_arithmetic_shift_right_const(left.as_const()?, right.as_const()?)
@@ -3140,13 +3145,40 @@ impl CType {
         matches!(self, Self::UInt8Pointer | Self::Int8Pointer)
     }
 
+    /// Whether `self` and `other` are pointers to the two signednesses of
+    /// one integer width, or the same pointer type: GCC and Clang convert
+    /// between them with at most a `-Wpointer-sign` warning, and C11 6.5p7
+    /// lets the signed or unsigned type corresponding to an object's type
+    /// read it. A load through either reads the cell's bits in its own
+    /// signedness ([`Self::read_cell`]).
+    pub(crate) fn is_signedness_view_of(self, other: Self) -> bool {
+        let width_class = |ty| match ty {
+            Self::Int8Pointer | Self::UInt8Pointer => Some(1),
+            Self::Int16Pointer | Self::UInt16Pointer => Some(2),
+            Self::Int32Pointer | Self::UInt32Pointer => Some(4),
+            Self::Int64Pointer | Self::UInt64Pointer => Some(8),
+            _ => None,
+        };
+        self == other || width_class(self).is_some_and(|width| width_class(other) == Some(width))
+    }
+
     /// The value a load of this type reads from a cell holding `stored`, or
     /// `None` when the cell holds nothing this load can read.
     ///
     /// A load reads a cell of its own kind as stored ([`Self::accepts`]).
-    /// The one other read is a character-type access (C11 6.5p7): a one-byte
-    /// character load reads a one-byte integer cell of the other signedness
-    /// as the same eight bits. An `unsigned char` load of a `signed char`
+    /// The one other read is through the integer type of the other
+    /// signedness and the same width (C11 6.5p7), which GCC and Clang allow
+    /// through a pointer conversion with at most a `-Wpointer-sign`
+    /// warning: the load reads the cell's bits in its own signedness. A
+    /// 32-bit term is the word's bits under either tag, as the kernel's own
+    /// C conversion between `int` and `unsigned int` treats it, so the read
+    /// retags it; a 64-bit term uses the bit-preserving conversions between
+    /// its two typed carriers. Narrower terms are their extended values, so
+    /// the read is the modular conversion between the two types, as for
+    /// bytes below.
+    ///
+    /// For bytes, a one-byte character load reads a one-byte integer cell
+    /// of the other signedness as the same eight bits. An `unsigned char` load of a `signed char`
     /// cell holding `t` reads `t mod 256`; a `signed char` load of an
     /// `unsigned char` cell holding `u` reads the two's-complement value of
     /// `u`'s eight bits. Both are the modular conversion between the two
@@ -3170,6 +3202,24 @@ impl CType {
                 MachineIntegerType::Int8,
                 term,
             ))),
+            (Self::UInt16, CValue::Int16(term)) => Some(CValue::UInt16(reinterpret(
+                MachineIntegerType::Int16,
+                MachineIntegerType::UInt16,
+                term,
+            ))),
+            (Self::Int16, CValue::UInt16(term)) => Some(CValue::Int16(reinterpret(
+                MachineIntegerType::UInt16,
+                MachineIntegerType::Int16,
+                term,
+            ))),
+            (Self::UInt32, CValue::Int32(term)) => Some(CValue::UInt32(term.clone())),
+            (Self::Int32, CValue::UInt32(term)) => Some(CValue::Int32(term.clone())),
+            (Self::UInt64, CValue::Int64(term)) => Some(CValue::UInt64(
+                Bitvector32Term::uint64_from_int64(term.clone()),
+            )),
+            (Self::Int64, CValue::UInt64(term)) => Some(CValue::Int64(
+                Bitvector32Term::int64_from_uint64_bits(term.clone()),
+            )),
             _ => None,
         }
     }

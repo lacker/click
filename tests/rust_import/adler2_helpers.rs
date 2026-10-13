@@ -273,6 +273,23 @@ fn charon_adler2_helpers_from_rejects_false_lanes_and_short_reads() {
     );
 }
 
+// The audit's retained formatter must also recognize lowered Rust method names,
+// so native claims do not fall back to repeating their original verification.
+#[test]
+fn charon_adler2_helper_expansion_uses_retained_native_certificate() {
+    let p = adler2_helpers_project();
+    let prepared = load_import(&p.config()).unwrap();
+    let proof = helper_proof(0);
+    let (_session, verified) =
+        C0VerificationSession::new_program_prepared(&proof, &prepared).unwrap();
+    let claim = format!("{}.contract", verified[0].function_block.signature().name());
+    let expanded =
+        click::surface::expand_verified_function_claim_source_by_label(&proof, &verified, &claim)
+            .unwrap()
+            .expect("a lowered Rust method retains its original certificate");
+    C0VerificationSession::new_program_prepared(&expanded, &prepared).unwrap();
+}
+
 fn reject_helper_byte_bounds(lane: usize) {
     let native = format!("result.0[{lane}] <= 255u32");
     let false_native = format!("result.0[{lane}] <= 254u32");
@@ -3355,7 +3372,8 @@ fn charon_adler2_general_compute_rejects_false_b_specification() {
         .split_once("adler_spec_b(bytes, ")
         .unwrap()
         .1
-        .split_once(", to_integer(a),")
+        // The A seed may name a recorded prefix snapshot rather than current a.
+        .split_once(", to_integer(")
         .unwrap()
         .0;
     reject_compute(

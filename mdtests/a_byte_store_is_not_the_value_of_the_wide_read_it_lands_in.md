@@ -59,5 +59,5 @@ int32 caller(int32* q) {
 ```
 
 ```expect
-fail: missing prerequisite (need7 precondition)
+fail: missing prerequisite (precondition clause 1 of `need7`)
 ```

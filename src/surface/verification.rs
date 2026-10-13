@@ -455,6 +455,16 @@ fn collect_applied_theorems(tactics: &[ProofTactic], names: &mut BTreeSet<String
                 collect_applied_theorems(&proof_if.else_tactics, names);
             }
             ProofTactic::CloseInvariantsBy(body) => collect_applied_theorems(body, names),
+            ProofTactic::StepProved { proof, .. } => match proof {
+                StepProof::By(body) => collect_applied_theorems(body, names),
+                StepProof::Requires(entries) => {
+                    for entry in entries {
+                        if let SourceProof::Script(tactics) = &entry.have.proof {
+                            collect_applied_theorems(tactics, names);
+                        }
+                    }
+                }
+            },
             ProofTactic::Both(both) => {
                 collect_applied_theorems(&both.left_tactics, names);
                 collect_applied_theorems(&both.right_tactics, names);
@@ -985,7 +995,8 @@ fn first_executing_tactic(tactics: &[ProofTactic]) -> Option<&'static str> {
         ProofTactic::Step
         | ProofTactic::StepBind(_)
         | ProofTactic::StepContract(_)
-        | ProofTactic::StepCall(_) => Some("step"),
+        | ProofTactic::StepCall(_)
+        | ProofTactic::StepProved { .. } => Some("step"),
         ProofTactic::SmartExecute => Some("execute"),
         ProofTactic::ExecuteUntil(_) => Some("execute_until"),
         ProofTactic::Loop(_) => Some("loop"),
@@ -1656,33 +1667,27 @@ impl C0VerificationSession {
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
         instrumentation::with_default_tactic_limits(|| {
             let sources = CSourceContext::of(inputs)?;
-            let (sources, verified, verified_function_environment, baseline_file) = match project {
+            // Parse the file once: verification starts from it and the
+            // session keeps it as the baseline for later rewrite checks.
+            let (sources, baseline_file) = match project {
                 Some(project) => {
                     let sources = sources.with_click_project(project);
                     let baseline_file = resolve_click_project_context(project, &sources)?;
-                    let (verified, environment) = verify_c0_sources_with_context(
-                        click_source,
-                        &sources,
-                        None,
-                        None,
-                        None,
-                        Some(baseline_file.clone()),
-                    )?;
-                    (sources, verified, environment, baseline_file)
+                    (sources, baseline_file)
                 }
                 None => {
-                    let (verified, environment) = verify_c0_sources_with_context(
-                        click_source,
-                        &sources,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )?;
                     let baseline_file = parse_c0_click_file_context(click_source, &sources)?;
-                    (sources, verified, environment, baseline_file)
+                    (sources, baseline_file)
                 }
             };
+            let (verified, verified_function_environment) = verify_c0_sources_with_context(
+                click_source,
+                &sources,
+                None,
+                None,
+                None,
+                Some(baseline_file.clone()),
+            )?;
             let environment_identity = sources.environment_identity_with_runtime(
                 baseline_file.selected_c_target(),
                 baseline_file.selected_thread_runtime(),
@@ -5888,10 +5893,21 @@ pub(in crate::surface) fn build_function_environment(
             environment.with_function_contract(contract.with_proof_parameters(proof_parameters));
     }
     for (source_path, function) in parsed_sources.values() {
-        let function = match function_blocks
+        let mut function_block = function_blocks
             .iter()
-            .find(|block| block.signature().name() == function.source_name())
+            .find(|block| block.signature().name() == function.source_name());
+        // A program's internal-linkage function is never the C library's
+        // function of the same name, whose contract the standard library
+        // declares. The C parser refuses an external-linkage definition of
+        // a library function Click specifies.
+        if let Some(block) = function_block
+            && block.is_external()
+            && function.name() != function.source_name()
+            && standard_library_function_block(block.signature().name())?.as_ref() == Some(block)
         {
+            function_block = None;
+        }
+        let function = match function_block {
             Some(function_block) => {
                 check_signature(function_block.signature(), function, source_path)?;
                 let (resource_requires, resource_ensures) = function_resource_summary(
@@ -7464,7 +7480,11 @@ pub(in crate::surface) fn check_signature(
     parsed_function: &syntax::C0Function,
     source_path: &str,
 ) -> Result<(), ClickError> {
-    if signature.return_type() != parsed_function.return_type() {
+    // A Click `int64`/`uint64` specifies a C `long` or `long long` alike:
+    // the two share a representation, and the C declarations themselves
+    // keep the C compatibility rules between ranks.
+    if signature.return_type().erase_long_rank() != parsed_function.return_type().erase_long_rank()
+    {
         return Err(ClickError::new(format!(
             "signature mismatch for `{}` in `{source_path}`: .click return type is {:?}, C return type is {:?}",
             signature.name(),
@@ -7507,12 +7527,17 @@ pub(in crate::surface) fn check_signature(
         .zip(parsed_function.parameters())
         .enumerate()
     {
-        if expected.c_type() != actual.c_type()
+        if expected.c_type().erase_long_rank() != actual.c_type().erase_long_rank()
             || expected.pointee_is_constant() != actual.pointee_is_constant()
             || expected.is_reference() != actual.is_reference()
             || expected.name() != actual.name()
             || expected.struct_name() != actual.struct_name()
-            || expected.function_pointer_signature() != actual.function_pointer_signature()
+            || expected
+                .function_pointer_signature()
+                .map(syntax::C0FunctionPointerSignature::erase_long_rank)
+                != actual
+                    .function_pointer_signature()
+                    .map(syntax::C0FunctionPointerSignature::erase_long_rank)
         {
             return Err(ClickError::new(format!(
                 "signature mismatch for `{}` parameter {} in `{source_path}`: .click has {} {}, C has {} {}",
@@ -7559,8 +7584,8 @@ pub(in crate::surface) fn describe_parameter_type(
         Some(name) if reference => format!("struct {name}&"),
         Some(name) => format!("struct {name}*"),
         None => match c_type.pointee_type().filter(|_| reference) {
-            Some(referent) => format!("{referent:?}&"),
-            None => format!("{c_type:?}"),
+            Some(referent) => format!("{}&", referent.diagnostic_name()),
+            None => c_type.diagnostic_name(),
         },
     };
     if pointee_constant {

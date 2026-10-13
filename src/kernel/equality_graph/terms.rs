@@ -283,6 +283,93 @@ pub(super) struct TermClasses {
     application_signatures: PersistentMap<u64, Application>,
 }
 
+/// The `int32` class an opaque atom belongs to, as `are_int32_equal`
+/// decides it: two opaque atoms are equal exactly when their classes are.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in crate::kernel) enum Int32AtomClass {
+    /// An atom no merge has touched, which equals only itself.
+    Atom(crate::kernel::Bitvector32Term),
+    /// The root of a class some merge built.
+    Merged(u64),
+}
+
+/// A graph's merge identity ([`TermClasses::merge_token`]), compared and
+/// hashed by the identity of its origin and newest merge, which it keeps
+/// alive.
+#[derive(Clone)]
+pub(in crate::kernel) struct Int32MergeToken {
+    origin: Arc<()>,
+    history: Option<Arc<MergeHistory>>,
+}
+
+impl Int32MergeToken {
+    fn identity(&self) -> (*const (), *const MergeHistory) {
+        (
+            Arc::as_ptr(&self.origin),
+            self.history.as_ref().map_or(std::ptr::null(), Arc::as_ptr),
+        )
+    }
+}
+
+impl PartialEq for Int32MergeToken {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for Int32MergeToken {}
+
+impl std::hash::Hash for Int32MergeToken {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.identity().hash(state);
+    }
+}
+
+impl TermClasses {
+    /// The identity of this graph's merges: two graphs with equal tokens
+    /// give every opaque atom the same [`Int32AtomClass`]. Registration
+    /// alone never changes a class, so only a merge changes the token.
+    pub(super) fn merge_token(&self) -> Int32MergeToken {
+        Int32MergeToken {
+            origin: self.origin.clone(),
+            history: self.history.clone(),
+        }
+    }
+
+    /// Every node some merge moved or kept: the members of the classes
+    /// merges built. One walk of the merge history, uncharged: it serves a
+    /// filing that charges nothing.
+    pub(super) fn merged_nodes(&self) -> std::collections::HashSet<u64> {
+        let mut merged = std::collections::HashSet::new();
+        let mut cursor = self.history.as_deref();
+        while let Some(node) = cursor {
+            merged.insert(node.merge.moved);
+            merged.insert(node.merge.kept);
+            cursor = node.parent.as_deref();
+        }
+        merged
+    }
+
+    /// The class of an opaque `int32` atom (a constant, or a variable that
+    /// names no load), given this graph's [`Self::merged_nodes`]. Such an
+    /// atom is equal to another exactly when it is the same atom, or both
+    /// are registered nodes of one merged class.
+    pub(super) fn int32_atom_class(
+        &self,
+        term: &crate::kernel::Bitvector32Term,
+        merged: &std::collections::HashSet<u64>,
+    ) -> Int32AtomClass {
+        let term = crate::kernel::canonical_term(term);
+        match self
+            .nodes
+            .get(&Node::Int32(MachineAtom::int32(term.clone())))
+        {
+            Some(id) if merged.contains(id) => Int32AtomClass::Merged(self.root(*id)),
+            _ => Int32AtomClass::Atom(term),
+        }
+    }
+}
+
 impl TermClasses {
     pub(super) fn merges_since(&self, ancestor: &Self) -> Option<Vec<TermClassMerge>> {
         if !Arc::ptr_eq(&self.origin, &ancestor.origin) {

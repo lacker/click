@@ -15,11 +15,12 @@ use click::cli::{
     source_refs,
 };
 use click::surface::{
-    C0VerificationSession, ClickProject, SourcePosition, c0_incremental_selection,
-    click_import_sites, expand_c0_claim_source_by_label, expand_c0_prepared_claim_source_by_label,
-    expand_c0_prepared_tactic_source_at, expand_c0_tactic_source_at,
-    expand_program_prepared_claim_source_by_label, expand_program_prepared_tactic_source_at,
-    expand_project_claim_source_by_label, expand_project_tactic_source_at,
+    C0VerificationSession, ClickProject, SourcePosition, VerifiedCTheorem,
+    c0_incremental_selection, click_import_sites, expand_c0_claim_source_by_label,
+    expand_c0_prepared_claim_source_by_label, expand_c0_prepared_tactic_source_at,
+    expand_c0_tactic_source_at, expand_program_prepared_claim_source_by_label,
+    expand_program_prepared_tactic_source_at, expand_project_claim_source_by_label,
+    expand_project_tactic_source_at, expand_verified_function_claim_source_by_label,
     project_smart_tactic_source_sites, project_tactic_source_position, smart_tactic_source_sites,
     tactic_source_position, verify_project_at, verify_sources_at, verifying_source_paths,
 };
@@ -279,7 +280,7 @@ struct ConciseClaimProgress {
 struct AuditSessionWorker {
     source: AuditSource,
     requests: Option<mpsc::Sender<SessionRequest>>,
-    responses: mpsc::Receiver<Result<PhaseCost, String>>,
+    responses: mpsc::Receiver<Result<SessionResponse, String>>,
     thread: Option<thread::JoinHandle<()>>,
     /// What initializing the session cost.
     initialization: PhaseCost,
@@ -289,6 +290,12 @@ struct SessionRequest {
     click_source: String,
     position: SourcePosition,
     limit: PhaseLimit,
+    expansion_claim: Option<String>,
+}
+
+struct SessionResponse {
+    cost: PhaseCost,
+    expansion: Option<String>,
 }
 
 /// At least the main thread's usual 8 MiB, so a proof that `click verify`
@@ -305,22 +312,46 @@ impl AuditSessionWorker {
             .name("click-audit-session".to_string())
             .stack_size(SESSION_THREAD_STACK_BYTES)
             .spawn(move || {
-                let session = match run_phase("verification-session initialization", limit, || {
-                    start_session(&session_source)
-                }) {
-                    Ok((session, cost)) => {
-                        if response_sender.send(Ok(cost)).is_err() {
+                let (session, verified) =
+                    match run_phase("verification-session initialization", limit, || {
+                        start_session(&session_source)
+                    }) {
+                        Ok((session, cost)) => {
+                            if response_sender
+                                .send(Ok(SessionResponse {
+                                    cost,
+                                    expansion: None,
+                                }))
+                                .is_err()
+                            {
+                                return;
+                            }
+                            session
+                        }
+                        Err(message) => {
+                            let _ = response_sender.send(Err(message));
                             return;
                         }
-                        session
-                    }
-                    Err(message) => {
-                        let _ = response_sender.send(Err(message));
-                        return;
-                    }
-                };
+                    };
                 for request in request_receiver {
-                    let result = verify_in_session(&session, &session_source, &request);
+                    let result = if let Some(claim) = &request.expansion_claim {
+                        run_phase("retained certificate expansion", request.limit, || {
+                            expand_verified_function_claim_source_by_label(
+                                &session_source.click_source,
+                                &verified,
+                                claim,
+                            )
+                            .map_err(|error| error.report())
+                        })
+                        .map(|(expansion, cost)| SessionResponse { cost, expansion })
+                    } else {
+                        verify_in_session(&session, &session_source, &request).map(|cost| {
+                            SessionResponse {
+                                cost,
+                                expansion: None,
+                            }
+                        })
+                    };
                     if response_sender.send(result).is_err() {
                         return;
                     }
@@ -334,7 +365,7 @@ impl AuditSessionWorker {
             thread: Some(thread),
             initialization: PhaseCost::default(),
         };
-        worker.initialization = worker.receive("verification-session initialization")?;
+        worker.initialization = worker.receive("verification-session initialization")?.cost;
         Ok(worker)
     }
 
@@ -348,6 +379,7 @@ impl AuditSessionWorker {
             click_source: click_source.to_string(),
             position,
             limit,
+            expansion_claim: None,
         };
         self.requests
             .as_ref()
@@ -355,9 +387,29 @@ impl AuditSessionWorker {
             .send(request)
             .map_err(|_| "the verification-session thread has stopped".to_string())?;
         self.receive("rewritten-sidecar verification")
+            .map(|response| response.cost)
     }
 
-    fn receive(&mut self, label: &str) -> Result<PhaseCost, String> {
+    fn expand_original_claim(
+        &mut self,
+        claim: &str,
+        limit: PhaseLimit,
+    ) -> Result<Option<(String, PhaseCost)>, String> {
+        self.requests
+            .as_ref()
+            .ok_or("the verification-session thread has stopped")?
+            .send(SessionRequest {
+                click_source: String::new(),
+                position: SourcePosition::new(1, 1),
+                limit,
+                expansion_claim: Some(claim.to_string()),
+            })
+            .map_err(|_| "the verification-session thread has stopped".to_string())?;
+        let response = self.receive("retained certificate expansion")?;
+        Ok(response.expansion.map(|source| (source, response.cost)))
+    }
+
+    fn receive(&mut self, label: &str) -> Result<SessionResponse, String> {
         self.responses.recv().unwrap_or_else(|_| {
             Err(format!(
                 "the verification-session thread stopped during {label}"
@@ -382,8 +434,10 @@ impl Drop for AuditSessionWorker {
     }
 }
 
-fn start_session(source: &AuditSource) -> Result<C0VerificationSession, String> {
-    let (session, _) = match &source.inputs {
+fn start_session(
+    source: &AuditSource,
+) -> Result<(C0VerificationSession, Vec<VerifiedCTheorem>), String> {
+    let session = match &source.inputs {
         CInput::Bundle(sources) => match &source.project {
             Some(project) => C0VerificationSession::new_project(project, &source_refs(sources)),
             None => C0VerificationSession::new(&source.click_source, &source_refs(sources)),
@@ -410,6 +464,7 @@ fn verify_in_session(
         click_source,
         position,
         limit,
+        ..
     } = request;
     let verify = || match &source.inputs {
         CInput::Bundle(_) => match &source.project {
@@ -1694,9 +1749,21 @@ fn audit_claim_rewrite(
     limits: &AuditLimits,
     deadline: Instant,
 ) -> Result<String, String> {
-    let (expanded, expansion) = run_phase("expansion", limits.expansion.within(deadline)?, || {
-        expand_claim_with_source(&site.click_path, &worker.source, &site.claim)
-    })?;
+    let (expanded, expansion) = if let Some((expanded_click, cost)) =
+        worker.expand_original_claim(&site.claim, limits.expansion.within(deadline)?)?
+    {
+        let expanded = match &worker.source.mdtest {
+            Some(mdtest) => {
+                mdtest.replace_click_source(&worker.source.container_source, &expanded_click)?
+            }
+            None => expanded_click,
+        };
+        (expanded, cost)
+    } else {
+        run_phase("expansion", limits.expansion.within(deadline)?, || {
+            expand_claim_with_source(&site.click_path, &worker.source, &site.claim)
+        })?
+    };
     let original = worker.source.container_source.clone();
     if expanded == original {
         return Err("expansion returned the original sidecar unchanged".to_string());
@@ -1722,20 +1789,37 @@ fn audit_claim_rewrite(
     }
 
     let retained = verify_rewrite_in_session(worker, &site.claim, &expanded, limits, deadline)?;
-    let original_cost = cold_verify(
-        &original,
-        &worker.source,
-        &site.claim,
-        limits.verification.within(deadline)?,
-        "original proof-unit verification",
-    )?;
-    let expanded_cost = cold_verify(
-        &expanded,
-        &worker.source,
-        &site.claim,
-        limits.verification.within(deadline)?,
-        "expanded proof-unit verification",
-    )?;
+    // These cold checks share no verification state. Run the rewritten one
+    // on its own kernel-table thread while the audit thread checks the
+    // original, preserving both independent verdicts and their work budgets.
+    let cold_source = worker.source.clone();
+    let cold_limit = limits.verification.within(deadline)?;
+    let (original_cost, expanded_cost) = thread::scope(|scope| {
+        let expanded_check = thread::Builder::new()
+            .name("click-audit-cold-rewritten".to_string())
+            .stack_size(SESSION_THREAD_STACK_BYTES)
+            .spawn_scoped(scope, || {
+                cold_verify(
+                    &expanded,
+                    &cold_source,
+                    &site.claim,
+                    cold_limit,
+                    "expanded proof-unit verification",
+                )
+            })
+            .map_err(|error| format!("failed to start cold verification: {error}"))?;
+        let original_cost = cold_verify(
+            &original,
+            &worker.source,
+            &site.claim,
+            cold_limit,
+            "original proof-unit verification",
+        );
+        let expanded_cost = expanded_check
+            .join()
+            .map_err(|_| "cold rewritten verification thread panicked".to_string())?;
+        Ok::<_, String>((original_cost?, expanded_cost?))
+    })?;
     if let Some(regression) =
         performance_regression(original_cost, expanded_cost, limits.performance_slack)
     {

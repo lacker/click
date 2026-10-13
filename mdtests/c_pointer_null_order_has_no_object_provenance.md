@@ -60,5 +60,5 @@ int32 compare_nulls() {
 ```
 
 ```expect
-fail: missing prerequisite (compare_lt precondition)
+fail: missing prerequisite (precondition clause 1 of `compare_lt`)
 ```

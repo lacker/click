@@ -646,6 +646,52 @@ fn checked_execution_region_contains_source_at(
     }
 }
 
+/// Checks a written `step` with proofs of its open obligations: each body is
+/// read by the source `have` driver, so it may use smart tactics, and the
+/// step's certificate keeps what they expanded to.
+fn apply_source_step_proofs<'a>(
+    proof: &Proof<'a>,
+    step: &ProofTactic,
+    step_proof: &StepProof,
+    tactic_index: usize,
+) -> Result<Proof<'a>, ClickError> {
+    let Some(step) = linear_execution_proof_step(step) else {
+        return Err(proof.step_error("obligation proofs follow a `step` form"));
+    };
+    let solve = |proof: &Proof<'a>, have: &ProofHave| -> Result<Proof<'a>, ClickError> {
+        let nested = proof.begin_have(have.proposition.clone())?;
+        let goal = nested.goal().cloned();
+        let selected = solve_nested_have(nested, have)
+            .map_err(|error| {
+                source_have_error(proof, have, tactic_index, goal.as_ref(), Some(error))
+            })?
+            .ok_or_else(|| source_have_error(proof, have, tactic_index, goal.as_ref(), None))?;
+        selected.join()
+    };
+    match step_proof {
+        StepProof::By(body) => {
+            proof.apply_step_with_obligation_proofs(step, None, &mut |proof, proposition, _| {
+                solve(
+                    proof,
+                    &ProofHave {
+                        proposition,
+                        proof: SourceProof::Script(body.clone()),
+                    },
+                )
+            })
+        }
+        StepProof::Requires(entries) => {
+            let written = entries
+                .iter()
+                .map(|entry| (entry.label.clone(), entry.have.proposition.clone()))
+                .collect::<Vec<_>>();
+            proof.apply_step_with_obligation_proofs(step, Some(&written), &mut |proof, _, index| {
+                solve(proof, &entries[index.expect("a `requires` entry")].have)
+            })
+        }
+    }
+}
+
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_proof_step(tactic).is_some()
         || closes_loop_invariants(tactic)
@@ -653,6 +699,7 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
         || matches!(
             tactic,
             ProofTactic::Step
+                | ProofTactic::StepProved { .. }
                 | ProofTactic::ApplyTheorem(_)
                 | ProofTactic::Transport { .. }
                 | ProofTactic::Have(_)
@@ -902,6 +949,12 @@ fn advance_checked_linear_continuation<'a>(
             proof.apply_close_invariants_body(&[ProofTactic::Simp])?
         } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.source_index)?
+        } else if let ProofTactic::StepProved {
+            step,
+            proof: step_proof,
+        } = &indexed.tactic
+        {
+            apply_source_step_proofs(&proof, step, step_proof, indexed.index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {
@@ -1867,6 +1920,26 @@ fn source_have_error(
     goal: Option<&Proposition>,
     cause: Option<ClickError>,
 ) -> ClickError {
+    // Search failures belong to the written auto goal, rather than the last
+    // candidate's nested proof step. Resource exhaustion still takes priority.
+    if matches!(
+        have.checking_proof().as_ref(),
+        SourceProof::Tactic(SmartTactic::Auto)
+    ) {
+        if let Err(error) = check_verification_deadline() {
+            return error;
+        }
+        if cause
+            .as_ref()
+            .is_none_or(|error| error.kind() == crate::surface::ClickErrorKind::Proof)
+        {
+            return ClickError::new(format!(
+                "`{}` tactic {index}: `auto` could not prove `{}`",
+                proof.claim_label(),
+                crate::surface::diagnostics::describe_click_proposition(&have.proposition)
+            ));
+        }
+    }
     if let Some(error) = cause {
         return proof.attach_step_diagnostic(error).with_context(format!(
             "`{}` tactic {index}: `have` failed for `{}`",
@@ -3014,6 +3087,12 @@ fn advance_focused_execution_arm<'a>(
             proof.apply_close_invariants_body(&[ProofTactic::Simp])?
         } else if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.source_index)?
+        } else if let ProofTactic::StepProved {
+            step,
+            proof: step_proof,
+        } = &indexed.tactic
+        {
+            apply_source_step_proofs(&proof, step, step_proof, indexed.index)?
         } else if let ProofTactic::CloseInvariantsBy(body) = &indexed.tactic {
             proof.apply_close_invariants_body(body)?
         } else if let ProofTactic::Choose(choice) = &indexed.tactic {

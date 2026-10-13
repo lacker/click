@@ -56,6 +56,44 @@ impl PlainChar {
     }
 }
 
+/// The integer conversion rank of a 64-bit LP64 integer type. `long` and
+/// `long long` have the same size and representation on every supported
+/// target, but they are distinct, incompatible C types, as GCC and Clang
+/// treat them: `long *` and `long long *` do not convert implicitly, and
+/// declarations that differ only in rank conflict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum LongRank {
+    Long,
+    LongLong,
+}
+
+impl LongRank {
+    /// The C spelling of the signed type of this rank.
+    pub const fn signed_spelling(self) -> &'static str {
+        match self {
+            Self::Long => "long",
+            Self::LongLong => "long long",
+        }
+    }
+
+    /// The C spelling of the unsigned type of this rank.
+    pub const fn unsigned_spelling(self) -> &'static str {
+        match self {
+            Self::Long => "unsigned long",
+            Self::LongLong => "unsigned long long",
+        }
+    }
+
+    /// C11 6.3.1.8: of two 64-bit operands, the one of greater rank
+    /// determines the common type.
+    pub const fn max(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::LongLong, _) | (_, Self::LongLong) => Self::LongLong,
+            _ => Self::Long,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CTarget {
     X86_64LinuxKernel,
@@ -126,6 +164,17 @@ impl CTarget {
         }
     }
 
+    /// The rank of `int64_t` and `uint64_t`: glibc defines them as `long`
+    /// and `unsigned long` on x86-64, while the Linux kernel's `s64`/`u64`
+    /// (and so its `int64_t`/`uint64_t`) are `long long` types. `size_t`
+    /// and `ssize_t` are `unsigned long` and `long` on both targets.
+    pub const fn int64_t_rank(self) -> LongRank {
+        match self {
+            Self::X86_64LinuxKernel => LongRank::LongLong,
+            Self::X86_64LinuxUserspace => LongRank::Long,
+        }
+    }
+
     pub const fn plain_char_is_signed(self) -> bool {
         self.plain_char().is_signed()
     }
@@ -189,6 +238,17 @@ impl CTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn int64_t_is_long_in_user_space_and_long_long_in_the_kernel() {
+        assert_eq!(CTarget::X86_64LinuxUserspace.int64_t_rank(), LongRank::Long);
+        assert_eq!(
+            CTarget::X86_64LinuxKernel.int64_t_rank(),
+            LongRank::LongLong
+        );
+        assert_eq!(LongRank::Long.max(LongRank::LongLong), LongRank::LongLong);
+        assert_eq!(LongRank::Long.max(LongRank::Long), LongRank::Long);
+    }
 
     #[test]
     fn default_target_is_userspace_with_signed_char() {

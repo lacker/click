@@ -28,10 +28,9 @@ pub(crate) use contracts::{
     memory_range_byte_count, memory_range_byte_count_extent, memory_range_element_count,
     memory_range_element_count_guards, memory_range_element_count_limit,
     memory_range_extent_guard_spellings, memory_range_extent_guards, narrow_range_constant,
-    scaled_extent_element_width, stated_extent_element_width,
-    stated_loadable_extent_guard_spellings, stated_loadable_extent_guards,
-    stated_separation_extent_bounds, stated_separation_extent_guards, wide_loadable_element_count,
-    wide_range_bounds,
+    scaled_extent_element_width, stated_loadable_extent_guard_spellings,
+    stated_loadable_extent_guards, stated_separation_extent_bounds,
+    stated_separation_extent_guards, wide_loadable_element_count, wide_range_bounds,
 };
 mod integer;
 mod machine_integer;
@@ -338,9 +337,10 @@ impl LoadKind {
     }
 
     /// The value a read of this kind returns from a cell holding `value`:
-    /// the value itself when the read is of its kind, or, for a one-byte
-    /// character read of a one-byte cell of the other signedness, the same
-    /// eight bits reinterpreted ([`CType::read_cell`]).
+    /// the value itself when the read is of its kind, or, for a one- or
+    /// two-byte read of a cell of the same width and the other signedness,
+    /// the same bits reinterpreted ([`CType::read_cell`]). A 32- or 64-bit
+    /// kind already reads a cell of either signedness as its bits.
     pub(crate) fn read_cell(self, value: &CValue) -> Option<CValue> {
         if self.reads_value(value) {
             return Some(value.clone());
@@ -348,6 +348,8 @@ impl LoadKind {
         match self {
             Self::Int8 => CType::Int8.read_cell(value),
             Self::UInt8 => CType::UInt8.read_cell(value),
+            Self::Int16 => CType::Int16.read_cell(value),
+            Self::UInt16 => CType::UInt16.read_cell(value),
             _ => None,
         }
     }

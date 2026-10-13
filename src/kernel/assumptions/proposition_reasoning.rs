@@ -2598,8 +2598,7 @@ impl PureFactContext {
         // or through the exact conjunction split `assume_proposition`
         // performs; deriving it here meant discharging antecedents with the
         // general prover and instantiating quantifiers inside a theory query.
-        let order_facts = self.condition_order_facts();
-        self.has_order_path_in_facts(&left, &right, strict, &order_facts)
+        self.has_order_path(&left, &right, strict)
     }
 
     pub(super) fn collect_quantified_order_facts_for_condition(

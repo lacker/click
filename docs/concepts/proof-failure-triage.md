@@ -53,9 +53,14 @@ two memories therefore never print alike. Different states do not by
 themselves establish unequal values: the proof may establish that their reads
 agree.
 
+A value no current local holds but a local held at a point this path
+recorded reads at that point: inside a loop body, after `i = i + 1`, the
+value `i` had when the iteration began is `at(statement(N).entry, i)`, where
+`N` is the loop's statement index, the same spelling a proof cites.
+
 Where no source name exists, the report uses a placeholder instead of a kernel
-identity: `<unnamed A>` for a value no local, parameter, read or model field
-names (a loop-head value, or a callee's result), and `<pointer A>` for an
+identity: `<unnamed A>` for a value no local, parameter, read, model field or
+recorded point names (a callee's result, say), and `<pointer A>` for an
 address no parameter or local reaches. Placeholders share one identity within a
 report and are not Click proof syntax. Facts with no Click form, such as the
 memory a step may have changed or resources held together, are short descriptions
@@ -111,6 +116,12 @@ omitted entries and support details are explicit. A write event records an
 access, not an equality about the current memory contents.
 
 Only the new facts at each checked step are printed, not the accumulated set.
+
+A loop-closure search error names its unresolved obligation from the member
+planner or the retained focused goal, including when that search exhausted its work budget.
+If no individual obligation was retained, the diagnostic says that the failure
+applies to the bundle search. A budget refusal reports an unfinished proof
+attempt; it does not establish that the named obligation is false.
 
 A failed pointer-valued resource child argument comparison reports the exact
 supplied and required values and the argument position. Up to four explicit
@@ -268,7 +279,12 @@ provide a small `using { ... }` list, when this bounded search misses. Each
 candidate still has to lower to the exact retained kernel fact.
 The automatic atomic fallback also declines components with more than 64
 premises before rendering them; it first tries the derivation's recorded path.
-This limit does not restrict an explicit `using` list.
+This limit does not restrict an explicit `using` list. A refused written view
+`simp()` retains the failing construction stage, including the actual selected
+premise count when it exceeds this limit, in the ordinary error and trace.
+The native kernel view query and source-certificate construction are distinct:
+a positive kernel query can still lack a printable checked proof. Do not infer
+a missing extent premise from that construction failure.
 
 The result distinguishes three important cases:
 

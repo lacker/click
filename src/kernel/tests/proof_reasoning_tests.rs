@@ -8754,6 +8754,121 @@ fn memory_resolution_order_walk_memo_agrees_with_the_full_scan() {
     );
 }
 
+/// The order walk `has_order_path` runs, filed by transport class
+/// (`TransportEdgeIndex`) and answered from a source's shared reach
+/// (`TransportReach`), answers exactly what the full scan answers. Generated
+/// fact sets over plain variables, a load-space variable, constants and a
+/// sum mix strict and non-strict orders and equalities; every pair is asked
+/// in one order and then in reverse, so each question meets reach memos
+/// filled by different earlier questions, and each is compared with the
+/// full scan, which reads no index or memo.
+#[test]
+fn transport_order_walk_agrees_with_the_full_scan() {
+    let mut pool = (0..6)
+        .map(|id| Bitvector32Term::Variable(Variable(89_700 + id)))
+        .collect::<Vec<_>>();
+    pool.push(Bitvector32Term::Variable(Variable((1 << 40) + 89_700)));
+    pool.extend([0, 4, -1].map(|value: i32| Bitvector32Term::Constant(value as u32)));
+    pool.push(Bitvector32Term::Add(
+        Box::new(pool[0].clone()),
+        Box::new(Bitvector32Term::Constant(1)),
+    ));
+    let mut state = 0x6a09_e667_f3bc_c908u64;
+    let mut next = |bound: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % bound as u64) as usize
+    };
+    let mut compared = 0;
+    let mut proved = 0;
+    for _ in 0..25 {
+        let mut facts = PureFactContext::new();
+        for _ in 0..(3 + next(6)) {
+            let left = pool[next(pool.len())].clone();
+            let right = pool[next(pool.len())].clone();
+            let condition = match next(5) {
+                0 | 1 => ConditionTerm::signed_less_than(left, right),
+                2 | 3 => ConditionTerm::signed_less_equal(left, right),
+                _ => ConditionTerm::equal(left, right),
+            };
+            facts = facts.assume_condition(condition, true);
+        }
+        let questions = pool
+            .iter()
+            .flat_map(|left| pool.iter().map(move |right| (left, right)))
+            .flat_map(|(left, right)| [true, false].map(|strict| (left, right, strict)))
+            .collect::<Vec<_>>();
+        for (left, right, strict) in questions.iter().chain(questions.iter().rev()) {
+            let filed = facts.has_order_path(left, right, *strict);
+            let scanned = crate::kernel::assumptions::with_order_walk_full_scan(|| {
+                facts.has_order_path(left, right, *strict)
+            });
+            assert_eq!(
+                filed, scanned,
+                "the filed walk and the full scan disagree on {left:?} -> {right:?} (strict {strict}) under {facts:?}"
+            );
+            compared += 1;
+            proved += usize::from(filed);
+        }
+    }
+    assert!(
+        proved > compared / 20 && proved < compared * 19 / 20,
+        "the generated questions should mix answers: {proved} of {compared} proved"
+    );
+}
+
+/// The order walk reads only the edges its nodes can match. A fixed walk —
+/// one proved and one refused — beside 16 to 256 unrelated bounded
+/// variables examines the same number of edges at every size, where the
+/// full scan examines every edge at every node. Each loop of a function
+/// leaves such bounds on its own copy of the loop variable, so before the
+/// filing every node of every later loop condition's walk rescanned every
+/// earlier loop's facts
+/// (`bugs/sequential-loop-clause-grows-with-earlier-loops.md`).
+#[test]
+fn order_walk_examines_edges_independent_of_unrelated_bounds() {
+    let variable = |id: u64| Bitvector32Term::Variable(Variable(89_800 + id));
+    let (x, y, z, w) = (variable(0), variable(1), variable(2), variable(3));
+    let mut examined = Vec::new();
+    let mut scanned_counts = Vec::new();
+    for size in [16, 64, 256] {
+        let mut facts = PureFactContext::new()
+            .assume_condition(ConditionTerm::signed_less_than(x.clone(), y.clone()), true)
+            .assume_condition(ConditionTerm::signed_less_than(z.clone(), x.clone()), true);
+        for index in 0..size {
+            let bounded = variable(100 + index);
+            facts = facts
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), bounded.clone()),
+                    true,
+                )
+                .assume_condition(ConditionTerm::signed_less_than(bounded, w.clone()), true);
+        }
+        let count = |facts: &PureFactContext| {
+            crate::kernel::assumptions::reset_order_walk_edge_visits();
+            assert!(facts.has_order_path(&z, &y, true));
+            assert!(!facts.has_order_path(&y, &z, false));
+            crate::kernel::assumptions::order_walk_edge_visits()
+        };
+        let filed = count(&facts);
+        let scanned = crate::kernel::assumptions::with_order_walk_full_scan(|| count(&facts));
+        assert!(
+            scanned > filed * 4,
+            "the full scan should read the unrelated bounds at N = {size}: {scanned} against {filed}"
+        );
+        examined.push(filed);
+        scanned_counts.push(scanned);
+    }
+    assert!(
+        examined.windows(2).all(|pair| pair[0] == pair[1]),
+        "the filed walk should examine the same edges at every size: {examined:?}"
+    );
+    eprintln!(
+        "order walk edges at 16/64/256 bounds: filed {examined:?}, full scan {scanned_counts:?}"
+    );
+}
+
 #[test]
 fn uint64_arithmetic_constant_queries_ignore_unrelated_context() {
     let x = Bitvector32Term::Variable(Variable(990_000));

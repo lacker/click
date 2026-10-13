@@ -1325,6 +1325,13 @@ impl Printer<'_> {
             None => self.labels.naming.clone(),
         };
         let cell = naming.as_deref().and_then(|naming| {
+            if let Some(model) = crate::surface::diagnostics::diagnostic_model_load_cell(
+                pointer,
+                kind,
+                ParameterBinding::new(&naming.0, &naming.1),
+            ) {
+                return Some(model);
+            }
             // An address spelling alone does not establish the type of a
             // read. Keep only bases whose declared element has this exact
             // load kind.

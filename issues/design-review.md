@@ -221,21 +221,31 @@ Decision: open.
 Facts, goals, rejected requirements, evaluated sides, search candidates and
 the proof context now print in Click or C syntax (`old(g[0]) < 100`,
 `(uint32)n <= 1073741823u32`, `viewable(p[1..2])`), with reads of other
-memories as `at(<state A>, ...)` defined after the report.
+memories as `at(<state A>, ...)` defined after the report. `--trace-proof`
+keeps its typed notation by design.
 
-Today: the `C operation:` and `call bindings:` lines still print lowered C
-(`first(load_int32_pointer(byte_offset(s, 8)), load_uint64(s))`,
-`mdtests/a_refused_wide_range_names_its_bound_field.md`); the echoed claim
-keeps full parentheses and `||` (`(((result == 0 || u == 0) || v == 0) ||
-result == 3)`); a value with no source name prints as `<unnamed A>` (a
-loop-head value, a callee's result) and an address as `<pointer A>` (a heap
-allocation once no live local holds it); byte offsets into an object print as
-`g+8` in the memory-history text and resource ranges over an unnamed base as
-`…[0..40]`. `--trace-proof` keeps its typed notation by design.
+Today: a loop-carried value inside the body prints as the iteration's entry
+value, `at(statement(N).entry, i)`, and a refused C operation names an address
+a local holds through that local (`alias->mu`, `*shared`, `p[i].y`). What
+remains:
 
-Proposed fix: render the C operation from its source statement, echo the claim
-through the same printer, and name loop-head values and allocations from the
-state that holds them.
+- A callee's result no local holds prints as `<unnamed A>` (`pure facts:
+  [<unnamed A> == -56]`); its only spelling is a translation temporary.
+- A pure theorem's `Integer` binder prints as `<unnamed A>` in a
+  conversion-condition refusal (`<unnamed A> + 1`): that refusal's names come
+  from the machine-typed values only.
+- A heap allocation no live local holds prints as `<pointer A>`, mostly in an
+  `ensures` check after the function returned: the outcome state has no
+  locals, and the execution's recorded snapshots that held the pointer are not
+  part of that check's names.
+- A store at a constant offset into a struct-typed global or local prints as
+  `g+8` in memory-history text: a field name needs the store's width checked
+  against the field, which `SourceCell` does not carry.
+
+Proposed fix: name a callee's result through the snapshot after its call and
+an allocation through the snapshot that last held it, where the outcome check
+can cite that snapshot; spell constant offsets as fields where the width
+matches.
 
 Decision: in progress.
 
@@ -292,11 +302,9 @@ Decision: open.
 ### L5. Resource clauses overlap and the docs disagree
 
 Today: `consumes X; produces X;` beside `owns X`; per-field `owns` lists;
-frames restated after `produces`; the docs disagree on whether `owns` grants
-access (`docs/concepts/spec-state.md` vs `docs/reference/language/index.md`).
+frames restated after `produces`.
 
-Proposed fix: reconcile the documents; `owns *s` for whole structs; infer
-frames for produced cells.
+Proposed fix: `owns *s` for whole structs; infer frames for produced cells.
 
 Decision: open.
 
@@ -319,18 +327,6 @@ without `;`; both `#` and `//` comments; `old(x)` beside
 
 Proposed fix: rule on each, keeping sugar only where it is documented as
 sugar.
-
-Decision: open.
-
-### L8. The language reference is not yet a good AI reference
-
-Today: `docs/reference/language/index.md` is about 3,000 lines with "this
-slice", "not yet" and mdtest citations throughout; core and edge cases are
-mixed.
-
-Proposed fix: make the language reference a good AI reference: core forms and
-edge cases are each easy to find, and the text states current behavior
-without changelog phrasing such as "this slice" or "not yet".
 
 Decision: open.
 
@@ -392,13 +388,13 @@ Decision: open.
 
 ### M5. Aliasing and place syntax are inconsistent
 
-Today: `docs/reference/language/limitations.md` says to add `separate(...)`
-for possibly aliasing pointers; `docs/internals/separation-logic.md` says
-owned ranges are exclusive by composition. `owns a->n` and `owns a->n[0..1]`
-differ (`design/place-based-resource-clauses.md`).
+Today: `owns a->n` and `owns a->n[0..1]` differ
+(`design/place-based-resource-clauses.md`). The docs now agree that a
+contract's `owns` clauses are disjoint from each other and from its `views`
+clauses, and that `separate(...)` is needed only between views and
+`viewable` facts.
 
-Proposed fix: state that `separate` is needed only for views and
-`viewable`; finish the place-based design.
+Proposed fix: finish the place-based design.
 
 Decision: open.
 
@@ -419,11 +415,12 @@ Decision: fix (maintainer).
 
 Today: both need a repository checkout and custom importer builds
 (`examples/basic-cpp/README.md`, `examples/basic-rust/README.md`); the C++
-example is `int increment(int& value)`; `docs/reference/rust.md` opens with
-retired-schema history.
+example is `int increment(int& value)`. The AI reference now labels both
+experimental (`docs/reference/coverage.md`) and keeps migration history out of
+`docs/reference/rust.md`.
 
-Proposed fix: label both alpha up front; ship the exporter and Charon with
-the installer; keep migration history out of user docs.
+Proposed fix: ship the exporter and Charon with the installer; a C++ example
+beyond a scalar reference.
 
 Decision: open.
 

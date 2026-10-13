@@ -226,8 +226,7 @@ Opaque function rules have a narrower boundary:
   Certification reuses a proof's execution when the entry states each of its
   assumptions, which is a lookup;
 - contract execution mode is explicit. `VerifyLoops` checks annotated loop
-  rules, while `ExecuteLoops` independently repeats a bounded concrete
-  execution trace;
+  rules, while `ExecuteLoops` unrolls loops along a bounded execution;
 - every path verification condition is discharged before any body-safety,
   postcondition, resource, or effect claim is certified;
 - all recorded contract claims must have checked evidence for that same exact
@@ -929,6 +928,14 @@ aggregate field, and a branch join's abstraction all draw from it, so two of
 them cannot hand the same identity to two different things. Reserved-set
 probing narrows what an individual stream will issue; it is not the mechanism
 that keeps allocators apart, because several allocators do not probe at all.
+
+Fresh execution reservations include free Integer identities inside every
+specification application argument, whether its result is a machine value,
+an Integer, or an algebraic value. The specification walker visits those
+explicit arguments while keeping execution-memory snapshots opaque. The
+statement-reservation regressions in `src/kernel/tests/execution_tests.rs`
+check that machine-valued and algebraic applications cannot surrender a held
+argument identity to the execution counter.
 
 A rule that abstracts a state therefore both takes the counter and reports
 where it left it. `abstract_c_state_for_join` and its siblings take the

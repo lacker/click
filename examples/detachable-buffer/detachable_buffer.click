@@ -144,18 +144,6 @@ int32 detachable_buffer_pipeline(
     fold(attached_buffer(owner));
     step();
     step();
-    have result == replacement by {
-        assumption();
-    }
-    have owner->len == length by {
-        assumption();
-    }
-    have owner->data == data by {
-        assumption();
-    }
-    have data[0] == replacement by {
-        assumption();
-    }
     assumption();
     assumption();
     assumption();

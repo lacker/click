@@ -241,6 +241,7 @@ pub(super) fn verify_execution_theorem(
             InstanceRename {
                 name: introduced.clone(),
                 identity: binding.identity,
+                target_identity: None,
             },
         );
     }

@@ -101,26 +101,13 @@ int32 vector_copy(
         invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
         owns dst[0..length];
         initialize by {
-            have 0 <= i by {
-                normalize();
-            }
-            have i <= length by {
-                assumption();
-            }
+            have 0 <= i by auto;
+            have i <= length by auto;
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
                 intro();
                 intro();
                 extract(0 <= k);
                 extract(k < i);
-                have i == 0 by {
-                    normalize();
-                }
-                have not (0 <= k) by {
-                    arithmetic() using {
-                        k < i;
-                        i == 0;
-                    }
-                }
                 contradiction(0 <= k);
             }
         }
@@ -130,13 +117,7 @@ int32 vector_copy(
             simp();
         }
     }
-    have i == length by {
-        apply(int32_less_equal_and_not_less_than_implies_equal(at(loop(0).exit, i), at(loop(0).exit, length))) using {
-            at(loop(0).exit, i) <= at(loop(0).exit, length);
-            not at(loop(0).exit, i) < at(loop(0).exit, length);
-        }
-        assumption();
-    }
+    have i == length by auto;
     have forall (k: int32) { 0 <= k and k < length implies dst[k] == old(src[k]) } by {
         intro();
         intro();
@@ -147,9 +128,6 @@ int32 vector_copy(
         assumption();
     }
     step();
-    have result == length by {
-        assumption();
-    }
     have forall (k: int32) { 0 <= k and k < length implies src[k] == old(src[k]) } by {
         intro();
         intro();
@@ -194,21 +172,6 @@ int32 vector_grow(struct vector* owner) {
     };
 } by {
     unfold(allocated_vector(owner));
-    have owner->cap < 2147483647 by {
-        apply(int32_less_equal_less_than_transitive(owner->cap, 536870910, 2147483647)) using {
-            owner->cap <= 536870910;
-        }
-        assumption();
-    }
-    have (owner->cap + 1) <= 536870911 by {
-        apply(int32_less_equal_less_than_transitive(owner->cap, 536870910, 536870911)) using {
-            owner->cap <= 536870910;
-        }
-        apply(int32_increment_upper_bound(owner->cap, 536870911)) using {
-            owner->cap < 536870911;
-        }
-        assumption();
-    }
     step();
     step();
     step();
@@ -218,87 +181,18 @@ int32 vector_grow(struct vector* owner) {
     step();
     step();
     step();
-    have 0 <= owner->len by {
-        assumption();
-    }
-    have owner->len <= owner->cap by {
-        assumption();
-    }
-    have 1 <= new_capacity by {
-        have 1 <= (owner->cap + 1) by {
-            apply(int32_increment_lower_bound(owner->cap, 1, 2147483647)) using {
-                1 <= owner->cap;
-                owner->cap < 2147483647;
-            }
-            assumption();
-        }
-        transport(1 <= (owner->cap + 1), 1 <= new_capacity) using {
-            1 <= (owner->cap + 1);
-        }
-        assumption();
-    }
-    have owner->len <= old_capacity by {
-        assumption();
-    }
-    have owner->len <= new_capacity by {
-        have owner->len <= (owner->cap + 1) by {
-            apply(int32_increment_lower_bound(owner->cap, owner->len, 2147483647)) using {
-                owner->len <= owner->cap;
-                owner->cap < 2147483647;
-            }
-            assumption();
-        }
-        transport(owner->len <= (owner->cap + 1), owner->len <= new_capacity) using {
-            owner->len <= (owner->cap + 1);
-        }
-        assumption();
-    }
-    have new_capacity <= 536870911 by {
-        assumption();
-    }
-    have 0 <= new_capacity by {
-        apply(int32_less_equal_transitive(0, 1, new_capacity)) using {
-            1 <= new_capacity;
-        }
-        assumption();
-    }
     have 0 <= old_capacity by {
-        have old_capacity == owner->cap by {
-            normalize();
-        }
         rewrite(old_capacity == owner->cap);
         apply(int32_less_equal_transitive(0, 1, owner->cap)) using {
             1 <= owner->cap;
         }
         assumption();
     }
-    have ((uint32)new_capacity) <= 1073741823u32 by {
-        arithmetic() using {
-            0 <= new_capacity;
-            new_capacity <= 536870911;
-        }
-    }
     have ((uint32)old_capacity) <= 1073741823u32 by {
-        have old_capacity == owner->cap by {
-            normalize();
-        }
         rewrite(old_capacity == owner->cap);
         arithmetic() using {
             1 <= owner->cap;
             owner->cap <= 536870910;
-        }
-    }
-    have owner->len <= 536870910 by {
-        apply(int32_less_equal_transitive(owner->len, owner->cap, 536870910)) using {
-            owner->len <= owner->cap;
-            owner->cap <= 536870910;
-        }
-        assumption();
-    }
-    have ((uint32)owner->len) <= 1073741823u32 by {
-        arithmetic() using {
-            0 <= owner->len;
-            owner->len <= 536870910;
         }
     }
     if new_data == 0 {
@@ -316,24 +210,10 @@ int32 vector_grow(struct vector* owner) {
             assumption();
         }
         fold(allocated_vector(owner));
-        have result == 0 by {
-            normalize();
-        }
-        have result == 0 or result == 1 by {
-            assumption();
-        }
-        have owner->len == old(owner->len) by {
-            normalize();
-        }
-        have result == 0 implies owner->cap == old(owner->cap) by {
-            simp();
-        }
-        have result == 0 implies owner->data == old(owner->data) by {
-            simp();
-        }
-        have result == 1 implies owner->cap == (old(owner->cap) + 1) by {
-            simp();
-        }
+        have result == 0 by auto;
+        have result == 0 implies owner->cap == old(owner->cap) by auto;
+        have result == 0 implies owner->data == old(owner->data) by auto;
+        have result == 1 implies owner->cap == (old(owner->cap) + 1) by auto;
         assumption();
         assumption();
         assumption();
@@ -345,56 +225,16 @@ int32 vector_grow(struct vector* owner) {
         step();
         step();
         step();
-        have copied == owner->len by {
-            assumption();
-        }
         step();
         step();
         step();
         step();
-        have 0 <= owner->len by {
-            assumption();
-        }
-        have owner->cap == at(statement(9).entry, new_capacity) by {
-            normalize();
-        }
-        have owner->len <= owner->cap by {
-            assumption();
-        }
-        have 1 <= owner->cap by {
-            assumption();
-        }
-        have owner->cap <= 536870911 by {
-            assumption();
-        }
-        have separate(memory(*owner), memory(owner->data[0..owner->cap])) by {
-            assumption();
-        }
-        have owner->len == old(owner->len) by {
-            transport(old(owner->len) == old(owner->len), owner->len == old(owner->len)) using {
-            }
-            assumption();
-        }
+        have owner->cap == at(statement(9).entry, new_capacity) by auto;
         have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by simp;
         fold(allocated_vector(owner));
-        have result == 1 by {
-            normalize();
-        }
-        have result == 0 or result == 1 by {
-            assumption();
-        }
-        have owner->len == old(owner->len) by {
-            normalize();
-        }
-        have result == 0 implies owner->cap == old(owner->cap) by {
-            simp();
-        }
-        have result == 0 implies owner->data == old(owner->data) by {
-            simp();
-        }
-        have result == 1 implies owner->cap == (old(owner->cap) + 1) by {
-            simp();
-        }
+        have result == 0 implies owner->cap == old(owner->cap) by auto;
+        have result == 0 implies owner->data == old(owner->data) by auto;
+        have result == 1 implies owner->cap == (old(owner->cap) + 1) by auto;
         assumption();
         assumption();
         assumption();
@@ -427,30 +267,6 @@ int32 vector_push(struct vector* owner, int32 value) {
     step();
     step();
     fold(vector_storage(owner));
-    have at(function.entry, owner->len) <= at(function.entry, owner->len) by {
-        normalize();
-    }
-    have at(function.entry, owner->len) < at(function.entry, (owner->len + 1)) by {
-        apply(int32_increment_strictly_increases(at(function.entry, owner->len), at(function.entry, owner->cap))) using {
-            at(function.entry, owner->len) < at(function.entry, owner->cap);
-        }
-        assumption();
-    }
-    have result == (old(owner->len) + 1) by {
-        normalize();
-    }
-    have owner->len == (old(owner->len) + 1) by {
-        normalize();
-    }
-    have owner->data[old(owner->len)] == value by {
-        normalize();
-    }
-    have owner->cap == old(owner->cap) by {
-        normalize();
-    }
-    have owner->data == old(owner->data) by {
-        normalize();
-    }
     have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
         intro();
         intro();
@@ -861,18 +677,7 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     step();
     step();
     fold(empty_vector(owner));
-    have result == 0 by {
-        normalize();
-    }
-    have owner->len == 0 by {
-        normalize();
-    }
-    have owner->cap == capacity by {
-        normalize();
-    }
-    have owner->data == data by {
-        normalize();
-    }
+    have result == 0 by auto;
     assumption();
     assumption();
     assumption();
@@ -885,9 +690,6 @@ int32 vector_len(struct vector* owner) {
 
     ensures result == owner->len by {
         step();
-        have result == owner->len by {
-            normalize();
-        }
         assumption();
     }
 }
@@ -903,13 +705,7 @@ int32 vector_get(struct vector* owner, int32 index) {
     step();
     step();
     step();
-    have result == owner->data[index] by {
-        normalize();
-    }
     assumption();
-    have result == old(owner->data[index]) by {
-        assumption();
-    }
     assumption();
 }
 
@@ -929,36 +725,6 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     step();
     step();
     fold(nonempty_vector(owner));
-    have index < (index + 1) by {
-        apply(int32_increment_strictly_increases(at(statement(3).entry, index), at(statement(3).entry, owner->len))) using {
-            at(statement(3).entry, index) < at(statement(3).entry, owner->len);
-        }
-        assumption();
-    }
-    have index <= index by {
-        normalize();
-    }
-    have index < (index + 1) by {
-        apply(int32_increment_strictly_increases(at(statement(3).entry, index), at(statement(3).entry, owner->len))) using {
-            at(statement(3).entry, index) < at(statement(3).entry, owner->len);
-        }
-        assumption();
-    }
-    have result == value by {
-        normalize();
-    }
-    have owner->data[index] == value by {
-        normalize();
-    }
-    have owner->len == old(owner->len) by {
-        normalize();
-    }
-    have owner->cap == old(owner->cap) by {
-        normalize();
-    }
-    have owner->data == old(owner->data) by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();
@@ -974,62 +740,20 @@ int32 vector_fill(struct vector* owner, int32 value) {
     unfold(nonempty_vector(owner));
     step();
     step();
-    have i >= 0 by {
-        normalize();
-    }
-    have i <= owner->len by {
-        apply(int32_less_equal_transitive(0, 1, owner->len)) using {
-            1 <= owner->len;
-        }
-        assumption();
-    }
+    have i >= 0 by auto;
+    have i <= owner->len by auto;
     loop as fill_cells {
         decreases owner->len - i;
         invariant i >= 0 and i <= owner->len;
         owns owner->data[0..owner->len];
         initialize by {
             have i >= 0 and i <= owner->len by {
-                have i >= 0 by {
-                    normalize();
-                }
-                have i <= owner->len by {
-                    assumption();
-                }
                 assumption();
             }
         }
         preserve by {
-            have i < owner->cap by {
-                apply(int32_less_than_less_equal_transitive(i, owner->len, owner->cap)) using {
-                    i < owner->len;
-                    owner->len <= owner->cap;
-                }
-                assumption();
-            }
             step();
             step();
-            have i >= 0 by {
-                extract(at(statement(3).entry, i) >= 0);
-                apply(int32_increment_greater_equal_lower_bound(at(statement(3).entry, i), 0, at(statement(3).entry, owner->len))) using {
-                    at(statement(3).entry, i) >= 0;
-                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
-                }
-                assumption();
-            }
-            have i <= owner->len by {
-                apply(int32_increment_upper_bound(at(statement(3).entry, i), at(statement(3).entry, owner->len))) using {
-                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
-                }
-                assumption();
-            }
-            have 0 <= 0 - at(statement(3).entry, i) + owner->len - 1 by {
-                arithmetic() using {
-                    at(statement(3).entry, i) >= 0;
-                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
-                    0 <= owner->len;
-                    i <= owner->len;
-                }
-            }
             have 0 - at(statement(3).entry, i) + owner->len - 1
                 < 0 - at(statement(3).entry, i) + owner->len by {
                 arithmetic() using {
@@ -1045,9 +769,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
     step();
     fold(nonempty_vector(owner));
     assumption();
-    have result == owner->len by {
-        normalize();
-    }
     assumption();
 }
 
@@ -1066,53 +787,17 @@ int32 vector_replace_if(
     step();
     step();
     step();
-    have replace == replace by {
-        normalize();
-    }
     branch then {
         step();
-        have replace != 0 implies selected == replacement by {
-            rewrite(selected == replacement);
-            intro();
-            normalize();
-        }
-        have not replace != 0 implies selected == original by {
-            intro();
-            contradiction(replace != 0);
-        }
-        have index < (index + 1) by {
-            apply(int32_increment_strictly_increases(at(statement(4).entry, index), at(statement(4).entry, owner->len))) using {
-                at(statement(4).entry, index) < at(statement(4).entry, owner->len);
-            }
-            assumption();
-        }
+        have replace != 0 implies selected == replacement by auto;
     } else {
         step();
         have replace != 0 implies selected == replacement by {
-            have not replace != 0 by {
-                assumption();
-            }
             intro();
             contradiction(not replace != 0);
         }
-        have not replace != 0 implies selected == original by {
-            intro();
-            assumption();
-        }
-        have index < (index + 1) by {
-            apply(int32_increment_strictly_increases(at(statement(5).entry, index), at(statement(5).entry, owner->len))) using {
-                at(statement(5).entry, index) < at(statement(5).entry, owner->len);
-            }
-            assumption();
-        }
     }
     step();
-    have index < (index + 1) by {
-        assumption();
-    }
-    have replace != 0 implies result == replacement by {
-        assumption();
-    }
     assumption();
     assumption();
 }
@@ -1126,9 +811,7 @@ int32 vector_clear(struct vector* owner) {
     unfold(nonempty_vector(owner));
     step();
     step();
-    have owner->len == 0 by {
-        normalize();
-    }
+    have owner->len == 0 by auto;
     apply(int32_less_equal_transitive(1, at(statement(0).entry, owner->len), at(statement(0).entry, owner->cap))) using {
         at(statement(0).entry, 1) <= at(statement(0).entry, owner->len);
         at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
@@ -1137,13 +820,7 @@ int32 vector_clear(struct vector* owner) {
         at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap);
     }
     assumption();
-    have separate(memory(*owner), memory(owner->data[0..owner->cap])) by {
-        assumption();
-    }
     fold(empty_vector(owner));
-    have owner->len == 0 by {
-        normalize();
-    }
     assumption();
     assumption();
 }
@@ -1166,86 +843,21 @@ int32 vector_pipeline(
     step();
     step();
     step();
-    have observed == 0 by {
-        assumption();
-    }
-    have owner->len == 0 by {
-        assumption();
-    }
-    have owner->cap == capacity by {
-        assumption();
-    }
     unfold(empty_vector(owner));
-    have 0 <= owner->len by {
-        rewrite(owner->len == 0);
-        normalize();
-    }
-    have owner->len <= owner->cap by {
-        rewrite(owner->len == 0);
-        apply(int32_less_equal_transitive(0, 1, owner->cap)) using {
-            1 <= owner->cap;
-        }
-        assumption();
-    }
     fold(vector_storage(owner));
-    have owner->len < owner->cap by {
-        rewrite(owner->len == 0);
-        apply(int32_increment_less_equal_implies_less_than(0, owner->cap)) using {
-            1 <= owner->cap;
-        }
-        assumption();
-    }
     step();
     unfold(vector_storage(owner));
-    have owner->len == 1 by {
-        rewrite(owner->len == at(statement(2).exit, (owner->len + 1)));
-        rewrite(at(statement(2).exit, owner->len) == at(statement(2).exit, 0));
-        normalize();
-    }
-    have 1 <= owner->len by {
-        rewrite(owner->len == 1);
-        normalize();
-    }
     fold(nonempty_vector(owner));
-    have 0 < owner->len by {
-        rewrite(owner->len == 1);
-        normalize();
-    }
     step();
-    have owner->len == 1 by {
-        rewrite(at(statement(3).exit, 1) == at(statement(3).exit, owner->len));
-        normalize();
-    }
-    have 0 < owner->len by {
-        rewrite(owner->len == 1);
-        normalize();
-    }
     step();
-    have owner->len == 1 by {
-        rewrite(at(statement(3).exit, 1) == at(statement(3).exit, owner->len));
-        assumption();
-    }
     observe(nonempty_vector(owner));
-    have owner->data[0] == replacement by {
-        assumption();
-    }
-    have 0 < owner->len by {
-        rewrite(owner->len == 1);
-        normalize();
-    }
     step();
-    have observed == owner->data[0] by {
-        assumption();
-    }
     apply(int32_equality_transitive(observed, owner->data[0], replacement)) using {
         observed == owner->data[0];
         owner->data[0] == replacement;
     }
     step();
     step();
-    have result == replacement by {
-        assumption();
-    }
     assumption();
     assumption();
 }

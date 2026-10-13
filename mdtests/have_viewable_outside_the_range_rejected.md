@@ -5,9 +5,8 @@ when order facts place `[lo, k)` inside `[lo, hi)`. Here `lo <= k` is stated and
 `k <= hi` is not, so the goal's upper end is not known to be inside the assumed
 range and the step is refused.
 
-The refusal names the missing fact in the spelling the theorem uses, because
-that is what the reader has to prove next. It does not print two lowered byte
-extents and leave the arithmetic to them.
+The refusal identifies the checked transport that failed, with its source and
+target. It does not infer a particular missing premise from the failed check.
 
 ```click
 theorem range_not_inside_a_viewable_range(v: int32[], lo: int32, hi: int32, k: int32) {
@@ -24,5 +23,5 @@ theorem range_not_inside_a_viewable_range(v: int32[], lo: int32, hi: int32, k: i
 ```
 
 ```expect
-fail: `transport using` cannot narrow `viewable(v[lo..hi])` to `viewable(v[lo..k])`: narrowing a viewable range needs `k <= hi`, which is not an available fact
+fail: `transport using` target does not follow from the source fact and the listed premises
 ```

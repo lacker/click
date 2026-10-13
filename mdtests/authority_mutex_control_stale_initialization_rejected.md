@@ -56,5 +56,5 @@ int32 run() {
 ```
 
 ```expect
-fail: Requires owns mutex_live(…)
+fail: Requires owns mutex_live(&obj->mu)
 ```

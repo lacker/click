@@ -29,11 +29,18 @@ const REWRITE_ATTEMPTS: usize = 256;
 /// closers miss: `simp` unfolds and computes what a rewrite exposes.
 const REWRITE_SIMP_CLOSURES: usize = 8;
 
+/// How many connected constructor equations `auto` pairs.
+const CONSTRUCTOR_EQUATIONS: usize = 16;
+
 /// The machine type an order fact compares, with the names its bridges use.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum MachineOrder {
     Int32,
     Wide(Carrier),
+    /// A 64-bit equality. The kernel's equality does not say whether its
+    /// operands are signed, so its bridges are tried for `uint64` and then
+    /// `int64`; the other type's application is refused.
+    Equal64,
 }
 
 impl MachineOrder {
@@ -54,20 +61,34 @@ impl MachineOrder {
             Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(..), true) => {
                 Some(Self::Int32)
             }
+            Proposition::ConditionIs(ConditionTerm::Bitvector64Equal(..), true) => {
+                Some(Self::Equal64)
+            }
             _ => None,
         }
     }
 
+    /// The types whose bridges may carry this fact.
+    fn carriers(self) -> Vec<Self> {
+        match self {
+            Self::Equal64 => vec![Self::Wide(Carrier::UInt64), Self::Wide(Carrier::Int64)],
+            order => vec![order],
+        }
+    }
+
+    /// The bridge prefix. `Equal64` reaches a bridge only through
+    /// `carriers`.
     fn name(self) -> &'static str {
         match self {
             Self::Int32 => "int32",
             Self::Wide(carrier) => carrier.name(),
+            Self::Equal64 => "uint64",
         }
     }
 
     fn typed_literals(self, expression: &ContractExpression) -> ContractExpression {
         match self {
-            Self::Int32 => expression.clone(),
+            Self::Int32 | Self::Equal64 => expression.clone(),
             Self::Wide(carrier) => carrier.typed_literals(expression),
         }
     }
@@ -86,6 +107,7 @@ impl MachineOrder {
                 )),
                 _ => None,
             },
+            Self::Equal64 => None,
         }
     }
 }
@@ -285,6 +307,26 @@ fn unanchored_equality(surface: &ClickProposition) -> Option<ClickProposition> {
         }),
         _ => None,
     }
+}
+
+/// The two sides of an algebraic equality fact.
+fn algebraic_sides(
+    fact: &Proposition,
+) -> Option<(&crate::kernel::AlgebraicTerm, &crate::kernel::AlgebraicTerm)> {
+    match fact {
+        Proposition::ConditionIs(ConditionTerm::AlgebraicEqual(left, right), true) => {
+            Some((left, right))
+        }
+        Proposition::Equal(Term::Algebraic(left), Term::Algebraic(right)) => Some((left, right)),
+        _ => None,
+    }
+}
+
+fn is_constructor(term: &crate::kernel::AlgebraicTerm) -> bool {
+    matches!(
+        term.node,
+        crate::kernel::AlgebraicTermNode::Constructor { .. }
+    )
 }
 
 /// An `Integer` literal, negative ones as a negation of their magnitude.
@@ -577,7 +619,13 @@ impl<'a> Proof<'a> {
         if let Some(closed) = self.try_simp_closure()? {
             return Ok(Some(closed));
         }
-        self.try_auto_equality_chain_closure()
+        if let Some(closed) = self.try_auto_equality_chain_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_constructor_join_closure()? {
+            return Ok(Some(closed));
+        }
+        self.try_wide_equality_solver_closure()
     }
 
     /// Rewrite the goal by the equality facts connected to it until
@@ -647,6 +695,103 @@ impl<'a> Proof<'a> {
             &mut seen,
             &mut budget,
         )
+    }
+
+    /// `auto` on a goal about the fields of a value that two connected facts
+    /// equate to constructor applications, `t == Node(c, r)` and
+    /// `t == Node(Black, Empty)`: it states `Node(c, r) == Node(Black, Empty)`,
+    /// proved by rewriting each application to `t`, and `simp` then reads the
+    /// fields' equalities (or the constructors' mismatch) from it. At most
+    /// `CONSTRUCTOR_EQUATIONS` connected equations are paired.
+    pub(in crate::surface::proof) fn try_constructor_join_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(goal) = self.goal() else {
+            return Ok(None);
+        };
+        let Some(equalities) =
+            crate::surface::planning::proposition_search::solver_connected_equalities(
+                self.facts().assumptions(),
+                goal,
+            )
+        else {
+            return Ok(None);
+        };
+        // Each equation as the value it names, its constructor application,
+        // and the fact oriented `application == value`.
+        let mut equations: Vec<(
+            crate::kernel::AlgebraicTerm,
+            ContractExpression,
+            ClickProposition,
+        )> = Vec::new();
+        for equality in &equalities {
+            check_verification_deadline()?;
+            if equations.len() >= CONSTRUCTOR_EQUATIONS {
+                break;
+            }
+            let Some((left, right)) = algebraic_sides(equality) else {
+                continue;
+            };
+            let (left_built, right_built) = (is_constructor(left), is_constructor(right));
+            if left_built == right_built {
+                continue;
+            }
+            let Some((_, surface)) = self
+                .resolve_simp_premises(std::slice::from_ref(equality), &[])
+                .and_then(|mut spelled| spelled.pop())
+            else {
+                continue;
+            };
+            let ClickProposition::Comparison {
+                left: written_left,
+                operator: ComparisonOperator::Equal,
+                right: written_right,
+            } = surface
+            else {
+                continue;
+            };
+            let (value, application, value_written) = if left_built {
+                (right, written_left, written_right)
+            } else {
+                (left, written_right, written_left)
+            };
+            let oriented = ClickProposition::Comparison {
+                left: application.clone(),
+                operator: ComparisonOperator::Equal,
+                right: value_written,
+            };
+            equations.push((value.clone(), application, oriented));
+        }
+        for (index, (value, first, first_fact)) in equations.iter().enumerate() {
+            for (other, second, second_fact) in &equations[index + 1..] {
+                check_verification_deadline()?;
+                if value != other || first == second {
+                    continue;
+                }
+                let joined = ClickProposition::Comparison {
+                    left: first.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: second.clone(),
+                };
+                let Ok(next) = self.apply_step(have(
+                    joined,
+                    vec![
+                        ProofStep::Rewrite(first_fact.clone()),
+                        ProofStep::Rewrite(second_fact.clone()),
+                        ProofStep::Normalize,
+                    ],
+                )) else {
+                    continue;
+                };
+                if next.is_complete() {
+                    return Ok(Some(next));
+                }
+                if let Some(closed) = next.try_simp_closure()? {
+                    return Ok(Some(closed));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// A bounded depth-first search over rewrite sequences: every applicable
@@ -851,6 +996,23 @@ impl<'a> Proof<'a> {
     pub(in crate::surface::proof) fn try_machine_goal_solver_closure(
         &self,
     ) -> Result<Option<Self>, ClickError> {
+        self.try_machine_goal_solver_closure_for(false)
+    }
+
+    /// `try_machine_goal_solver_closure` for a 64-bit equality goal. Its
+    /// `Integer` reading is proved before the type is known, so it costs
+    /// more than the other machine goals; `auto` tries it last, after
+    /// `simp` and its rewrite search.
+    pub(in crate::surface::proof) fn try_wide_equality_solver_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_machine_goal_solver_closure_for(true)
+    }
+
+    fn try_machine_goal_solver_closure_for(
+        &self,
+        wide_equality: bool,
+    ) -> Result<Option<Self>, ClickError> {
         let (Some(goal), Some(surface_goal)) = (self.goal(), self.surface_goal()) else {
             return Ok(None);
         };
@@ -860,6 +1022,9 @@ impl<'a> Proof<'a> {
         let Some(order) = MachineOrder::of(goal) else {
             return Ok(None);
         };
+        if (order == MachineOrder::Equal64) != wide_equality {
+            return Ok(None);
+        }
         let Some((lower, upper, relation, true)) = relation_parts(surface_goal) else {
             return Ok(None);
         };
@@ -870,12 +1035,51 @@ impl<'a> Proof<'a> {
             (MachineOrder::Wide(_), Relation::Less) => "to_integer_less_than_implies_less_than",
             _ => return Ok(None),
         };
-        let lower = order.typed_literals(&lower);
-        let upper = order.typed_literals(&upper);
-        let observed = relate(to_integer(&lower), to_integer(&upper), relation);
+        // The `Integer` reading proved for the previous type, which the next
+        // type reuses when its literals read the same.
+        let mut proved: Option<(ClickProposition, Self)> = None;
+        for order in order.carriers() {
+            let lower = order.typed_literals(&lower);
+            let upper = order.typed_literals(&upper);
+            let observed = relate(to_integer(&lower), to_integer(&upper), relation);
+            let proof = match &proved {
+                Some((reading, proof)) if *reading == observed => proof.clone(),
+                _ => {
+                    let Some(proof) = self.prove_integer_reading(&lower, &upper, &observed)? else {
+                        continue;
+                    };
+                    proved = Some((observed.clone(), proof.clone()));
+                    proof
+                }
+            };
+            let Ok(applied) = proof.apply_step(apply(
+                &format!("{}_{stem}", order.name()),
+                vec![lower, upper],
+                vec![observed],
+            )) else {
+                continue;
+            };
+            if applied.is_complete() || applied.goal() != self.goal() {
+                return Ok(Some(applied));
+            }
+            if let Some(closed) = applied.try_direct_logical_closure().ok().flatten() {
+                return Ok(Some(closed));
+            }
+        }
+        Ok(None)
+    }
+
+    /// `observed`, the `Integer` reading of a machine comparison of `lower`
+    /// and `upper`, proved by `auto` as a stated fact.
+    fn prove_integer_reading(
+        &self,
+        lower: &ContractExpression,
+        upper: &ContractExpression,
+        observed: &ClickProposition,
+    ) -> Result<Option<Self>, ClickError> {
         // `to_integer(a + b)` can be stated only where `a + b` is defined.
         let mut base = self.clone();
-        for side in [&lower, &upper] {
+        for side in [lower, upper] {
             if matches!(
                 side,
                 ContractExpression::Add(..) | ContractExpression::Subtract(..)
@@ -895,20 +1099,7 @@ impl<'a> Proof<'a> {
         let Some(closed) = scope.try_auto_fact_closure()? else {
             return Ok(None);
         };
-        let Ok(proof) = closed.join() else {
-            return Ok(None);
-        };
-        let Ok(applied) = proof.apply_step(apply(
-            &format!("{}_{stem}", order.name()),
-            vec![lower, upper],
-            vec![observed],
-        )) else {
-            return Ok(None);
-        };
-        if applied.is_complete() || applied.goal() != self.goal() {
-            return Ok(Some(applied));
-        }
-        Ok(applied.try_direct_logical_closure().ok().flatten())
+        Ok(closed.join().ok())
     }
 
     /// The sums and differences named by connected `defined(...)` facts.
@@ -948,7 +1139,12 @@ impl<'a> Proof<'a> {
         let mut carried = Vec::new();
         let mut ranged: Vec<ContractExpression> = Vec::new();
         for candidate in candidates {
-            let Some(order) = MachineOrder::of(candidate) else {
+            // A 64-bit equality is not carried: rewriting by it serves an
+            // `Integer` claim without reading both types' ranges into every
+            // solver call.
+            let Some(order) =
+                MachineOrder::of(candidate).filter(|order| *order != MachineOrder::Equal64)
+            else {
                 continue;
             };
             crate::instrumentation::record_deterministic_work(1);

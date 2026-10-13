@@ -188,8 +188,8 @@ pub(super) fn c0_type_from_kernel(c_type: CType) -> C0Type {
         CType::UInt8 => C0Type::UInt8,
         CType::UInt16 => C0Type::UInt16,
         CType::UInt32 => C0Type::UInt32,
-        CType::Int64 => C0Type::Int64,
-        CType::UInt64 => C0Type::UInt64,
+        CType::Int64 => C0Type::Int64(LongRank::Long),
+        CType::UInt64 => C0Type::UInt64(LongRank::Long),
         CType::Int128 => C0Type::Int128,
         CType::UInt128 => C0Type::UInt128,
         CType::Float32 => C0Type::Float32,
@@ -200,9 +200,9 @@ pub(super) fn c0_type_from_kernel(c_type: CType) -> C0Type {
         CType::Int32Pointer => C0Type::Int32Pointer,
         CType::UInt8Pointer => C0Type::UInt8Pointer,
         CType::UInt32Pointer => C0Type::UInt32Pointer,
-        CType::Int64Pointer => C0Type::Int64Pointer,
+        CType::Int64Pointer => C0Type::Int64Pointer(LongRank::Long),
         CType::Int128Pointer => C0Type::Int128Pointer,
-        CType::UInt64Pointer => C0Type::UInt64Pointer,
+        CType::UInt64Pointer => C0Type::UInt64Pointer(LongRank::Long),
         CType::UInt128Pointer => C0Type::UInt128Pointer,
         CType::Float32Pointer => C0Type::Float32Pointer,
         CType::Float64Pointer => C0Type::Float64Pointer,
@@ -212,9 +212,9 @@ pub(super) fn c0_type_from_kernel(c_type: CType) -> C0Type {
         CType::Int32PointerPointer => C0Type::Int32PointerPointer,
         CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
         CType::UInt32PointerPointer => C0Type::UInt32PointerPointer,
-        CType::Int64PointerPointer => C0Type::Int64PointerPointer,
+        CType::Int64PointerPointer => C0Type::Int64PointerPointer(LongRank::Long),
         CType::Int128PointerPointer => C0Type::Int128PointerPointer,
-        CType::UInt64PointerPointer => C0Type::UInt64PointerPointer,
+        CType::UInt64PointerPointer => C0Type::UInt64PointerPointer(LongRank::Long),
         CType::UInt128PointerPointer => C0Type::UInt128PointerPointer,
         CType::Float32PointerPointer => C0Type::Float32PointerPointer,
         CType::Float64PointerPointer => C0Type::Float64PointerPointer,
@@ -225,13 +225,15 @@ pub(super) fn c0_type_from_kernel(c_type: CType) -> C0Type {
         CType::Int32Array(length) => C0Type::Int32Array(length),
         CType::UInt8Array(length) => C0Type::UInt8Array(length),
         CType::UInt32Array(length) => C0Type::UInt32Array(length),
-        CType::Int64Array(length) => C0Type::Int64Array(length),
+        CType::Int64Array(length) => C0Type::Int64Array(LongRank::Long, length),
         CType::Int128Array(length) => C0Type::Int128Array(length),
-        CType::UInt64Array(length) => C0Type::UInt64Array(length),
+        CType::UInt64Array(length) => C0Type::UInt64Array(LongRank::Long, length),
         CType::UInt128Array(length) => C0Type::UInt128Array(length),
         CType::Float32Array(length) => C0Type::Float32Array(length),
         CType::Float64Array(length) => C0Type::Float64Array(length),
-        CType::PointerArray(element, length) => C0Type::PointerArray(element, length),
+        CType::PointerArray(element, length) => {
+            C0Type::PointerArray(element, LongRank::Long, length)
+        }
     }
 }
 
@@ -754,6 +756,38 @@ fn instantiate_proof_tactic(
         ProofTactic::CloseInvariantsBy(body) => ProofTactic::CloseInvariantsBy(
             instantiate_proof_tactics(body, substitution, algebraic_parameters)?,
         ),
+        ProofTactic::StepProved { step, proof } => ProofTactic::StepProved {
+            step: Box::new(instantiate_proof_tactic(
+                step,
+                substitution,
+                algebraic_parameters,
+            )?),
+            proof: match proof {
+                StepProof::By(body) => StepProof::By(instantiate_proof_tactics(
+                    body,
+                    substitution,
+                    algebraic_parameters,
+                )?),
+                StepProof::Requires(entries) => StepProof::Requires(
+                    entries
+                        .iter()
+                        .map(|entry| {
+                            Ok(StepRequirement {
+                                label: entry.label.clone(),
+                                have: ProofHave {
+                                    proposition: proposition(&entry.have.proposition)?,
+                                    proof: instantiate_source_proof(
+                                        &entry.have.proof,
+                                        substitution,
+                                        algebraic_parameters,
+                                    )?,
+                                },
+                            })
+                        })
+                        .collect::<Result<_, String>>()?,
+                ),
+            },
+        },
         ProofTactic::Both(both) => ProofTactic::Both(ProofBoth {
             left_tactics: instantiate_proof_tactics(
                 &both.left_tactics,

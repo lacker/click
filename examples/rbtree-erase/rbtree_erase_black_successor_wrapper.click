@@ -39,9 +39,7 @@ void rb_erase(struct rb_node* node, struct rb_root* root) {
         rewrite(RbTree::Empty == hole.model); assumption();
     }
     apply(plug_parent_consistent_transport(deficit.model, RbTree::Empty, 0));
-    have rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1 by {
-        unfold(rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty))); assumption();
-    }
+    have rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1 by auto;
     have ctx_rb(deficit.model, Nat::Succ(black_height(RbTree::Empty)), Color::Black) == 1 by {
         unfold(black_height(RbTree::Empty)); assumption();
     }
@@ -52,12 +50,5 @@ void rb_erase(struct rb_node* node, struct rb_root* root) {
     step();
     mark repair;
     let { whole: whole } = step(____rb_erase_color(rebalance, root, dummy_rotate), { c: deficit });
-    have whole.model == erase_flips_red_all_result(rb_successor_context(old(node->rb_right), 0, Color::Black, rb_left(old(tree.model)), rb_right(old(tree.model)), Context::Top), RbTree::Empty) by {
-        rewrite(whole.model == erase_flips_red_all_result(at(repair, deficit.model), RbTree::Empty));
-        rewrite(at(repair, deficit.model) == rb_successor_context(old(node->rb_right), 0, Color::Black, rb_left(old(tree.model)), rb_right(old(tree.model)), Context::Top)); normalize();
-    }
-    have rb_inorder(whole.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model)))) by {
-        rewrite(rb_inorder(whole.model) == rb_inorder(plug(at(repair, deficit.model), RbTree::Empty))); assumption();
-    }
     execute(); simp();
 }

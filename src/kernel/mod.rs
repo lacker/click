@@ -14,6 +14,10 @@ pub(crate) mod api;
 pub const RESOURCE_SEMANTICS_VERSION: u32 = 76;
 
 pub(crate) mod assumptions;
+// Phase 1 of issues/difference-logic.md: tested, not yet consulted. Phase 2
+// maintains it in the fact context and removes this allowance.
+#[cfg_attr(not(test), allow(dead_code))]
+mod difference_graph;
 mod equality_graph;
 mod eval;
 mod fold_read_summary;

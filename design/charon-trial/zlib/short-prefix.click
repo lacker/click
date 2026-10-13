@@ -5,24 +5,24 @@ function zlib_prefix_count(total: uint64, remaining: uint64) -> int32 {
  (int32)(uint32)(total - remaining)
 }
 theorem zlib_prefix_observation(total: uint64, remaining: uint64) {
- requires total - remaining <= 15u64;
+ requires total - remaining <= 22208u64;
  ensures to_integer(zlib_prefix_count(total, remaining)) == to_integer(total - remaining) by {
-  have total - remaining <= 22208u64 by arithmetic() using { total - remaining <= 15u64; };
+  have total - remaining <= 22208u64 by arithmetic() using { total - remaining <= 22208u64; };
   apply(adler_count_observation(total - remaining));
   unfold(zlib_prefix_count(total, remaining));
   assumption();
  }
  ensures 0 <= zlib_prefix_count(total, remaining) and zlib_prefix_count(total, remaining) <= 22208 by {
-  have total - remaining <= 22208u64 by arithmetic() using { total - remaining <= 15u64; };
+  have total - remaining <= 22208u64 by arithmetic() using { total - remaining <= 22208u64; };
   apply(adler_count_bounds(total - remaining));
   unfold(zlib_prefix_count(total, remaining));
   assumption();
  }
 }
 theorem zlib_prefix_pointer(base: const uint8*, total: uint64, remaining: uint64) {
- requires total - remaining <= 15u64;
+ requires total - remaining <= 22208u64;
  ensures base + (total - remaining) == base + zlib_prefix_count(total, remaining) by {
-  have total - remaining <= 22208u64 by arithmetic() using { total - remaining <= 15u64; };
+  have total - remaining <= 22208u64 by arithmetic() using { total - remaining <= 22208u64; };
   apply(adler_count_byte_pointer(base, total - remaining));
   unfold(zlib_prefix_count(total, remaining));
   assumption();

@@ -19,7 +19,7 @@ Every function in `modeled_binary_tree.c` is verified:
 
 Run `cargo run --bin click -- verify examples/modeled-binary-tree` from the
 repository root. `cargo run --bin click -- audit examples/modeled-binary-tree`
-expands every smart tactic and rechecks the result: 39 of 39 sites. The example
+expands every smart tactic and rechecks the result: 45 of 45 sites. The example
 is also checked by `scripts/check.sh`.
 
 ## The model
@@ -137,14 +137,13 @@ matched, modeled resource without losing or duplicating any subtree.
 The membership guarantee is where the model's identity payload earns its place.
 `heap_member` tests `node == target` against the payload, while the C tests the
 address `root == target`; `tree_at` states `fact p == identity`, and the proof
-turns that into `node == target` with
+turns that into `node == target` in the branch where the C test held with
 
 ```click
-have node == target by {
-    rewrite(node == root);
-    normalize() using { root == target; }
-}
+have node == target by auto;
 ```
+
+`auto` rewrites `node` to `root` and closes on the branch condition.
 
 A pointer payload is an ordinary pointer in a proposition, so this compares a
 `struct tree_node*` payload with a C pointer directly, with no conversion and

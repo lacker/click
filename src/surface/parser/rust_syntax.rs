@@ -75,7 +75,7 @@ impl Parser {
                         .parameter,
                 );
                 let length_type = ParsedType {
-                    c_type: C0Type::UInt64,
+                    c_type: C0Type::UInt64(LongRank::Long),
                     struct_name: None,
                     struct_pointer: false,
                     constant: false,
@@ -583,12 +583,12 @@ fn rust_scalar_type(name: &str) -> Option<C0Type> {
         "i8" => C0Type::Int8,
         "i16" => C0Type::Int16,
         "i32" => C0Type::Int32,
-        "i64" | "isize" => C0Type::Int64,
+        "i64" | "isize" => C0Type::Int64(LongRank::Long),
         "i128" => C0Type::Int128,
         "u8" => C0Type::UInt8,
         "u16" => C0Type::UInt16,
         "u32" => C0Type::UInt32,
-        "u64" | "usize" => C0Type::UInt64,
+        "u64" | "usize" => C0Type::UInt64(LongRank::Long),
         "u128" => C0Type::UInt128,
         "f32" => C0Type::Float32,
         "f64" => C0Type::Float64,
@@ -628,7 +628,7 @@ pub(super) fn rust_signature_hint(parsed: &ParsedFunctionSignature) -> Option<St
             let base = scalar_name(pointee)?;
             let slice = signature.parameters.get(index + 1).is_some_and(|length| {
                 length.name == format!("{}_len", parameter.name)
-                    && length.c_type() == C0Type::UInt64
+                    && matches!(length.c_type(), C0Type::UInt64(_))
             });
             if slice {
                 index += 1;

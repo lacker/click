@@ -639,7 +639,7 @@ impl ProofFacts {
         }
     }
 
-    /// A free identity for a universal introduction's witness, from the range
+    /// A free logical-witness identity, from the range
     /// [`ExecutionBudget::UNIVERSAL_WITNESS_VARIABLE_BASE`] reserves for them.
     ///
     /// Scanning up from `Variable(0)` for an identity no *fact* mentions was
@@ -656,7 +656,7 @@ impl ProofFacts {
     /// Work is proportional to the witnesses in scope, not to the fact set:
     /// the reserved set is ordered, so the highest witness is one backward
     /// walk over that range's tail.
-    fn fresh_universal_witness(
+    pub(super) fn fresh_universal_witness(
         &self,
         body_variables: &std::collections::BTreeSet<Variable>,
     ) -> Option<Variable> {
@@ -707,19 +707,7 @@ impl ProofFacts {
             return Some((binder, body));
         }
         let body_variables = crate::kernel::proposition_variables(body);
-        let reserved_max = self.reserved_variables.iter().next_back().copied();
-        let body_max = body_variables.iter().next_back().copied();
-        let max_variable = reserved_max.into_iter().chain(body_max).max();
-        let mut fresh = match max_variable {
-            Some(variable) => Variable(variable.0.checked_add(1)?),
-            None => Variable(0),
-        };
-        loop {
-            if !self.reserved_variables.contains(&fresh) && !body_variables.contains(&fresh) {
-                break;
-            }
-            fresh = Variable(fresh.0.checked_add(1)?);
-        }
+        let fresh = self.fresh_universal_witness(&body_variables)?;
         let replacement = crate::kernel::IntegerTerm::var(fresh);
         let body = super::super::reasoning::substitute_integer_variable_in_pure_proposition(
             body,
@@ -4035,6 +4023,42 @@ mod selected_defined_read_tests {
             !initial
                 .with_selected_defined_reads(&other, &state)
                 .contains(&other)
+        );
+    }
+}
+
+#[cfg(test)]
+mod integer_witness_freshness_tests {
+    use super::*;
+
+    #[test]
+    fn integer_universal_witnesses_come_from_the_witness_band() {
+        let binder = Variable(3_200_000);
+        let load = Variable((1 << 40) + 7);
+        let integer_fact = |variable| {
+            Proposition::ConditionIs(
+                ConditionTerm::IntegerEqual(
+                    crate::kernel::IntegerTerm::var(variable).into(),
+                    crate::kernel::IntegerTerm::constant_i64(0).into(),
+                ),
+                true,
+            )
+        };
+        let facts = ProofFacts::from_ordered(&[
+            Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(load),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            ),
+            integer_fact(binder),
+        ]);
+        let body = integer_fact(binder);
+        let (witness, _) = facts.freshen_integer_forall_body(binder, &body).unwrap();
+        assert!(
+            crate::kernel::ExecutionBudget::is_universal_witness_variable(witness),
+            "{witness:?}"
         );
     }
 }

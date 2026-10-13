@@ -2543,5 +2543,5 @@ struct rb_node* rb_next(struct rb_node* node) {
 ```
 
 ```expect
-fail: `ensures (result != 0 => plug(ctx.model, sub.model) == old(t.model))` failed
+fail: `ensures result != 0 implies plug(ctx.model, sub.model) == old(t.model)` failed
 ```

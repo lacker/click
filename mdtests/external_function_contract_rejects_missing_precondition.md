@@ -22,5 +22,5 @@ int32 caller() {
 ```
 
 ```expect
-fail: external_identity precondition
+fail: precondition clause 1 of `external_identity`
 ```

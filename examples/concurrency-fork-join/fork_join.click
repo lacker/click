@@ -37,9 +37,7 @@ void *fill_range(void *argument) {
         };
 
         initialize by {
-            have job->begin <= index and index <= job->end by {
-                both { normalize(); } and { assumption(); }
-            }
+            have job->begin <= index and index <= job->end by auto;
             have forall (k: int32) { job->begin <= k and k < index implies job->output[k] == job->value } by {
                 intro();
                 intro();
@@ -62,37 +60,14 @@ void *fill_range(void *argument) {
                     simp();
                 } else {
                     extract(k <= index);
-                    have k == index by {
-                        apply(int32_less_equal_and_not_less_than_implies_equal(k, index)) using {
-                            k <= index;
-                            not (k < index);
-                        }
-                    }
+                    have k == index by auto;
                     rewrite(k == index);
                     simp();
                 }
             }
             step();
-            have 0 <= at(iteration, index) by {
-                simp() using {
-                    0 <= job->begin;
-                    job->begin <= at(iteration, index);
-                }
-            }
-            have 0 <= job->end by {
-                simp() using {
-                    0 <= job->begin;
-                    job->begin <= job->end;
-                }
-            }
-            have 0 <= 0 - at(iteration, index) + job->end - 1 by {
-                arithmetic() using {
-                    0 <= at(iteration, index);
-                    0 <= job->end;
-                    at(iteration, index) < at(iteration, job->end);
-                    job->begin <= job->end;
-                }
-            }
+            have 0 <= at(iteration, index) by auto;
+            have 0 <= job->end by auto;
             have 0 - at(iteration, index) + job->end - 1
                 < 0 - at(iteration, index) + job->end by {
                 arithmetic() using {
@@ -109,11 +84,7 @@ void *fill_range(void *argument) {
                 intro();
                 extract(job->begin <= k);
                 extract(k < index);
-                have k <= at(iteration, index) by {
-                    apply(int32_less_than_increment_implies_less_equal(k, at(iteration, index))) using {
-                        k < index;
-                    }
-                }
+                have k <= at(iteration, index) by auto;
                 instantiate(at(statement(6).entry, forall (k: int32) {
                     job->begin <= k and k <= index implies job->output[k] == job->value
                 }), k) using { job->begin <= k; k <= at(iteration, index); }

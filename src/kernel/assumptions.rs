@@ -26,7 +26,9 @@ pub(in crate::kernel) mod variable_chains;
 pub(in crate::kernel) use condition_reasoning::cancel_common_offset_addends;
 pub(in crate::kernel) use condition_reasoning::narrowed_cast_identity;
 #[cfg(test)]
-pub(in crate::kernel) use condition_reasoning::with_order_walk_full_scan;
+pub(in crate::kernel) use condition_reasoning::{
+    order_walk_edge_visits, reset_order_walk_edge_visits, with_order_walk_full_scan,
+};
 mod constant_classes;
 use super::equality_graph::EqualityGraph;
 pub(in crate::kernel) use constant_classes::ConstantClasses;

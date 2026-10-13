@@ -1435,6 +1435,14 @@ id = "tactic-form.step-call"
 path = "reference/tactics/index.md#execution"
 
 [[item]]
+id = "tactic-form.step-by"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
+id = "tactic-form.step-requires"
+path = "reference/tactics/index.md#execution"
+
+[[item]]
 id = "tactic-form.user-tactic"
 path = "reference/tactics/index.md#resources-and-snapshots"
 [[item]]

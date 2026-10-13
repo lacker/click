@@ -532,23 +532,18 @@ int32 caller(int32 x, int32 y) {
         expand_c0_claim_source(click_source, &c_sources, "caller", CProofClaim::Ensure(0))
             .expect("source-backed call requirement should expand");
     assert!(
-        expanded.contains("have x > 0 or y > 0 by"),
-        "expanded proof should retain the checked call requirement Have: {expanded}"
+        expanded.contains("step() by {"),
+        "expanded proof should prove the call requirement on its step: {expanded}"
     );
-    verify_c0_sources(&expanded, &c_sources)
-        .expect("expanded source-backed call requirement should reverify");
+    crate::surface::proof::without_implicit_auto(|| verify_c0_sources(&expanded, &c_sources))
+        .expect("expanded source-backed call requirement should cold reverify");
 
-    let have_start = expanded
-        .find("have x > 0 or y > 0 by")
-        .expect("the expansion should contain the retained requirement");
-    let step_start = expanded[have_start..]
-        .find("step();")
-        .map(|offset| have_start + offset)
-        .expect("the retained have should precede the call step");
-    let mut without_have = expanded.clone();
-    without_have.replace_range(have_start..step_start, "");
-    let (without_have_result, planning_transitions) =
-        count_planning_statement_transitions(|| verify_c0_sources(&without_have, &c_sources));
+    let without_have = without_first_step_obligation_proofs(&expanded);
+    let (without_have_result, planning_transitions) = count_planning_statement_transitions(|| {
+        crate::surface::proof::without_implicit_auto(|| {
+            verify_c0_sources(&without_have, &c_sources)
+        })
+    });
     let error = without_have_result
         .expect_err("deleting the retained have must reject the call precondition");
     assert_eq!(
@@ -627,7 +622,7 @@ fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
         .expect("the ordinary expanded source-identity proof should independently reverify");
 }
 
-fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have: &str) {
+fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
@@ -652,14 +647,10 @@ fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have
     let expanded =
         expand_c0_tactic_source_at(click_source, &c_sources, position.line, position.column)
             .expect("static-array call requirement should expand");
-    let have_start = expanded.find(have).unwrap_or_else(|| {
-        panic!("expanded proof should retain six-conjunct static Have: {expanded}")
-    });
-    let step_start = expanded[have_start..]
-        .find("\n        step();")
-        .map(|offset| have_start + offset)
-        .expect("the retained static Have should precede the call step");
-    assert!(have_start < step_start, "{expanded}");
+    assert!(
+        expanded.contains("step() by {") || expanded.contains("step() {"),
+        "expanded proof should prove the static requirement on its step: {expanded}"
+    );
     let function_start = expanded
         .find("int32 call_twice")
         .expect("expanded source should retain the selected function");
@@ -670,11 +661,12 @@ fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have
                 .find("step();")
                 .expect("expanded selected function should contain a tactic"),
     );
-    verify_c0_sources_at(&expanded, &c_sources, selected.line, selected.column)
-        .expect("expanded static-array proof should cold reverify at the same selection");
+    crate::surface::proof::without_implicit_auto(|| {
+        verify_c0_sources_at(&expanded, &c_sources, selected.line, selected.column)
+    })
+    .expect("expanded static-array proof should cold reverify at the same selection");
 
-    let mut without_have = expanded.clone();
-    without_have.replace_range(have_start..step_start, "");
+    let without_have = without_first_step_obligation_proofs(&expanded);
     let function_start = without_have
         .find("int32 call_twice")
         .expect("edited source should retain the selected function");
@@ -685,8 +677,10 @@ fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have
                 .find("step();")
                 .expect("edited selected function should contain a tactic"),
     );
-    let error = verify_c0_sources_at(&without_have, &c_sources, selected.line, selected.column)
-        .expect_err("deleting the retained static Have must reject the selected call precondition");
+    let error = crate::surface::proof::without_implicit_auto(|| {
+        verify_c0_sources_at(&without_have, &c_sources, selected.line, selected.column)
+    })
+    .expect_err("deleting the step's static proof must reject the selected call precondition");
     assert!(
         error.unresolved_requirement().is_some(),
         "deleted static Have should expose the structured call requirement: {}",
@@ -697,10 +691,7 @@ fn assert_static_array_call_requirement_expands_and_deletion(fixture: &str, have
 #[test]
 #[ignore = "nightly: 3s in the parallel gate"]
 fn static_array_call_requirement_expands_and_deletion_rejects() {
-    assert_static_array_call_requirement_expands_and_deletion(
-        "mdtests/static_local_arrays.md",
-        "have static_local::increment_twice::values[0] > -1000",
-    );
+    assert_static_array_call_requirement_expands_and_deletion("mdtests/static_local_arrays.md");
 }
 
 #[test]
@@ -708,7 +699,6 @@ fn static_array_call_requirement_expands_and_deletion_rejects() {
 fn parity_scalar_array_call_requirement_expands_and_deletion_rejects() {
     assert_static_array_call_requirement_expands_and_deletion(
         "mdtests/static_array_parity_scalar.md",
-        "have static_local::increment_twice::values[0] > -1000",
     );
 }
 
@@ -717,7 +707,6 @@ fn parity_scalar_array_call_requirement_expands_and_deletion_rejects() {
 fn parity_multidimensional_array_call_requirement_expands_and_deletion_rejects() {
     assert_static_array_call_requirement_expands_and_deletion(
         "mdtests/static_array_parity_multidimensional.md",
-        "have static_local::increment_twice::values[0][0] > -1000 and static_local::increment_twice::values[0][0] < 1000 and static_local::increment_twice::values[0][1] > -1000 and static_local::increment_twice::values[0][1] < 1000 and static_local::increment_twice::values[0][2] > -1000 and static_local::increment_twice::values[0][2] < 1000",
     );
 }
 
@@ -726,14 +715,10 @@ fn parity_multidimensional_array_call_requirement_expands_and_deletion_rejects()
 fn parity_fixed_multidimensional_array_call_requirement_expands_and_deletion_rejects() {
     assert_static_array_call_requirement_expands_and_deletion(
         "mdtests/static_array_parity_fixed_multidimensional.md",
-        "have static_local::increment_twice::values[0][0] > -1000 and static_local::increment_twice::values[0][0] < 1000 and static_local::increment_twice::values[0][1] > -1000 and static_local::increment_twice::values[0][1] < 1000 and static_local::increment_twice::values[0][2] > -1000 and static_local::increment_twice::values[0][2] < 1000",
     );
 }
 
-fn assert_quantified_range_call_requirement_expands_and_deletion_rejects(
-    fixture: &str,
-    have_prefix: &str,
-) {
+fn assert_quantified_range_call_requirement_expands_and_deletion_rejects(fixture: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture);
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
@@ -757,21 +742,18 @@ fn assert_quantified_range_call_requirement_expands_and_deletion_rejects(
         CProofClaim::Grouped,
     )
     .expect("quantified-range call requirement should expand");
-    let have_start = expanded.find(have_prefix).unwrap_or_else(|| {
-        panic!("expanded proof should retain quantified-range Have `{have_prefix}`: {expanded}")
-    });
-    let step_start = expanded[have_start..]
-        .find("step();")
-        .map(|offset| have_start + offset)
-        .expect("the retained quantified-range Have should precede the call step");
-    assert!(have_start < step_start, "{expanded}");
-    verify_c0_sources(&expanded, &c_sources)
+    assert!(
+        expanded.contains("step() by {") || expanded.contains("step() {"),
+        "expanded proof should prove the quantified-range requirement on its step: {expanded}"
+    );
+    crate::surface::proof::without_implicit_auto(|| verify_c0_sources(&expanded, &c_sources))
         .expect("expanded quantified-range proof should cold reverify");
 
-    let mut without_have = expanded.clone();
-    without_have.replace_range(have_start..step_start, "");
-    let error = verify_c0_sources(&without_have, &c_sources)
-        .expect_err("deleting the retained quantified-range Have must reject the call");
+    let without_have = without_first_step_obligation_proofs(&expanded);
+    let error = crate::surface::proof::without_implicit_auto(|| {
+        verify_c0_sources(&without_have, &c_sources)
+    })
+    .expect_err("deleting the step's quantified-range proof must reject the call");
     assert!(
         error.unresolved_requirement().is_some(),
         "deleted quantified-range Have should expose the structured call requirement: {}",
@@ -783,7 +765,6 @@ fn assert_quantified_range_call_requirement_expands_and_deletion_rejects(
 fn forall_loadable_range_call_requirement_expands_and_deletion_rejects() {
     assert_quantified_range_call_requirement_expands_and_deletion_rejects(
         "mdtests/forall_viewable_range.md",
-        "have forall (k: int32) {",
     );
 }
 
@@ -791,7 +772,6 @@ fn forall_loadable_range_call_requirement_expands_and_deletion_rejects() {
 fn exists_loadable_range_call_requirement_expands_and_deletion_rejects() {
     assert_quantified_range_call_requirement_expands_and_deletion_rejects(
         "mdtests/exists_viewable_range.md",
-        "have exists (len: int32) {",
     );
 }
 
@@ -1531,22 +1511,18 @@ fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
         .expect("symbolic-branch source requirement should verify");
     let expanded = expand_c0_claim_source(click_source, &c_sources, "apply", CProofClaim::Grouped)
         .expect("symbolic-branch source requirement should expand");
-    let have = "have value >= 0 or value == -1 by";
-    let have_start = expanded
-        .find(have)
-        .unwrap_or_else(|| panic!("expanded proof should retain `{have}`: {expanded}"));
-    let step_start = expanded[have_start..]
-        .find("step();")
-        .map(|offset| have_start + offset)
-        .expect("the retained Have should precede the callback step");
-    assert!(have_start < step_start, "{expanded}");
-    verify_c0_sources(&expanded, &c_sources)
-        .expect("expanded symbolic-branch source requirement should reverify");
+    assert!(
+        expanded.contains("step() by {") || expanded.contains("step() {"),
+        "expanded proof should prove the callback requirement on its step: {expanded}"
+    );
+    crate::surface::proof::without_implicit_auto(|| verify_c0_sources(&expanded, &c_sources))
+        .expect("expanded symbolic-branch source requirement should cold reverify");
 
-    let mut without_have = expanded.clone();
-    without_have.replace_range(have_start..step_start, "");
-    let error = verify_c0_sources(&without_have, &c_sources)
-        .expect_err("deleting the retained Have must reject the callback precondition");
+    let without_have = without_first_step_obligation_proofs(&expanded);
+    let error = crate::surface::proof::without_implicit_auto(|| {
+        verify_c0_sources(&without_have, &c_sources)
+    })
+    .expect_err("deleting the step's proof must reject the callback precondition");
     assert!(
         error.unresolved_requirement().is_some(),
         "deleted branch-local Have should expose the structured callback requirement: {}",
@@ -17714,4 +17690,109 @@ fn unfolding_proof_bound_integer_arguments_expands_and_rechecks() {
         let expanded = expand_c0_claim_source_by_label(&source, &[], label).unwrap();
         verify_c0_sources(&expanded, &[]).unwrap();
     }
+}
+
+/// A step's written obligation proofs expand in place: each `requires` entry
+/// keeps its proposition and prints its body's checked steps, the expansion
+/// reverifies, and deleting an entry leaves its obligation unproved.
+#[test]
+fn step_requires_entries_expand_in_place_and_are_needed() {
+    let c_source = r#"
+        int32 first(int32 x, int32 y) {
+            return x;
+        }
+
+        int32 caller(int32 a, int32 b) {
+            return first(a, b);
+        }
+    "#;
+    let click_source = r#"
+verifying "pair.c";
+
+int32 first(int32 x, int32 y) {
+    requires x > 0 or y > 0;
+    requires y > 0 or x > 0;
+    ensures 1 == 1 by auto;
+}
+
+int32 caller(int32 a, int32 b) {
+    requires a > 0;
+    ensures 1 == 1 by {
+        step() {
+            requires a > 0 or b > 0 by simp;
+            requires b > 0 or a > 0 by simp;
+        }
+        step();
+        simp();
+    }
+}
+"#;
+    let c_sources = [("pair.c", c_source)];
+    verify_c0_sources(click_source, &c_sources).expect("the written entries should verify");
+    let expanded =
+        expand_c0_claim_source(click_source, &c_sources, "caller", CProofClaim::Ensure(0))
+            .expect("the step's entries should expand");
+    assert!(
+        expanded.contains("step() {")
+            && expanded.contains("requires a > 0 or b > 0 by {")
+            && expanded.contains("requires b > 0 or a > 0 by {")
+            && !expanded.contains("by simp"),
+        "the expansion should keep both entries with checked bodies: {expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources).expect("the expansion should reverify");
+
+    let second = expanded
+        .find("requires b > 0 or a > 0 by {")
+        .expect("the expansion keeps the second entry");
+    let second_end = expanded[second..]
+        .find("\n            }\n")
+        .map(|offset| second + offset + "\n            }\n".len())
+        .expect("the second entry's body closes");
+    let mut without_second = expanded.clone();
+    without_second.replace_range(second..second_end, "");
+    let error = crate::surface::proof::without_implicit_auto(|| {
+        verify_c0_sources(&without_second, &c_sources)
+    })
+    .expect_err("with the implicit `auto` off, deleting an entry leaves its obligation unproved");
+    // Compare without grouping parentheses, which the diagnostic renderer may
+    // or may not print around each disjunct.
+    assert!(
+        error
+            .message()
+            .replace(['(', ')'], "")
+            .contains("b > 0 or a > 0"),
+        "the refusal should name the unproved obligation: {}",
+        error.message()
+    );
+}
+
+/// `expanded` with its first step's obligation proofs removed:
+/// `step() by { ... }` or `step() { requires ... }` becomes `step();`.
+fn without_first_step_obligation_proofs(expanded: &str) -> String {
+    let start = ["step() by {", "step() {"]
+        .iter()
+        .filter_map(|head| expanded.find(head))
+        .min()
+        .unwrap_or_else(|| panic!("an expanded step with obligation proofs: {expanded}"));
+    let open = start
+        + expanded[start..]
+            .find('{')
+            .expect("the proofs open a block");
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, character) in expanded[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close.expect("the proofs close their block");
+    format!("{}step();{}", &expanded[..start], &expanded[close + 1..])
 }

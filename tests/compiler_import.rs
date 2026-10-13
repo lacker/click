@@ -809,6 +809,143 @@ fn pinned_zlib_null_reset_is_independent_of_seed_and_nonunit_length() {
     );
 }
 
+#[test]
+#[ignore = "nightly: unchanged DO16 checksum proof, checked helpers, and mutations"]
+fn pinned_zlib_sixteen_block_matches_checked_shared_specification_offline() {
+    let root = tempfile::tempdir().expect("isolated offline zlib DO16 fixture");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("design/charon-trial/zlib");
+    for name in [
+        "adler32.c",
+        "zutil.h",
+        "zlib.h",
+        "zconf.h",
+        "adler32.i",
+        "sixteen.click.import.json",
+        "sixteen.click.import.lock.json",
+    ] {
+        fs::copy(fixture.join(name), root.path().join(name)).expect(name);
+    }
+    let imports = load_imports(&root.path().join("sixteen.click.import.json"))
+        .expect("offline locked unchanged zlib source");
+    let proof = include_str!("../design/charon-trial/zlib/sixteen.click")
+        .replace(
+            "import \"block.click\";",
+            include_str!("../design/charon-trial/zlib/block.click"),
+        )
+        .replace(
+            "import \"short-prefix.click\";",
+            include_str!("../design/charon-trial/zlib/short-prefix.click"),
+        )
+        .replace(
+            "import \"byte.click\";",
+            include_str!("../design/charon-trial/zlib/byte.click"),
+        )
+        .replace(
+            "import \"../adler2/count-bridge.click\";",
+            include_str!("../design/charon-trial/adler2/count-bridge.click"),
+        )
+        .replace(
+            "import \"../../adler32-spec.click\";",
+            include_str!("../design/adler32-spec.click"),
+        );
+    let checked = verify_c0_prepared_sources(&proof, &imports)
+        .expect("DO16 shared checksum, termination, byte preservation, and all helper bodies");
+    let contracts: Vec<_> = checked
+        .iter()
+        .filter(|claim| claim.function_block.signature().name() == "adler32_z")
+        .collect();
+    assert_eq!(contracts.len(), 2, "checksum and byte preservation");
+    for claim in contracts {
+        assert_eq!(
+            claim.import_identity.as_deref(),
+            Some(imports[0].identity())
+        );
+    }
+    let offset = proof.find("execute_until(loop(3));").unwrap();
+    let line = proof[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = offset - proof[..offset].rfind('\n').unwrap();
+    let expanded = expand_c0_prepared_tactic_source_at(&proof, &imports, line, column)
+        .expect("checked original DO16 loop-entry expansion");
+    verify_c0_prepared_sources(&expanded, &imports).expect("expanded DO16 checksum proof");
+    for invalid in [
+        proof.replacen("views buf[0u64..len];", "", 1),
+        proof.replacen("views buf[0u64..len];", "views buf[0u64..len - 1u64];", 1),
+        proof.replace(
+            "ensures to_integer(result) == adler_spec_checksum(old(buf), 16, 1, 0);",
+            "ensures to_integer(result) == adler_spec_checksum(old(buf), 16, 1, 0) + 1;",
+        ),
+        proof.replacen(
+            "invariant to_integer(adler) == 1 + adler_byte_sum(old(buf), zlib_prefix_count(16u64, len));",
+            "invariant to_integer(adler) == 2 + adler_byte_sum(old(buf), zlib_prefix_count(16u64, len));",
+            1,
+        ),
+        proof.replacen(
+            "invariant to_integer(sum2) == to_integer(zlib_prefix_count(16u64, len)) + adler_weighted_sum(old(buf), zlib_prefix_count(16u64, len), zlib_prefix_count(16u64, len));",
+            "invariant to_integer(sum2) == adler_weighted_sum(old(buf), zlib_prefix_count(16u64, len), zlib_prefix_count(16u64, len));",
+            1,
+        ),
+    ] {
+        assert_ne!(proof, invalid);
+        assert!(verify_c0_prepared_sources(&invalid, &imports).is_err());
+    }
+}
+
+#[test]
+#[ignore = "nightly: symbolic DO16 count, lane, and read-bound theorem bodies"]
+fn pinned_zlib_window_lemmas_have_checked_bodies() {
+    let source = include_str!("../design/charon-trial/zlib/window.click")
+        .replace(
+            "import \"block.click\";",
+            include_str!("../design/charon-trial/zlib/block.click"),
+        )
+        .replace(
+            "import \"short-prefix.click\";",
+            include_str!("../design/charon-trial/zlib/short-prefix.click"),
+        )
+        .replace(
+            "import \"byte.click\";",
+            include_str!("../design/charon-trial/zlib/byte.click"),
+        )
+        .replace(
+            "import \"../adler2/count-bridge.click\";",
+            include_str!("../design/charon-trial/adler2/count-bridge.click"),
+        )
+        .replace(
+            "import \"../../adler32-spec.click\";",
+            include_str!("../design/adler32-spec.click"),
+        );
+    click::surface::verify_click_theorems(&source)
+        .expect("all shared, native recurrence, and symbolic window bodies");
+}
+
+#[test]
+#[ignore = "nightly: shared checksum library and native block recurrence bodies"]
+fn pinned_zlib_block_lemmas_have_checked_bodies() {
+    let source = include_str!("../design/charon-trial/zlib/block.click")
+        .replace(
+            "import \"short-prefix.click\";",
+            include_str!("../design/charon-trial/zlib/short-prefix.click"),
+        )
+        .replace(
+            "import \"byte.click\";",
+            include_str!("../design/charon-trial/zlib/byte.click"),
+        )
+        .replace(
+            "import \"../adler2/count-bridge.click\";",
+            include_str!("../design/charon-trial/adler2/count-bridge.click"),
+        )
+        .replace(
+            "import \"../../adler32-spec.click\";",
+            include_str!("../design/adler32-spec.click"),
+        );
+    click::surface::verify_click_theorems(&source)
+        .expect("all shared and native recurrence bodies");
+}
+
 /// A user-space compiler import in a fresh directory, with the given files
 /// and arguments for `main.c`.
 fn userspace_import(files: &[(&str, &str)], args: &[&str]) -> tempfile::TempDir {

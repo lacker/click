@@ -1,5 +1,5 @@
-# The C and upstream header are unchanged. This proof uses Click's explicit
-# x86_64-linux-kernel target (eight-bit unsigned plain char).
+# The C and upstream header are unchanged. This proof uses Click's default
+# x86_64-linux-userspace target (eight-bit signed plain char).
 verifying "json_c_version.c";
 
 const char *json_c_version() {

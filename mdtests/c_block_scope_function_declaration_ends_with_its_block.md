@@ -21,5 +21,5 @@ int32 run(int32 value) {
 ```
 
 ```expect
-fail: unknown function `__compiletime_assert_1`
+fail: unknown function `__compiletime_assert_1`: no verified source defines it and the sidecar declares no contract for it; describe an implementation outside the verified sources with an `extern` contract
 ```

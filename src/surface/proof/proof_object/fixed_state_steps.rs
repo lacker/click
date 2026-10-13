@@ -7,37 +7,6 @@ use crate::surface::planning::proposition_search::PropositionSearch;
 
 const MAX_CHOSEN_PROJECTION_WORK: usize = 4096;
 
-/// Whether a rendered range still shows one of the verifier's own variable
-/// identities (`v100001`), which means it could not be put in the contract's
-/// words and so names nothing the reader can act on.
-fn renders_internal_identity(description: &str) -> bool {
-    description.match_indices('v').any(|(index, _)| {
-        description[..index]
-            .chars()
-            .next_back()
-            .is_none_or(|previous| !previous.is_alphanumeric() && previous != '_')
-            && description[index + 1..]
-                .chars()
-                .next()
-                .is_some_and(|digit| digit.is_ascii_digit())
-    })
-}
-
-/// What a walk for a stated `loadable` range to narrow from found, kept split
-/// by the filter each candidate fell out of, so a refusal can name the side it
-/// was looking at instead of claiming the contract stated nothing.
-#[derive(Default)]
-struct StatedLoadableRanges {
-    /// Stated ranges over the goal's own base that are available facts here,
-    /// with the element width of the kernel extent they were recorded beside.
-    available: Vec<(ClickProposition, u32)>,
-    /// Stated ranges over the goal's own base whose kernel proposition is not
-    /// an available fact at this program point.
-    same_base_unavailable: Vec<ClickProposition>,
-    /// Stated ranges that are available facts here, but over another base.
-    available_other_bases: Vec<ClickProposition>,
-}
-
 fn proposition_at_connective_path<'a>(
     root: &'a Proposition,
     path: &[usize],
@@ -749,7 +718,10 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("`choose` source is not an existential proposition"));
         };
-        let chosen_variable = Variable(self.state().locals().next_choice_variable);
+        let chosen_variable = self
+            .state
+            .fresh_existential_witness(&body, Variable(self.state().locals().next_choice_variable))
+            .map_err(|_| self.step_error("`choose` could not allocate a fresh witness"))?;
         let chosen = match sort {
             sort if sort.machine_integer_type().is_some() => sort
                 .machine_integer_type()
@@ -779,13 +751,16 @@ impl<'a> Proof<'a> {
             choice.name.clone(),
             ContractExpression::CFragment(CExpression::Value(chosen.clone())),
         );
-        locals.next_choice_variable += 1;
+        locals.next_choice_variable = chosen_variable.0.saturating_add(1);
         let added_facts = if self.facts().contains_top_level(&chosen_fact) {
             Vec::new()
         } else {
             vec![chosen_fact.clone()]
         };
-        let facts = self.facts().with_kernel_checked_fact(chosen_fact.clone());
+        let facts = self
+            .facts()
+            .with_kernel_checked_fact(chosen_fact.clone())
+            .with_reserved_variables([chosen_variable]);
         let mut transition =
             self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]);
         if let Some(projection) = self.build_chosen_projection(
@@ -927,7 +902,9 @@ impl<'a> Proof<'a> {
             if !facts.contains_top_level(&fact) {
                 added.push(fact.clone());
             }
-            facts = facts.with_kernel_checked_fact(fact.clone());
+            facts = facts
+                .with_kernel_checked_fact(fact.clone())
+                .with_reserved_variables([variable]);
             checked.push(fact);
         }
         // The opened body is spelled as written, under the names just bound,
@@ -1137,7 +1114,10 @@ impl<'a> Proof<'a> {
                 "`choose(... from invariant N)` currently requires an algebraic existential invariant",
             ));
         };
-        let chosen_variable = Variable(self.state().locals().next_choice_variable);
+        let chosen_variable = self
+            .state
+            .fresh_existential_witness(&body, Variable(self.state().locals().next_choice_variable))
+            .map_err(|_| self.step_error("`choose` could not allocate a fresh witness"))?;
         let chosen = crate::kernel::AlgebraicTerm {
             algebraic_type: algebraic_type.clone(),
             node: crate::kernel::AlgebraicTermNode::Variable(chosen_variable),
@@ -1162,7 +1142,10 @@ impl<'a> Proof<'a> {
             .then(|| fact.clone())
             .into_iter()
             .collect();
-        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        let facts = self
+            .facts()
+            .with_kernel_checked_fact(fact.clone())
+            .with_reserved_variables([chosen_variable]);
         Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
     }
 
@@ -1396,7 +1379,10 @@ impl<'a> Proof<'a> {
             .then(|| fact.clone())
             .into_iter()
             .collect();
-        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        let facts = self
+            .facts()
+            .with_kernel_checked_fact(fact.clone())
+            .with_reserved_variables([chosen_variable]);
         Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
     }
 
@@ -1457,7 +1443,10 @@ impl<'a> Proof<'a> {
                 "pure algebraic `choose` requires an algebraic existential requirement",
             ));
         };
-        let chosen_variable = Variable(self.state().locals().next_choice_variable);
+        let chosen_variable = self
+            .state
+            .fresh_existential_witness(&body, Variable(self.state().locals().next_choice_variable))
+            .map_err(|_| self.step_error("`choose` could not allocate a fresh witness"))?;
         let chosen = crate::kernel::AlgebraicTerm {
             algebraic_type: algebraic_type.clone(),
             node: crate::kernel::AlgebraicTermNode::Variable(chosen_variable),
@@ -1482,7 +1471,10 @@ impl<'a> Proof<'a> {
             .then(|| fact.clone())
             .into_iter()
             .collect();
-        let facts = self.facts().with_kernel_checked_fact(fact.clone());
+        let facts = self
+            .facts()
+            .with_kernel_checked_fact(fact.clone())
+            .with_reserved_variables([chosen_variable]);
         Ok(self.checked_fact_transition(locals, facts, false, added, vec![fact]))
     }
 
@@ -3209,67 +3201,6 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// The first fact range narrowing needs that is not available, in the
-    /// spelling the two segments were written with.
-    ///
-    /// Narrowing `loadable(p[a..b])` to `loadable(p[c..d])` needs `a <= c`,
-    /// `c <= d` and `d <= b`. When the checked step declines, the reader wants
-    /// the one of those that is missing, named the way they wrote it, not two
-    /// lowered byte extents. The extent bounds the rule also needs are reported
-    /// beside this, in [`Self::apply_pure_transport_using`], because naming
-    /// their limit takes the element width and a segment does not carry it.
-    /// This explains a refusal already decided; it does not decide anything,
-    /// and it names only facts the rule actually asks for.
-    fn missing_loadable_narrowing_order_fact(
-        &self,
-        source: &ClickProposition,
-        target: &ClickProposition,
-    ) -> Option<ClickProposition> {
-        let segment_range = |proposition: &ClickProposition| match proposition {
-            ClickProposition::Loadable { segment } => segment
-                .surface_range()
-                .map(|(base, start, end)| (base.clone(), start.clone(), end.clone())),
-            _ => None,
-        };
-        let (source_base, source_start, source_end) = segment_range(source)?;
-        let (target_base, target_start, target_end) = segment_range(target)?;
-        if source_base != target_base {
-            return None;
-        }
-        let less_equal =
-            |left: &ContractExpression, right: &ContractExpression| ClickProposition::Comparison {
-                left: left.clone(),
-                operator: ComparisonOperator::LessEqual,
-                right: right.clone(),
-            };
-        [
-            (source_start.clone(), target_start.clone()),
-            (target_start, target_end.clone()),
-            (target_end, source_end),
-        ]
-        .into_iter()
-        .filter(|(lower, upper)| lower != upper)
-        .find(|(lower, upper)| {
-            // The rule takes a strict order path as an answer to the
-            // non-strict question, so a written `a < b` establishes `a <= b`.
-            // Ask the same way, or this names a fact that is already there.
-            ![
-                less_equal(lower, upper),
-                ClickProposition::Comparison {
-                    left: lower.clone(),
-                    operator: ComparisonOperator::LessThan,
-                    right: upper.clone(),
-                },
-            ]
-            .iter()
-            .any(|order| {
-                self.lower_cited_surface_proposition(order, "narrowing order fact")
-                    .is_ok_and(|lowered| self.facts().exact_available_across_effects(&lowered, &[]))
-            })
-        })
-        .map(|(lower, upper)| less_equal(&lower, &upper))
-    }
-
     /// The surface spellings recorded for this context's kernel facts.
     ///
     /// One place, so a diagnostic that wants to name a fact the way the proof
@@ -3285,145 +3216,6 @@ impl<'a> Proof<'a> {
                 None => Some(&self.execution()?.presentation.surface_propositions),
             },
         }
-    }
-
-    /// The stated loadable ranges over the goal range's own base, in the
-    /// spelling they were stated with, with their element width — and what
-    /// each filter rejected.
-    ///
-    /// A range that is not available here explains nothing, so availability is
-    /// asked of the facts and the spelling of the lowering record, which is
-    /// where a contract's `loadable(a[0..n])` is kept beside the kernel
-    /// proposition it became. The width comes from that same proposition,
-    /// because a surface segment does not carry one and naming an extent's
-    /// limit takes it.
-    ///
-    /// "No stated viewable range over the same base is available here" is one
-    /// of three different situations, and a reader can only act on the one
-    /// they are in: the contract stated no such range, it stated one that is
-    /// not a fact at this program point, or the ranges that are facts here are
-    /// over some other base. Reporting the first for all three sent readers to
-    /// state a range they had already stated. Keep the rejected candidates so
-    /// the refusal can name which side it was looking at.
-    /// A `size_t`-bounded goal range and a constant 32-bit range stated over
-    /// the same base: the stated range covers the goal exactly when the
-    /// goal's byte count is at most the constant, which is what to name.
-    fn unproved_wide_range_goal_reason(
-        &self,
-        goal: &ClickProposition,
-        target: &str,
-    ) -> Option<String> {
-        let Proposition::CMemoryLoadable {
-            bytes: goal_bytes,
-            wide: true,
-            ..
-        } = self
-            .lower_surface_proposition_direct(goal, "wide viewable goal")
-            .ok()?
-        else {
-            return None;
-        };
-        let ClickProposition::Loadable { segment } = goal else {
-            return None;
-        };
-        let (goal_base, _, _) = segment.surface_range()?;
-        let propositions = self.context_surface_propositions()?;
-        for kernel in propositions.atomic_kernel_facts() {
-            let Proposition::CMemoryLoadable {
-                bytes: Bitvector32Term::Constant(held),
-                wide: false,
-                ..
-            } = kernel
-            else {
-                continue;
-            };
-            if !self.facts().exact_available_across_effects(kernel, &[]) {
-                continue;
-            }
-            for surface in propositions.surfaces(kernel) {
-                let ClickProposition::Loadable { segment } = surface else {
-                    continue;
-                };
-                if segment.surface_range().map(|(base, _, _)| base) != Some(goal_base) {
-                    continue;
-                }
-                // The goal's byte count, written over its own bounds; a
-                // wider element has no single comparison to name.
-                let count = (!matches!(goal_bytes, Bitvector32Term::UInt64Multiply(..)))
-                    .then(|| loadable_surface_range_endpoints(goal))
-                    .flatten()
-                    .map(|(start, end)| match start {
-                        ContractExpression::IntegerLiteral(literal) if literal == "0" => end,
-                        _ => ContractExpression::Subtract(Box::new(end), Box::new(start)),
-                    });
-                let needed = count
-                    .map(|count| {
-                        describe_click_proposition(&ClickProposition::Comparison {
-                            left: count,
-                            operator: ComparisonOperator::LessEqual,
-                            right: ContractExpression::CFragment(CExpression::Value(
-                                CValue::UInt64(Bitvector32Term::UInt64Constant(u64::from(*held))),
-                            )),
-                        })
-                    })
-                    .unwrap_or_else(|| format!("a byte count of at most {held}"));
-                return Some(format!(
-                    "`{target}` does not follow from `{}`: that range covers {held} bytes, so it covers `{target}` only when `{needed}`, which is not an available fact",
-                    describe_click_proposition(surface)
-                ));
-            }
-        }
-        None
-    }
-
-    fn stated_loadable_range_lookup(&self, goal: &ClickProposition) -> StatedLoadableRanges {
-        let mut lookup = StatedLoadableRanges::default();
-        let Some(propositions) = self.context_surface_propositions() else {
-            return lookup;
-        };
-        let ClickProposition::Loadable { segment } = goal else {
-            return lookup;
-        };
-        let Some((goal_base, _, _)) = segment.surface_range() else {
-            return lookup;
-        };
-        for kernel in propositions.atomic_kernel_facts() {
-            let Proposition::CMemoryLoadable { bytes, .. } = kernel else {
-                continue;
-            };
-            let Some(element_width) = crate::kernel::stated_extent_element_width(bytes) else {
-                continue;
-            };
-            let available = self.facts().exact_available_across_effects(kernel, &[]);
-            for surface in propositions.surfaces(kernel) {
-                let ClickProposition::Loadable { segment } = surface else {
-                    continue;
-                };
-                let Some((base, _, _)) = segment.surface_range() else {
-                    continue;
-                };
-                if surface == goal {
-                    continue;
-                }
-                if base != goal_base {
-                    if available && !lookup.available_other_bases.contains(surface) {
-                        lookup.available_other_bases.push(surface.clone());
-                    }
-                    continue;
-                }
-                if !available {
-                    if !lookup.same_base_unavailable.contains(surface) {
-                        lookup.same_base_unavailable.push(surface.clone());
-                    }
-                    continue;
-                }
-                let candidate = (surface.clone(), element_width);
-                if !lookup.available.contains(&candidate) {
-                    lookup.available.push(candidate);
-                }
-            }
-        }
-        lookup
     }
 
     /// The valid-byte-extent facts a stated range owes, over the count the
@@ -3463,166 +3255,38 @@ impl<'a> Proof<'a> {
         facts
     }
 
-    /// Why an unproved `loadable` range goal was not proved, in the spelling
-    /// the proof wrote it with.
-    ///
-    /// A refused range-loadability goal otherwise renders as its lowered
-    /// extent — `loadable(base=the pointer value at this program point,
-    /// bytes=(v2 * 4))` — which names neither the range the reader wrote nor
-    /// anything they can go and prove. What they want is their own
-    /// `loadable(a[0..k])` and the fact narrowing a stated range to it is
-    /// waiting for.
-    ///
-    /// Narrowing needs the three order facts
-    /// [`Self::missing_loadable_narrowing_order_fact`] walks, and the stated
-    /// range established as a valid 32-bit byte extent. A missing order fact is
-    /// named first, since that is one this can see is absent; with all three
-    /// present what is left is the range's own extent, reported the way
-    /// [`Self::apply_pure_transport_using`] reports it for the explicit
-    /// narrowing step, so the same refusal reads the same way whichever tactic
-    /// asked. This explains a refusal already decided and decides nothing: it
-    /// names only facts the kernel rule asks for, in the spelling the surface
-    /// can write them.
+    /// Report the actual native checker result separately from source proof
+    /// construction. Search-stage failures are retained by the simp driver;
+    /// absence of a certificate is not evidence of a missing extent premise.
     pub(in crate::surface::proof) fn unproved_loadable_range_goal_reason(&self) -> Option<String> {
         let goal = self.surface_goal()?;
         loadable_surface_range_endpoints(goal)?;
         let target = describe_click_proposition(goal);
-        if let Some(reason) = self.unproved_wide_range_goal_reason(goal, &target) {
-            return Some(reason);
-        }
-        let lookup = self.stated_loadable_range_lookup(goal);
-        let candidates = &lookup.available;
-        for (stated, _) in candidates {
-            if let Some(missing) = self.missing_loadable_narrowing_order_fact(stated, goal) {
+        let accepted = match self.goal()? {
+            Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes,
+                wide: true,
+            } => self
+                .facts()
+                .assumptions()
+                .proves_native_memory_loadable(memory, base, bytes),
+            _ => {
                 return Some(format!(
-                    "`{target}` does not follow from `{}`: narrowing that range needs `{}`, which is not an available fact",
-                    describe_click_proposition(stated),
-                    describe_click_proposition(&missing)
+                    "no checked source proof was constructed for `{target}`"
                 ));
             }
-        }
-        if let Some((stated, element_width)) = candidates.first() {
-            let (start, end) = loadable_surface_range_endpoints(stated)?;
-            let extent = Self::stated_range_extent_facts(&start, &end, *element_width)
-                .iter()
-                .map(describe_click_proposition)
-                .collect::<Vec<_>>()
-                .join("` and `");
-            return Some(format!(
-                "`{target}` does not follow from `{}`: every order fact narrowing that range needs is available here, so what is left is its own byte extent, which narrowing needs established as `{extent}`",
-                describe_click_proposition(stated)
-            ));
-        }
-        // Every remaining case is "nothing to narrow from", and which one the
-        // reader is in decides what they do next. Name the side this was
-        // looking at rather than reporting the first case for all three.
-        if let Some(stated) = lookup.same_base_unavailable.first() {
-            return Some(format!(
-                "`{target}` was not proved: `{}` is stated over the same base, but it is not an available fact here, so there is no range to narrow",
-                describe_click_proposition(stated)
-            ));
-        }
-        if !lookup.available_other_bases.is_empty() {
-            let others = lookup
-                .available_other_bases
-                .iter()
-                .map(describe_click_proposition)
-                .collect::<Vec<_>>()
-                .join("` and `");
-            return Some(format!(
-                "`{target}` was not proved and no stated viewable range over its own base is available here to narrow; the stated ranges available here are `{others}`"
-            ));
-        }
-        // A `views`/`owns` clause states a range too, but it becomes a
-        // resource rather than a recorded `loadable` proposition, so the walk
-        // above cannot see it. Saying "no stated viewable range" to a reader
-        // whose contract opens with `views a[0..n]` sends them to state what
-        // they already stated, so name the resource ranges over this base.
-        let (held, held_any) = self.held_memory_ranges_over_goal_base();
-        if !held.is_empty() {
-            let ranges = held.join("` and `");
-            return Some(format!(
-                "`{target}` was not proved: the range this proof holds over that base is `{ranges}`, so narrowing has to reach `{target}` from it, and it did not"
-            ));
-        }
-        if held_any {
-            // There are ranges over this block, but none of them renders as a
-            // range over the base the goal names. Claiming nothing was stated
-            // would be the old wrong answer again, so say what is true.
-            return Some(format!(
-                "`{target}` was not proved: this proof holds memory over that object, but none of it is a range over `{target}`'s own base, so there is nothing to narrow"
-            ));
-        }
-        Some(format!(
-            "`{target}` was not proved and no viewable range over the same base was stated anywhere in scope, so there is nothing to narrow"
-        ))
-    }
-
-    /// The memory ranges this proof's resource context holds over the goal
-    /// range's own pointer block, in the spelling a contract clause writes.
-    ///
-    /// A goal range and a held range that name the same base are not the same
-    /// kernel pointer — `a[k..k + 1]` starts at `a + k * 4` and `a[0..n]` at
-    /// `a` — and every external argument shares one pointer block, so neither
-    /// exact equality nor the block alone selects what the reader means by
-    /// "the same base". The selection is therefore the name: a held range is
-    /// reported when the contract spelling it renders into is a range over the
-    /// base the goal was written with. The walk is over the held resource
-    /// facts, which is the proof's own resource context, not an ambient fact
-    /// scan, and this decides nothing — it only names what was being compared.
-    ///
-    /// The second result says whether this proof holds any memory over that
-    /// object at all, so a refusal that could name none of it can still say
-    /// that rather than reporting that nothing was ever stated.
-    fn held_memory_ranges_over_goal_base(&self) -> (Vec<String>, bool) {
-        let Some(Proposition::CMemoryLoadable { base, .. }) = self.goal() else {
-            return (Vec::new(), false);
         };
-        let Some(ClickProposition::Loadable { segment }) = self.surface_goal() else {
-            return (Vec::new(), false);
-        };
-        let Some((goal_base, _, _)) = segment.surface_range() else {
-            return (Vec::new(), false);
-        };
-        let prefix = format!("{}[", describe_contract_expression(goal_base));
-        let view = match self.context.as_ref() {
-            ProofContext::FixedState(context) => {
-                Some(FixedStateOperationView::from_fixed_state(context))
-            }
-            ProofContext::Execution(_) => self
-                .outcome_fixed_state_view()
-                .or_else(|| self.execution_fixed_state_view()),
-            ProofContext::Pure(_) => None,
-        };
-        let Some(context) = view else {
-            return (Vec::new(), false);
-        };
-        let mut ranges = Vec::new();
-        let mut held_any = false;
-        for fact in context.fixed_state.state.resources().facts() {
-            let CResource::Memory(range) = fact.resource() else {
-                continue;
-            };
-            if range.base().block != base.block {
-                continue;
-            }
-            held_any = true;
-            let described = crate::surface::diagnostics::describe_memory_range(
-                range,
-                context.parameter_binding,
-            );
-            // A range over another parameter renders against this one's base
-            // as a pointer difference, which is both wrong for the reader and
-            // unwritable. A range this cannot name in the words the contract
-            // used is not named at all.
-            if described.starts_with(&prefix)
-                && !renders_internal_identity(&described)
-                && !ranges.contains(&described)
-            {
-                ranges.push(described);
-            }
-        }
-        (ranges, held_any)
+        Some(if accepted {
+            format!(
+                "`{target}` is accepted by the kernel native view checker in the current proof context, but `simp` did not construct a checked source proof"
+            )
+        } else {
+            format!(
+                "the kernel native view checker did not establish `{target}` in the current proof context; `simp` did not construct a checked source proof"
+            )
+        })
     }
 
     /// `transport(source, target) using { ... }` inside a pure theorem.
@@ -3659,7 +3323,6 @@ impl<'a> Proof<'a> {
                 explicit_premises.push(premise);
             }
         }
-        let surface_source = source;
         let source = self.lower_cited_surface_proposition(source, "`transport` source")?;
         let selected_assumptions =
             crate::surface::verification::assumptions_from_propositions(&explicit_premises);
@@ -3679,40 +3342,11 @@ impl<'a> Proof<'a> {
                 crate::surface::proof_diagnostics::render::render_proposition(&source)
             )));
         }
-        let surface_target = target;
         let target = self.lower_cited_surface_proposition(target, "`transport` target")?;
         let transport_assumptions = selected_assumptions.assume_proposition(source.clone());
         if !self.facts().available_across_effects(&target, &[])
             && !certified_fact_transport_reaches(&source, &target, None, &transport_assumptions)
         {
-            if let Some(missing) =
-                self.missing_loadable_narrowing_order_fact(surface_source, surface_target)
-            {
-                return Err(self.step_error(format!(
-                    "`transport using` cannot narrow `{}` to `{}`: narrowing a viewable range needs `{}`, which is not an available fact",
-                    describe_click_proposition(surface_source),
-                    describe_click_proposition(surface_target),
-                    describe_click_proposition(&missing)
-                )));
-            }
-            // Every order fact the rule walks is present, so what is left is
-            // the source range's own extent: its element count has to be
-            // established nonnegative and within the largest count a 32-bit
-            // byte extent can hold, or its extent term is a wrapped value.
-            if let Some((start, end)) = loadable_surface_range_endpoints(surface_source)
-                && loadable_surface_range_endpoints(surface_target).is_some()
-            {
-                return Err(self.step_error(format!(
-                    "`transport using` cannot narrow `{}` to `{}`: narrowing a viewable range needs `{}` established as a valid 32-bit byte extent, which takes `0 <= {} - {}` and an upper bound on `{} - {}` within the element count a 32-bit extent holds",
-                    describe_click_proposition(surface_source),
-                    describe_click_proposition(surface_target),
-                    describe_click_proposition(surface_source),
-                    describe_contract_expression(&end),
-                    describe_contract_expression(&start),
-                    describe_contract_expression(&end),
-                    describe_contract_expression(&start)
-                )));
-            }
             return Err(self.step_error(format!(
                 "`transport using` target does not follow from the source fact and the listed premises\n  source: {}\n  target: {}",
                 crate::surface::proof_diagnostics::render::render_proposition(&source),

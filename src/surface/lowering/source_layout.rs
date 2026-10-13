@@ -90,6 +90,10 @@ struct SourceExecutionLayoutData {
     /// only, read by a refusal to name the line it refused. Statements a
     /// frontend generated with no source statement of their own are absent.
     sites: BTreeMap<usize, std::sync::Arc<syntax::C0StatementSite>>,
+    /// The places a refusal names reads by, built once for the function on
+    /// the first step that enters a statement scope.
+    diagnostic_places:
+        std::sync::OnceLock<std::sync::Arc<crate::surface::diagnostics::StatementPlaces>>,
 }
 
 #[derive(Clone, Copy)]
@@ -843,6 +847,18 @@ impl SourceExecutionLayout {
     }
 
     /// Where the C statement at `index` was written, when it records it.
+    /// The places a refusal in this function names reads by, built on
+    /// first use.
+    pub(in crate::surface) fn diagnostic_places(
+        &self,
+        build: impl FnOnce() -> crate::surface::diagnostics::StatementPlaces,
+    ) -> std::sync::Arc<crate::surface::diagnostics::StatementPlaces> {
+        self.data
+            .diagnostic_places
+            .get_or_init(|| std::sync::Arc::new(build()))
+            .clone()
+    }
+
     pub(in crate::surface) fn site(
         &self,
         index: usize,
@@ -1438,6 +1454,7 @@ mod source_execution_layout_tests {
                 exited_branch_regions: BTreeMap::new(),
                 arm_lasts_by_exited_region: BTreeMap::new(),
                 sites: BTreeMap::new(),
+                diagnostic_places: std::sync::OnceLock::new(),
             }),
         };
         let cloned = layout.clone();

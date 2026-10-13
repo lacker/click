@@ -16941,15 +16941,16 @@ fn coerce_c_contract_arguments(
         if parameter.aggregate_layout().is_some() {
             coerced.push(value.clone());
         } else {
-            // A contract stated over one character type's bytes accepts a
-            // pointer to the other's: C11 6.5p7 lets either read the object,
-            // and loads read a one-byte cell of either signedness through
-            // either type (`CType::read_cell`). This is how a byte contract
-            // such as `strlen`'s serves a signed plain `char *`.
+            // A contract stated over one integer type's cells accepts a
+            // pointer to the other signedness of the same width: C11 6.5p7
+            // lets either read the object, and loads read a cell of either
+            // signedness through either type (`CType::read_cell`). This is
+            // how a byte contract such as `strlen`'s serves a signed plain
+            // `char *`.
             let value = match value {
                 CValue::Pointer(pointer)
-                    if parameter.c_type().is_character_pointer()
-                        && pointer.c_type().is_character_pointer() =>
+                    if parameter.c_type() != pointer.c_type()
+                        && parameter.c_type().is_signedness_view_of(pointer.c_type()) =>
                 {
                     CValue::Pointer(pointer.clone().with_type(parameter.c_type()))
                 }

@@ -47,10 +47,10 @@ int32 service_step(struct service* owner) {
         owns owner->cell[0..1];
     } then {
         step();
-        have owner->cell == old(owner->cell) by normalize();
+        have owner->cell == old(owner->cell) by auto;
     } else {
         step();
-        have owner->cell == old(owner->cell) by normalize();
+        have owner->cell == old(owner->cell) by auto;
     }
     step();
     fold(service(owner));

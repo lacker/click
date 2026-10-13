@@ -133,6 +133,21 @@ pub(super) fn tokenize(
                 tokens.push(Token::Percent);
                 index += 1;
             }
+            // After an operand, `&&` and `||` can only be C's logical
+            // operators. Read as two tokens, `a && b` would parse as
+            // `a & (&b)` and be refused for what the writer did not mean.
+            // Elsewhere they stay two tokens: a Rust sidecar's `&&i32` is a
+            // reference to a reference.
+            '&' if chars.get(index + 1) == Some(&'&') && follows_operand(&tokens) => {
+                return Err(ClickError::new(format!(
+                    "{position}: Click writes conjunction as `and`, not `&&`"
+                )));
+            }
+            '|' if chars.get(index + 1) == Some(&'|') && follows_operand(&tokens) => {
+                return Err(ClickError::new(format!(
+                    "{position}: Click writes disjunction as `or`, not `||`"
+                )));
+            }
             '&' => {
                 tokens.push(Token::Amp);
                 index += 1;
@@ -449,6 +464,28 @@ fn is_ident_start(ch: char) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+/// Whether the last token ends an operand, so a following `&&` or `||` is
+/// a binary operator.
+fn follows_operand(tokens: &[Token]) -> bool {
+    matches!(
+        tokens.last(),
+        Some(
+            Token::Ident(_)
+                | Token::Number(_)
+                | Token::BigNumber(_)
+                | Token::UnsuffixedInt64(_)
+                | Token::UnsuffixedUInt64(_)
+                | Token::UInt8Number(_)
+                | Token::UInt32Number(_)
+                | Token::Int64Number(_)
+                | Token::Int64MinimumMagnitude
+                | Token::UInt64Number(_)
+                | Token::RParen
+                | Token::RBracket
+        )
+    )
 }
 
 #[cfg(test)]

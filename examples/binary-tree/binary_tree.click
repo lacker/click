@@ -36,9 +36,6 @@ int32 tree_root(struct node* node) {
 } by {
     observe(tree(node));
     step();
-    have result == node->value by {
-        normalize();
-    }
     assumption();
 }
 
@@ -66,18 +63,6 @@ int32 tree_make_root(
     step();
     step();
     fold(tree(node));
-    have result == value by {
-        normalize();
-    }
-    have node->value == value by {
-        normalize();
-    }
-    have node->left == left by {
-        normalize();
-    }
-    have node->right == right by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();
@@ -118,51 +103,13 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
     step();
     step();
     step();
-    have left == 0 by {
-        assumption();
-    }
     step();
-    have right == 0 by {
-        assumption();
-    }
     step();
-    have node->right == right by {
-        assumption();
-    }
-    have node->left == left by {
-        assumption();
-    }
-    have made == value by {
-        assumption();
-    }
     unfold(tree(node));
     step();
     fold(tree(node));
-    have swapped == node->value by {
-        assumption();
-    }
     step();
-    have observed == node->value by {
-        assumption();
-    }
     step();
-    have result == value by {
-        rewrite(at(statement(10).entry, observed) == at(statement(10).entry, node->value));
-        assumption();
-    }
-    have node->value == value by {
-        assumption();
-    }
-    have node->left == 0 by {
-        rewrite(node->left == at(statement(8).entry, node->right));
-        rewrite(at(statement(8).entry, node->right) == at(statement(8).entry, right));
-        assumption();
-    }
-    have node->right == 0 by {
-        rewrite(node->right == at(statement(8).entry, node->left));
-        rewrite(at(statement(8).entry, node->left) == at(statement(8).entry, left));
-        assumption();
-    }
     assumption();
     assumption();
     assumption();
@@ -198,27 +145,13 @@ int32 tree_is_leaf(struct node* node) {
         }
     }
     if at(function.entry, node->left) != at(function.entry, 0) {
-        have result == 1 implies node->left == 0 by {
-            simp();
-        }
-        have result == 1 implies node->right == 0 by {
-            simp();
-        }
-        have node->left != 0 implies result == 0 by {
-            simp();
-        }
-        have node->left == 0 implies node->right != 0 implies result == 0 by {
-            simp();
-        }
-        have node->left == 0 implies node->right == 0 implies result == 1 by {
-            intro();
-            contradiction(node->left != 0);
-        }
-        have result == 0 or result == 1 by {
-            have result == 0 by normalize();
-            assumption();
-        }
-        assumption();
+        have result == 1 implies node->left == 0 by auto;
+        have result == 1 implies node->right == 0 by auto;
+        have node->left != 0 implies result == 0 by auto;
+        have node->left == 0 implies node->right != 0 implies result == 0 by auto;
+        have node->left == 0 implies node->right == 0 implies result == 1 by auto;
+        have result == 0 or result == 1 by auto;
+ assumption();
         assumption();
         assumption();
         assumption();
@@ -226,61 +159,26 @@ int32 tree_is_leaf(struct node* node) {
         assumption();
     } else {
         if at(function.entry, node->right) != at(function.entry, 0) {
-            have result == 1 implies node->left == 0 by {
-                simp();
-            }
-            have result == 1 implies node->right == 0 by {
-                simp();
-            }
-            have node->left != 0 implies result == 0 by {
-                simp();
-            }
-            have node->left == 0 implies node->right != 0 implies result == 0 by {
-                simp();
-            }
-            have node->left == 0 implies node->right == 0 implies result == 1 by {
-                intro();
-                intro();
-                contradiction(node->right != 0);
-            }
-            have result == 0 or result == 1 by {
-                have result == 0 by normalize();
-                assumption();
-            }
-            assumption();
+            have result == 1 implies node->left == 0 by auto;
+            have result == 1 implies node->right == 0 by auto;
+            have node->left != 0 implies result == 0 by auto;
+            have node->left == 0 implies node->right != 0 implies result == 0 by auto;
+            have node->left == 0 implies node->right == 0 implies result == 1 by auto;
+            have result == 0 or result == 1 by auto;
+     assumption();
             assumption();
             assumption();
             assumption();
             assumption();
             assumption();
         } else {
-            have result == 1 implies node->left == 0 by {
-                rewrite(node->left == 0);
-                intro();
-                normalize();
-            }
-            have result == 1 implies node->right == 0 by {
-                rewrite(node->right == 0);
-                intro();
-                normalize();
-            }
-            have node->left != 0 implies result == 0 by {
-                intro();
-                contradiction(node->left == 0);
-            }
-            have node->left == 0 implies node->right != 0 implies result == 0 by {
-                intro();
-                intro();
-                contradiction(node->right == 0);
-            }
-            have node->left == 0 implies node->right == 0 implies result == 1 by {
-                simp();
-            }
-            have result == 0 or result == 1 by {
-                have result == 1 by normalize();
-                assumption();
-            }
-            assumption();
+            have result == 1 implies node->left == 0 by auto;
+            have result == 1 implies node->right == 0 by auto;
+            have node->left != 0 implies result == 0 by auto;
+            have node->left == 0 implies node->right != 0 implies result == 0 by auto;
+            have node->left == 0 implies node->right == 0 implies result == 1 by auto;
+            have result == 0 or result == 1 by auto;
+     assumption();
             assumption();
             assumption();
             assumption();
@@ -310,9 +208,6 @@ int32 tree_sum_root_and_children(struct node* node) {
     step();
     step();
     step();
-    have result == ((node->value + node->left->value) + node->right->value) by {
-        normalize();
-    }
     assumption();
 }
 
@@ -336,12 +231,6 @@ struct node* tree_rotate_left(struct node* node) {
     step();
     fold(tree(node));
     fold(tree(result));
-    have result == old(node->right) by {
-        normalize();
-    }
-    have result->left == node by {
-        normalize();
-    }
     assumption();
     assumption();
     assumption();
@@ -369,9 +258,6 @@ int32 tree_walk(struct node* node) {
             step();
             step();
             step();
-            have result == node->value by {
-                normalize();
-            }
             assumption();
         } else {
             step();
@@ -385,13 +271,7 @@ int32 tree_walk(struct node* node) {
             step();
             step();
             step();
-            have child_value == node->right[0] by {
-                assumption();
-            }
             step();
-            have result == node->value by {
-                normalize();
-            }
             assumption();
         }
     } else {
@@ -405,15 +285,9 @@ int32 tree_walk(struct node* node) {
             step();
             step();
             step();
-            have child_value == node->left[0] by {
-                assumption();
-            }
             step();
             step();
             step();
-            have result == node->value by {
-                normalize();
-            }
             assumption();
         } else {
             step();
@@ -425,18 +299,9 @@ int32 tree_walk(struct node* node) {
             step();
             step();
             step();
-            have child_value == node->left[0] by {
-                assumption();
-            }
             step();
             step();
-            have child_value == node->right[0] by {
-                assumption();
-            }
             step();
-            have result == node->value by {
-                normalize();
-            }
             assumption();
         }
     }

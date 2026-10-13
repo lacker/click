@@ -59,52 +59,9 @@ int32 owned_segmented_buffer_init(
     step();
     step();
     step();
-    have 0 <= owner->first_len by {
-        apply(int32_less_equal_transitive(0, 1, at(statement(4).entry, first_len))) using {
-            at(statement(4).entry, 1) <= at(statement(4).entry, first_len);
-        }
-        assumption();
-    }
-    have 0 <= owner->second_len by {
-        apply(int32_less_equal_transitive(0, 1, at(statement(4).entry, second_len))) using {
-            at(statement(4).entry, 1) <= at(statement(4).entry, second_len);
-        }
-        assumption();
-    }
-    have 1 <= owner->first_len by {
-        assumption();
-    }
-    have 1 <= owner->second_len by {
-        assumption();
-    }
     fold(owned_segmented_buffer(owner));
-    have result == first_len by {
-        normalize();
-    }
-    have owner->first_len == first_len by {
-        normalize();
-    }
-    have owner->second_len == second_len by {
-        normalize();
-    }
-    have 0 < owner->first_len by {
-        apply(int32_increment_less_equal_implies_less_than(0, owner->first_len)) using {
-            1 <= owner->first_len;
-        }
-        assumption();
-    }
-    have 0 < owner->second_len by {
-        apply(int32_increment_less_equal_implies_less_than(0, owner->second_len)) using {
-            1 <= owner->second_len;
-        }
-        assumption();
-    }
-    have owner->first_data == first_data by {
-        normalize();
-    }
-    have owner->second_data == second_data by {
-        normalize();
-    }
+    have 0 < owner->first_len by auto;
+    have 0 < owner->second_len by auto;
     assumption();
     assumption();
     assumption();
@@ -127,9 +84,6 @@ int32 owned_segmented_buffer_get_first(
 } by {
     observe(owned_segmented_buffer(owner));
     step();
-    have result == owner->first_data[index] by {
-        normalize();
-    }
     assumption();
 }
 
@@ -280,31 +234,7 @@ int32 owned_segmented_buffer_pipeline(
     step();
     step();
     unfold(owned_segmented_buffer(owner));
-    have ignored == first_len by {
-        assumption();
-    }
-    have 0 < owner->first_len by {
-        assumption();
-    }
-    have 0 < owner->second_len by {
-        assumption();
-    }
-    have owner->first_data == first_data by {
-        assumption();
-    }
-    have owner->second_data == second_data by {
-        assumption();
-    }
     step();
-    have 0 < owner->second_len by {
-        assumption();
-    }
-    have owner->first_data == first_data by {
-        assumption();
-    }
-    have owner->second_data == second_data by {
-        assumption();
-    }
     have at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value) by {
         rewrite(at(statement(4).entry, first_value) == at(statement(4).entry, owner->first_data[0]));
         rewrite(at(statement(4).entry, owner->first_data) == at(statement(4).entry, first_data));
@@ -349,15 +279,6 @@ int32 owned_segmented_buffer_pipeline(
         at(statement(4).entry, owner->second_data) == at(statement(4).entry, second_data);
         1 <= second_len;
     }
-    have 0 < owner->first_len by {
-        assumption();
-    }
-    have owner->first_data == first_data by {
-        assumption();
-    }
-    have owner->second_data == second_data by {
-        assumption();
-    }
     have at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value) by {
         rewrite(at(statement(5).entry, second_value) == at(statement(5).entry, owner->second_data[0]));
         rewrite(at(statement(5).entry, owner->second_data) == at(statement(5).entry, second_data));
@@ -365,12 +286,6 @@ int32 owned_segmented_buffer_pipeline(
     }
     transport(at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value), second_data[0] == second_value) using {
         at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value);
-    }
-    have 1 <= owner->first_len by {
-        assumption();
-    }
-    have 1 <= owner->second_len by {
-        assumption();
     }
     fold(owned_segmented_buffer(owner));
     step();
@@ -384,27 +299,7 @@ int32 owned_segmented_buffer_pipeline(
         *first_data == first_value;
     }
     step();
-    have owner->first_len == first_len by {
-        assumption();
-    }
-    have owner->second_len == second_len by {
-        assumption();
-    }
-    have owner->first_data == first_data by {
-        assumption();
-    }
-    have owner->second_data == second_data by {
-        assumption();
-    }
-    have first_data[0] == first_value by {
-        assumption();
-    }
-    have second_data[0] == second_value by {
-        assumption();
-    }
-    have result == first_value by {
-        assumption();
-    }
+    have owner->first_data == first_data by auto;
     assumption();
     assumption();
     assumption();

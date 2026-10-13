@@ -79,17 +79,9 @@
   "by_auto": false,
   "deletable": true
  },
- "examples/binary-tree/binary_tree.click::child_value == node->left[0]::0": {
+ "examples/binary-tree/binary_tree.click::node->left != 0 implies result == 0::0": {
   "by_auto": true,
-  "deletable": true
- },
- "examples/binary-tree/binary_tree.click::child_value == node->right[0]::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/binary-tree/binary_tree.click::made == value::0": {
-  "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/binary-tree/binary_tree.click::node->left != 0 implies result == 0::1": {
   "by_auto": true,
@@ -103,7 +95,19 @@
   "by_auto": true,
   "deletable": false
  },
+ "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right != 0 implies result == 0::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right != 0 implies result == 0::2": {
+  "by_auto": true,
+  "deletable": false
+ },
  "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right == 0 implies result == 1::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/binary-tree/binary_tree.click::node->left == 0 implies node->right == 0 implies result == 1::1": {
   "by_auto": true,
   "deletable": false
  },
@@ -111,31 +115,23 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/binary-tree/binary_tree.click::node->left == 0::0": {
+ "examples/binary-tree/binary_tree.click::result == 0 or result == 1::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/binary-tree/binary_tree.click::node->left == left::0": {
+ "examples/binary-tree/binary_tree.click::result == 0 or result == 1::1": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/binary-tree/binary_tree.click::node->right == 0::0": {
+ "examples/binary-tree/binary_tree.click::result == 0 or result == 1::2": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/binary-tree/binary_tree.click::node->right == right::0": {
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->left == 0::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/binary-tree/binary_tree.click::observed == node->value::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/binary-tree/binary_tree.click::result == ((node->value + node->left->value) + node->right->value)::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/binary-tree/binary_tree.click::result == 0::0": {
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->left == 0::1": {
   "by_auto": true,
   "deletable": false
  },
@@ -147,17 +143,13 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/binary-tree/binary_tree.click::result == 1 implies node->right == 0::2": {
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->right == 0::1": {
   "by_auto": true,
   "deletable": false
  },
- "examples/binary-tree/binary_tree.click::result == node->value::2": {
+ "examples/binary-tree/binary_tree.click::result == 1 implies node->right == 0::2": {
   "by_auto": true,
-  "deletable": true
- },
- "examples/binary-tree/binary_tree.click::swapped == node->value::0": {
-  "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/bounded-pool/bounded_pool.click::0 <= to_integer(count(pool_slot(pool)))::0": {
   "by_auto": false,
@@ -191,7 +183,11 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(pool, _)) + 1)::2": {
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(pool, _)) + 1)::1": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/bounded-pool/bounded_pool.click::defined(count(pool_object(source, _)) + 1)::0": {
   "by_auto": true,
   "deletable": false
  },
@@ -211,6 +207,10 @@
   "by_auto": true,
   "deletable": false
  },
+ "examples/bounded-pool/bounded_pool.click::defined(pool->checked_out + count(pool_slot(pool)))::2": {
+  "by_auto": true,
+  "deletable": false
+ },
  "examples/bounded-pool/bounded_pool.click::defined(pool->checked_out + count(pool_slot(pool)))::3": {
   "by_auto": true,
   "deletable": false
@@ -219,19 +219,11 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/bounded-pool/bounded_pool.click::pool->capacity == pool->checked_out + count(pool_slot(pool))::0": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/bounded-pool/bounded_pool.click::to_integer(destination->checked_out) + 1 >= -2147483648::0": {
   "by_auto": true,
   "deletable": false
  },
  "examples/bounded-pool/bounded_pool.click::to_integer(pool->capacity) == to_integer(pool->checked_out) + to_integer(count(pool_slot(pool)))::0": {
-  "by_auto": true,
-  "deletable": false
- },
- "examples/bounded-pool/bounded_pool.click::to_integer(pool->checked_out) + 1 >= -2147483648::0": {
   "by_auto": true,
   "deletable": false
  },
@@ -242,10 +234,6 @@
  "examples/byte-representation/byte_representation.click::copied == -1::0": {
   "by_auto": false,
   "deletable": false
- },
- "examples/concurrency-fork-join/fork_join.click::0 <= 0 - at(iteration, index) + job->end - 1::0": {
-  "by_auto": true,
-  "deletable": true
  },
  "examples/concurrency-fork-join/fork_join.click::0 <= at(iteration, index)::0": {
   "by_auto": true,
@@ -267,29 +255,9 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/detachable-buffer/detachable_buffer.click::data[0] == replacement::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/detachable-buffer/detachable_buffer.click::owner->data == data::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/detachable-buffer/detachable_buffer.click::owner->len == length::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/detachable-buffer/detachable_buffer.click::result == replacement::0": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/input-cursor/input_cursor.click::0 < right->len::0": {
   "by_auto": true,
   "deletable": false
- },
- "examples/input-cursor/input_cursor.click::0 <= owner->pos::0": {
-  "by_auto": true,
-  "deletable": true
  },
  "examples/input-cursor/input_cursor.click::at(statement(5).entry, left->pos) == 0::0": {
   "by_auto": true,
@@ -313,10 +281,6 @@
  },
  "examples/input-cursor/input_cursor.click::left->pos == at(statement(5).entry, left->pos) + 1::0": {
   "by_auto": false,
-  "deletable": true
- },
- "examples/input-cursor/input_cursor.click::owner->pos <= owner->len::0": {
-  "by_auto": true,
   "deletable": true
  },
  "examples/input-cursor/input_cursor.click::right->data == data::0": {
@@ -343,6 +307,10 @@
   "by_auto": true,
   "deletable": true
  },
+ "examples/input-cursor/input_cursor.click::right->pos == 0::0": {
+  "by_auto": true,
+  "deletable": true
+ },
  "examples/input-cursor/input_cursor.click::right->pos == 0::1": {
   "by_auto": true,
   "deletable": true
@@ -363,9 +331,9 @@
   "by_auto": true,
   "deletable": true
  },
- "examples/modeled-binary-tree/modeled_binary_tree.click::heap_left(sub.model) == HeapTree::Empty::0": {
+ "examples/modeled-binary-tree/modeled_binary_tree.click::heap_left(t.model) == left_model::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Empty, target) == 0::0": {
   "by_auto": true,
@@ -376,20 +344,12 @@
   "deletable": false
  },
  "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Node(node, value, left, right), target) == 1::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(HeapTree::Node(node, value, left, right), target) == 1::2": {
   "by_auto": false,
   "deletable": false
  },
  "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(l.model, target) != 0::0": {
   "by_auto": true,
   "deletable": false
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(left_model, target) == 0::0": {
-  "by_auto": true,
-  "deletable": true
  },
  "examples/modeled-binary-tree/modeled_binary_tree.click::heap_member(left_model, target) == 1::0": {
   "by_auto": false,
@@ -399,11 +359,19 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/modeled-binary-tree/modeled_binary_tree.click::heap_right(sub.model) == HeapTree::Empty::0": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/modeled-binary-tree/modeled_binary_tree.click::heap_right(t.model) == right_model::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::left_model != HeapTree::Empty::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::left_model == l.model::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/modeled-binary-tree/modeled_binary_tree.click::node == target::0": {
   "by_auto": true,
   "deletable": false
  },
@@ -411,33 +379,9 @@
   "by_auto": false,
   "deletable": false
  },
- "examples/modeled-binary-tree/modeled_binary_tree.click::plug(ctx.model, sub.model) == old(t.model)::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::plug(ctx.model, sub.model) == old(t.model)::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::plug(ctx.model, t.model) == old(t.model)::1": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(old(t.model), target)::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(old(t.model), target)::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(old(t.model), target)::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/modeled-binary-tree/modeled_binary_tree.click::result == heap_member(right_model, target)::0": {
-  "by_auto": true,
-  "deletable": true
+  "by_auto": false,
+  "deletable": false
  },
  "examples/modeled-binary-tree/modeled_binary_tree.click::right_model != HeapTree::Empty::0": {
   "by_auto": true,
@@ -447,9 +391,9 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->first_len::3": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->first_len::1": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 < owner->second_len::0": {
   "by_auto": true,
@@ -459,10 +403,6 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::0 <= owner->second_len::0": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/owned-segmented-buffer/owned_segmented_buffer.click::1 <= owner->first_len::0": {
   "by_auto": true,
   "deletable": true
@@ -471,39 +411,27 @@
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::1 <= owner->second_len::2": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value)::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::first_data[0] == first_value::0": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value)::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::ignored == first_len::0": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::c(result) == first_data[0]::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::1": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == old(owner->second_data)::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::3": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_data == first_data::4": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_len == first_len::1": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->first_len == old(owner->second_len)::0": {
   "by_auto": true,
   "deletable": true
  },
@@ -511,49 +439,25 @@
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->second_data == second_data::0": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::owner->second_len == old(owner->first_len)::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::result == first_value::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-segmented-buffer/owned_segmented_buffer.click::second_data[0] == second_value::0": {
+ "examples/owned-segmented-buffer/owned_segmented_buffer.click::result == old(owner->second_len)::0": {
   "by_auto": true,
   "deletable": true
  },
  "examples/owned-split-buffer/owned_split_buffer.click::1 < length::0": {
   "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-split-buffer/owned_split_buffer.click::1 < owner->len::0": {
+  "by_auto": true,
   "deletable": false
- },
- "examples/owned-split-buffer/owned_split_buffer.click::1 < owner->split::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::at(statement(5).entry, owner->split) == 1::0": {
-  "by_auto": true,
-  "deletable": true
  },
  "examples/owned-split-buffer/owned_split_buffer.click::c(result) == data[1]::0": {
   "by_auto": true,
   "deletable": false
- },
- "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::0": {
-  "by_auto": true,
-  "deletable": false
- },
- "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::data[0] == left_value::3": {
-  "by_auto": true,
-  "deletable": true
  },
  "examples/owned-split-buffer/owned_split_buffer.click::data[1] == right_value::0": {
   "by_auto": true,
@@ -561,73 +465,33 @@
  },
  "examples/owned-split-buffer/owned_split_buffer.click::data[1] == right_value::1": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->data == data::0": {
+ "examples/owned-string/owned_string.click::(owner->len + 1) < owner->cap::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->data == data::3": {
+ "examples/owned-string/owned_string.click::0 < owner->len::1": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->len == length::0": {
+ "examples/owned-string/owned_string.click::0 <= owner->len::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->len == length::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->len == owner->len::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->split < owner->len::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->split == 1::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->split == 2::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->split == 2::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-split-buffer/owned_split_buffer.click::owner->split == owner->split::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::(let data = old(owner->data); old(owner->data)[0]) == (let data = old(owner->data); old(old(owner->data)[0]))::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::(let data = old(owner->data); old(owner->data)[0]) == (let data = old(owner->data); old(old(owner->data)[0]))::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::(owner->len - 1) < owner->len::0": {
+ "examples/owned-string/owned_string.click::0 <= owner->len::1": {
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-string/owned_string.click::0 < owner->len::2": {
+ "examples/owned-string/owned_string.click::at(statement(5).entry, owner->len) == 1::0": {
+  "by_auto": false,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::data[0] == 0::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-string/owned_string.click::0 <= at(statement(4).entry, index)::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::0 == 0::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::at(statement(4).entry, owner->cap) == old(owner->cap)::0": {
+ "examples/owned-string/owned_string.click::ignored == 0::0": {
   "by_auto": true,
   "deletable": true
  },
@@ -639,27 +503,31 @@
   "by_auto": true,
   "deletable": true
  },
+ "examples/owned-string/owned_string.click::owner->cap == capacity::1": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->data == data::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-string/owned_string.click::owner->data[0] == first::0": {
+  "by_auto": true,
+  "deletable": false
+ },
  "examples/owned-string/owned_string.click::owner->data[at(statement(3).entry, owner->len)] == first::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-string/owned_string.click::owner->data[owner->len] == 0::1": {
+ "examples/owned-string/owned_string.click::owner->data[owner->len] == 0::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-string/owned_string.click::owner->len == (old(owner->len) + 1)::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-string/owned_string.click::owner->len < owner->cap::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::owner->len == 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::owner->len == 0::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::result == at(statement(6).entry, observed)::0": {
+ "examples/owned-string/owned_string.click::owner->len == 1::0": {
   "by_auto": true,
   "deletable": true
  },
@@ -667,19 +535,31 @@
   "by_auto": false,
   "deletable": true
  },
- "examples/owned-string/owned_string.click::result == old(owner->data[(owner->len - 1)])::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-string/owned_string.click::result == value::0": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/owned-string/owned_string.click::terminated_at(owner->data, owner->len)::0": {
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-string/owned_string.click::terminated_at(owner->data, owner->len)::1": {
+ "examples/owned-string/owned_string.click::terminated_at(owner->data, owner->len)::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-string/owned_string.click::terminated_at(owner->data, owner->len)::3": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::((uint32)old_capacity) <= 1073741823u32::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::0 <= i::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::0 <= old_capacity::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::0 <= owner->len::1": {
   "by_auto": true,
   "deletable": true
  },
@@ -687,15 +567,27 @@
   "by_auto": true,
   "deletable": true
  },
+ "examples/owned-vector/vector.click::at(statement(0).entry, (owner->len + 1)) <= at(statement(0).entry, owner->cap)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::at(statement(0).entry, owner->len) < at(statement(0).entry, owner->cap)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::at(statement(8).entry, owner->len) < at(statement(8).entry, owner->cap)::0": {
+  "by_auto": true,
+  "deletable": true
+ },
+ "examples/owned-vector/vector.click::c(grown) == 1::0": {
+  "by_auto": false,
+  "deletable": false
+ },
  "examples/owned-vector/vector.click::i == length::0": {
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-vector/vector.click::i >= 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::index < (index + 1)::3": {
+ "examples/owned-vector/vector.click::i >= 0 and i <= owner->len::0": {
   "by_auto": true,
   "deletable": false
  },
@@ -703,55 +595,19 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-vector/vector.click::not replace != 0 implies selected == original::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::not replace != 0 implies selected == original::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::not replace != 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->cap < 2147483647::0": {
+ "examples/owned-vector/vector.click::old(owner->len) < old(owner->cap) implies owner->cap == old(owner->cap)::2": {
   "by_auto": true,
   "deletable": false
  },
- "examples/owned-vector/vector.click::owner->cap == capacity::1": {
+ "examples/owned-vector/vector.click::owner->cap <= 536870911::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-vector/vector.click::owner->cap == old(owner->cap)::0": {
+ "examples/owned-vector/vector.click::owner->data == old(owner->data)::0": {
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-vector/vector.click::owner->data == old(owner->data)::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->data[0] == replacement::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->len <= owner->cap::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->len <= owner->cap::3": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->len == 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->len == 0::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/owned-vector/vector.click::owner->len == 1::2": {
+ "examples/owned-vector/vector.click::owner->data[old(owner->len)] == value::1": {
   "by_auto": true,
   "deletable": true
  },
@@ -759,9 +615,17 @@
   "by_auto": true,
   "deletable": true
  },
- "examples/owned-vector/vector.click::result == owner->data[index]::0": {
+ "examples/owned-vector/vector.click::result == 0 implies owner->cap == old(owner->cap)::4": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::result == 1 implies owner->data[old(owner->len)] == value::2": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/owned-vector/vector.click::result == 1 implies owner->len == (old(owner->len) + 1)::2": {
+  "by_auto": true,
+  "deletable": false
  },
  "examples/perpetual-service/perpetual_service.click::owner->cell == old(owner->cell)::0": {
   "by_auto": true,
@@ -871,22 +735,6 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/rbtree-erase/rbtree_change_child.click::identity->rb_left == 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_change_child.click::old != 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_change_child.click::old != 0::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_change_child.click::old == 0::0": {
-  "by_auto": true,
-  "deletable": false
- },
  "examples/rbtree-erase/rbtree_change_child.click::parent == 0::0": {
   "by_auto": false,
   "deletable": false
@@ -898,14 +746,6 @@
  "examples/rbtree-erase/rbtree_change_child.click::parent == identity::1": {
   "by_auto": false,
   "deletable": false
- },
- "examples/rbtree-erase/rbtree_change_child.click::parent->rb_left != old::0": {
-  "by_auto": false,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_change_child.click::parent->rb_left == 0::0": {
-  "by_auto": true,
-  "deletable": true
  },
  "examples/rbtree-erase/rbtree_erase.click::(node->__rb_parent_color & 1) == 1::0": {
   "by_auto": false,
@@ -1149,27 +989,15 @@
  },
  "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::deficit.model == erase_deep_context(old(tree.model), old(up.model))::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::plug(deficit.model, RbTree::Empty) == plug(old(up.model), erase_deep_model(old(tree.model)))::0": {
   "by_auto": false,
   "deletable": false
  },
- "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::rb_inorder(plug(deficit.model, RbTree::Empty)) == rb_inorder(plug(old(up.model), erase_deep_model(old(tree.model))))::0": {
-  "by_auto": true,
-  "deletable": false
- },
- "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::rb_inorder(whole.model) == rb_inorder(plug(old(up.model), erase_deep_model(old(tree.model))))::0": {
-  "by_auto": false,
-  "deletable": true
- },
  "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1::0": {
   "by_auto": true,
   "deletable": false
- },
- "examples/rbtree-erase/rbtree_erase_black_spine_wrapper.click::whole.model == erase_flips_red_all_result(erase_deep_context(old(tree.model), old(up.model)), RbTree::Empty)::0": {
-  "by_auto": false,
-  "deletable": true
  },
  "examples/rbtree-erase/rbtree_erase_black_successor.click::(node->__rb_parent_color & 1) == 1::0": {
   "by_auto": false,
@@ -1261,23 +1089,15 @@
  },
  "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::deficit.model == rb_successor_context(old(node->rb_right), 0, Color::Black, rb_left(old(tree.model)), rb_right(old(tree.model)), Context::Top)::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::rb_inorder(plug(deficit.model, RbTree::Empty)) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
   "by_auto": false,
   "deletable": false
  },
- "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::rb_inorder(whole.model) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model))))::0": {
-  "by_auto": false,
-  "deletable": true
- },
  "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::rb_tree_parent_consistent(plug(deficit.model, RbTree::Empty)) == 1::0": {
   "by_auto": true,
   "deletable": false
- },
- "examples/rbtree-erase/rbtree_erase_black_successor_wrapper.click::whole.model == erase_flips_red_all_result(rb_successor_context(old(node->rb_right), 0, Color::Black, rb_left(old(tree.model)), rb_right(old(tree.model)), Context::Top), RbTree::Empty)::0": {
-  "by_auto": false,
-  "deletable": true
  },
  "examples/rbtree-erase/rbtree_erase_child_successor.click::(node->__rb_parent_color & 1) == 1::0": {
   "by_auto": false,
@@ -2227,54 +2047,6 @@
   "by_auto": false,
   "deletable": true
  },
- "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 0::0": {
-  "by_auto": false,
-  "deletable": false
- },
- "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 0::1": {
-  "by_auto": false,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 1::0": {
-  "by_auto": false,
-  "deletable": false
- },
- "examples/rbtree-erase/rbtree_set_parent.click::(rb->__rb_parent_color & 1) == 1::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::after.model == rb_reparent(old(before.model), p)::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::after.model == rb_reparent(old(before.model), p)::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::color_bit(color) == 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::color_bit(color) == 1::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == (1 | address(p))::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == (address(p) | 0)::0": {
-  "by_auto": true,
-  "deletable": false
- },
- "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == address(p) + 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-erase/rbtree_set_parent.click::rb->__rb_parent_color == address(p) + 1::0": {
-  "by_auto": false,
-  "deletable": false
- },
  "examples/rbtree-insert/rbtree_insert.click::almost_rb_insert(RbTree::Node(cid, cgp, Color::Red, t.model, csib)) == 1::1": {
   "by_auto": false,
   "deletable": false
@@ -2535,16 +2307,20 @@
   "by_auto": false,
   "deletable": false
  },
+ "examples/rbtree-model/rbtree_model.click::Nat::Succ(black_height(t)) == Nat::Succ(black_height(RbTree::Node(red, sibling, Color::Red, rl, rr)))::1": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::Nat::Succ(black_height(t)) == black_height(sl)::1": {
+  "by_auto": false,
+  "deletable": false
+ },
  "examples/rbtree-model/rbtree_model.click::almost_rb_insert(RbTree::Node(node, parent, color, left, right)) != 1::0": {
   "by_auto": false,
   "deletable": false
  },
  "examples/rbtree-model/rbtree_model.click::almost_rb_insert(RbTree::Node(node, parent, color, left, right)) != 1::2": {
   "by_auto": false,
-  "deletable": false
- },
- "examples/rbtree-model/rbtree_model.click::black_height(RbTree::Empty) == Nat::Zero::0": {
-  "by_auto": true,
   "deletable": false
  },
  "examples/rbtree-model/rbtree_model.click::black_height(RbTree::Node(parent, above, Color::Black, RbTree::Node(sibling, parent, Color::Red, sl, sr), t)) == Nat::Succ(black_height(t))::1": {
@@ -2563,39 +2339,27 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rb_reparent(near, parent))::0": {
+ "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rb_reparent(rl, parent))::0": {
   "by_auto": false,
   "deletable": false
  },
- "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rb_reparent(rl, parent))::1": {
+ "examples/rbtree-model/rbtree_model.click::color_black(rb_color(rb_reparent(sr, parent))) == 1::0": {
   "by_auto": true,
-  "deletable": true
- },
- "examples/rbtree-model/rbtree_model.click::black_height(t) == black_height(rr)::0": {
-  "by_auto": true,
-  "deletable": false
- },
- "examples/rbtree-model/rbtree_model.click::ctx_rb(up, frame_black_height(Color::Black, Nat::Succ(black_height(t))), Color::Black) == 1::1": {
-  "by_auto": false,
   "deletable": false
  },
  "examples/rbtree-model/rbtree_model.click::is_rb(RbTree::Node(node, parent, color, left, right)) != 1::0": {
   "by_auto": false,
   "deletable": false
  },
- "examples/rbtree-model/rbtree_model.click::is_rb(rb_reparent(rl, parent)) == 1::0": {
-  "by_auto": true,
-  "deletable": false
- },
  "examples/rbtree-model/rbtree_model.click::node_color_ok(Color::Red, Color::Black, Color::Red) != 1::0": {
   "by_auto": false,
   "deletable": false
  },
- "examples/rbtree-model/rbtree_model.click::node_color_ok(Color::Red, rb_color(RbTree::Node(sibling, parent, Color::Red, sl, sr)), Color::Black) != 1::0": {
+ "examples/rbtree-model/rbtree_model.click::node_color_ok(pcolor, rb_color(RbTree::Node(parent, sibling, Color::Black, t, rb_reparent(near, parent))), rb_color(RbTree::Node(red, sibling, Color::Black, rl, rr))) == 1::0": {
   "by_auto": false,
   "deletable": false
  },
- "examples/rbtree-model/rbtree_model.click::node_color_ok(pcolor, rb_color(RbTree::Node(parent, sibling, Color::Black, t, rb_reparent(near, parent))), rb_color(RbTree::Node(red, sibling, Color::Black, rl, rr))) == 1::0": {
+ "examples/rbtree-model/rbtree_model.click::rb_inorder(RbTree::Node(sibling, above, Color::Black, RbTree::Node(parent, sibling, Color::Red, t, rb_reparent(sl, parent)), sr)) == rb_inorder(RbTree::Node(parent, above, Color::Black, t, RbTree::Node(sibling, parent, Color::Red, sl, sr)))::0": {
   "by_auto": false,
   "deletable": false
  },
@@ -2611,7 +2375,15 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/rbtree-model/rbtree_model.click::rb_rotate_left(RbTree::Node(parent, above, pcolor, t, RbTree::Node(red, parent, Color::Red, rl, RbTree::Node(sibling, red, Color::Black, rb_reparent(rr, sibling), far)))) == RbTree::Node(red, above, Color::Red, RbTree::Node(parent, red, pcolor, t, rb_reparent(rl, parent)), RbTree::Node(sibling, red, Color::Black, rb_reparent(rr, sibling), far))::0": {
+ "examples/rbtree-model/rbtree_model.click::rb_rotate_left_at_left(RbTree::Node(parent, above, pcolor, RbTree::Node(sibling, parent, Color::Black, far, RbTree::Node(red, sibling, Color::Red, rl, rr)), t)) == RbTree::Node(parent, above, pcolor, RbTree::Node(red, parent, Color::Red, RbTree::Node(sibling, red, Color::Black, far, rb_reparent(rl, sibling)), rr), t)::0": {
+  "by_auto": false,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::rb_rotate_right(RbTree::Node(parent, above, pcolor, RbTree::Node(red, parent, Color::Red, RbTree::Node(sibling, red, Color::Black, far, rb_reparent(rl, sibling)), rr), t)) == RbTree::Node(red, above, Color::Red, RbTree::Node(sibling, red, Color::Black, far, rb_reparent(rl, sibling)), RbTree::Node(parent, red, pcolor, rb_reparent(rr, parent), t))::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/rbtree-model/rbtree_model.click::rb_rotate_right(RbTree::Node(parent, above, pcolor, RbTree::Node(sibling, parent, Color::Black, RbTree::Node(red, sibling, Color::Red, rl, rr), near), t)) == RbTree::Node(sibling, above, Color::Black, RbTree::Node(red, sibling, Color::Red, rl, rr), RbTree::Node(parent, sibling, pcolor, rb_reparent(near, parent), t))::0": {
   "by_auto": true,
   "deletable": false
  },
@@ -2788,7 +2560,7 @@
   "deletable": false
  },
  "examples/rust-chunks-exact/chunks.click::(bytes.len() - bytes.len() % 4u64) - iter_remaining == 0u64::0": {
-  "by_auto": false,
+  "by_auto": true,
   "deletable": false
  },
  "examples/rust-chunks-exact/chunks.click::4u64 <= iter_remaining::0": {
@@ -2960,7 +2732,7 @@
   "deletable": false
  },
  "examples/rust-iterators/sum.click::iter_remaining == 0u64::0": {
-  "by_auto": false,
+  "by_auto": true,
   "deletable": false
  },
  "examples/rust-iterators/sum.click::iter_remaining == bytes.len()::0": {
@@ -3023,67 +2795,35 @@
   "by_auto": true,
   "deletable": true
  },
- "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::1": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::4": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::count(permit(obj)) == 0::5": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/shared-refcount/shared_refcount.click::count(permit(obj)) >= 1::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::count(reference(obj)) == 0::2": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::count(reference(obj)) >= 1::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::defined(slack + 1)::0": {
   "by_auto": true,
   "deletable": false
  },
- "examples/shared-refcount/shared_refcount.click::obj->refs <= 2::0": {
+ "examples/shared-refcount/shared_refcount.click::count(reference(obj)) >= 1::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/shared-refcount/shared_refcount.click::obj->refs == refs::0": {
+ "examples/shared-refcount/shared_refcount.click::refs <= 2::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
- "examples/shared-refcount/shared_refcount.click::obj->refs == refs::1": {
+ "examples/shared-refcount/shared_refcount.click::refs == count(reference(obj))::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::slack <= 2::0": {
+  "by_auto": true,
+  "deletable": false
  },
  "examples/shared-refcount/shared_refcount.click::slack == count(permit(obj))::0": {
   "by_auto": true,
   "deletable": false
  },
- "examples/shared-refcount/shared_refcount.click::to_integer(1) + to_integer(2) == 3::0": {
-  "by_auto": true,
-  "deletable": true
- },
- "examples/shared-refcount/shared_refcount.click::to_integer(1) + to_integer(2) == 3::1": {
-  "by_auto": true,
-  "deletable": true
- },
  "examples/shared-refcount/shared_refcount.click::to_integer(1) <= to_integer(refs)::0": {
+  "by_auto": true,
+  "deletable": false
+ },
+ "examples/shared-refcount/shared_refcount.click::to_integer(1) <= to_integer(slack)::0": {
   "by_auto": true,
   "deletable": false
  },
@@ -3091,9 +2831,9 @@
   "by_auto": true,
   "deletable": false
  },
- "examples/shared-refcount/shared_refcount.click::to_integer(refs) + to_integer(slack) == 3::0": {
+ "examples/shared-refcount/shared_refcount.click::to_integer(refs - 1) == to_integer(refs) - to_integer(1)::0": {
   "by_auto": true,
-  "deletable": true
+  "deletable": false
  },
  "examples/shared-refcount/shared_refcount.click::to_integer(slack + 1) == to_integer(slack) + to_integer(1)::0": {
   "by_auto": true,

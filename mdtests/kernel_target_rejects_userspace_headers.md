@@ -27,5 +27,5 @@ int32 is_null(int32* p) {
 ```
 
 ```expect
-fail: system header `<stddef.h>` is not supported for x86_64-linux-kernel
+fail: system header `<stddef.h>` is not supported for x86_64-linux-kernel; Click models it for `x86_64-linux-userspace`, selected with `target "x86_64-linux-userspace";` in the sidecar
 ```

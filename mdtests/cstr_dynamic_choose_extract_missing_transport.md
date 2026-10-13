@@ -57,5 +57,5 @@ uint64 read_terminator(uint8 bytes[]) {
 ```
 
 ```expect
-fail: `viewable(bytes[0..(found_len + 1u64)])` was not proved
+fail: 0 of 1 selected derivation premises have checked source spellings; 1 were omitted
 ```

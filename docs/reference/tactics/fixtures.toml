@@ -43,6 +43,16 @@ path = "mdtests/c_call_binder_transport.md"
 needle = "step(increment(state), { first: c });"
 
 [[form]]
+id = "step-by"
+path = "mdtests/step_by_proves_its_one_open_obligation.md"
+needle = "step() by { simp(); }"
+
+[[form]]
+id = "step-requires"
+path = "mdtests/step_requires_proves_each_open_obligation.md"
+needle = "requires a > 0 or b > 0 by simp;"
+
+[[form]]
 id = "user-tactic"
 path = "mdtests/user_tactic_reshapes_owned_resources.md"
 needle = "divide(p, { x: x });"

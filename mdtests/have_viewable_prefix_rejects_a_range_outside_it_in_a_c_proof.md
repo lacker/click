@@ -3,13 +3,9 @@
 The positive half is
 `mdtests/have_viewable_prefix_of_a_range_in_a_c_proof.md`. Drop `k <= n` from it
 and `a[0..k]` may run past the end of the stated range, so the narrowing is
-refused — and the refusal names the goal and the stated range the way the proof
-wrote them, and the one order fact that would place one inside the other.
-
-A refusal naming the lowered form instead, `viewable(base=the pointer value at
-this program point, bytes=(v2 * 4))`, is what this reports if the diagnostic
-regresses: it tells the reader neither which range they asked for nor what to go
-and prove.
+refused. The diagnostic names the written goal and reports the failed
+source-proof construction, without attributing the miss to a guessed source
+range or byte-extent premise.
 
 ```c filename=have_loadable_prefix_rejects_a_range_outside_it_in_a_c_proof.c
 int32 probe(int32 a[], int32 n, int32 k) {
@@ -32,5 +28,5 @@ int32 probe(int32 a[], int32 n, int32 k) {
 ```
 
 ```expect
-fail: `viewable(a[0..k])` does not follow from `viewable(a[0..n])`: narrowing that range needs `k <= n`, which is not an available fact
+fail: no checked source proof was constructed for `viewable(
 ```

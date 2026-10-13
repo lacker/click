@@ -9,8 +9,8 @@ pub(super) fn integer_conversion_target(name: &str) -> Option<C0Type> {
         "to_uint8" => C0Type::UInt8,
         "to_uint16" => C0Type::UInt16,
         "to_uint32" => C0Type::UInt32,
-        "to_int64" => C0Type::Int64,
-        "to_uint64" => C0Type::UInt64,
+        "to_int64" => C0Type::Int64(LongRank::Long),
+        "to_uint64" => C0Type::UInt64(LongRank::Long),
         "to_int128" => C0Type::Int128,
         "to_uint128" => C0Type::UInt128,
         _ => return None,
@@ -30,8 +30,8 @@ pub(super) fn machine_integer_source_type(c_type: C0Type) -> bool {
             | C0Type::UInt8
             | C0Type::UInt16
             | C0Type::UInt32
-            | C0Type::Int64
-            | C0Type::UInt64
+            | C0Type::Int64(_)
+            | C0Type::UInt64(_)
             | C0Type::Int128
             | C0Type::UInt128
     )

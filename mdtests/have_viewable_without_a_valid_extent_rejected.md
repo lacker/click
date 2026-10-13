@@ -10,7 +10,8 @@ would turn nothing into a real cell.
 So the rule asks for the range it starts from to be established as a valid
 32-bit byte extent — the same side condition a contract carries — and refuses
 when it is not. Every order fact is present here; only the extent is missing,
-and the refusal says which two facts would supply it.
+and the refusal identifies the rejected explicit transport and its source and
+target without inferring that every such rejection has an extent cause.
 
 ```click
 theorem range_without_a_valid_extent(v: int32[], lo: int32, hi: int32) {
@@ -31,5 +32,5 @@ theorem range_without_a_valid_extent(v: int32[], lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: narrowing a viewable range needs `viewable(v[lo..hi])` established as a valid 32-bit byte extent, which takes `0 <= hi - lo` and an upper bound on `hi - lo` within the element count a 32-bit extent holds
+fail: `transport using` target does not follow from the source fact and the listed premises
 ```

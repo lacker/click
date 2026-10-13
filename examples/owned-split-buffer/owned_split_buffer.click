@@ -164,15 +164,6 @@ int32 owned_split_buffer_pipeline(
     step();
     unfold(owned_split_buffer(owner));
     step();
-    have owner->split == owner->split by {
-        normalize();
-    }
-    have owner->len == owner->len by {
-        normalize();
-    }
-    have owner->data == owner->data by {
-        normalize();
-    }
     transport(at(statement(3).entry, owner->split) == 1, owner->split == 1) using {
         at(statement(3).entry, owner->split) == 1;
         2 <= length;
@@ -187,24 +178,8 @@ int32 owned_split_buffer_pipeline(
         at(statement(3).entry, owner->data) == data;
         2 <= length;
     }
-    have owner->data == data;
-    have data[0] == left_value by {
-        simp() using {
-            at(statement(4).entry, owner->data[0]) == at(statement(4).entry, left_value);
-            owner->data == data;
-        }
-    }
-    have 1 < length by {
-        simp() using {
-            2 <= length;
-        }
-    }
-    have 1 < owner->len by {
-        simp() using {
-            1 < length;
-            owner->len == length;
-        }
-    }
+    have 1 < length by auto;
+    have 1 < owner->len by auto;
     step();
     transport(at(statement(4).entry, owner->data) == data, owner->data == data) using {
         at(statement(4).entry, owner->data) == data;
@@ -215,38 +190,14 @@ int32 owned_split_buffer_pipeline(
         owner->data == data;
         2 <= length;
     }
-    have data[0] == left_value by {
-        assumption();
-    }
     have data[1] == right_value by {
         simp() using {
             at(statement(5).entry, *(owner->data + 1)) == at(statement(5).entry, right_value);
             owner->data == data;
         }
     }
-    have owner->split == 1 by {
-        transport(at(statement(3).entry, owner->split) == 1, owner->split == 1) using {
-            at(statement(3).entry, owner->split) == 1;
-        }
-        assumption();
-    }
-    have owner->split < owner->len by {
-        simp() using {
-            owner->split == 1;
-            1 < owner->len;
-        }
-    }
     step();
-    have owner->data == data by {
-        simp() using {
-            owner->data == at(statement(4).entry, owner->data);
-            at(statement(4).entry, owner->data) == at(statement(3).entry, owner->data);
-            at(statement(3).entry, owner->data) == at(statement(3).entry, data);
-        }
-    }
-    have data[0] == left_value;
     have data[1] == right_value;
-    have at(statement(5).entry, owner->split) == 1;
     have at(statement(5).exit, owner->split) ==
         at(statement(5).entry, owner->split) + 1 by {
         simp();
@@ -255,19 +206,8 @@ int32 owned_split_buffer_pipeline(
         at(statement(5).entry, owner->split),
         at(statement(5).exit, owner->split)
     ));
-    have owner->split == 2;
-    have 1 < owner->split;
-    have owner->len == length;
-    have owner->data == data;
-    have data[0] == left_value;
-    have data[1] == right_value;
     fold(owned_split_buffer(owner));
     step();
-    have owner->split == 2;
-    have owner->len == length;
-    have owner->data == data;
-    have data[0] == left_value;
-    have data[1] == right_value;
     have c(result) == data[1] by {
         simp() using {
             at(statement(7).entry, c(result)) == at(statement(7).entry, *(owner->data + 1));

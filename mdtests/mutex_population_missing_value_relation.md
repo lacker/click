@@ -140,5 +140,5 @@ int32 increment_twice(struct mutex_counter* counter) {
 ```
 
 ```expect
-fail: ensures (result == 0 || counter->value == 2)
+fail: ensures result == 0 or counter->value == 2
 ```

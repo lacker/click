@@ -2785,6 +2785,10 @@ pub(in crate::surface) fn contract_let_substitutions(
 pub(in crate::surface) struct InstanceRename {
     pub(in crate::surface) name: String,
     pub(in crate::surface) identity: Variable,
+    /// The identity the renamed reads take, when the new name denotes a
+    /// different instance: a caller's instance bound to a callee's binder.
+    /// `None` keeps the identity.
+    pub(in crate::surface) target_identity: Option<Variable>,
 }
 
 /// Nothing is renamed. A values-only pass borrows this instead of allocating
@@ -2898,6 +2902,24 @@ impl<'a> ContractSubstitutions<'a> {
             .get(owner)
             .filter(|rename| rename.identity == identity)
             .map(|rename| rename.name.clone())
+    }
+
+    /// The new name and identity of the instance `owner`, when a rename was
+    /// recorded for exactly that instance identity.
+    fn instance_rename_target(
+        &self,
+        owner: &str,
+        identity: Variable,
+    ) -> Option<(String, Variable)> {
+        self.instance_renames
+            .get(owner)
+            .filter(|rename| rename.identity == identity)
+            .map(|rename| {
+                (
+                    rename.name.clone(),
+                    rename.target_identity.unwrap_or(identity),
+                )
+            })
     }
 
     /// Every name this pass replaces, values and renames alike. A fresh
@@ -3235,9 +3257,10 @@ pub(in crate::surface) fn substitute_contract_expression_in(
             Ok(ContractExpression::CFragment(name))
         }
         ContractExpression::ResourceField(access) => Ok(ContractExpression::ResourceField(
-            match substitutions.instance_rename(&access.owner, access.identity) {
-                Some(owner) => ResourceFieldAccess {
+            match substitutions.instance_rename_target(&access.owner, access.identity) {
+                Some((owner, identity)) => ResourceFieldAccess {
                     owner,
+                    identity,
                     ..access.clone()
                 },
                 None => access.clone(),

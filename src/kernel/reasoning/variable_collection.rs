@@ -651,8 +651,8 @@ pub(in crate::kernel) fn collect_c_ranking_component_variables(
 /// indexing.
 ///
 /// A quantifier's variable is removed once its body is collected; fold and
-/// match binders are kept. An Integer argument of a machine or algebraic
-/// application is not visited. A specification memory is an execution
+/// match binders are kept. Arguments of every application result type are
+/// visited, including mathematical Integer arguments. A specification memory is an execution
 /// snapshot: its blocks and cells are opaque to lexical variable collection,
 /// and only the explicit pointer and expression payloads beside it are
 /// visited.
@@ -668,18 +668,6 @@ fn collect_spec_bitvector_variables(root: SpecNode<'_>, variables: &mut BTreeSet
             }
             N::Integer(SpecIntegerExpression::Term(term)) => {
                 collect_integer_variables(term, variables);
-            }
-            N::Expression(SpecExpression::PureFunctionApplication { arguments, .. })
-            | N::Algebraic(SpecAlgebraicExpression {
-                node: SpecAlgebraicExpressionNode::PureFunctionApplication { arguments, .. },
-                ..
-            }) => {
-                for argument in arguments {
-                    if !matches!(argument, SpecPureFunctionArgument::Integer(_)) {
-                        collect_spec_bitvector_variables(N::Argument(argument), variables);
-                    }
-                }
-                return Visit::Skip;
             }
             N::Proposition(proposition) => {
                 if let Some((variable, body)) = proposition.quantifier() {

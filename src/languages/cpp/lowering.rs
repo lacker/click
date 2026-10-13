@@ -255,7 +255,8 @@ fn lower_function(
         _ if matches!(source.return_type, CppType::Record { .. }) => CType::Int32Pointer,
         _ => cpp_return_scalar_type(&source.return_type)?,
     };
-    let return_constant = matches!(&source.return_type, CppType::LvalueReference { pointee } if is_const_int32(pointee));
+    let return_constant =
+        scalar::reference_element(&source.return_type).is_some_and(|element| element.is_const);
     let mut function = c_function(
         return_type,
         names.require(&source.declaration_id)?.to_owned(),
@@ -273,7 +274,9 @@ fn lower_function(
                 let CppType::LvalueReference { pointee } = &parameter.value_type else {
                     return None;
                 };
-                let element_type = if is_mutable_int32(pointee) || is_const_int32(pointee) {
+                let element_type = if Scalar::is(pointee, ScalarKind::Int32, false)
+                    || Scalar::is(pointee, ScalarKind::Int32, true)
+                {
                     CType::Int32
                 } else if is_const_int64(pointee) {
                     CType::Int64
@@ -374,11 +377,14 @@ fn lower_parameter(
             bits: 8,
             is_const: false,
         } => Ok(c_parameter(parameter.name.clone(), CType::Bool)),
-        CppType::LvalueReference { pointee }
-            if is_mutable_int32(pointee) || is_const_int32(pointee) =>
+        CppType::LvalueReference { .. }
+            if scalar::reference_element(&parameter.value_type).is_some() =>
         {
-            Ok(c_parameter(parameter.name.clone(), CType::Int32Pointer)
-                .with_pointee_constant(is_const_int32(pointee)))
+            let element = scalar::reference_element(&parameter.value_type).unwrap();
+            Ok(
+                c_parameter(parameter.name.clone(), element_pointer_type(element)?)
+                    .with_pointee_constant(element.is_const),
+            )
         }
         CppType::LvalueReference { pointee } if is_const_int64(pointee) => Ok(c_parameter(
             parameter.name.clone(),
@@ -510,17 +516,19 @@ impl LoweringContext<'_> {
                     local.name.clone(),
                     cpp_scalar_kernel_type(&local.value_type)?,
                 )),
-                (CppType::LvalueReference { pointee }, CppInitializer::Value { value }) => {
+                (CppType::LvalueReference { .. }, CppInitializer::Value { value }) => {
                     let address = self.lower_expression(value)?;
                     let carrier = reference_carrier_name(&local.name);
+                    let element = scalar::reference_element(&local.value_type)
+                        .ok_or("unsupported C++ reference local")?;
                     Ok(c_seq(
                         c_declare_with_all_qualifiers(
                             carrier.clone(),
-                            CType::Int32Pointer,
+                            element_pointer_type(element)?,
                             false,
                             false,
                             false,
-                            is_const_int32(pointee),
+                            element.is_const,
                         ),
                         c_assign(carrier, address),
                     ))
@@ -833,6 +841,43 @@ impl LoweringContext<'_> {
                     c_call(
                         self.names.require(&callee.declaration_id)?.to_owned(),
                         arguments,
+                    ),
+                ))
+            }
+            CppStatement::CallStore {
+                callee,
+                arguments,
+                value_type,
+                value,
+                ..
+            } => {
+                let element = scalar::reference_element(value_type)
+                    .ok_or("unsupported C++ call store referent")?;
+                let element_type = element.kind.kernel_type();
+                // The right operand is read first; the call then yields the
+                // referent's address.
+                let stored = self.fresh_call_capture()?;
+                let read = c_seq(
+                    c_declare(stored.clone(), element_type),
+                    c_assign(stored.clone(), self.lower_expression(value)?),
+                );
+                let (prefix, arguments) = self.normalize_arguments(arguments)?;
+                let address = self.fresh_call_capture()?;
+                Ok(c_seq(
+                    read,
+                    evaluate_then(
+                        prefix,
+                        c_seq(
+                            c_seq(
+                                c_declare(address.clone(), element_pointer_type(element)?),
+                                c_call_assign(
+                                    address.clone(),
+                                    self.names.require(&callee.declaration_id)?.to_owned(),
+                                    arguments,
+                                ),
+                            ),
+                            c_typed_store(c_variable(address), c_variable(stored), element_type),
+                        ),
                     ),
                 ))
             }
@@ -1195,7 +1240,8 @@ impl LoweringContext<'_> {
                 initializer: CppInitializer::Call { .. },
                 ..
             }
-            | CppStatement::Call { .. } => {
+            | CppStatement::Call { .. }
+            | CppStatement::CallStore { .. } => {
                 let operation = self.lower_statement(statement)?;
                 self.lower_throwing_statement(operation, state.exit(unwind_base))
             }
@@ -1260,6 +1306,13 @@ impl LoweringContext<'_> {
                 let mut value = c_variable(capture.clone());
                 let mut result_type = capture_type;
                 for conversion in conversions {
+                    if conversion.cast_kind == super::CppScalarCastKind::ReferenceLoad {
+                        let element = scalar::reference_element(&conversion.source_type)
+                            .ok_or("unsupported C++ reference load")?;
+                        result_type = element.kind.kernel_type();
+                        value = self.lower_typed_load(value, result_type)?;
+                        continue;
+                    }
                     if matches!(conversion.value_type, CppType::Pointer { .. }) {
                         result_type = cpp_return_scalar_type(&conversion.value_type)?;
                         if conversion.cast_kind == super::CppScalarCastKind::BytePointerCast {
@@ -1286,7 +1339,8 @@ impl LoweringContext<'_> {
                                 false,
                                 false,
                                 false,
-                                matches!(value_type, CppType::LvalueReference { pointee } if is_const_int32(pointee)),
+                                scalar::reference_element(value_type)
+                                    .is_some_and(|element| element.is_const),
                             ),
                             c_call_assign(
                                 capture.clone(),
@@ -1758,10 +1812,10 @@ impl LoweringContext<'_> {
                 {
                     Ok(c_variable(self.variable_name(place)))
                 }
-                (CppType::LvalueReference { pointee }, value_type)
-                    if (is_mutable_int32(pointee) || is_const_int32(pointee))
-                        && is_mutable_int32(value_type) =>
+                (reference @ CppType::LvalueReference { .. }, _)
+                    if scalar::reference_element(reference).is_some() =>
                 {
+                    let element = scalar::reference_element(reference).unwrap();
                     let pointer = self.lower_place(place)?;
                     let occurrence = self.next_load_occurrence;
                     self.next_load_occurrence = self
@@ -1770,7 +1824,7 @@ impl LoweringContext<'_> {
                         .ok_or_else(|| "C++ load occurrence capacity exceeded".to_string())?;
                     Ok(c_typed_load_with_source(
                         pointer,
-                        CType::Int32,
+                        element.kind.kernel_type(),
                         Some(LoadSourceId {
                             owner: LoadSourceOwnerId {
                                 source_unit: self.source_unit.into(),
@@ -1807,7 +1861,7 @@ impl LoweringContext<'_> {
                 place, value_type, ..
             } => match (&self.place(place)?.value_type, value_type) {
                 (CppType::LvalueReference { pointee }, CppType::Pointer { pointee: result })
-                    if (is_mutable_int32(pointee) || is_const_int32(pointee))
+                    if Scalar::pointer_element(pointee, true).is_some()
                         && scalar::same_scalar_type(pointee, result) =>
                 {
                     Ok(c_variable(self.variable_name(place)))
@@ -2152,13 +2206,20 @@ fn cpp_return_scalar_type(value_type: &CppType) -> Result<CType, String> {
             .and_then(|scalar| scalar.kind.pointer_kernel_type())
             .ok_or_else(|| "unsupported native C++ pointer result".into());
     }
-    if matches!(value_type, CppType::LvalueReference { pointee } if is_mutable_int32(pointee) || is_const_int32(pointee))
-    {
-        return Ok(CType::Int32Pointer);
+    if let Some(element) = scalar::reference_element(value_type) {
+        return element_pointer_type(element);
     }
     Scalar::mutable_kind(value_type)
         .map(ScalarKind::kernel_type)
         .ok_or_else(|| "unsupported C++ scalar kernel type".into())
+}
+
+/// The pointer that carries a native reference to `element`.
+fn element_pointer_type(element: Scalar) -> Result<CType, String> {
+    element
+        .kind
+        .pointer_kernel_type()
+        .ok_or_else(|| "unsupported native C++ reference element".into())
 }
 
 fn cpp_scalar_kernel_type(value_type: &CppType) -> Result<CType, String> {
@@ -2171,17 +2232,11 @@ fn cpp_scalar_kernel_type(value_type: &CppType) -> Result<CType, String> {
     }
 }
 
-fn is_mutable_int32(value_type: &CppType) -> bool {
-    Scalar::is(value_type, ScalarKind::Int32, false)
-}
 fn is_mutable_bool(value_type: &CppType) -> bool {
     Scalar::is(value_type, ScalarKind::Bool, false)
 }
 fn is_mutable_int64(value_type: &CppType) -> bool {
     Scalar::is(value_type, ScalarKind::Int64, false)
-}
-fn is_const_int32(value_type: &CppType) -> bool {
-    Scalar::is(value_type, ScalarKind::Int32, true)
 }
 fn is_const_int64(value_type: &CppType) -> bool {
     Scalar::is(value_type, ScalarKind::Int64, true)

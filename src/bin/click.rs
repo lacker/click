@@ -36,6 +36,7 @@ commands:\n  \
   versions list installed versions";
 
 fn main() {
+    click::cli::enable_process_crash_containment();
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     match version_dispatch::maybe_dispatch("click", &arguments) {
         Ok(Some(status)) => std::process::exit(status),
@@ -400,7 +401,7 @@ mod tests {
             "int32 callee(int32 n) {{\n    requires n >= 0;\n    ensures result == n;\n}}\nint32 caller(int32 n) {{\n    ensures result == n + 1;\n{three_steps}"
         ));
         assert!(
-            call.contains("`step()` is missing prerequisite (callee precondition)"),
+            call.contains("`step()` is missing prerequisite (precondition clause 1 of `callee`)"),
             "{call}"
         );
         assert!(

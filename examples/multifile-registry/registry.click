@@ -83,7 +83,6 @@ int32 registry_run() {
         step();
         step();
         have first == 2;
-        have counters[0].value == 11;
         have counters[0].value > -1000;
         have counters[0].value < 1000;
         have alpha::calls > -1000;

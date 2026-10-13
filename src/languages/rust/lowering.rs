@@ -10,7 +10,7 @@ mod moves;
 mod owned_parameter_regressions;
 mod shared_arrays;
 use crate::kernel::*;
-use crate::languages::c::syntax::{C0Function, C0Parameter, C0StructLayout, C0Type};
+use crate::languages::c::syntax::{C0Function, C0Parameter, C0StructLayout, C0Type, LongRank};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ fn scalar_type(t: &Type) -> Result<C0Type, String> {
         Type::U8 => Ok(C0Type::UInt8),
         Type::U16 => Ok(C0Type::UInt16),
         Type::U32 => Ok(C0Type::UInt32),
-        Type::Usize => Ok(C0Type::UInt64),
+        Type::Usize => Ok(C0Type::UInt64(LongRank::Long)),
         Type::Bool => Ok(C0Type::Bool),
         Type::Unit => Ok(C0Type::Void),
         Type::Reference { pointee, .. } => match pointee.as_ref() {
@@ -231,7 +231,11 @@ fn lower_function(
                     .with_pointee_constant(!mutable)
                     .with_native_pointer_input(true),
             );
-            parameters.push(C0Parameter::new(C0Type::UInt64, length.clone(), None));
+            parameters.push(C0Parameter::new(
+                C0Type::UInt64(LongRank::Long),
+                length.clone(),
+                None,
+            ));
             kernel_parameters.push(
                 c_parameter(&p.name, CType::UInt8Pointer)
                     .with_pointee_constant(!mutable)
@@ -263,7 +267,11 @@ fn lower_function(
                     .with_pointee_constant(true)
                     .with_native_pointer_input(true),
             );
-            parameters.push(C0Parameter::new(C0Type::UInt64, length.clone(), None));
+            parameters.push(C0Parameter::new(
+                C0Type::UInt64(LongRank::Long),
+                length.clone(),
+                None,
+            ));
             kernel_parameters.push(
                 c_parameter(&p.name, pointer.to_kernel_type())
                     .with_pointee_constant(true)

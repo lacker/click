@@ -411,11 +411,29 @@ fn unsupported_system_header(
     header: &str,
     target: super::target::CTarget,
 ) -> CSourceError {
+    use super::system_headers::{COVERAGE_REFERENCE, modeled_header_names};
+    let modeled = modeled_header_names(target)
+        .iter()
+        .map(|name| format!("<{name}>"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let elsewhere = super::target::CTarget::ALL
+        .iter()
+        .find(|other| **other != target && modeled_header_names(**other).contains(&header))
+        .map(|other| {
+            format!(
+                "; Click models it for `{}`, selected with `target \"{}\";` in the sidecar",
+                other.name(),
+                other.name()
+            )
+        })
+        .unwrap_or_default();
     CSourceError::new(
         source_path,
         line_number,
         format!(
-            "system header `<{header}>` is not supported for {}",
+            "system header `<{header}>` is not supported for {}{elsewhere}; the modeled headers for {} are {modeled} (see {COVERAGE_REFERENCE})",
+            target.name(),
             target.name()
         ),
     )
@@ -1371,21 +1389,6 @@ fn parse_directive(
                     ));
                 };
                 let header = &rest[1..end];
-                if matches!(
-                    header,
-                    "stdint.h"
-                        | "inttypes.h"
-                        | "stdbool.h"
-                        | "stddef.h"
-                        | "pthread.h"
-                        | "stdatomic.h"
-                        | "limits.h"
-                        | "string.h"
-                        | "stdlib.h"
-                ) && trailing_comments_only(&rest[end + 1..])
-                {
-                    return Ok(Some(SourceDirective::SystemInclude(header.to_string())));
-                }
                 if !trailing_comments_only(&rest[end + 1..]) {
                     return Err(CSourceError::new(
                         source_path,
@@ -1393,9 +1396,9 @@ fn parse_directive(
                         "malformed system include; expected only a header name",
                     ));
                 }
-                return Ok(Some(SourceDirective::Unsupported(format!(
-                    "system header `<{header}>` is not supported"
-                ))));
+                // Whether the target models the header is decided where the
+                // include is expanded, so the refusal can name the target.
+                return Ok(Some(SourceDirective::SystemInclude(header.to_string())));
             }
             return Err(CSourceError::new(
                 source_path,

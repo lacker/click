@@ -805,7 +805,7 @@ fn proof_error_report(
             shell_word(&sidecar.display().to_string())
         ));
     }
-    report
+    click::surface::bound_diagnostic_message(report)
 }
 
 /// The one proof unit `--trace-proof` verifies and traces.
@@ -1676,6 +1676,21 @@ mod directory_tests;
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn ordinary_cli_diagnostics_bound_late_source_and_trace_hint() {
+        let name = format!(
+            "oversized_{}",
+            "n".repeat(click::surface::DEFAULT_DIAGNOSTIC_BYTE_LIMIT)
+        );
+        let source =
+            format!("theorem {name}(x: Integer) {{ ensures x == 0 by {{ assumption(); }} }}");
+        let (_root, path) = temporary_project("ordinary-byte-limit", "void f() {}", &source);
+        let report = entry_with([path.display().to_string()]).expect_err("false theorem");
+        assert!(report.len() <= click::surface::DEFAULT_DIAGNOSTIC_BYTE_LIMIT);
+        assert!(report.starts_with("proof error:"));
+        assert!(report.contains("diagnostic truncated"));
+    }
 
     #[test]
     fn source_tactic_excerpt_bounds_lines_and_unicode_width() {

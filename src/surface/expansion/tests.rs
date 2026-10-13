@@ -1,5 +1,31 @@
 use super::*;
 
+// Audit may format the certificate its session already checked, but the
+// rewrite still needs independent verification against the actual program.
+#[test]
+fn retained_function_expansion_formats_without_reverification_and_rechecks() {
+    let c = "int32 id(int32 x) { return x; }";
+    let source =
+        "verifying \"id.c\"; int32 id(int32 x) { ensures result == x; } by { execute(); simp(); }";
+    let (_session, verified) = C0VerificationSession::new(source, &[("id.c", c)]).unwrap();
+    let (rewritten, events) = instrumentation::collect(|| {
+        expand_verified_function_claim_source_by_label(source, &verified, "id.contract")
+            .unwrap()
+            .unwrap()
+    });
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, instrumentation::VerificationEvent::TacticStarted(_)))
+    );
+    assert_eq!(
+        rewritten,
+        expand_c0_claim_source_by_label(source, &[("id.c", c)], "id.contract").unwrap()
+    );
+    verify_c0_sources(&rewritten, &[("id.c", c)]).unwrap();
+    assert!(verify_c0_sources(&rewritten, &[("id.c", "int32 id(int32 x) { return 0; }")]).is_err());
+}
+
 #[test]
 fn batch_source_positions_preserve_unicode_columns_and_request_order() {
     let source = "αβ;\n\tγδ;\nlast";

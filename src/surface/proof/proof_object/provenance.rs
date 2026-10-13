@@ -81,6 +81,20 @@ pub(in crate::surface::proof) struct ProofStepSite {
 }
 
 impl ProofStepSite {
+    /// Zero-based written position in the current block, without walking
+    /// or allocating the enclosing diagnostic path.
+    pub(super) fn tactic_index(&self) -> Option<usize> {
+        if self.generated {
+            return None;
+        }
+        match self.position {
+            Some(ProofStepPosition::SourceTactic(index) | ProofStepPosition::InBlock(index)) => {
+                Some(index)
+            }
+            None => None,
+        }
+    }
+
     /// The same site addressing the claim's `index`th source tactic
     /// occurrence.
     ///

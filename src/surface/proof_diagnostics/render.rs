@@ -372,6 +372,20 @@ impl SnapshotLabels {
         self.source_names.entry(variable).or_insert(name);
     }
 
+    /// Names `variable` with `name` and its C type when nothing named it yet.
+    pub(crate) fn fallback_source_name(
+        &mut self,
+        variable: Variable,
+        name: String,
+        c_type: crate::kernel::CType,
+    ) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = self.source_names.entry(variable)
+        {
+            entry.insert(name);
+            self.source_types.entry(variable).or_insert(c_type);
+        }
+    }
+
     fn source_name_for(&self, variable: Variable) -> Option<&str> {
         self.source_names
             .get(&variable)
@@ -576,6 +590,21 @@ pub(crate) fn enter_ambient_naming(parameter_binding: ParameterBinding<'_>, entr
 pub(crate) fn clear_ambient_naming() {
     AMBIENT_NAMING.with(|naming| *naming.borrow_mut() = None);
     AMBIENT_ENTRY.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// The source declaration supplies nominal layout metadata even when a
+/// diagnostic's current-state naming table contains only kernel types.
+pub(in crate::surface) fn ambient_source_parameter(
+    name: &str,
+) -> Option<crate::languages::c::syntax::C0Parameter> {
+    AMBIENT_NAMING.with(|slot| {
+        slot.borrow()
+            .as_ref()?
+            .0
+            .iter()
+            .find(|parameter| parameter.name() == name)
+            .cloned()
+    })
 }
 
 /// While alive, propositions render in the typed trace notation.

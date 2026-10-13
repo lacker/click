@@ -50,5 +50,5 @@ int32 two_reads(int16* q, int16 y) {
 ```
 
 ```expect
-fail: missing prerequisite (same precondition)
+fail: missing prerequisite (precondition clause 1 of `same`)
 ```

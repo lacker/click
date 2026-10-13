@@ -97,14 +97,6 @@ int32 input_cursor_take(struct input_cursor* owner) {
     step();
     step();
     step();
-    have 0 <= owner->pos by {
-        simp();
-    }
-    have owner->pos <= owner->len by {
-        simp() using {
-            old(owner->pos) < owner->len;
-        }
-    }
     fold(input_cursor(owner));
     simp();
 }

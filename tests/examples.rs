@@ -46,7 +46,7 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 /// not retain, over the whole unfiltered corpus, by route and top rule. A
 /// count may only fall; `issues/simplify-step.md` drives it to zero.
 const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] =
-    &[((HiddenPrerequisiteRoute::StepObligation, "And"), 4)];
+    &[((HiddenPrerequisiteRoute::StepObligation, "And"), 2)];
 
 #[test]
 #[ignore = "nightly: 4s in the parallel gate"]
@@ -1646,7 +1646,7 @@ fn verify_source_integrity(project: &Path) -> Result<Option<SourceFixtureStatus>
             || !(matches!(
                 path.extension().and_then(|extension| extension.to_str()),
                 Some("c" | "h")
-            ) || name == "COPYING")
+            ) || matches!(name, "COPYING" | "LICENSE" | "LICENSE.txt"))
         {
             return Err(format!(
                 "`{}` line {} names an invalid source fixture path `{name}`",

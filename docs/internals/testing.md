@@ -1,5 +1,13 @@
 # Testing Click
 
+`tests/process_containment.rs` checks the CLI's independent crash watchdog.
+The debug-only `CLICK_DEBUG_BLOCK_VERIFIER` hook parks the verifier after its
+containment scope opens, without polling a deadline. The child must exit with
+a containment message; an independent outer test bound kills a broken child.
+A normal verification also checks cancellation of a long-lived watchdog.
+The hook is omitted from release builds, and library tests retain cooperative
+limits without process termination.
+
 Click uses ordinary Rust tests plus markdown integration tests.
 
 The [verification efficiency contract](verification-efficiency.md) is part of

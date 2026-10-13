@@ -26,5 +26,5 @@ int32 fill(uint8 d[]) {
 ```
 
 ```expect
-fail: memset precondition
+fail: precondition clause 2 of `memset`
 ```

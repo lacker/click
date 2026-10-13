@@ -19,7 +19,9 @@ was refused:
   reported as undefined behavior.
 - `main`'s startup contract is not callable.
 
-What remains is completeness: verifying the unchanged PCG wrappers and client.
+What remains is completeness: the PCG client. The unchanged PCG library,
+including both public wrappers over private `pcg32_global`, verifies in
+`examples/pcg-basic/` with pinned source hashes.
 These probes should become the negative regressions the acceptance list asks for.
 
 ## Invariant
@@ -59,6 +61,14 @@ Its generator and reentrant seeding helpers can be proved with explicit field
 resources; `pcg32_srandom` and `pcg32_random` pass private `pcg32_global` to
 those helpers. The integer-narrowing prerequisite is separate from this gap.
 
+`examples/pcg-basic/` now verifies the generator, the reentrant seeding helper
+and both public wrappers on the unchanged pinned source. The client checking
+the first two outputs after `pcg32_srandom(42, 54)` (`0xa15c02b7`,
+`0x7b47f409`) and reseeding is blocked: evaluating the output formula on the
+seeded state needs `normalize` to fold an unsigned shift by `(-rot) & 31`
+(`bugs/normalize-leaves-an-unsigned-shift-by-a-folded-amount-unevaluated.md`).
+After seeding, the client's proof already holds the concrete state.
+
 ## Acceptance criteria
 
 File aliases now provide a naming mechanism: `verifying "library.c" as library;`
@@ -88,6 +98,7 @@ checked representability obligations for symbolic 64-to-int returns.
   same-named statics in different translation units.
 - Reject duplicated ownership, overlapping helper arguments, writes through
   const storage, and claims that a helper leaves aliased static state unchanged.
-- Verify PCG's public seed/draw wrappers and a separate client checking its
-  first two outputs and reset behavior, with pinned unchanged source hashes.
+- Verify a separate client of `examples/pcg-basic/` checking its first two
+  outputs and reset behavior. (The public seed/draw wrappers and their pinned
+  unchanged source hashes are delivered.)
 - Keep ordinary verification, expansion/reverification, and the full gate green.

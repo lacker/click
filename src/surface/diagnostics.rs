@@ -1,4 +1,19 @@
 use super::*;
+
+pub(in crate::surface) fn describe_proof_obligation_context(
+    obligation: &ProofObligation,
+) -> Option<String> {
+    if let Some(source) = obligation.call_requirement_site()
+        && let Some(ordinal) = source.source_requirement_ordinal
+    {
+        return Some(format!(
+            "precondition clause {} of `{}`",
+            ordinal + 1,
+            source.callee
+        ));
+    }
+    obligation.context().map(str::to_owned)
+}
 use crate::kernel::ExecutionFactSource;
 use crate::kernel::SharedCMemory;
 use crate::kernel::resource_tracker;
@@ -41,10 +56,11 @@ impl CStatementSiteScope {
     ) -> Self {
         let site = layout.site(statement_index).cloned();
         C_STATEMENT_SITES.with(|sites| sites.borrow_mut().push(site));
+        let places = layout.diagnostic_places(|| StatementPlaces::of(function));
         REFERENCE_CARRIERS.with(|carriers| {
             carriers.borrow_mut().push(PlaceScope {
-                carriers: reference_carriers(function),
-                structs: BTreeMap::new(),
+                carriers: places.carriers.clone(),
+                structs: places.structs.clone(),
                 ..PlaceScope::default()
             })
         });
@@ -85,10 +101,10 @@ struct PlaceScope {
     struct_pointer_parameters: Vec<Option<String>>,
     /// The parameters whose reads are printed as places, by the name each
     /// has in a kernel term.
-    carriers: BTreeMap<String, PointeeShape>,
+    carriers: std::sync::Arc<BTreeMap<String, PointeeShape>>,
     /// The fields of each struct a pointer field reaches, by struct name, so
     /// a read through a loaded pointer is a place too.
-    structs: BTreeMap<String, Vec<crate::surface::FieldPlace>>,
+    structs: std::sync::Arc<BTreeMap<String, Vec<crate::surface::FieldPlace>>>,
     /// An expansion scope's function: whether its signature is written in
     /// Rust syntax, and its slice parameters (`enter_rust_spelling`).
     rust_spelling: Option<Option<std::rc::Rc<[String]>>>,
@@ -99,6 +115,56 @@ thread_local! {
     /// an expansion scope supplies the innermost of these.
     static REFERENCE_CARRIERS: std::cell::RefCell<Vec<PlaceScope>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The places a step's refusal names reads by: the function's reference
+/// parameters, its struct pointer parameters and locals, and the fields of
+/// each struct a pointer field reaches. Built once per function.
+pub(in crate::surface) struct StatementPlaces {
+    carriers: std::sync::Arc<BTreeMap<String, PointeeShape>>,
+    structs: std::sync::Arc<BTreeMap<String, Vec<crate::surface::FieldPlace>>>,
+}
+
+impl StatementPlaces {
+    fn of(function: &syntax::C0Function) -> Self {
+        let layouts = function.structs();
+        let fields_of = |struct_name: &str| {
+            layouts
+                .get(struct_name)
+                .map(|layout| crate::surface::scalar_field_places(layout, layouts))
+        };
+        let mut carriers = reference_carriers(function);
+        for parameter in function.parameters() {
+            if let Some(struct_name) = parameter.struct_name()
+                && parameter.c_type().is_pointer()
+                && !carriers.contains_key(parameter.name())
+                && let Some(fields) = parameter
+                    .pointee_struct_layout()
+                    .map(|layout| crate::surface::scalar_field_places(layout, layouts))
+                    .or_else(|| fields_of(struct_name))
+            {
+                carriers.insert(
+                    parameter.name().to_string(),
+                    PointeeShape::Struct { fields },
+                );
+            }
+        }
+        for (local, struct_name) in function.local_struct_pointers() {
+            if !carriers.contains_key(local)
+                && let Some(fields) = fields_of(struct_name)
+            {
+                carriers.insert(local.clone(), PointeeShape::Struct { fields });
+            }
+        }
+        let structs = layouts
+            .keys()
+            .filter_map(|name| Some((name.clone(), fields_of(name)?)))
+            .collect();
+        Self {
+            carriers: std::sync::Arc::new(carriers),
+            structs: std::sync::Arc::new(structs),
+        }
+    }
 }
 
 fn reference_carriers(function: &syntax::C0Function) -> BTreeMap<String, PointeeShape> {
@@ -167,8 +233,8 @@ impl ParameterPlaceScope {
                         && matches!(parameter.click_type(), ClickType::C(c_type) if c_type.is_pointer()))
                         .then(|| parameter.name().to_string())
                 }).collect(),
-                carriers: shapes,
-                structs: block.pointee_field_places().clone(),
+                carriers: std::sync::Arc::new(shapes),
+                structs: std::sync::Arc::new(block.pointee_field_places().clone()),
                 rust_spelling: Some(
                     block
                         .signature()
@@ -1248,7 +1314,9 @@ pub(super) fn describe_runtime_error(
             )
         }
         crate::kernel::CRuntimeError::UnknownFunction(name) => {
-            format!("unknown function `{name}`")
+            format!(
+                "unknown function `{name}`: no verified source defines it and the sidecar declares no contract for it; describe an implementation outside the verified sources with an `extern` contract in the sidecar (docs/reference/language/c.md#external-function-contracts)"
+            )
         }
         crate::kernel::CRuntimeError::TypeMismatch => "type mismatch".to_string(),
         crate::kernel::CRuntimeError::LoadTypeMismatch {
@@ -3483,6 +3551,19 @@ pub(in crate::surface) fn diagnostic_source_cell(
     (!matches!(cell.index, CellIndex::Unnamed)).then(|| cell.text())
 }
 
+pub(in crate::surface) fn diagnostic_model_load_cell(
+    pointer: &Pointer,
+    kind: crate::kernel::LoadKind,
+    parameter_binding: ParameterBinding<'_>,
+) -> Option<String> {
+    if let Some((cell, value_type)) = cpp_model::describe_model_field_at(pointer, parameter_binding)
+        && crate::kernel::LoadKind::of_type(value_type) == Some(kind)
+    {
+        return Some(cell);
+    }
+    None
+}
+
 pub(in crate::surface) fn diagnostic_source_load_cell(
     pointer: &Pointer,
     kind: crate::kernel::LoadKind,
@@ -3501,6 +3582,11 @@ pub(in crate::surface) fn diagnostic_source_pointer_cell(
     parameter_binding: ParameterBinding<'_>,
     base_point: Option<&str>,
 ) -> Option<String> {
+    if let Some((cell, value_type)) = cpp_model::describe_model_field_at(pointer, parameter_binding)
+        && value_type.is_pointer()
+    {
+        return Some(base_point.map_or(cell.clone(), |point| format!("at({point}, {cell})")));
+    }
     for (parameter, argument) in parameter_binding
         .parameters
         .iter()
@@ -4135,10 +4221,10 @@ fn scalar_element_width(c_type: C0Type) -> Option<i64> {
         | C0Type::UInt32Array(_)
         | C0Type::Float32Pointer
         | C0Type::Float32Array(_) => Some(4),
-        C0Type::Int64Pointer
-        | C0Type::Int64Array(_)
-        | C0Type::UInt64Pointer
-        | C0Type::UInt64Array(_)
+        C0Type::Int64Pointer(_)
+        | C0Type::Int64Array(_, _)
+        | C0Type::UInt64Pointer(_)
+        | C0Type::UInt64Array(_, _)
         | C0Type::Float64Pointer
         | C0Type::Float64Array(_) => Some(8),
         C0Type::Int128Pointer
@@ -4435,7 +4521,7 @@ fn diagnostic_c0_type_byte_width(c_type: C0Type, pointer_width: u32) -> i64 {
         C0Type::Int8 => 1,
         C0Type::Int16 | C0Type::UInt16 => 2,
         C0Type::Int32 | C0Type::UInt32 => 4,
-        C0Type::Int64 | C0Type::UInt64 => 8,
+        C0Type::Int64(_) | C0Type::UInt64(_) => 8,
         _ if c_type.is_pointer() => i64::from(pointer_width),
         _ => i64::from(pointer_width),
     }
@@ -4481,16 +4567,19 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::UInt32Pointer
         | C0Type::Int32Array(_)
         | C0Type::UInt32Array(_) => 4,
-        C0Type::Int64 | C0Type::UInt64 | C0Type::Int64Array(_) | C0Type::UInt64Array(_) => 8,
+        C0Type::Int64(_)
+        | C0Type::UInt64(_)
+        | C0Type::Int64Array(_, _)
+        | C0Type::UInt64Array(_, _) => 8,
         C0Type::Float32 | C0Type::Float32Array(_) => 4,
         C0Type::Float64 | C0Type::Float64Array(_) => 8,
         C0Type::Int8Pointer | C0Type::Int8PointerPointer => 8,
         C0Type::Int16Pointer
         | C0Type::UInt16Pointer
         | C0Type::Int128Pointer
-        | C0Type::Int64Pointer
+        | C0Type::Int64Pointer(_)
         | C0Type::UInt128Pointer
-        | C0Type::UInt64Pointer
+        | C0Type::UInt64Pointer(_)
         | C0Type::Int16PointerPointer
         | C0Type::UInt16PointerPointer
         | C0Type::Int32PointerPointer
@@ -4498,15 +4587,15 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         | C0Type::UInt8PointerPointer
         | C0Type::UInt32PointerPointer
         | C0Type::Int128PointerPointer
-        | C0Type::Int64PointerPointer
+        | C0Type::Int64PointerPointer(_)
         | C0Type::UInt128PointerPointer
-        | C0Type::UInt64PointerPointer
+        | C0Type::UInt64PointerPointer(_)
         | C0Type::Float32Pointer
         | C0Type::Float64Pointer
         | C0Type::Float32PointerPointer
         | C0Type::Float64PointerPointer => 8,
         C0Type::FunctionPointer(_) => 8,
-        C0Type::PointerArray(_, _) => 8,
+        C0Type::PointerArray(_, _, _) => 8,
     }
 }
 
@@ -4644,6 +4733,7 @@ pub(super) fn describe_c_value(value: &CValue, parameter_binding: ParameterBindi
             describe_bitvector_with_context(value, parameter_binding),
             "u8",
         ),
+        CValue::UInt32(Bitvector32Term::Constant(value)) => format!("{value}u32"),
         CValue::UInt32(value) => typed_literal_spelling(
             describe_bitvector_with_context(value, parameter_binding),
             "u32",
@@ -6066,14 +6156,31 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_snapshot_selector(selector),
             describe_click_proposition(proposition)
         ),
-        ClickProposition::And(left, right) => describe_binary_click_proposition(left, "&&", right),
-        ClickProposition::Or(left, right) => describe_binary_click_proposition(left, "||", right),
+        // Connectives print as the sidecar writes them, with only the
+        // parentheses Click's precedence needs (`docs/reference/language/
+        // grammar.md`): `implies` binds loosest and to the right, then `or`,
+        // `and`, and prefix `not`.
+        ClickProposition::And(left, right) => format!(
+            "{} and {}",
+            describe_click_operand(left, CONNECTIVE_AND),
+            describe_click_operand(right, CONNECTIVE_NOT)
+        ),
+        ClickProposition::Or(left, right) => format!(
+            "{} or {}",
+            describe_click_operand(left, CONNECTIVE_OR),
+            describe_click_operand(right, CONNECTIVE_AND)
+        ),
         ClickProposition::Not(proposition) => {
-            format!("!{}", describe_click_proposition(proposition))
+            format!(
+                "not {}",
+                describe_click_operand(proposition, CONNECTIVE_NOT)
+            )
         }
-        ClickProposition::Implies(left, right) => {
-            describe_binary_click_proposition(left, "=>", right)
-        }
+        ClickProposition::Implies(left, right) => format!(
+            "{} implies {}",
+            describe_click_operand(left, CONNECTIVE_OR),
+            describe_click_operand(right, CONNECTIVE_IMPLIES)
+        ),
         ClickProposition::ForAll {
             click_type,
             name,
@@ -6129,16 +6236,27 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
     }
 }
 
-pub(super) fn describe_binary_click_proposition(
-    left: &ClickProposition,
-    operator: &str,
-    right: &ClickProposition,
-) -> String {
-    format!(
-        "({} {operator} {})",
-        describe_click_proposition(left),
-        describe_click_proposition(right)
-    )
+const CONNECTIVE_IMPLIES: u8 = 1;
+const CONNECTIVE_OR: u8 = 2;
+const CONNECTIVE_AND: u8 = 3;
+const CONNECTIVE_NOT: u8 = 4;
+
+/// A proposition as an operand of a connective that needs at least
+/// `minimum` precedence there, parenthesized when it binds more loosely.
+fn describe_click_operand(proposition: &ClickProposition, minimum: u8) -> String {
+    let precedence = match proposition {
+        ClickProposition::Implies(..) => CONNECTIVE_IMPLIES,
+        ClickProposition::Or(..) => CONNECTIVE_OR,
+        ClickProposition::And(..) => CONNECTIVE_AND,
+        ClickProposition::Not(..) => CONNECTIVE_NOT,
+        _ => u8::MAX,
+    };
+    let text = describe_click_proposition(proposition);
+    if precedence < minimum {
+        format!("({text})")
+    } else {
+        text
+    }
 }
 
 pub(super) fn describe_snapshot_selector(selector: &SnapshotSelector) -> String {
@@ -6375,12 +6493,12 @@ pub(super) fn describe_parameter_bitvector(
                 return Some(parameter.name().to_string());
             }
             CExpression::Value(CValue::Int64(value))
-                if value == term && parameter.c_type() == C0Type::Int64 =>
+                if value == term && matches!(parameter.c_type(), C0Type::Int64(_)) =>
             {
                 return Some(parameter.name().to_string());
             }
             CExpression::Value(CValue::UInt64(value))
-                if value == term && parameter.c_type() == C0Type::UInt64 =>
+                if value == term && matches!(parameter.c_type(), C0Type::UInt64(_)) =>
             {
                 return Some(parameter.name().to_string());
             }

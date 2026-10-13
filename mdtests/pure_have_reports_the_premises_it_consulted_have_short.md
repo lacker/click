@@ -17,5 +17,5 @@ theorem last_cell(p: int32[], lo: int32, hi: int32) {
 ```
 
 ```expect
-fail: narrowing that range needs `lo <= (hi - 1)`
+fail: no checked source proof was constructed for `viewable(
 ```

@@ -20,5 +20,5 @@ int32 caller(int32 n) {
 ```
 
 ```expect
-fail: missing prerequisite (identity precondition)
+fail: missing prerequisite (precondition clause 1 of `identity`)
 ```

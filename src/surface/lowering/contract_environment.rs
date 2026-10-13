@@ -144,8 +144,8 @@ pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0T
         )
         | (CValue::UInt16(_), C0Type::UInt16)
         | (CValue::UInt32(_), C0Type::UInt32)
-        | (CValue::Int64(_), C0Type::Int64)
-        | (CValue::UInt64(_), C0Type::UInt64)
+        | (CValue::Int64(_), C0Type::Int64(_))
+        | (CValue::UInt64(_), C0Type::UInt64(_))
         | (CValue::Int128(_), C0Type::Int128)
         | (CValue::UInt128(_), C0Type::UInt128) => true,
         (CValue::Pointer(pointer), c_type) if c_type.is_pointer() => pointer

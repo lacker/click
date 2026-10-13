@@ -513,6 +513,60 @@ fn invariant_bundle_closure_rejects_surface_free_bundle_without_fold_equality() 
 }
 
 #[test]
+fn invariant_bundle_budget_refusal_retains_selected_obligation() {
+    let (_, fold_equality) = invariant_bundle_leaf_fixture();
+    let context = pure_identity_fixture();
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let root = Proof::for_pure_goal(
+        "selected invariant bundle leaf",
+        &[],
+        fold_equality,
+        &context,
+        SpecDefinitions::new(&predicates, &functions),
+        &theorems,
+    );
+    let expected = root.bundle_member_spelling().unwrap();
+    let _ = execution_statements::take_unclosed_bundle_member();
+    let error = crate::instrumentation::with_run_work_limit(0, || {
+        root.plan_invariant_bundle_closure(&[], &[])
+    })
+    .err()
+    .expect("exhaustion must refuse the selected obligation");
+    assert!(error.message().contains("budget"), "{error:?}");
+    // The source driver adds the checked goal's diagnostic to a deadline
+    // refusal. Exercise the same formatting path: concise reports read its
+    // reason rather than the error's legacy summary.
+    let error = root.step_error(error.raw_summary());
+    let reported = execution_statements::describe_invariant_closure_error(error);
+    for report in [reported.message().to_owned(), reported.concise_report()] {
+        assert!(
+            report.contains("unresolved obligation") && report.contains(&expected),
+            "{report}"
+        );
+        assert!(report.contains("budget"), "{report}");
+    }
+    assert!(execution_statements::take_unclosed_bundle_member().is_none());
+    let unknown =
+        execution_statements::describe_invariant_closure_error(ClickError::new("search stopped"));
+    assert!(
+        unknown
+            .concise_report()
+            .contains("without retaining an individual obligation")
+    );
+    assert!(root.certificate().steps().is_empty());
+    let direct = crate::instrumentation::with_run_work_limit(0, || {
+        root.try_direct_structural_closure_with_quantified(&mut |_| Ok(None))
+    })
+    .err()
+    .expect("the direct strategy must also refuse exhaustion");
+    assert_eq!(direct.diagnostic().unwrap().kernel_goal(), root.goal());
+    let direct = execution_statements::describe_invariant_closure_error(direct);
+    assert!(direct.concise_report().contains("unresolved obligation"));
+}
+
+#[test]
 fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
     let fact = indexed_fact(7);
     let goal = Proposition::Implies(Box::new(fact.clone()), Box::new(fact));

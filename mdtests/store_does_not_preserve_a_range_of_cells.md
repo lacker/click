@@ -35,5 +35,5 @@ void mark_one(int32 a[], int32 n, int32 i) {
 ```
 
 ```expect
-fail: `have` failed for `forall (k: int32) { ((0 <= k && k < n) => a[k] == at(entry, a[k])) }`
+fail: `have` failed for `forall (k: int32) { 0 <= k and k < n implies a[k] == at(entry, a[k]) }`
 ```

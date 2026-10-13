@@ -1,11 +1,8 @@
-# an unnarrowable range names the range the proof holds
+# A refused prefix does not infer a missing extent from a held range
 
-A refused range narrowing has to say what it was looking at. `views a[0..n]`
-states a range, but a `views` clause becomes a resource rather than a recorded
-`loadable` proposition, so the walk over stated propositions finds nothing and
-used to report `no stated viewable range over the same base is available here
-to narrow` — telling the reader to state a range their contract opens with.
-The refusal names the range the proof actually holds over that base instead.
+The proof holds `a[0..n]`, and requests the larger `a[0..n + 1]`. The claim must
+fail without asserting that no range was stated or inventing an extent cause
+from the failure to construct a checked source proof.
 
 ```c filename=unnarrowable_range_names_held_range.c
 void walk(int32 *a, int32 *b, int32 n) {
@@ -29,5 +26,5 @@ void walk(int32 *a, int32 *b, int32 n) {
 ```
 
 ```expect
-fail: `viewable(a[0..(n + 1)])` was not proved: the range this proof holds over that base is `a[0..n]`, so narrowing has to reach `viewable(a[0..(n + 1)])` from it, and it did not
+fail: no checked source proof was constructed for `viewable(
 ```

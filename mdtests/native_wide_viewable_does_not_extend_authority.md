@@ -16,5 +16,5 @@ void hold(const uint8* bytes, uint64 length) {
 ```
 
 ```expect
-fail: was not proved
+fail: kernel native view checker did not establish
 ```

@@ -3393,3 +3393,66 @@ fn a_zero_filled_automatic_array_costs_the_same_whatever_its_length() {
          work, load work, cell entries): {samples:?}"
     );
 }
+
+fn assert_statement_reserves_application_integer_argument(
+    invariant: SpecProposition,
+    held: Variable,
+) {
+    let statement = c_while_with_invariant_checks(
+        c_less_than(c_variable("i"), c_int32_literal(1)),
+        Vec::new(),
+        vec![CLoopInvariantCheck::new(invariant, None, None)],
+        c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
+    );
+    let mut reserved = BTreeSet::new();
+    crate::kernel::reasoning::collect_c_statement_bitvector_variables(&statement, &mut reserved);
+    let mut budget = ExecutionBudget::for_new_execution();
+    let mut variables = KernelVariableGenerator::fresh_for_execution(reserved);
+    assert_ne!(variables.next_in(&mut budget).unwrap(), held);
+}
+
+#[test]
+fn statement_reservations_cover_integer_arguments_of_machine_applications() {
+    let held = Variable(ExecutionBudget::KERNEL_VARIABLE_BASE);
+    let call = SpecExpression::PureFunctionApplication {
+        name: "f".into(),
+        arguments: vec![SpecPureFunctionArgument::Integer(
+            SpecIntegerExpression::Term(IntegerTerm::var(held)),
+        )],
+        result_type: CType::Int32,
+    };
+    assert_statement_reserves_application_integer_argument(
+        SpecProposition::Comparison {
+            left: call,
+            operator: CComparisonOperator::LessEqual,
+            right: SpecExpression::CExpression(c_variable("i")),
+        },
+        held,
+    );
+}
+
+#[test]
+fn statement_reservations_cover_integer_arguments_of_algebraic_applications() {
+    let held = Variable(ExecutionBudget::KERNEL_VARIABLE_BASE);
+    let ty = AlgebraicType::parameter("T".into());
+    let call = SpecAlgebraicExpression {
+        algebraic_type: ty.clone(),
+        node: SpecAlgebraicExpressionNode::PureFunctionApplication {
+            name: "g".into(),
+            arguments: vec![SpecPureFunctionArgument::Integer(
+                SpecIntegerExpression::Term(IntegerTerm::var(held)),
+            )],
+        },
+    };
+    assert_statement_reserves_application_integer_argument(
+        SpecProposition::AlgebraicComparison {
+            left: call,
+            equal: true,
+            right: SpecAlgebraicExpression {
+                algebraic_type: ty,
+                node: SpecAlgebraicExpressionNode::Variable(Variable(99)),
+            },
+        },
+        held,
+    );
+}

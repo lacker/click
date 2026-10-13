@@ -545,6 +545,18 @@ impl Metadata<'_> {
                     self.arguments(arguments)?;
                     span
                 }
+                CppStatement::CallStore {
+                    callee,
+                    arguments,
+                    value,
+                    span,
+                    ..
+                } => {
+                    self.callee(callee)?;
+                    self.arguments(arguments)?;
+                    self.expression(value)?;
+                    span
+                }
                 CppStatement::Scope {
                     body,
                     cleanups,

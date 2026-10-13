@@ -1430,6 +1430,55 @@ fn implementation_uses_canonical_form_and_load_variable_terms() {
     );
 }
 
+/// The language reference states current behavior. Changelog phrasing such
+/// as "this slice" or "not yet supported" dates the text and hides whether a
+/// form is refused or merely undocumented.
+#[test]
+fn language_reference_states_current_behavior() {
+    let repository = root();
+    let mut files = Vec::new();
+    files_with_extension(
+        &repository.join("docs/reference/language"),
+        "md",
+        &mut files,
+    );
+    files.sort();
+    let phrases = [
+        "this slice",
+        "outside this slice",
+        "initial slice",
+        "first-pass",
+        "not yet supported",
+        "not yet generated",
+        "currently supported",
+        "currently understand",
+    ];
+    let mut failures = Vec::new();
+    for path in files {
+        let text = fs::read_to_string(&path)
+            .expect("read language reference")
+            .to_ascii_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for phrase in phrases {
+            if text.contains(phrase) {
+                failures.push(format!(
+                    "{}: `{phrase}`",
+                    path.strip_prefix(&repository)
+                        .expect("repository-relative path")
+                        .display()
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "state current behavior instead of changelog phrasing:\n{}",
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn retired_execution_engine_terminology_is_absent() {
     let repository = root();

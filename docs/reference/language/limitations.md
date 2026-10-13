@@ -25,7 +25,7 @@ operands, unary proposition negation accepts up to 64 prefixes, sequential
 contract `let` bindings accept up to 128 bindings, and recursively nested
 contract `let` initializers accept up to 8 levels. These are parser/tooling
 boundaries, not a promise that every accepted shape is semantically useful:
-for example, sequence literals currently require scalar elements, so deeply
+for example, sequence literals require scalar elements, so deeply
 nested bracket literals are checked for safe parsing and rendering but are not
 valid theorem values.
 
@@ -220,8 +220,13 @@ there is still no first-class Click string value and no full libc string model.
 
 ## Aliasing is default
 
-Distinct pointer parameters may alias. Add
-`separate(memory(...), memory(...))` whenever a proof depends on non-overlap.
+Distinct pointer parameters may alias. A contract's `owns` clauses denote
+memory disjoint from one another and from its `views` clauses, so a proof
+needs no `separate(...)` for them
+(`mdtests/a_views_clause_is_separate_from_an_owns_clause.md`). Two `views`
+clauses, or `viewable(...)` facts, may name overlapping memory: add
+`separate(memory(...), memory(...))` when a proof depends on their
+non-overlap.
 
 ## Requirements cannot freely read memory
 
@@ -244,7 +249,7 @@ Range `.all` and symbolic `.any` lower their bodies under the range-membership
 facts, so `p[k]` is memory-safe when the caller has a matching
 `viewable(p[lo..hi])`.
 
-Plain logical conjunction does not currently act as a left-to-right guard for
+Plain logical conjunction does not act as a left-to-right guard for
 lowering. For example, prefer `(lo..hi).any(|k| { p[k] == x })` over an
 explicit `exists (k: int32) { lo <= k and k < hi and p[k] == x }` until the
 surface language has a designed guard story for partial C fragments.
@@ -306,8 +311,9 @@ entry memory snapshots. This supports direct invariants such as
 
 ## Loop invariants need explicit facts
 
-Pointer-writing loops do not implicitly preserve memory. Use invariants,
-`owns` clauses, and `separate(memory(...), memory(...))` requirements. Symbolic loops need invariants
+Pointer-writing loops do not implicitly preserve memory. Use invariants and
+`owns` clauses, and `separate(memory(...), memory(...))` for viewed memory a
+proof needs apart. Symbolic loops need invariants
 for arithmetic bounds, memory safety, and postconditions.
 
 ## `simp` is not a solver
@@ -325,5 +331,5 @@ lists what the search covers.
 
 Failure messages increasingly expose a proof context split into pure facts and
 resource facts, but some lower-level errors still expose internal propositions
-and memory terms. They are useful for agents but not yet polished for end
+and memory terms. They are useful for agents but not polished for end
 users.

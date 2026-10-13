@@ -189,13 +189,38 @@ does. Verifying plain C needs no compiler or system headers; see the
 Any other system include is refused. The kernel target refuses the hosted
 headers, since kernel code uses its own.
 
+A call to one of these library functions is checked against Click's
+specification of the function, which binds by its name. A program may also
+declare the function itself (C11 7.1.4p2), as in `void *malloc(unsigned long
+size);`, but only with a type compatible with the library's prototype (C11
+6.7.6.3p15): a parameter's own qualifiers do not matter, a pointee's
+qualifiers and plain `char` do, and `unsigned long f();` without a prototype
+needs only the library's result type. Click refuses an incompatible
+declaration such as `int strlen(int s);` and names both types; GCC and Clang
+reject it when the header is included and Clang warns otherwise
+(`mdtests/a_library_function_redeclared_with_an_int_parameter_is_refused.md`,
+`mdtests/a_compatible_redeclaration_of_strlen_binds_its_contract.md`).
+Click also refuses a program's definition of one of these functions with
+external linkage: the name is reserved for the library (C11 7.1.3), and GCC
+and Clang compile calls to it as calls to the library's function, folding
+`strlen("abc")` to 3 whatever the program's body says. Both targets compile
+hosted, without `-ffreestanding` or `-fno-builtin`, so the same holds for
+kernel code: Linux builds its own `lib/string.c` freestanding, which no Click
+target models
+(`mdtests/a_kernel_target_definition_of_strlen_is_refused.md`,
+`mdtests/a_kernel_target_incompatible_declaration_of_strlen_is_refused.md`).
+A `static` function of the same name is the program's own, and its calls
+execute its body (`mdtests/a_program_definition_of_strlen_is_refused.md`,
+`mdtests/a_static_function_named_strlen_is_the_programs_own.md`).
+
 A [compiler import](../cli/import.md#clicks-system-headers) searches the same
 headers, with the same text, in the place of the C library's: after the
 project's `-iquote`, `-I`, and `-isystem` directories, as GCC orders them. It
 refuses `<pthread.h>` and `<stdatomic.h>`, whose runtime does not accept
 compiler-imported sources, and names any other standard C or POSIX header it
 refuses. The headers carry no contracts: a call is checked against Click's
-contract for the function's name, whichever declaration the compiler selected.
+contract for the function's name, whichever declaration the compiler selected,
+and that declaration must be compatible with the library's, as above.
 
 ## Program-entry static ownership
 
@@ -212,9 +237,9 @@ ownership conversion or a module concept. With no explicit effect clause,
 the startup frame permits writes to its writable static storage; explicit
 effect clauses may restrict that frame.
 
-Startup proofs currently require no parameters or preconditions. They are
+Startup proofs require no parameters or preconditions. They are
 not reusable function contracts: an ordinary call to `main` cannot assume
-startup values or receive fresh permissions. This slice does not model
+startup values or receive fresh permissions. Click does not model
 `argc`/`argv`, constructors before main, or separate library-initialization
 proofs. Owned global ranges can be folded into named resources and transferred
 through helper contracts. Resource tactics retain the current function's
@@ -237,7 +262,17 @@ through two calls to a pointer-taking helper without resetting the state.
 - `int8`/`signed char`/`int8_t`, a signed byte with range `-128..127`
 - `int16`/`short` and `uint16`/`unsigned short`
 - `uint32`
-- `int64`/`long`/`long long` and `uint64`/`unsigned long`/`unsigned long long`
+- `int64`/`long`/`long long` and `uint64`/`unsigned long`/`unsigned long long`.
+  `long` and `long long` share the 64-bit representation but, as in GCC and
+  Clang, are distinct, incompatible C types: their values convert implicitly,
+  but `long *` and `long long *` (of either signedness) do not convert without
+  a cast, a cast between them retypes the pointee and is refused, pointers to
+  them compare after only a warning in GCC and Clang and so compare in Click
+  (`mdtests/long_and_long_long_pointers_compare_after_a_warning.md`), and
+  declarations, function pointer types, and library prototypes that differ only
+  in rank conflict. A Click `int64` or `uint64` in a sidecar specifies either.
+  See `mdtests/long_and_long_long_values_convert_implicitly.md` and
+  `mdtests/a_long_pointer_does_not_initialize_a_long_long_pointer.md`.
 - C `_Bool` and the modeled `stdbool.h` spelling `bool`; both use one-byte
   storage and normalize values to `0` or `1`
 - `float` (IEEE-754 binary32) and `double` (IEEE-754 binary64) as typed value
@@ -248,7 +283,12 @@ through two calls to a pointer-taking helper without resetting the state.
   `uint8`; `unsigned short` and `uint16_t` map to `uint16`; `unsigned int` and
   `uint32_t` map to `uint32`; `long`, `long long`, and `int64_t` map to
   `int64`; `ssize_t` also maps to `int64`; `unsigned long`, `unsigned long
-  long`, `uint64_t`, and `size_t` map to `uint64`.
+  long`, `uint64_t`, and `size_t` map to `uint64`. As C types, `size_t` and
+  `ssize_t` are `unsigned long` and `long` on both targets; `int64_t` and
+  `uint64_t` are `long` and `unsigned long` in user space (glibc) and `long
+  long` and `unsigned long long` on the kernel target, whose `s64`/`u64` they
+  follow. See `mdtests/size_t_and_int64_t_are_long_types_in_user_space.md`
+  and `mdtests/int64_t_is_long_long_on_the_kernel_target.md`.
   C and Click accept valid contiguous standard integer specifiers in any
   order: `long unsigned int` and `int unsigned long` both mean `uint64`.
   `short`, `long`, and `long long` accept an optional `int`; bare `signed`
@@ -327,8 +367,8 @@ sidecar contract describes the object such a parameter carries by casting the
 parameter, `(struct name *)argument`, in its clauses; see
 [contract pointer casts](index.md#old).
 Function pointers are not object pointers, so a `void *` position does not
-change a callback's signature. Opaque-pointer fields remain outside this
-slice; the new `void **` declaration form does not itself specify what an
+change a callback's signature. Opaque-pointer fields are not supported;
+the `void **` declaration form does not itself specify what an
 external call may write through such a pointer.
 
 <!-- verified-example: mdtests/c_void_pointers.md -->
@@ -366,7 +406,7 @@ its own private identity within its translation unit; aliasing that typedef
 preserves the identity and does not introduce a `struct pair` tag. Separate
 anonymous declarations are not interchangeable. Anonymous unions and inline
 tagged definitions in typedefs also retain their nominal identity and ABI
-layout. Compound union member operations and whole-union values are not yet
+layout. Compound union member operations and whole-union values are not
 supported. Multiple typedef declarators and automatic
 typedef-name lookup in Click sidecars remain unsupported.
 See `mdtests/c_anonymous_struct_typedef.md`.
@@ -432,13 +472,28 @@ refused. Conversions GCC and Clang refuse stay refused: pointers to character
 pointers such as `char **` to `unsigned char **`
 (`mdtests/a_char_pointer_pointer_is_not_converted_to_an_unsigned_char_pointer_pointer.md`),
 `?:` arms of different character pointer types, whose common type would be
-`void *`, the subtraction of such pointers, and conversions to or from a
-pointer to a wider integer type. An uncast or explicit conversion between
-pointers to wider integer types of the same width and different signedness,
-such as `int *` and `unsigned int *`, is also only a `-Wpointer-sign`
-warning in GCC and Clang, but it is not yet supported: the kernel reads a
-wider cell only through its stored type, so the conversion is refused as a
-retyping object-pointer cast.
+`void *`, the subtraction of such pointers, and conversions between a
+character pointer and a pointer to a wider integer type.
+
+The same holds for the signed and unsigned integer types of one wider width:
+`short *` and `unsigned short *`, `int *` and `unsigned int *`, and `long *`
+and `unsigned long *`. GCC and Clang convert between them with only a
+`-Wpointer-sign` warning, and C11 6.5p7 lets the signed or unsigned type
+corresponding to an object's type access it. Click accepts the conversion,
+uncast in the positions above or as an explicit cast, at one level of
+indirection. A load reads the cell's bits in its own signedness, so the `int`
+`-1` reads as `4294967295` through an `unsigned int *`; a store through either
+pointer writes the bits a later read of the object sees; and a contract stated
+over `int32` cells accepts a pointer to `uint32` cells
+(`mdtests/integer_pointers_of_either_signedness_read_the_same_bits.md`).
+Pointers to such pointers, `?:` arms of the two types, and their subtraction
+stay refused as in GCC and Clang
+(`mdtests/an_int_pointer_pointer_does_not_convert_to_an_unsigned_int_pointer_pointer.md`),
+and a conversion between integer pointers of different widths, such as `int *`
+to `short *`, is a retyping object-pointer cast, which Click does not support
+(`mdtests/a_short_pointer_is_not_a_view_of_an_int.md`). `long` and
+`long long` are distinct types of one width, so `long *` and
+`unsigned long long *` differ in more than signedness and do not convert.
 
 An integer constant expression converted to an integer type that cannot
 represent it, such as `unsigned char c = -56;` or `signed char c = 200;`, is at
@@ -521,8 +576,8 @@ Named enums are supported as four-byte `int32`-shaped scalar fields. Click
 preserves the enum name and enumerator values in imported metadata, and named
 enumerators such as `PACKET_READY` lower to their declared integer values in C
 expressions and by-value copies. Enum parameters, return types, local
-declarations, enum arrays, and anonymous enum declarations remain outside this
-slice.
+declarations, enum arrays, and anonymous enum declarations are not
+supported.
 
 ## Floating-point boundary
 
@@ -620,7 +675,7 @@ parameter's entry value carries its range `flag == 0 or flag == 1` as an
 available fact, so a claim such as `result == 0 or result == 1` about the
 promoted value needs no explicit case split; the range does not decide which
 value the parameter holds. Pointers to boolean objects and boolean pointer
-arithmetic are not currently modeled.
+arithmetic are not modeled.
 
 ## Supported expressions and statements
 
@@ -841,7 +896,7 @@ Supported C surface includes:
 - heap arrays of supported structs, allocated with `malloc` or `calloc` using
   `count * sizeof(struct T)` and resized with bounded `realloc`; indexed
   `items[i].field` accesses use the complete ABI struct stride
-- a small struct slice: `struct name { ... };`, `struct name*` and
+- a struct subset: `struct name { ... };`, `struct name*` and
   `struct name**` pointers, chained `p->child->field` loads/stores for scalar
   fields and pointer fields, and address-taking of struct-pointer cells such
   as `&p->child` for `struct name** link; *link = replacement;`
@@ -1043,7 +1098,10 @@ Supported C surface includes:
   `realloc`, and `free`, and defines `NULL`; calls are checked against the
   standard-library contracts and the allocation model
   (`mdtests/c_builtin_string_and_stdlib_headers.md`,
-  `mdtests/c_builtin_string_header_declares_strlen.md`). A specification may
+  `mdtests/c_builtin_string_header_declares_strlen.md`). A program's own
+  declaration of one of these functions must be compatible with the
+  library's, and a program may not define one with external linkage; see
+  [System headers](#system-headers). A specification may
   pass a `char` or `signed char` pointer where a predicate or pure function
   takes `uint8` bytes, as in `requires cstr_readable(s);` for a `const char *s`.
   For a signed character type, the argument is elaborated to the explicit byte view
@@ -1109,8 +1167,10 @@ Supported C surface includes:
   exact C identity is unavailable are rejected: these include expression
   `typeof` of scalars, pointers, or arrays, pointers derived from expression
   `typeof`, nested const typedefs, enum/function types, GNU mode typedefs,
-  array typedefs, and width-only 64-bit aliases. Array declarators
-  are outside this slice. See `mdtests/c_builtin_types_compatible.md` and
+  and array typedefs. The built-in names `size_t`, `ssize_t`, `int64_t`,
+  and `uint64_t` have the target's `long` or `long long` identity. Array
+  declarators
+  are not supported. See `mdtests/c_builtin_types_compatible.md` and
   `mdtests/c_builtin_types_compatible_rejects_false_equality.md`.
 - the GNU builtin `__builtin_constant_p(operand)`. Whether the compiler folds
   the operand to a constant depends on optimization, so its value is an
@@ -1225,7 +1285,7 @@ scalar arrays expose their array-to-pointer address for indexed expressions and
 contract footprints; contract ranges refer to the flattened storage block.
 Fixed-size one-dimensional arrays of supported scalar-field structs use the
 same stable linkage and ABI-sized element stride; incomplete, non-literal,
-or dynamically initialized arrays remain outside this slice. An external
+or dynamically initialized arrays are not supported. An external
 declaration or external-linkage tentative definition may omit its outer bound,
 as in `extern int32 table[];`, `extern int32 matrix[][3];`,
 `int32 values[];`, or `int32 matrix[][3];`; bundle linking resolves it against
@@ -1284,7 +1344,7 @@ these aggregates also accept `[literal] = {...}` element designators, with
 omitted elements zero-filled. Non-literal designator expressions, designated
 initializers for inline scalar arrays, multidimensional aggregate arrays,
 uninitialized incomplete aggregate definitions, and dynamic or non-literal initialization
-remain outside this slice. An `extern struct state entries[]` declaration is
+are not supported. An `extern struct state entries[]` declaration is
 supported when bundle linking finds a complete fixed-size definition.
 One-dimensional aggregate definitions may infer their bound from non-empty
 positional element groups, such as `struct state entries[] = {{1}, {3, 1}};`.
@@ -1370,7 +1430,7 @@ through `slot_cell`. These qualifiers are tracked independently. Each direct
 or pointer-derived read or write emits a distinct, ordered kernel-certified
 execution fact, so the verifier cannot silently cache the access or erase it
 while checking the surrounding expression or statement. The value still comes
-from the current symbolic memory state; this slice does not model external
+from the current symbolic memory state; Click does not model external
 agents changing memory between accesses.
 
 Taking the address of a supported volatile object and accessing it through
@@ -1520,7 +1580,7 @@ check their resource arguments against the actual C arguments. Returned
 instances keep their identities but get fresh symbolic fields; only explicit
 guarantees relate those fields to the call-entry values. Unselected instances
 remain framed. Concrete function refinement for these parameterized contracts
-and ordinary inline-call instance transport are not yet supported.
+and ordinary inline-call instance transport are not supported.
 
 Empty applications are supported end to end:
 
@@ -1934,7 +1994,7 @@ zero-filled.
 
 ## Struct subset
 
-Click supports a small struct slice:
+Click supports a struct subset:
 
 <!-- verified-example: mdtests/struct_multifield_explicit_permissions.md -->
 ```c
@@ -2061,7 +2121,7 @@ same per-dimension subobject checks, so an index cannot spill into a following
 struct field merely because the containing object is large enough. Pointer and
 array forms now preserve the declared scalar width; unsupported pointer forms
 remain outside the modeled subset.
-Direct whole-union values and union-member writes remain outside this slice;
+Direct whole-union values and union-member writes are not supported;
 union-containing struct copies preserve the overlapping member views. Compiler-dependent layout rules are tracked in
 `issues/multiple-compilers.md`. Fixed multidimensional arrays of embedded
 structs are supported through indexed leaf-field access and retain their
@@ -2099,10 +2159,10 @@ value. Taking the address of a scalar or pointer member preserves that same
 containing allocation and produces the member's typed pointer (`int32*` for an
 `int32` member, or `int32**` for an `int32*` member), so the resulting pointer
 can be used for a read without materializing a whole-union value. The tag check
-remains an ordinary C branch or Click precondition; the
-current slice does not infer a mapping between arbitrary tag values and member
+remains an ordinary C branch or Click precondition; Click
+does not infer a mapping between arbitrary tag values and member
 names. Union member writes, whole-union expressions, union locals or
-parameters, and arrays inside unions remain outside the supported slice.
+parameters, and arrays inside unions are not supported.
 Structs containing supported named unions can be copied by value while
 preserving the overlapping typed member views.
 
@@ -2301,7 +2361,7 @@ These are not general C features yet:
   multidimensional file-scope and function-local static scalar arrays,
   file-scope globals with compatible `extern` declarations, and basic ASCII
   read-only string literals are documented above
-- `switch` case labels currently require integer or character literals, labels
+- `switch` case labels require integer or character literals, labels
   must be direct children of the switch compound body, and duplicate labels are
   rejected; arbitrary constant expressions and nested switch labels remain
   unsupported. The narrow direct forward-`goto` and natural-cycle slices

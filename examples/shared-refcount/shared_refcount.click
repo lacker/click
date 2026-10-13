@@ -23,31 +23,21 @@ void object_retain(struct object *obj) {
     let { refs: refs, slack: slack } = unfold(state);
     have count(permit(obj)) >= 1;
     have slack == count(permit(obj));
-    have 1 <= slack;
-    have to_integer(1) <= to_integer(slack) by apply(int32_less_equal_to_integer(1, slack));
-    have to_integer(refs) + to_integer(slack) == 3;
+    have to_integer(1) <= to_integer(slack) by auto;
     have to_integer(refs) <= to_integer(2) by arithmetic() using {
         to_integer(refs) + to_integer(slack) == 3;
         to_integer(1) <= to_integer(slack);
     };
-    have refs <= 2 by apply(int32_to_integer_less_equal_implies_less_equal(refs, 2));
-    have defined(refs + 1);
-    have defined(slack - 1);
-    have to_integer(refs + 1) == to_integer(refs) + to_integer(1) by {
-        apply(int32_add_to_integer(refs, 1));
-    }
-    have to_integer(slack - 1) == to_integer(slack) - to_integer(1) by {
-        apply(int32_subtract_to_integer(slack, 1));
-    }
+    have refs <= 2 by auto;
+    have to_integer(refs + 1) == to_integer(refs) + to_integer(1) by auto;
+    have to_integer(slack - 1) == to_integer(slack) - to_integer(1) by auto;
     have to_integer(refs + 1) + to_integer(slack - 1) == 3 by arithmetic() using {
         to_integer(refs + 1) == to_integer(refs) + to_integer(1);
         to_integer(slack - 1) == to_integer(slack) - to_integer(1);
         to_integer(refs) + to_integer(slack) == 3;
     };
-    have obj->refs == refs;
     unfold(permit(obj));
     fold(reference(obj));
-    have obj->refs <= 2;
     step();
     let restored = fold(control(obj), { refs: refs + 1, slack: slack - 1 });
     step(pthread_mutex_unlock(&obj->mu), { access: access, guard: guard, state: restored });
@@ -63,31 +53,21 @@ void object_release(struct object *obj) {
     let { refs: refs, slack: slack } = unfold(state);
     have count(reference(obj)) >= 1;
     have refs == count(reference(obj));
-    have 1 <= refs;
-    have to_integer(1) <= to_integer(refs) by apply(int32_less_equal_to_integer(1, refs));
-    have to_integer(refs) + to_integer(slack) == 3;
+    have to_integer(1) <= to_integer(refs) by auto;
     have to_integer(slack) <= to_integer(2) by arithmetic() using {
         to_integer(refs) + to_integer(slack) == 3;
         to_integer(1) <= to_integer(refs);
     };
-    have slack <= 2 by apply(int32_to_integer_less_equal_implies_less_equal(slack, 2));
-    have defined(refs - 1);
-    have defined(slack + 1);
-    have to_integer(refs - 1) == to_integer(refs) - to_integer(1) by {
-        apply(int32_subtract_to_integer(refs, 1));
-    }
-    have to_integer(slack + 1) == to_integer(slack) + to_integer(1) by {
-        apply(int32_add_to_integer(slack, 1));
-    }
+    have slack <= 2 by auto;
+    have to_integer(refs - 1) == to_integer(refs) - to_integer(1) by auto;
+    have to_integer(slack + 1) == to_integer(slack) + to_integer(1) by auto;
     have to_integer(refs - 1) + to_integer(slack + 1) == 3 by arithmetic() using {
         to_integer(refs - 1) == to_integer(refs) - to_integer(1);
         to_integer(slack + 1) == to_integer(slack) + to_integer(1);
         to_integer(refs) + to_integer(slack) == 3;
     };
-    have obj->refs == refs;
     unfold(reference(obj));
     fold(permit(obj));
-    have obj->refs >= 1;
     step();
     let restored = fold(control(obj), { refs: refs - 1, slack: slack + 1 });
     step(pthread_mutex_unlock(&obj->mu), { access: access, guard: guard, state: restored });
@@ -119,7 +99,6 @@ int32 run() {
     fold(reference(obj));
     fold(permit(obj));
     fold(permit(obj));
-    have to_integer(1) + to_integer(2) == 3;
     let control = fold(control(obj), { refs: 1, slack: 2 });
     let { lifetime: lifetime } = step(pthread_mutex_init(&obj->mu, 0), { state: control });
     step(object_retain(obj), { access: lifetime });
@@ -132,8 +111,6 @@ int32 run() {
         unfold(permit(obj));
         unfold(permit(obj));
         unfold(permit(obj));
-        have count(reference(obj)) == 0;
-        have count(permit(obj)) == 0;
         unfold(authority(reference(obj)));
         unfold(authority(permit(obj)));
         step();
@@ -151,8 +128,6 @@ int32 run() {
         unfold(permit(obj));
         unfold(permit(obj));
         unfold(permit(obj));
-        have count(reference(obj)) == 0;
-        have count(permit(obj)) == 0;
         unfold(authority(reference(obj)));
         unfold(authority(permit(obj)));
         step();
@@ -167,8 +142,6 @@ int32 run() {
     unfold(permit(obj));
     unfold(permit(obj));
     unfold(permit(obj));
-    have count(reference(obj)) == 0;
-    have count(permit(obj)) == 0;
     unfold(authority(reference(obj)));
     unfold(authority(permit(obj)));
     step();
@@ -190,7 +163,6 @@ int32 run_reverse_join() {
     fold(reference(obj));
     fold(permit(obj));
     fold(permit(obj));
-    have to_integer(1) + to_integer(2) == 3;
     let control = fold(control(obj), { refs: 1, slack: 2 });
     let { lifetime: lifetime } = step(pthread_mutex_init(&obj->mu, 0), { state: control });
     step(object_retain(obj), { access: lifetime });
@@ -203,8 +175,6 @@ int32 run_reverse_join() {
         unfold(permit(obj));
         unfold(permit(obj));
         unfold(permit(obj));
-        have count(reference(obj)) == 0;
-        have count(permit(obj)) == 0;
         unfold(authority(reference(obj)));
         unfold(authority(permit(obj)));
         step();
@@ -222,8 +192,6 @@ int32 run_reverse_join() {
         unfold(permit(obj));
         unfold(permit(obj));
         unfold(permit(obj));
-        have count(reference(obj)) == 0;
-        have count(permit(obj)) == 0;
         unfold(authority(reference(obj)));
         unfold(authority(permit(obj)));
         step();
@@ -238,8 +206,6 @@ int32 run_reverse_join() {
     unfold(permit(obj));
     unfold(permit(obj));
     unfold(permit(obj));
-    have count(reference(obj)) == 0;
-    have count(permit(obj)) == 0;
     unfold(authority(reference(obj)));
     unfold(authority(permit(obj)));
     step();

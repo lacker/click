@@ -7,13 +7,10 @@ flow path into Click's shared execution, memory, and certificate rules.
 Verification uses the same sidecars, tactics, and bounded engine as C and C++.
 [Language coverage](coverage.md) compares the Rust subset with C and C++.
 
-Charon is the default and sole extraction backend. All 16 canonical examples
-use native `.ullbc` artifacts, and the original compiler-backed regressions run
-through Charon. Original Rust source and contracts are preserved; five sidecars
-have digest-pinned archived proofs and verified native proof ports. The
-[adapter inventory](https://github.com/clicklang/click/blob/master/design/charon-trial/README.md)
-records the migration evidence. The repository-owned HIR/MIR exporter, its
-separate compiler pin, and schema-2 import path have been retired.
+Charon is the extraction backend; `scripts/build-charon.sh` builds the pinned
+version. Rust support is experimental: it needs a repository checkout and a
+separately built importer, and covers the subset listed in
+[Language coverage](coverage.md).
 
 The working example is
 [`examples/basic-rust/borrow.rs`](https://github.com/clicklang/click/blob/master/examples/basic-rust/borrow.rs),

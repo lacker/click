@@ -455,7 +455,7 @@ fn parser_bounds_non_parenthesized_surface_nesting_before_ast_construction() {
         .theorem_proposition()
         .expect("the test requirement should be a proposition");
     let rendered = diagnostics::describe_click_proposition(&requirement);
-    assert!(rendered.starts_with("!"));
+    assert!(rendered.starts_with("not not "));
     drop(rendered);
     drop(requirement);
     drop(supported);

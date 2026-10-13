@@ -17,7 +17,7 @@ theorem rb_erase_root_child_nonempty_left(node: struct rb_node*, parent: struct 
     ensures rb_erase_root_child(RbTree::Node(node, parent, color, left, right)) == left by {
         induct(left) as ih {
             RbTree::Empty => {
-                have RbTree::Empty == RbTree::Empty by normalize();
+                have RbTree::Empty == RbTree::Empty by auto;
                 contradiction(RbTree::Empty == RbTree::Empty);
             }
             RbTree::Node(a, b, c, l, r) => {
@@ -106,10 +106,7 @@ theorem rb_erase_root_child_inorder(tree: RbTree) {
                 unfold(rb_right(RbTree::Node(node, parent, color, left, right)));
                 cases {
                     rb_left(RbTree::Node(node, parent, color, left, right)) == RbTree::Empty => {
-                        have left == RbTree::Empty by {
-                            rewrite(left == rb_left(RbTree::Node(node, parent, color, left, right)));
-                                assumption();
-                        }
+                        have left == RbTree::Empty by auto;
                         rewrite(left == RbTree::Empty);
                         unfold(rb_erase_root_child(RbTree::Node(node, parent, color, RbTree::Empty,
                             right)));
@@ -120,10 +117,7 @@ theorem rb_erase_root_child_inorder(tree: RbTree) {
                         normalize();
                     }
                     rb_right(RbTree::Node(node, parent, color, left, right)) == RbTree::Empty => {
-                        have right == RbTree::Empty by {
-                            rewrite(right == rb_right(RbTree::Node(node, parent, color, left, right)));
-                                assumption();
-                        }
+                        have right == RbTree::Empty by auto;
                         rewrite(right == RbTree::Empty);
                         unfold(rb_left(RbTree::Node(node, parent, color, left, RbTree::Empty)));
                         unfold(rb_right(RbTree::Node(node, parent, color, left, RbTree::Empty)));

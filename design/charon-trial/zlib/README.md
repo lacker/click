@@ -1,7 +1,7 @@
 # Unchanged zlib Adler-32 adapter trial
 
 The unchanged zlib 1.3.1 computation imports and proves its empty-input result
-and its checksums for every length 1 through 15 against the shared mathematical
+and its checksums for every length 1 through 16 against the shared mathematical
 specification for the canonical seed 1 and a nonnull buffer. The nonempty proofs
 also preserve every input byte. **The arbitrary-length checksum postcondition
 and C/Rust result equality remain unproved.** This is the C
@@ -31,6 +31,7 @@ target/debug/click verify design/charon-trial/zlib/empty.click
 target/debug/click verify design/charon-trial/zlib/one-byte.click
 target/debug/click verify design/charon-trial/zlib/reset.click
 target/debug/click verify design/charon-trial/zlib/short-memory.click
+target/debug/click verify design/charon-trial/zlib/sixteen.click
 ```
 
 To reproduce preparation on a machine with the compiler and include paths in
@@ -93,10 +94,67 @@ The bounds A <= 3826 and B <= 57390 establish that the native additions do not
 wrap. The final reduction and shift/OR packing satisfy the shared specification.
 `byte.click` supplies the same checked promotion theorem to both C proofs.
 
-**The original 5552-byte batches, 16-byte blocks, and scalar tail remain
-unproved.** The offline short-loop regression checks all helper bodies together,
+**The original 5552-byte batches, repeated 16-byte blocks, and nonempty
+scalar tail on the larger path remain unproved.** The offline short-loop
+regression checks all helper bodies together,
 rechecks an expansion, and rejects missing byte authority, false component
 invariants, and false checksum results. These larger checks run in nightly.
+
+`block.click` checks a mathematical scalar recurrence, its native uint64
+addition pair for prefixes below 5552 bytes, and recombination after both
+original reductions. The addition-pair theorem requires the promoted byte to
+match the specification byte and exact accumulator equations and bounds; it
+provides no C memory authority or assumed callee result.
+
+[sixteen.click](sixteen.click) proves the unchanged remaining-length DO16 path
+for canonical seed 1, a nonnull buffer, and exactly 16 bytes. It establishes
+the shared checksum, termination, and preservation of every input byte.
+Its sixteen original addition pairs use checked native recurrence lemmas;
+the loop invariant follows the actual remaining count and input snapshot,
+without a generated processed counter. Explicit ranking facts establish
+nonnegativity and the decrease from 16 to 0.
+
+At loop exit, the proof converts the native prefix count to an integer
+separately from rewriting the weighted sum's native arguments. This preserves
+the exact B invariant while deriving the final component equation. The
+subsequent zero-length scalar loop preserves both component equations, and
+the original reductions and packing establish the shared result.
+
+The manifest and lock reuse the unchanged prepared C input and source closure.
+The nightly offline regression relocates the fixture, checks all imported
+helper bodies and an expansion, and rejects missing or insufficient read
+authority, false A/B invariants, and a false checksum. This establishes one
+DO16 iteration; repeated blocks and nonempty tails require further proofs.
+The count-presentation rendering regression is retained in
+[the native-count rewrite fixture](../../../mdtests/integer_rewrite_preserves_folded_count_presentation.md).
+
+`window.click` checks symbolic prefix advance after decrementing the actual
+remaining count, DO16 lane bounds and byte identities, and complete native
+read bounds for one batch below 5552 bytes. The prefix observation and pointer
+bridges in `short-prefix.click` now accept the existing checked count ceiling
+of 22208 instead of restricting those reusable observations to fifteen.
+The nightly window regression checks every dependency body as well.
+
+The [repeated-block draft](repeated-proof.click.draft) targets canonical seed 1,
+nonnull input, and lengths 16–5551. All sixteen addition pairs check at a
+symbolic prefix, and the DO16 loop closes its component, cursor, view, and
+ranking invariants. Bounds for each lane are stated explicitly in the original
+buffer's native coordinates; they supply read authority without a generated
+processed counter or verifier changes.
+
+**This draft does not verify and adds no C checksum result.** Its scalar tail
+stops at the first-byte `viewable(buf[0u64..1u64])` construction. The kernel's
+native view checker accepts that goal in the live proof context. `simp`
+selects a derivation containing 71 premises, then its source-spelling stage
+refuses the selection at the existing 64-premise limit, before generating a
+transport proof. Reduce the selected dependencies or use a checked explicit
+transport with the relevant premises; do not increase the presentation limit.
+
+To reproduce in a throwaway copy retaining this directory's relative imports,
+copy the draft to `repeated.click`, copy `short-memory.click.import.json` and its
+`.import.lock.json` to the corresponding `repeated.click` names, and run
+`click verify --trace-proof adler32_z repeated.click`. The C, headers, prepared
+input, and existing locks stay unchanged.
 
 | Original file | SHA-256 |
 | --- | --- |

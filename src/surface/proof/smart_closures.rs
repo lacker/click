@@ -22,6 +22,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 const MAX_DIRECT_CALLER_BINDING_NAMES: usize = 4096;
+const MAX_SIMP_SOURCE_PREMISES: usize = 64;
 
 /// Goal-changing rewrites kept per link of an equality chain: the first
 /// continues the chain, the others get a one-link closing probe.
@@ -1705,39 +1706,59 @@ impl<'a> Proof<'a> {
         if leaves.len() <= 8 {
             return None;
         }
+        // Leaves are checked last first. A loop-invariant bundle guards each
+        // member by every earlier declaration, so its last members are the
+        // largest and the ones that exceed the synthesis bounds. Checking
+        // them first makes a refusal one bounded attempt; checking in order
+        // reified every earlier member first, and the binary descent that
+        // follows a refusal repeated that at each level. The result does not
+        // depend on the order.
         let surfaces = if let Some(surface) = self.surface_goal() {
             let mut pending = vec![surface];
-            let mut leaves = Vec::new();
+            let mut surfaces = Vec::new();
             while let Some(surface) = pending.pop() {
                 if let ClickProposition::And(left, right) = surface {
                     pending.push(right);
                     pending.push(left);
                 } else {
-                    leaves.push(surface.clone());
+                    surfaces.push(surface.clone());
                 }
             }
-            leaves
-        } else {
-            leaves
-                .iter()
-                .map(|goal| self.synthesized_bundle_member_surface(goal))
-                .collect::<Option<Vec<_>>>()?
-        };
-        if surfaces.len() != leaves.len() {
-            return None;
-        }
-        for (surface, goal) in surfaces.iter().zip(leaves) {
-            let lowered = self
-                .lower_surface_goal(surface, "conjunction certificate leaf")
-                .ok()?;
-            if !crate::kernel::proof::propositions_are_alpha_equal(&lowered, goal) {
+            if surfaces.len() != leaves.len() {
                 return None;
             }
-        }
+            for (surface, goal) in surfaces.iter().zip(&leaves).rev() {
+                let lowered = self
+                    .lower_surface_goal(surface, "conjunction certificate leaf")
+                    .ok()?;
+                if !crate::kernel::proof::propositions_are_alpha_equal(&lowered, goal) {
+                    return None;
+                }
+            }
+            surfaces
+        } else {
+            // A synthesized member is kept only when it lowers back to its
+            // leaf, so it needs no second check.
+            let mut surfaces = leaves
+                .iter()
+                .rev()
+                .map(|goal| self.synthesized_bundle_member_surface(goal))
+                .collect::<Option<Vec<_>>>()?;
+            surfaces.reverse();
+            surfaces
+        };
         Some(surfaces)
     }
 
     fn try_direct_structural_closure_inner(
+        &self,
+        quantified: &mut dyn FnMut(&Self) -> Result<Option<Self>, ClickError>,
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_direct_structural_closure_inner_impl(quantified)
+            .map_err(|error| self.attach_step_diagnostic(error))
+    }
+
+    fn try_direct_structural_closure_inner_impl(
         &self,
         quantified: &mut dyn FnMut(&Self) -> Result<Option<Self>, ClickError>,
     ) -> Result<Option<Self>, ClickError> {
@@ -1852,7 +1873,13 @@ impl<'a> Proof<'a> {
         if let Some(closed) = self.try_auto_conjunction_closure()? {
             return Ok(Some(closed));
         }
-        self.try_auto_equality_chain_closure()
+        if let Some(closed) = self.try_auto_equality_chain_closure()? {
+            return Ok(Some(closed));
+        }
+        if let Some(closed) = self.try_constructor_join_closure()? {
+            return Ok(Some(closed));
+        }
+        self.try_wide_equality_solver_closure()
     }
 
     pub(in crate::surface::proof) fn try_solver_closure(&self) -> Result<Option<Self>, ClickError> {
@@ -3993,16 +4020,24 @@ impl<'a> Proof<'a> {
         let derivation = if exclude_exact_goal {
             self.facts()
                 .assumptions()
-                .derive_simp_proposition_without_exact_goal(&goal)?
+                .derive_simp_proposition_without_exact_goal(&goal)
         } else {
             match plan_simp_certificate(&goal, self.facts().assumptions()) {
-                Some(SimpEvidence::Derivation(derivation)) => derivation,
-                _ if matches!(self.context.as_ref(), ProofContext::Pure(_)) => self
-                    .facts()
-                    .assumptions()
-                    .derive_atomic_proposition(&goal)?,
-                _ => return None,
+                Some(SimpEvidence::Derivation(derivation)) => Some(derivation),
+                _ if matches!(self.context.as_ref(), ProofContext::Pure(_)) => {
+                    self.facts().assumptions().derive_atomic_proposition(&goal)
+                }
+                _ => None,
             }
+        };
+        let Some(derivation) = derivation else {
+            if matches!(goal, Proposition::CMemoryLoadable { .. }) {
+                attempt::record_search_note(
+                    "simp view derivation selection",
+                    "no retained-premise derivation was produced for the requested view",
+                );
+            }
+            return None;
         };
         Some((goal, derivation, theorem_application_closes_goal))
     }
@@ -4019,7 +4054,16 @@ impl<'a> Proof<'a> {
         // render an unbounded component speculatively. The recorded-path
         // candidate is tried first, and explicit `using` lists have their
         // own presentation/checking path.
-        if premises.len() > 64 {
+        if premises.len() > MAX_SIMP_SOURCE_PREMISES {
+            if matches!(self.goal(), Some(Proposition::CMemoryLoadable { .. })) {
+                attempt::record_search_note(
+                    "simp view premise spelling",
+                    format!(
+                        "budget exhausted: the selected view derivation contains {} premises; source spelling permits at most {MAX_SIMP_SOURCE_PREMISES}",
+                        premises.len()
+                    ),
+                );
+            }
             return None;
         }
         crate::instrumentation::measure_operation(
@@ -4133,6 +4177,20 @@ impl<'a> Proof<'a> {
             if anchored_pairs.len() >= premise_pairs.len() {
                 premise_pairs = anchored_pairs;
             }
+        }
+        if !crate::instrumentation::deadline_exceeded()
+            && matches!(self.goal(), Some(Proposition::CMemoryLoadable { .. }))
+            && premise_pairs.len() < premises.len()
+        {
+            attempt::record_search_note(
+                "simp view premise spelling",
+                format!(
+                    "{} of {} selected derivation premises have checked source spellings; {} were omitted",
+                    premise_pairs.len(),
+                    premises.len(),
+                    premises.len() - premise_pairs.len()
+                ),
+            );
         }
         (!crate::instrumentation::deadline_exceeded()).then_some(premise_pairs)
     }
@@ -4742,7 +4800,11 @@ impl<'a> Proof<'a> {
         // premise spelling and changes the intended transport certificate.
         let scalar_goal = match self.goal()? {
             Proposition::ConditionIs(
-                ConditionTerm::Bitvector64SignedLessThan(..)
+                ConditionTerm::Bitvector32SignedLessThan(..)
+                | ConditionTerm::Bitvector32SignedLessEqual(..)
+                | ConditionTerm::Bitvector32SignedGreaterThan(..)
+                | ConditionTerm::Bitvector32SignedGreaterEqual(..)
+                | ConditionTerm::Bitvector64SignedLessThan(..)
                 | ConditionTerm::Bitvector64SignedLessEqual(..)
                 | ConditionTerm::Bitvector64SignedGreaterThan(..)
                 | ConditionTerm::Bitvector64SignedGreaterEqual(..)
@@ -4775,6 +4837,62 @@ impl<'a> Proof<'a> {
             return None;
         }
         self.try_indexed_goal_equality_rewrite_with_options(exclude_goal_fact, false, true)
+    }
+
+    /// A derived call equality need not have a recorded source spelling.
+    /// Use only an operand already written in this goal, and check the
+    /// resulting equality in an ordinary nested proof before citing it.
+    fn try_goal_operand_constant_equality(
+        &self,
+        equality: &Proposition,
+    ) -> Option<(ClickProposition, Self)> {
+        let ClickProposition::Comparison {
+            left: source_left,
+            right: source_right,
+            ..
+        } = self.surface_goal()?
+        else {
+            return None;
+        };
+        let Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
+            true,
+        ) = self.goal()?
+        else {
+            return None;
+        };
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(a, b), true) = equality else {
+            return None;
+        };
+        for (operand, source) in [(left.as_ref(), source_left), (right.as_ref(), source_right)] {
+            let literal = if a.as_ref() == operand {
+                b.as_ref()
+            } else if b.as_ref() == operand {
+                a.as_ref()
+            } else {
+                continue;
+            };
+            let Bitvector32Term::Constant(value) = literal else {
+                continue;
+            };
+            if matches!(operand, Bitvector32Term::Constant(_)) {
+                continue;
+            }
+            let surface = ClickProposition::Comparison {
+                left: source.clone(),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                    Bitvector32Term::Constant(*value),
+                ))),
+            };
+            let scope = self.begin_have(surface.clone()).ok()?;
+            let closed = scope.try_direct_logical_closure().ok()??;
+            return Some((surface, closed.join().ok()?));
+        }
+        None
     }
 
     fn try_indexed_goal_equality_rewrite_with_options(
@@ -4861,17 +4979,21 @@ impl<'a> Proof<'a> {
                 {
                     continue;
                 }
-                let Some((rewrite_base, surface)) =
-                    proof.recheckable_equality_surface(surface_facts, premise_anchor, &equality)
-                else {
-                    continue;
+                let (rewrite_base, surface) = match proof.recheckable_equality_surface(
+                    surface_facts,
+                    premise_anchor,
+                    &equality,
+                ) {
+                    Some(candidate) => candidate,
+                    None => match proof.try_goal_operand_constant_equality(&equality) {
+                        Some((surface, candidate)) => (candidate, surface),
+                        None => continue,
+                    },
                 };
                 if rewrite_base.is_complete() {
                     return Ok(Some(rewrite_base));
                 }
-                // A changed historical read is now an explicitly checked
-                // transported fact; ordinary rewrite still requires exact
-                // availability of the citation it actually lowers.
+                let proof = &rewrite_base;
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
                     // Automatic refinement reduces symbolic operands to known
@@ -5063,7 +5185,17 @@ impl<'a> Proof<'a> {
                                 .ok()
                                 .flatten()
                                 .or_else(|| rewritten.try_typed_atomic_simp_closure())
-                        };
+                        }
+                        // A rewrite can leave a goal over constructors only,
+                        // such as `ParentLink::Linked(kid) != ParentLink::Empty`
+                        // after rewriting by `link.link == ParentLink::Linked(kid)`;
+                        // normalization decides it without consulting context.
+                        .or_else(|| {
+                            rewritten
+                                .apply_step(ProofStep::Normalize)
+                                .ok()
+                                .filter(Proof::is_complete)
+                        });
                         if let Some(closed) = closed {
                             return Some(closed);
                         }
@@ -7264,12 +7396,26 @@ impl<'a> Proof<'a> {
                         surface_goal,
                     ),
                 )])
-            })?;
+            });
+        let Some(tactics) = tactics else {
+            if matches!(goal, Proposition::CMemoryLoadable { .. }) {
+                attempt::record_search_note(
+                    "simp view certificate planning",
+                    "no source certificate plan was produced from the resolved derivation premises",
+                );
+            }
+            return None;
+        };
         // The planner selects only Surface-expressible explicit operations.
         // Apply those through the same recursive Proof driver used by
         // authoritative source scripts; the plan is provenance input, not an
         // independently interpreted semantic certificate.
         let checked = self.try_generated_linear_script(&tactics);
+        if matches!(goal, Proposition::CMemoryLoadable { .. })
+            && let Err(error) = &checked
+        {
+            attempt::record_search_note("simp view certificate checking", error.raw_summary());
+        }
         let proof = attempt::candidate_outcome(checked)
             .ok()
             .flatten()
@@ -7652,16 +7798,23 @@ impl<'a> Proof<'a> {
                     proof = proof.apply_theorem_application(application)?;
                 }
                 ProofTactic::Simp => {
-                    let Some(closed) = proof.try_simp_closure()? else {
+                    let mut search = attempt::search_scope("written simp");
+                    let selected = proof.try_simp_closure();
+                    let selected = match selected {
+                        Ok(selected) => selected,
+                        Err(error) => return Err(error.with_search_failures(search.finish())),
+                    };
+                    let Some(closed) = selected else {
                         if tactics[..index].iter().any(|previous| {
                             matches!(previous, ProofTactic::Witness(_) | ProofTactic::Choose(_))
                         }) {
                             return Err(proof.step_error(
                                 "checked `simp` after witness/choose could not close the remaining witness obligations; split conjunctions and discharge each definedness condition explicitly",
-                            ));
+                            ).with_search_failures(search.finish()));
                         }
-                        return Err(proof.simp_failure());
+                        return Err(proof.simp_failure().with_search_failures(search.finish()));
                     };
+                    search.succeed();
                     proof = closed;
                 }
                 ProofTactic::SimpUsing(simp) => {
@@ -7915,6 +8068,81 @@ impl<'a> Proof<'a> {
     /// has reported an unresolved requirement.  Keeping the refused result as
     /// an input makes the retry core directly testable without changing the
     /// production checked-step dispatch.
+    /// A Surface spelling of `requirement` at this frontier that lowers back
+    /// to it, chosen as the smart retry chooses one: the source-backed call
+    /// clause first, with the caller's own predicate requirement unfolded when
+    /// the call passes it through, then a synthesized spelling. `None` when
+    /// neither lowers to the requirement.
+    pub(in crate::surface::proof) fn requirement_surface(
+        &self,
+        requirement: &UnresolvedRequirement,
+        step: &ProofStep,
+    ) -> Result<Option<RequirementSpelling>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let Some(execution) = self.execution() else {
+            return Ok(None);
+        };
+        let execution_view = execution.view(context);
+        let _qualified_sources = super::surface_synthesis::QualifiedSynthesisScope::enter(
+            execution_view.surface_propositions,
+        );
+        let admit = |candidate: ClickProposition| match self
+            .lower_surface_goal(&candidate, "step obligation")
+        {
+            Ok(lowered) if lowered_states_requirement(&lowered, requirement) => Some(candidate),
+            _ => None,
+        };
+        if requirement.call_site.is_some()
+            && let Some(registry_surface) = source_backed_call_requirement_surface(
+                requirement,
+                step,
+                execution,
+                context,
+                self.facts().assumptions(),
+            )
+        {
+            let direct_caller = source_backed_direct_caller_requirement(
+                requirement,
+                step,
+                execution,
+                context,
+                self.facts().assumptions(),
+            );
+            let candidate = match &direct_caller {
+                Some((predicate_name, _)) => {
+                    let mut unfolded = self.active_unfolded_predicates();
+                    unfolded.push(predicate_name.clone());
+                    unfold_structural_invariant_proposition(
+                        context.spec_definitions.predicates,
+                        &registry_surface.proposition,
+                        &unfolded,
+                    )
+                    .map_err(|message| self.step_error(message))?
+                }
+                None => registry_surface.proposition,
+            };
+            if let Some(surface) = admit(candidate) {
+                return Ok(Some(RequirementSpelling {
+                    surface,
+                    direct_caller,
+                }));
+            }
+        }
+        check_verification_deadline()?;
+        Ok(synthesize_surface_proposition(
+            &requirement.proposition,
+            ParameterBinding::new(context.parsed_function.parameters(), context.arguments),
+            &execution.core.state,
+        )
+        .and_then(admit)
+        .map(|surface| RequirementSpelling {
+            surface,
+            direct_caller: None,
+        }))
+    }
+
     pub(in crate::surface::proof) fn retry_statement_after_refusal(
         &self,
         step: ProofStep,
@@ -7962,39 +8190,10 @@ impl<'a> Proof<'a> {
                     let admit_candidate = |candidate: ClickProposition| match proof
                         .lower_surface_goal(&candidate, "smart retained-have requirement")
                     {
-                        Ok(lowered)
-                            if propositions_match_after_canonical_loads(
-                                &lowered,
-                                &requirement.proposition,
-                            ) =>
-                        {
+                        Ok(lowered) if lowered_states_requirement(&lowered, &requirement) => {
                             Ok(Some(candidate))
                         }
-                        Ok(lowered) => {
-                            // The checked call may carry a generated arithmetic
-                            // guard already discharged in this proof scope.
-                            // Proving its exact consequent is sufficient for
-                            // the subsequent ordinary checked-step retry.
-                            let mut target = &requirement.proposition;
-                            for introduction in &requirement.introductions {
-                                if !matches!(
-                                    introduction,
-                                    crate::kernel::LoweringIntroduction::ObligationGuard
-                                ) {
-                                    break;
-                                }
-                                let Proposition::Implies(_, consequent) = target else {
-                                    break;
-                                };
-                                target = consequent;
-                                if propositions_match_after_canonical_loads(&lowered, target) {
-                                    return Ok(Some(candidate));
-                                }
-                            }
-                            check_verification_deadline()?;
-                            Ok(None)
-                        }
-                        Err(_) => {
+                        Ok(_) | Err(_) => {
                             check_verification_deadline()?;
                             Ok(None)
                         }
@@ -8096,37 +8295,7 @@ impl<'a> Proof<'a> {
                                 }
                             }
                         }
-                        None => {
-                            let mut surfaces = vec![surface.clone()];
-                            surfaces.extend(collect_bounded_surface_conjunct_leaves(&surface)?);
-                            let closed = have.try_simp_closure_with_surfaces(&surfaces)?;
-                            if closed.is_some() {
-                                closed
-                            } else if let ClickProposition::Exists {
-                                click_type: ClickType::C(syntax::C0Type::Int32),
-                                name,
-                                written_name,
-                                ..
-                            } = &surface
-                            {
-                                let witnessed = attempt::candidate_outcome(have.apply_step(
-                                    ProofStep::Witness(ProofWitness::single(
-                                        written_name.as_ref().unwrap_or(name).clone(),
-                                        ContractExpression::CFragment(CExpression::Value(
-                                            CValue::Int32(Bitvector32Term::Constant(0)),
-                                        )),
-                                    )),
-                                ))?;
-                                match witnessed {
-                                    Some(witnessed) => {
-                                        witnessed.try_simp_closure_with_surfaces(&surfaces)?
-                                    }
-                                    None => None,
-                                }
-                            } else {
-                                None
-                            }
-                        }
+                        None => close_requirement_have_by_auto(have, &surface)?,
                     };
                     let Some(closed) = closed else {
                         return Err(error);
@@ -8148,7 +8317,7 @@ impl<'a> Proof<'a> {
                                 &next_requirement,
                                 &execution_memory,
                             )? {
-                                return proof.apply_step(step.clone());
+                                return Err(next_error);
                             }
                             let Some(next_identity) =
                                 proposition_identity_key(&next_requirement.proposition)
@@ -8863,6 +9032,38 @@ pub(in crate::surface::proof) fn collect_bounded_surface_conjunct_leaves(
 /// Compare retained-have round-trip forms while applying the kernel's load
 /// naming law to condition leaves. The lockstep worklist keeps this path
 /// iterative and bounded and never clones an entire proposition tree.
+/// Whether a lowered proposition states `requirement`: exactly, up to
+/// canonical condition loads, or as the consequent left under the guards
+/// lowering put in front of it (generated arithmetic guards and path-fact
+/// guards, which no Surface connective spells). Proving that consequent is
+/// enough for the retried step, whose kernel check still sees the guard.
+pub(super) fn lowered_states_requirement(
+    lowered: &Proposition,
+    requirement: &UnresolvedRequirement,
+) -> bool {
+    if propositions_match_after_canonical_loads(lowered, &requirement.proposition) {
+        return true;
+    }
+    let mut target = &requirement.proposition;
+    for introduction in &requirement.introductions {
+        if !matches!(
+            introduction,
+            crate::kernel::LoweringIntroduction::ObligationGuard
+                | crate::kernel::LoweringIntroduction::PathFactGuard
+        ) {
+            break;
+        }
+        let Proposition::Implies(_, consequent) = target else {
+            break;
+        };
+        target = consequent;
+        if propositions_match_after_canonical_loads(lowered, target) {
+            return true;
+        }
+    }
+    false
+}
+
 fn propositions_match_after_canonical_loads(left: &Proposition, right: &Proposition) -> bool {
     const MAX_NODES: usize = 4096;
     let mut work = vec![(left, right)];
@@ -9119,9 +9320,31 @@ fn source_backed_call_requirement_surface(
             }
         },
     );
-    let proposition = substitute_click_proposition(
+    // A call step's binder map names the caller instance each callee binder
+    // is: the callee's field reads become reads of that caller instance.
+    let instance_renames = match step {
+        ProofStep::StepCall(transport) => transport
+            .binders()
+            .iter()
+            .map(|binding| {
+                (
+                    binding.binder().to_string(),
+                    crate::surface::lowering::InstanceRename {
+                        name: binding.instance().to_string(),
+                        identity: binding.binder_identity(),
+                        target_identity: Some(binding.identity()),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>(),
+        _ => BTreeMap::new(),
+    };
+    let proposition = crate::surface::lowering::substitute_click_proposition_in(
         elaborated.as_ref().unwrap_or(&source_proposition),
-        &substitutions,
+        &crate::surface::lowering::ContractSubstitutions::with_instance_renames(
+            &substitutions,
+            &instance_renames,
+        ),
     )
     .ok()?;
     Some(SourceBackedCallSurface {
@@ -10141,4 +10364,68 @@ fn unsigned_order_parts(
         return None;
     }
     Some((order, unflipped(left)?, unflipped(right)?))
+}
+
+/// Closes a `have` of a step requirement the way smart execution does: the
+/// bounded simp closure over the requirement and its conjunct leaves, and for
+/// an `int32` existential a witness of 0 first. This is the implicit `auto`
+/// a step runs for an obligation nothing written proves.
+pub(in crate::surface::proof) fn close_requirement_have_by_auto<'a>(
+    have: ProofScope<'a>,
+    surface: &ClickProposition,
+) -> Result<Option<ProofScope<'a>>, ClickError> {
+    let mut surfaces = vec![surface.clone()];
+    surfaces.extend(collect_bounded_surface_conjunct_leaves(surface)?);
+    let closed = have.try_simp_closure_with_surfaces(&surfaces)?;
+    if closed.is_some() {
+        return Ok(closed);
+    }
+    let ClickProposition::Exists {
+        click_type: ClickType::C(syntax::C0Type::Int32),
+        name,
+        written_name,
+        ..
+    } = surface
+    else {
+        return Ok(None);
+    };
+    let witnessed =
+        attempt::candidate_outcome(have.apply_step(ProofStep::Witness(ProofWitness::single(
+            written_name.as_ref().unwrap_or(name).clone(),
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(0),
+            ))),
+        ))))?;
+    match witnessed {
+        Some(witnessed) => witnessed.try_simp_closure_with_surfaces(&surfaces),
+        None => Ok(None),
+    }
+}
+
+/// A step requirement spelled in Surface syntax.
+pub(in crate::surface::proof) struct RequirementSpelling {
+    pub(in crate::surface::proof) surface: ClickProposition,
+    /// When the requirement is the caller's own predicate requirement passed
+    /// through the call: the predicate to unfold and the requirement to
+    /// project, as smart execution's retry proves it.
+    pub(in crate::surface::proof) direct_caller: Option<(String, CallerRequirementSelection)>,
+}
+
+/// Proves a requirement's `have` by the implicit `auto`: the caller's own
+/// requirement by unfolding its predicate and projecting it, anything else by
+/// [`close_requirement_have_by_auto`].
+pub(in crate::surface::proof) fn close_requirement_spelling_by_auto<'a>(
+    have: ProofScope<'a>,
+    spelling: &RequirementSpelling,
+) -> Result<Option<ProofScope<'a>>, ClickError> {
+    let Some((predicate_name, selection)) = &spelling.direct_caller else {
+        return close_requirement_have_by_auto(have, &spelling.surface);
+    };
+    let Some(unfolded) = attempt::candidate_outcome(
+        have.apply_step(ProofStep::UnfoldPredicate(predicate_name.clone())),
+    )?
+    else {
+        return Ok(None);
+    };
+    unfolded.try_direct_caller_requirement_closure(selection)
 }
