@@ -1,6 +1,6 @@
-# Serial-tail boundary of the original, locked Adler32::compute body.
-# The fixture harness combines this contract with the helper/getter contracts
-# from helpers.click, checks all their bodies, and rechecks the proof tools.
+// Serial-tail boundary of the original, locked Adler32::compute body.
+// The fixture harness combines this contract with the helper/getter contracts
+// from helpers.click, checks all their bodies, and rechecks the proof tools.
 impl adler2::Adler32 {
     fn compute(&mut self, bytes: &[u8]) {
      requires bytes.len() == 3u64;
@@ -19,8 +19,8 @@ impl adler2::Adler32 {
     } by {
      apply(adler_serial_three_result_spec(bytes));
      have old(bytes.len()) == 3u64;
-     # The empty chunk iterators execute no body. Prove the scalar reduction
-     # from its checked transition before following lane recombination.
+     // The empty chunk iterators execute no body. Prove the scalar reduction
+     // from its checked transition before following lane recombination.
      execute_until(assignment(b, 0)); step();
      have b == 0u32;
      execute_until(assignment(b, 3));
@@ -38,9 +38,9 @@ impl adler2::Adler32 {
      rewrite(at(scalar_mod, b) == 0u32);
      simp();
      }
-     # Marks bind the operands before each original lane update. __rust_checked
-     # locals are the adapter's actual captured call/arithmetic operands, not
-     # proof counters. These names are checked against the frozen import.
+     // Marks bind the operands before each original lane update. __rust_checked
+     // locals are the adapter's actual captured call/arithmetic operands, not
+     // proof counters. These names are checked against the frozen import.
      execute_until(assignment(__rust_mir_94, 0));
      mark add_lane_1;
      have at(add_lane_1, b_vec.0[1]) == 0u32;
@@ -156,7 +156,7 @@ impl adler2::Adler32 {
      have b_vec.0[1] == 65521u32;
      have b_vec.0[2] == 131042u32;
      have b_vec.0[3] == 196563u32;
-     # Read-only array iteration sums all four original lanes in order.
+     // Read-only array iteration sums all four original lanes in order.
      mark before_sum_a;
      have at(before_sum_a, a) == 1u32;
      have at(before_sum_a, a_vec.0[0]) == 0u32;
@@ -191,7 +191,7 @@ impl adler2::Adler32 {
      rewrite(at(before_sum_b, b_vec.0[3]) == 196563u32);
      simp();
      }
-     # Tail byte 0: the stored cursor/remaining pair advances once.
+     // Tail byte 0: the stored cursor/remaining pair advances once.
      execute_until(assignment(__rust_mir_144, 0));
      have remainder == old(bytes);
      have __rust_mir_138_cursor == old(bytes) + 1 by simp() using { remainder == old(bytes); };
@@ -264,9 +264,9 @@ impl adler2::Adler32 {
      add 6, 5 => to_integer(at(tail_b_1, a)) + (to_integer(at(tail_b_1, b)) + (to_integer(__rust_mir_148) + to_integer(at(tail_b_1, b) + at(tail_b_1, a)))) <= 256 + (393126 + (to_integer(at(tail_b_1, b) + at(tail_b_1, a)) + (to_integer(at(tail_b_1, b)) + to_integer(at(tail_b_1, a)))));
      conclusion 7;
      } }
-     # Finish the original store and storage-end nodes, then reach the next loop head.
+     // Finish the original store and storage-end nodes, then reach the next loop head.
      step(); step(); step(); step(); step(); step(); step(); step(); step(); step();
-     # Tail byte 1: the stored cursor/remaining pair advances once.
+     // Tail byte 1: the stored cursor/remaining pair advances once.
      execute_until(assignment(__rust_mir_144, 0));
      have remainder == old(bytes);
      have __rust_mir_138_cursor == old(bytes) + 2 by simp() using { remainder == old(bytes); };
@@ -336,9 +336,9 @@ impl adler2::Adler32 {
      add 6, 5 => to_integer(at(tail_b_2, a)) + (to_integer(at(tail_b_2, b)) + (to_integer(__rust_mir_148) + to_integer(at(tail_b_2, b) + at(tail_b_2, a)))) <= 511 + (393382 + (to_integer(at(tail_b_2, b) + at(tail_b_2, a)) + (to_integer(at(tail_b_2, b)) + to_integer(at(tail_b_2, a)))));
      conclusion 7;
      } }
-     # Finish the original store and storage-end nodes, then reach the next loop head.
+     // Finish the original store and storage-end nodes, then reach the next loop head.
      step(); step(); step(); step(); step(); step(); step(); step(); step(); step();
-     # Tail byte 2: the stored cursor/remaining pair advances once.
+     // Tail byte 2: the stored cursor/remaining pair advances once.
      execute_until(assignment(__rust_mir_144, 0));
      have remainder == old(bytes);
      have __rust_mir_138_cursor == old(bytes) + 3 by simp() using { remainder == old(bytes); };

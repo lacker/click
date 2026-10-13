@@ -901,7 +901,7 @@ int32 identity(int32 x) { ensures result == x by { execute(); simp(); } }
                 entry,
                 ClickModuleSource::new(
                     "library.click",
-                    "# changed imported input\ntheorem library_fact(x: int32) { ensures x == x by simp; }",
+                    "// changed imported input\ntheorem library_fact(x: int32) { ensures x == x by simp; }",
                     [],
                 ),
             ],

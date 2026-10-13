@@ -42,7 +42,7 @@ let k: int32 where k == x;
 
 ensures result == k by {
     execute();
-    witness { k: x }
+    witness { k: x };
     simp();
 }
 ```

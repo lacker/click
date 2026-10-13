@@ -51,7 +51,7 @@
     "diagnostic": "unbound variable `__rust_iter_3_5_remaining`",
     "migrated_sidecar": "design/charon-trial/iterator-proof/rust-iter-references/sum.click",
     "frozen_sidecar": "design/charon-trial/iterator-proof/rust-iter-references/frozen.click",
-    "frozen_sha256": "9fce5c740360aa8145bb54116a1b410b6a078ffaba533472425d8da184ceaed0"
+    "frozen_sha256": "b36a9f6fd4f25cf172e82ed3df23f8811f1862c89f992093f4d7bc62948553d8"
   },
   {
     "config": "examples/rust-iterators/sum.click.import.json",
@@ -59,7 +59,7 @@
     "diagnostic": "unbound variable `__rust_iter_3_5_remaining`",
     "migrated_sidecar": "design/charon-trial/iterator-proof/rust-iterators/sum.click",
     "frozen_sidecar": "design/charon-trial/iterator-proof/rust-iterators/frozen.click",
-    "frozen_sha256": "9fce5c740360aa8145bb54116a1b410b6a078ffaba533472425d8da184ceaed0"
+    "frozen_sha256": "b36a9f6fd4f25cf172e82ed3df23f8811f1862c89f992093f4d7bc62948553d8"
   },
   {
     "config": "examples/rust-loops/loops.click.import.json",

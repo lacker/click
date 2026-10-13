@@ -61,8 +61,8 @@ impl adler2::algo::U32X4 {
         have to_integer(result.0[2]) == old(to_integer((bytes[2] as i32))) by { rewrite(result.0[2] == old((bytes[2] as u32))); assumption(); }
         have result.0[3] == old((bytes[3] as u32));
         have to_integer(result.0[3]) == old(to_integer((bytes[3] as i32))) by { rewrite(result.0[3] == old((bytes[3] as u32))); assumption(); }
-        # Establish the byte ranges independently of the ensures clauses, then
-        # close from those checked witnesses so false bounds fail without search.
+        // Establish the byte ranges independently of the ensures clauses, then
+        // close from those checked witnesses so false bounds fail without search.
         have 255u32 >= result.0[0];
         have to_integer(result.0[0]) >= 0;
         have 255 >= to_integer(result.0[0]);
@@ -273,8 +273,8 @@ impl MulAssign<u32> for adler2::algo::U32X4 {
     }
 }
 
-# Empty-input boundary of the original, locked Adler32::compute body.
-# The preceding helper bodies and both constant getters are checked here too.
+// Empty-input boundary of the original, locked Adler32::compute body.
+// The preceding helper bodies and both constant getters are checked here too.
 impl adler2::Adler32 {
     fn compute(&mut self, bytes: &[u8]) {
      requires bytes.len() == 0u64;
@@ -286,8 +286,8 @@ impl adler2::Adler32 {
      ensures self.a == 1;
      ensures self.b == 0;
     } by {
-     # The empty chunk iterators execute no body. Prove the scalar reduction
-     # from its checked transition before following lane recombination.
+     // The empty chunk iterators execute no body. Prove the scalar reduction
+     // from its checked transition before following lane recombination.
      execute_until(assignment(b, 0)); step();
      have b == 0u32;
      execute_until(assignment(b, 3));
@@ -305,9 +305,9 @@ impl adler2::Adler32 {
      rewrite(at(scalar_mod, b) == 0u32);
      simp();
      }
-     # Marks bind the operands before each original lane update. __rust_checked
-     # locals are the adapter's actual captured call/arithmetic operands, not
-     # proof counters. These names are checked against the frozen import.
+     // Marks bind the operands before each original lane update. __rust_checked
+     // locals are the adapter's actual captured call/arithmetic operands, not
+     // proof counters. These names are checked against the frozen import.
      execute_until(assignment(__rust_mir_94, 0));
      mark add_lane_1;
      have at(add_lane_1, b_vec.0[1]) == 0u32;
@@ -423,7 +423,7 @@ impl adler2::Adler32 {
      have b_vec.0[1] == 65521u32;
      have b_vec.0[2] == 131042u32;
      have b_vec.0[3] == 196563u32;
-     # Read-only array iteration sums all four original lanes in order.
+     // Read-only array iteration sums all four original lanes in order.
      mark before_sum_a;
      have at(before_sum_a, a) == 1u32;
      have at(before_sum_a, a_vec.0[0]) == 0u32;
@@ -458,8 +458,8 @@ impl adler2::Adler32 {
      rewrite(at(before_sum_b, b_vec.0[3]) == 196563u32);
      simp();
      }
-     # Reduce before narrowing to u16; retain only these checked values in
-     # the final store closers.
+     // Reduce before narrowing to u16; retain only these checked values in
+     // the final store closers.
      execute_until(assignment(__rust_mir_149, 0));
      mark output_a;
      have at(output_a, __rust_mir_150) == 1u32;
@@ -497,7 +497,7 @@ impl adler2::Adler32 {
     }
 }
 
-# Imported scalar constants
+// Imported scalar constants
 impl adler2::Adler32 {
     fn compute::MOD() -> u32 { ensures result == 65521u32; } by { execute(); simp(); }
 }

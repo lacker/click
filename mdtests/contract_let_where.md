@@ -14,7 +14,7 @@ int32 identity(int32 x) {
 
     ensures result_matches_witness: result == k by {
         execute();
-        witness { k: x }
+        witness { k: x };
         simp();
     }
 }

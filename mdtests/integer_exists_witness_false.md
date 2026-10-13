@@ -3,7 +3,7 @@
 ```click
 theorem integer_exists_witness_false(x: Integer) {
     ensures exists (z: Integer) { z == 0 } by {
-        witness { z: x }
+        witness { z: x };
         normalize();
     }
 }

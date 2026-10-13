@@ -1,6 +1,6 @@
-# Shared Adler-32 specification over a logical byte snapshot.
-# The caller supplies a nonnegative signed-range length and canonical seeds.
-# These are mathematical lemmas; neither implementation's result is assumed.
+// Shared Adler-32 specification over a logical byte snapshot.
+// The caller supplies a nonnegative signed-range length and canonical seeds.
+// These are mathematical lemmas; neither implementation's result is assumed.
 
 function adler_byte_sum(bytes: uint8[], end: int32) -> Integer {
  (0..end).fold(0, |acc, k| { acc + to_integer((int32)bytes[k]) })
@@ -378,8 +378,8 @@ theorem adler_weighted_append_four(bytes: uint8[], n: int32) {
  }
 }
 
-# A signed quotient difference can witness congruence even when either
-# representative is smaller. Both dividend interpretations remain nonnegative.
+// A signed quotient difference can witness congruence even when either
+// representative is smaller. Both dividend interpretations remain nonnegative.
 theorem adler_residue_congruent(n: Integer, m: Integer, q: Integer) {
  requires 0 <= n;
  requires 0 <= m;
@@ -945,7 +945,7 @@ theorem adler_spec_three(bytes: uint8[]) {
  }
 }
 
-# Extensionality uses only equality of the selected input bytes; it grants no memory authority.
+// Extensionality uses only equality of the selected input bytes; it grants no memory authority.
 theorem adler_sums_extensional(left: uint8[], right: uint8[], bound: int32, n: int32, weight: int32) {
  requires 0 <= n;
  requires n <= bound;

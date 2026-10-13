@@ -111,7 +111,7 @@ void inspect(struct node* parent, int32 side) {
                     step(); step();
                     have sibling == model;
                     have parent->tag == at(tag_inputs, parent->tag);
-                    step(); # Finish the selected if continuation.
+                    step(); // Finish the selected if continuation.
                     mark rotation;
                     step(copy_tag(parent, sibling), {});
                     step(); step();

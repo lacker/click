@@ -54,6 +54,22 @@ Regressions cover siblings, long lines, deep nesting, and unrelated source text.
 
 ## Proof size and speed targets
 
+Direct int32 constant lookup follows only exact written equality edges filed
+under the queried endpoint. The adjacency map and its fact-ordered buckets
+are persistent; inserting an equality touches its two endpoints. Query work
+is the reached component, including repeated edges, rather than all ambient
+condition facts at each hop. The existing constant-class index declines a
+walk when the component has no constant; its folded values never supply a
+positive answer to this exact-equality query. It deliberately does not import pointer-offset
+equalities, memory canonicalization, or arithmetic folding. Replacement,
+withdrawal and premise restriction keep the derived index consistent with
+the retained facts. Identity memo keys omit this query index.
+`direct_constant_lookup_ignores_unrelated_condition_facts` measures three
+edge visits and six work units beside 16, 64, 256 and 1,024 unrelated
+entries. A separate multi-size chain regression bounds work by the connected
+input, and premise-lifecycle coverage checks cycles, reversed edges, forks,
+conflicting constants and distinct wide judgments.
+
 The complexity contract says how verification must scale. These working
 targets say what a finished example should look like. They are for judging a
 proof and deciding where to look when one is slow, not gates.
@@ -880,11 +896,10 @@ Recursive resource representations do not enter that relation as a cache
 probe: until they have stable shallow identities they are never rebased, and
 certification reports why the artifact was not reused.
 
-Likewise, two complete artifacts checked under exactly opposite polarities of
-one entry condition may be composed into one exhaustive frontier. All other
-premises must follow from the reconstructed contract context and every
-retained execution input must match. One side alone, two unrelated conditions, or any
-additional unproved premise leaves the artifacts unreusable.
+Each reused artifact must cover the whole entry on its own: artifacts checked
+under opposite cases of an entry condition are not composed. A proof that
+splits on a condition keeps both cases in one artifact, whose case partition
+the kernel checks for exhaustiveness.
 
 Grouped claims retain the same artifact, so adding claims does not multiply
 whole-function execution. Tests count checked body executions directly and

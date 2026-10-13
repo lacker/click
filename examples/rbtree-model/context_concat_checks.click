@@ -1,4 +1,4 @@
-# Red boundary, exact height/color matching, and whole-root blackness checks.
+// Red boundary, exact height/color matching, and whole-root blackness checks.
 import "rbtree_model.click";
 
 theorem red_boundary_fragment() {

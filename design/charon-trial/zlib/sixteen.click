@@ -513,7 +513,7 @@ uint64 adler32_z(uint64 adler, const uint8* buf, uint64 len) {
  }
  have zlib_prefix_count(16u64, len) == 16 by { unfold(zlib_prefix_count(16u64, len)); simp(); }
  have to_integer(adler) == 1 + adler_byte_sum(old(buf), 16) by { rewrite(16 == zlib_prefix_count(16u64, len)); assumption(); }
- # Convert the count separately: the Integer coefficient has already folded.
+ // Convert the count separately: the Integer coefficient has already folded.
  have to_integer(zlib_prefix_count(16u64, len)) == 16 by simp() using { zlib_prefix_count(16u64, len) == 16; };
  have adler_weighted_sum(old(buf), zlib_prefix_count(16u64, len), zlib_prefix_count(16u64, len)) == adler_weighted_sum(old(buf), 16, 16) by { rewrite(zlib_prefix_count(16u64, len) == 16); normalize(); }
  have to_integer(sum2) == to_integer(16) + adler_weighted_sum(old(buf), 16, 16) by arithmetic() using {
@@ -521,7 +521,7 @@ uint64 adler32_z(uint64 adler, const uint8* buf, uint64 len) {
   to_integer(zlib_prefix_count(16u64, len)) == 16;
   adler_weighted_sum(old(buf), zlib_prefix_count(16u64, len), zlib_prefix_count(16u64, len)) == adler_weighted_sum(old(buf), 16, 16);
  };
- # This original scalar loop exits immediately, but must retain A and B.
+ // This original scalar loop exits immediately, but must retain A and B.
  execute_until(loop(4));
  loop {
   decreases to_integer(len);

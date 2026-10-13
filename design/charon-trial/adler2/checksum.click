@@ -1,5 +1,5 @@
-# Contract fragment for the unchanged shared checksum getter.
-# The harness combines this with packing.click and the locked crate import.
+// Contract fragment for the unchanged shared checksum getter.
+// The harness combines this with packing.click and the locked crate import.
 impl adler2::Adler32 {
     fn checksum(&self) -> u32 {
      views self.a;

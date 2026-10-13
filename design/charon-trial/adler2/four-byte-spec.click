@@ -1,5 +1,5 @@
-# Checked bridge from the original four-byte recombination to the common spec.
-# Assemble after design/adler32-spec.click. No computation summary is assumed.
+// Checked bridge from the original four-byte recombination to the common spec.
+// Assemble after design/adler32-spec.click. No computation summary is assumed.
 
 theorem adler_four_byte_native_result(x0: uint8, x1: uint8, x2: uint8, x3: uint8) {
  ensures to_integer(((((1u32 + (uint32)x0) + (uint32)x1) + (uint32)x2) + (uint32)x3) % 65521u32) == truncating_remainder(1 + to_integer((int32)x0) + to_integer((int32)x1) + to_integer((int32)x2) + to_integer((int32)x3), 65521)

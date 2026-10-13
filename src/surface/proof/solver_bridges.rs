@@ -470,62 +470,55 @@ impl<'a> Proof<'a> {
         }
         let mut premises = candidates;
         premises.extend(established.iter().map(|(kernel, _)| kernel.clone()));
-        for _ in 0..super::smart_closures::SOLVER_SPELLING_ROUNDS {
-            check_verification_deadline()?;
-            let IntegerRefutation::Proved {
-                certificate,
-                premises: used,
-            } = crate::instrumentation::measure_operation(
-                "surface",
-                "auto solver",
-                "auto solver: bridged integer refutation",
-                || plan_integer_refutation(goal, &premises),
-            )
-            else {
-                return Ok(None);
-            };
-            // Keep only the carried facts the certificate cites, in their
-            // order.
-            let mut proof = self.clone();
-            for (kernel, item) in &established {
-                if used.contains(kernel) {
-                    match item.establish(&proof)? {
-                        Some(next) => proof = next,
-                        None => return Ok(None),
-                    }
+        check_verification_deadline()?;
+        let IntegerRefutation::Proved {
+            certificate,
+            premises: used,
+        } = crate::instrumentation::measure_operation(
+            "surface",
+            "auto solver",
+            "auto solver: bridged integer refutation",
+            || plan_integer_refutation(goal, &premises),
+        )
+        else {
+            return Ok(None);
+        };
+        // Keep only the carried facts the certificate cites, in their order.
+        let mut proof = self.clone();
+        for (kernel, item) in &established {
+            if used.contains(kernel) {
+                match item.establish(&proof)? {
+                    Some(next) => proof = next,
+                    None => return Ok(None),
                 }
             }
-            let mut pairs = Vec::with_capacity(used.len());
-            let mut unspelled = Vec::new();
-            for premise in &used {
-                if let Some((_, item)) = established.iter().find(|(kernel, _)| kernel == premise) {
-                    pairs.push((premise.clone(), item.surface.clone()));
-                    continue;
-                }
-                match proof
-                    .resolve_simp_premises(std::slice::from_ref(premise), &[])
-                    .and_then(|mut spelled| spelled.pop())
-                {
-                    Some(pair) => pairs.push(pair),
-                    None => unspelled.push(premise.clone()),
-                }
-            }
-            if !unspelled.is_empty() {
-                premises.retain(|premise| !unspelled.contains(premise));
-                continue;
-            }
-            let Some(surface) = super::smart_closures::integer_plan_to_surface_certificate(
-                &certificate,
-                &pairs,
-                surface_goal,
-            ) else {
-                return Ok(None);
-            };
-            return attempt::candidate_outcome(proof.apply_step(ProofStep::ArithmeticCertificate(
-                ArithmeticCertificate::integer(surface),
-            )));
         }
-        Ok(None)
+        // A cited fact with no source spelling leaves the certificate
+        // unwritable, so the solver does not close the goal.
+        let Some(pairs) = used
+            .iter()
+            .map(
+                |premise| match established.iter().find(|(kernel, _)| kernel == premise) {
+                    Some((_, item)) => Some((premise.clone(), item.surface.clone())),
+                    None => proof
+                        .resolve_simp_premises(std::slice::from_ref(premise), &[])
+                        .and_then(|mut spelled| spelled.pop()),
+                },
+            )
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(None);
+        };
+        let Some(surface) = super::smart_closures::integer_plan_to_surface_certificate(
+            &certificate,
+            &pairs,
+            surface_goal,
+        ) else {
+            return Ok(None);
+        };
+        attempt::candidate_outcome(proof.apply_step(ProofStep::ArithmeticCertificate(
+            ArithmeticCertificate::integer(surface),
+        )))
     }
 
     /// Close an `Integer` equality goal `l == r` by proving `l <= r` and

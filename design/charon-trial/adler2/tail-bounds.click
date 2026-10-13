@@ -1,5 +1,5 @@
-# Bounds for the unchanged zero-to-three-byte scalar tail.
-# Consumption is an observation of the stored iterator, without a runtime counter.
+// Bounds for the unchanged zero-to-three-byte scalar tail.
+// Consumption is an observation of the stored iterator, without a runtime counter.
 
 function adler_tail_consumed(total: int32, remaining: int32) -> Integer {
  to_integer(total) - to_integer(remaining)

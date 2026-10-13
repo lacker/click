@@ -1,4 +1,4 @@
-# Checked split observations for composing two native slice updates.
+// Checked split observations for composing two native slice updates.
 theorem adler_incremental_split(total: uint64, prefix: uint64) {
  requires total <= 2147483647u64;
  requires prefix <= total;

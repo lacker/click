@@ -1322,11 +1322,15 @@ pub(in crate::surface) struct FieldPlace {
     /// For a pointer to a struct, that struct: a read through the loaded
     /// pointer names the struct's fields, `p->next->second`.
     pointee_struct: Option<String>,
+    /// For an array of scalars, its element width and length: a read of
+    /// element `k` names `field[k]`, and `value_type` is the element's.
+    array: Option<(u32, u32)>,
 }
 
 /// The fields of `layout` a typed read can name: its scalar fields, and
 /// those of a struct nested in it, `inner.x`, at their offset from the
-/// start of `layout`. A union or an array is not one place and is left out.
+/// start of `layout`, and its arrays of scalars, each one place whose
+/// elements a read names by index. A union is not one place and is left out.
 pub(in crate::surface) fn scalar_field_places(
     layout: &syntax::C0StructLayout,
     layouts: &BTreeMap<String, syntax::C0StructLayout>,
@@ -1344,14 +1348,32 @@ pub(in crate::surface) fn scalar_field_places(
         places: &mut Vec<FieldPlace>,
     ) {
         for (name, field) in layout.fields() {
-            if field.union_name().is_some()
-                || field.array_element_width().is_some()
-                || field.is_long_double()
-            {
+            if field.union_name().is_some() || field.is_long_double() {
                 continue;
             }
             let name = format!("{prefix}{name}");
             let offset_bytes = base + field.offset_bytes();
+            if field.array_element_width().is_some() {
+                let element = match field.c_type() {
+                    C0Type::Int32Array(length) => Some((CType::Int32, 4, length)),
+                    C0Type::UInt32Array(length) => Some((CType::UInt32, 4, length)),
+                    C0Type::UInt8Array(length) => Some((CType::UInt8, 1, length)),
+                    _ => None,
+                };
+                if let Some((value_type, width, length)) = element
+                    && field.struct_name().is_none()
+                {
+                    places.push(FieldPlace {
+                        name,
+                        offset_bytes,
+                        value_type,
+                        pointee_constant: false,
+                        pointee_struct: None,
+                        array: Some((width, length)),
+                    });
+                }
+                continue;
+            }
             // A struct held by value is entered; a pointer to one is a
             // scalar place like any other pointer field.
             match field.struct_name() {
@@ -1378,6 +1400,7 @@ pub(in crate::surface) fn scalar_field_places(
                         .struct_name()
                         .filter(|_| field.c_type().is_pointer())
                         .map(str::to_string),
+                    array: None,
                 }),
             }
         }

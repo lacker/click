@@ -4,7 +4,7 @@ import "rbtree_erase_callbacks.click";
 import "../rbtree-model/rbtree_resources.click";
 import "../rbtree-model/rbtree_erase_splice.click";
 
-# Immediate black-leaf successor: retain the deficit for erase fixup.
+// Immediate black-leaf successor: retain the deficit for erase fixup.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);

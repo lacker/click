@@ -27,7 +27,7 @@ resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
     fact AugmentRotate(augment->rotate);
 }
 
-# Immediate red-leaf successor at the root.
+// Immediate red-leaf successor at the root.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);

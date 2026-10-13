@@ -26,7 +26,7 @@ int32 byte_slice_range_predicates(uint8 p[], int32 n) {
         obtain (found: int32) {
             0 <= found and found < n and p[found] == 'x'
         }
-        witness { k: found }
+        witness { k: found };
         simp();
     }
 

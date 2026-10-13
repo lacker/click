@@ -37,6 +37,20 @@ impl Drop for ModelAccessorScope {
     }
 }
 
+/// `std_array_data(a)` for the field place `a._M_elems`, when `field` (a
+/// dotted path such as `_M_extent._M_extent_value`) is a bound accessor's
+/// path: a place a typed read names is printed as the sidecar writes it.
+pub(super) fn describe_model_field_place(base: &str, field: &str) -> Option<String> {
+    MODEL_ACCESSORS.with(|bound| {
+        let bound = bound.borrow();
+        let path = field.split('.').collect::<Vec<_>>();
+        let (accessor, _) = bound
+            .iter()
+            .find(|(_, bound_path)| *bound_path == path.as_slice())?;
+        Some(format!("{accessor}({base})"))
+    })
+}
+
 /// Names a read address through a bound model accessor only when the
 /// receiver's own layout identifies the exact scalar field at that address.
 pub(super) fn describe_model_field_at(

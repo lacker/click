@@ -1,6 +1,7 @@
 //! Smart closure search and linear script interpretation.
 
 use super::*;
+use crate::kernel::CFloatCondition;
 use crate::kernel::proof::arithmetic_special::signed_definedness_operands;
 use crate::kernel::proof::integer_arithmetic::{
     IntegerAffineClaim, IntegerAffineRelation, IntegerArithmeticCertificate, IntegerArithmeticNode,
@@ -13,7 +14,6 @@ use crate::kernel::proof::signed_arithmetic::{
 use crate::kernel::proof::{
     PropositionIdentityKey, proposition_identity_key, propositions_are_alpha_equal,
 };
-use crate::kernel::{CFloatClassification, CFloatCondition};
 use crate::surface::checking::plan_signed_arithmetic_certificate;
 use crate::surface::checking::{IntegerRefutation, plan_integer_refutation};
 use crate::surface::planning::proposition_search::PropositionSearch;
@@ -28,7 +28,6 @@ const MAX_SIMP_SOURCE_PREMISES: usize = 64;
 /// continues the chain, the others get a one-link closing probe.
 /// How many times the solver behind `auto` plans again without the
 /// premises it could not spell.
-pub(in crate::surface::proof) const SOLVER_SPELLING_ROUNDS: usize = 4;
 const MAX_EQUALITY_REWRITE_BRANCHES: usize = 4;
 
 fn collect_signed_surface_terms<'a>(
@@ -1889,7 +1888,7 @@ impl<'a> Proof<'a> {
         if crate::kernel::proof::integer_arithmetic::integer_affine_claim(goal).is_none() {
             return Ok(None);
         }
-        let Some(mut candidates) =
+        let Some(candidates) =
             crate::surface::planning::proposition_search::solver_connected_premises(
                 self.facts().assumptions(),
                 goal,
@@ -1897,49 +1896,39 @@ impl<'a> Proof<'a> {
         else {
             return Ok(None);
         };
-        // A certificate cites its premises by their source spelling. A fact
-        // with none (a conjunct of a written invariant, for one) cannot be
-        // cited, so the solver runs again without it, a bounded number of
-        // times.
-        for _ in 0..SOLVER_SPELLING_ROUNDS {
-            check_verification_deadline()?;
-            let IntegerRefutation::Proved {
-                certificate,
-                premises,
-            } = crate::instrumentation::measure_operation(
-                "surface",
-                "auto solver",
-                "auto solver: integer refutation",
-                || plan_integer_refutation(goal, &candidates),
-            )
-            else {
-                return Ok(None);
-            };
-            let mut pairs = Vec::with_capacity(premises.len());
-            let mut unspelled = Vec::new();
-            for premise in &premises {
-                match self
-                    .resolve_simp_premises(std::slice::from_ref(premise), &[])
+        check_verification_deadline()?;
+        let IntegerRefutation::Proved {
+            certificate,
+            premises,
+        } = crate::instrumentation::measure_operation(
+            "surface",
+            "auto solver",
+            "auto solver: integer refutation",
+            || plan_integer_refutation(goal, &candidates),
+        )
+        else {
+            return Ok(None);
+        };
+        // A certificate cites its premises by their source spelling; one
+        // that needs a fact with none (a conjunct of a written invariant,
+        // for one) is not closed by the solver.
+        let Some(pairs) = premises
+            .iter()
+            .map(|premise| {
+                self.resolve_simp_premises(std::slice::from_ref(premise), &[])
                     .and_then(|mut spelled| spelled.pop())
-                {
-                    Some(pair) => pairs.push(pair),
-                    None => unspelled.push(premise.clone()),
-                }
-            }
-            if !unspelled.is_empty() {
-                candidates.retain(|candidate| !unspelled.contains(candidate));
-                continue;
-            }
-            let Some(surface) =
-                integer_plan_to_surface_certificate(&certificate, &pairs, surface_goal)
-            else {
-                return Ok(None);
-            };
-            return attempt::candidate_outcome(self.apply_step(ProofStep::ArithmeticCertificate(
-                ArithmeticCertificate::integer(surface),
-            )));
-        }
-        Ok(None)
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(None);
+        };
+        let Some(surface) = integer_plan_to_surface_certificate(&certificate, &pairs, surface_goal)
+        else {
+            return Ok(None);
+        };
+        attempt::candidate_outcome(self.apply_step(ProofStep::ArithmeticCertificate(
+            ArithmeticCertificate::integer(surface),
+        )))
     }
 
     fn try_flat_simp_conjunction(
@@ -2277,13 +2266,15 @@ impl<'a> Proof<'a> {
             // holds every fact connected to the goal's variables, and
             // spelling them all costs work in the path's length for a
             // closer that cites one or two.
-            if let Some(cited) = derivation.recorded_path_premises()
-                && let Some(pairs) = self.resolve_simp_premises(&cited, introduced_surfaces)
-                && pairs.len() == cited.len()
+            let cited_pairs = derivation.recorded_path_premises().and_then(|cited| {
+                self.resolve_simp_premises(&cited, introduced_surfaces)
+                    .filter(|pairs| pairs.len() == cited.len())
+            });
+            if let Some(pairs) = &cited_pairs
                 && let Some(closed) = self.check_typed_atomic_simp_candidate(
                     &goal,
                     &derivation,
-                    &pairs,
+                    pairs,
                     fixed_state_application_closes_goal,
                 )
             {
@@ -2306,22 +2297,19 @@ impl<'a> Proof<'a> {
             anchored_pairs =
                 self.resolve_simp_premises(&derivation.context_premises(), introduced_surfaces)?;
             let premise_pairs = &anchored_pairs;
+            // The same derivation already failed to check over the premises
+            // it cites; the wider context does not translate it either.
             let typed_atomic =
                 match self.extract_special_conjunct_premises(&derivation, premise_pairs) {
                     Ok(Some(extracted)) if extracted.is_complete() => Some(extracted),
+                    _ if cited_pairs.is_some() => None,
                     Ok(Some(extracted)) => extracted.check_typed_atomic_simp_candidate(
                         &goal,
                         &derivation,
                         premise_pairs,
                         fixed_state_application_closes_goal,
                     ),
-                    Ok(None) => self.check_typed_atomic_simp_candidate(
-                        &goal,
-                        &derivation,
-                        premise_pairs,
-                        fixed_state_application_closes_goal,
-                    ),
-                    Err(()) => self.check_typed_atomic_simp_candidate(
+                    Ok(None) | Err(()) => self.check_typed_atomic_simp_candidate(
                         &goal,
                         &derivation,
                         premise_pairs,
@@ -4207,7 +4195,7 @@ impl<'a> Proof<'a> {
     /// as the same judgment stated in the function body does. A fixed-state
     /// proof whose state is its entry state (the same object) needs no such
     /// anchoring, and keeps its plain spellings.
-    fn premise_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
+    pub(super) fn premise_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
         self.outcome_fixed_state_view()
             .or_else(|| self.execution_proposition_fixed_state_view())
             .or_else(|| match self.context.as_ref() {
@@ -7355,42 +7343,6 @@ impl<'a> Proof<'a> {
                         &plan,
                         &premise_pairs
                             .iter()
-                            .map(|(_, surface)| surface.clone())
-                            .collect::<Vec<_>>(),
-                        surface_goal,
-                    ),
-                )])
-            })
-            .or_else(|| {
-                let finite_premises = premise_pairs
-                    .iter()
-                    .filter(|(premise, _)| {
-                        matches!(
-                            premise,
-                            Proposition::ConditionIs(
-                                ConditionTerm::Float32(CFloatCondition::Classification {
-                                    classification: CFloatClassification::Finite,
-                                    ..
-                                }) | ConditionTerm::Float64(CFloatCondition::Classification {
-                                    classification: CFloatClassification::Finite,
-                                    ..
-                                }),
-                                true
-                            )
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let kernels = finite_premises
-                    .iter()
-                    .map(|(premise, _)| premise.clone())
-                    .collect::<Vec<_>>();
-                let surface_goal = self.surface_goal()?;
-                let plan = plan_special_arithmetic_certificate(goal, &kernels)?;
-                Some(vec![ProofTactic::ArithmeticCertificate(
-                    special_plan_to_surface_certificate(
-                        &plan,
-                        &finite_premises
-                            .into_iter()
                             .map(|(_, surface)| surface.clone())
                             .collect::<Vec<_>>(),
                         surface_goal,

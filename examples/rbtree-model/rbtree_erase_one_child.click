@@ -8,7 +8,7 @@ function rb_erase_one_child_model(tree: RbTree) -> RbTree {
     }
 }
 
-# A node with only a nonempty right child is itself the subtree minimum.
+// A node with only a nonempty right child is itself the subtree minimum.
 theorem rb_erase_only_right_child(node: struct rb_node*, parent: struct rb_node*,
     color: Color, child: RbTree, up: Context) {
     requires is_rb(RbTree::Node(node, parent, color, RbTree::Empty, child)) == 1;
@@ -58,7 +58,7 @@ theorem rb_erase_child_keeps_parents(up: Context, node: struct rb_node*, parent:
     }
 }
 
-# Local symmetry lets both one-child directions use the same balance argument.
+// Local symmetry lets both one-child directions use the same balance argument.
 theorem rb_swap_children_valid(node: struct rb_node*, parent: struct rb_node*, color: Color,
     left: RbTree, right: RbTree) {
     requires is_rb(RbTree::Node(node, parent, color, left, right)) == 1;

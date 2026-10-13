@@ -61,7 +61,7 @@ int32 plain_cstr(uint8 p[]) {
         obtain (found_len: uint64) {
             at(function.entry, cstr_len(p, found_len))
         }
-        witness { len: found_len }
+        witness { len: found_len };
         simp();
     }
 }

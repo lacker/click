@@ -223,6 +223,14 @@ fallback: the former `Retained` search, the compatibility escape hatch in
 smart execution's retry, and the in-step re-run. Lower each pin as its cases
 move; the step census reaches zero.
 
+Progress: `simp` proves a constructor disequality over
+a call-produced field, and a count's definedness once a zero summand is
+removed, and a `defined(..)` that carries a read's definedness. The remaining
+cases are 3 `ContextualAtomic` mdtests (`shared_heap_*` after
+`parent_read_payload`, whose constructor argument is an entry-snapshot value
+synthesis cannot yet spell) and 1 example `And` (`owned-string`), whose
+add-overflow-and-read requirement has no spelling yet.
+
 ### 4. Check expansion cold
 
 `click expand` already checks its output before writing it. Run that check,

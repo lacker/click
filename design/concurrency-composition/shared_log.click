@@ -886,9 +886,9 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
     }
 }
 
-# Each producer still to run holds one credit. The log's control owns the
-# vector, whose allocation and data range change when a push grows it, and
-# the credit authority; its fact keeps room for every remaining push.
+// Each producer still to run holds one credit. The log's control owns the
+// vector, whose allocation and data range change when a push grows it, and
+// the credit authority; its fact keeps room for every remaining push.
 authorized resource credit(log: struct shared_log*) {}
 
 resource log_state(log: struct shared_log*) {

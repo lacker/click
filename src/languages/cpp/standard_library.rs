@@ -45,6 +45,18 @@ const BINDINGS: &[AccessorBinding] = &[
         accessor: "std_span_size",
         path: &["__size_"],
     },
+    // `std::array<T, N>` holds its elements in `T _M_elems[N]` (libstdc++)
+    // or `T __elems_[N]` (libc++).
+    AccessorBinding {
+        record_prefix: "array__",
+        accessor: "std_array_data",
+        path: &["_M_elems"],
+    },
+    AccessorBinding {
+        record_prefix: "array__",
+        accessor: "std_array_data",
+        path: &["__elems_"],
+    },
 ];
 
 /// The model accessors the parsed records support, each with its field path.
@@ -143,6 +155,30 @@ const SPAN_ELEMENTS: &[SpanElement] = &[
         name: "std::byte",
         signature: "enum std::byte",
         click: "uint8",
+        bytes: 1,
+    },
+    SpanElement {
+        name: "const int",
+        signature: "const int",
+        click: "const int32",
+        bytes: 4,
+    },
+    SpanElement {
+        name: "const unsigned int",
+        signature: "const unsigned int",
+        click: "const uint32",
+        bytes: 4,
+    },
+    SpanElement {
+        name: "const unsigned char",
+        signature: "const unsigned char",
+        click: "const uint8",
+        bytes: 1,
+    },
+    SpanElement {
+        name: "const std::byte",
+        signature: "const enum std::byte",
+        click: "const uint8",
         bytes: 1,
     },
 ];
@@ -249,6 +285,169 @@ const SPAN_CATALOG: &[CatalogEntry] = &[
     },
 ];
 
+// `std::span<T, N>` with static extent `N`: a view of `[data, data + N)`. The
+// extent is the template argument, not state, so the contracts state it as
+// the literal `{extent}`; only the data pointer is a model accessor. The
+// subviews taking a runtime count return dynamic-extent spans.
+const STATIC_SPAN_CATALOG: &[CatalogEntry] = &[
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::size",
+        signature: "unsigned long (void) const noexcept",
+        contract: "extern uint64 {name}(const struct {record}* this) {
+    ensures result == {extent}u64;
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::size_bytes",
+        signature: "unsigned long (void) const noexcept",
+        contract: "extern uint64 {name}(const struct {record}* this) {
+    ensures result == {extent_bytes}u64;
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::data",
+        signature: "{T_signature} *(void) const noexcept",
+        contract: "extern {element}* {name}(const struct {record}* this) {
+    views std_span_data(this);
+    ensures result == std_span_data(this);
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::front",
+        signature: "{T_signature} &(void) const noexcept",
+        contract: "extern {element}& {name}(const struct {record}* this) {
+    views std_span_data(this);
+    requires 1u64 <= {extent}u64;
+    ensures &result == std_span_data(this);
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::back",
+        signature: "{T_signature} &(void) const noexcept",
+        contract: "extern {element}& {name}(const struct {record}* this) {
+    views std_span_data(this);
+    requires 1u64 <= {extent}u64;
+    ensures &result == std_span_data(this) + ({extent}u64 - 1u64);
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::operator[]",
+        signature: "{T_signature} &(unsigned long) const noexcept",
+        contract: "extern {element}& {name}(const struct {record}* this, uint64 {p1}) {
+    views std_span_data(this);
+    requires {p1} < {extent}u64;
+    ensures &result == std_span_data(this) + {p1};
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::first",
+        signature: "class std::span<{T_signature}> (unsigned long) const noexcept",
+        contract: "extern struct {result_record} {name}(const struct {record}* this, uint64 {p1}) {
+    views std_span_data(this);
+    requires {p1} <= {extent}u64;
+    ensures std_span_data(result) == std_span_data(this);
+    ensures std_span_size(result) == {p1};
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::last",
+        signature: "class std::span<{T_signature}> (unsigned long) const noexcept",
+        contract: "extern struct {result_record} {name}(const struct {record}* this, uint64 {p1}) {
+    views std_span_data(this);
+    requires {p1} <= {extent}u64;
+    ensures std_span_data(result) == std_span_data(this) + ({extent}u64 - {p1});
+    ensures std_span_size(result) == {p1};
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::span<{T}, {N}>::subspan",
+        signature: "class std::span<{T_signature}> (unsigned long, unsigned long) const noexcept",
+        contract: "extern struct {result_record} {name}(const struct {record}* this, uint64 {p1}, uint64 {p2}) {
+    views std_span_data(this);
+    requires {p1} <= {extent}u64;
+    requires {p2} != {dynamic_extent} implies {p2} <= {extent}u64 - {p1};
+    ensures std_span_data(result) == std_span_data(this) + {p1};
+    ensures {p2} == {dynamic_extent} implies std_span_size(result) == {extent}u64 - {p1};
+    ensures {p2} != {dynamic_extent} implies std_span_size(result) == {p2};
+}",
+    },
+];
+
+// `std::array<T, N>`: `N` elements held in the object, `std_array_data(a)`.
+// The element accessors have a const and a mutable overload; they require
+// an index inside the array and form an address without reading it.
+const ARRAY_CATALOG: &[CatalogEntry] = &[
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::size",
+        signature: "unsigned long (void) const noexcept",
+        contract: "extern uint64 {name}(const struct {record}* this) {
+    ensures result == {extent}u64;
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::data",
+        signature: "{T_signature} *(void) noexcept",
+        contract: "extern {element}* {name}(struct {record}* this) {
+    ensures result == &std_array_data(this)[0];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::data",
+        signature: "const {T_signature} *(void) const noexcept",
+        contract: "extern const {element}* {name}(const struct {record}* this) {
+    ensures result == &std_array_data(this)[0];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::operator[]",
+        signature: "{T_signature} &(unsigned long) noexcept",
+        contract: "extern {element}& {name}(struct {record}* this, uint64 {p1}) {
+    requires {p1} < {extent}u64;
+    ensures &result == &std_array_data(this)[{p1}];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::operator[]",
+        signature: "const {T_signature} &(unsigned long) const noexcept",
+        contract: "extern const {element}& {name}(const struct {record}* this, uint64 {p1}) {
+    requires {p1} < {extent}u64;
+    ensures &result == &std_array_data(this)[{p1}];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::front",
+        signature: "{T_signature} &(void) noexcept",
+        contract: "extern {element}& {name}(struct {record}* this) {
+    requires 1u64 <= {extent}u64;
+    ensures &result == &std_array_data(this)[0];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::front",
+        signature: "const {T_signature} &(void) const noexcept",
+        contract: "extern const {element}& {name}(const struct {record}* this) {
+    requires 1u64 <= {extent}u64;
+    ensures &result == &std_array_data(this)[0];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::back",
+        signature: "{T_signature} &(void) noexcept",
+        contract: "extern {element}& {name}(struct {record}* this) {
+    requires 1u64 <= {extent}u64;
+    ensures &result == &std_array_data(this)[{extent}u64 - 1u64];
+}",
+    },
+    CatalogEntry {
+        qualified_name: "std::array<{T}, {N}>::back",
+        signature: "const {T_signature} &(void) const noexcept",
+        contract: "extern const {element}& {name}(const struct {record}* this) {
+    requires 1u64 <= {extent}u64;
+    ensures &result == &std_array_data(this)[{extent}u64 - 1u64];
+}",
+    },
+];
+
 // Entries for one instantiation, outside the generic span family.
 const CATALOG: &[CatalogEntry] = &[CatalogEntry {
     qualified_name: "std::as_writable_bytes",
@@ -267,32 +466,62 @@ fn catalog_contract(axiom: &super::schema::CppAxiom) -> Option<String> {
     }) {
         return Some(entry.contract.to_string());
     }
-    // The element is the template argument the qualified name spells; an
-    // entry matches only when its signature spells the same element.
-    let element_name = axiom
-        .qualified_name
-        .strip_prefix("std::span<")?
-        .rsplit_once(">::")?
-        .0;
+    // The element, and a static extent if there is one, are the template
+    // arguments the qualified name spells; an entry matches only when its
+    // signature spells the same element.
+    let (array, arguments) = if let Some(rest) = axiom.qualified_name.strip_prefix("std::span<") {
+        (false, rest)
+    } else {
+        (true, axiom.qualified_name.strip_prefix("std::array<")?)
+    };
+    let arguments = arguments.rsplit_once(">::")?.0;
+    let (element_name, extent) = match arguments.rsplit_once(", ") {
+        Some((element, extent)) => (element, Some(extent.parse::<u64>().ok()?)),
+        None => (arguments, None),
+    };
+    // An array's elements are its own objects; a const element type is
+    // not one the catalog states.
+    if array && (extent.is_none() || element_name.starts_with("const ")) {
+        return None;
+    }
     let element = SPAN_ELEMENTS
         .iter()
         .find(|element| element.name == element_name)?;
+    // `std::dynamic_extent` is never spelled as a static extent.
+    if extent.is_some_and(|extent| extent == u64::MAX) {
+        return None;
+    }
+    let extent_text = extent.map(|extent| extent.to_string()).unwrap_or_default();
     let instantiate = |pattern: &str| {
         pattern
             .replace("{T_signature}", element.signature)
             .replace("{T}", element.name)
+            .replace("{N}", &extent_text)
     };
-    let entry = SPAN_CATALOG.iter().find(|entry| {
+    let family = if array {
+        ARRAY_CATALOG
+    } else if extent.is_some() {
+        STATIC_SPAN_CATALOG
+    } else {
+        SPAN_CATALOG
+    };
+    let entry = family.iter().find(|entry| {
         instantiate(entry.qualified_name) == axiom.qualified_name
             && instantiate(entry.signature) == axiom.signature
     })?;
-    Some(
-        entry
-            .contract
-            .replace("{element}", element.click)
-            .replace("{bytes}", &element.bytes.to_string())
-            .replace("{dynamic_extent}", DYNAMIC_EXTENT),
-    )
+    let mut contract = entry
+        .contract
+        .replace("{element}", element.click)
+        .replace("{bytes}", &element.bytes.to_string())
+        .replace("{dynamic_extent}", DYNAMIC_EXTENT);
+    if let Some(extent) = extent {
+        // An extent whose byte size does not fit is not stated.
+        let extent_bytes = extent.checked_mul(element.bytes)?;
+        contract = contract
+            .replace("{extent_bytes}", &extent_bytes.to_string())
+            .replace("{extent}", &extent_text);
+    }
+    Some(contract)
 }
 
 /// The Click contracts for the axioms an import reaches, as `extern`

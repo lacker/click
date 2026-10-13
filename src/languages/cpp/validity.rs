@@ -60,9 +60,11 @@ impl CppType {
                 }
                 Ok(())
             }
-            Self::LvalueReference { pointee } | Self::Pointer { pointee } => {
-                pointee.check_aliases(accepts_source)
-            }
+            Self::LvalueReference { pointee }
+            | Self::Pointer { pointee }
+            | Self::Array {
+                element: pointee, ..
+            } => pointee.check_aliases(accepts_source),
             Self::Void | Self::Boolean { .. } | Self::Record { .. } => Ok(()),
         }
     }

@@ -1,6 +1,6 @@
-# Four-byte boundary of the original, locked Adler32::compute body.
-# The fixture harness combines this contract with the helper/getter contracts
-# from helpers.click, checks all their bodies, and rechecks the proof tools.
+// Four-byte boundary of the original, locked Adler32::compute body.
+// The fixture harness combines this contract with the helper/getter contracts
+// from helpers.click, checks all their bodies, and rechecks the proof tools.
 impl adler2::Adler32 {
     fn compute(&mut self, bytes: &[u8]) {
      requires bytes.len() == 4u64;
@@ -27,7 +27,7 @@ impl adler2::Adler32 {
      have at(input_batch, remainder_chunk_len) == 4u64 by simp() using { remainder_chunk_len == 4u64; };
      have at(input_batch, a) == 1u32;
      have at(input_batch, b) == 0u32;
-     # Observe the stored int32 traversal state, not the uint64 slice facade.
+     // Observe the stored int32 traversal state, not the uint64 slice facade.
      execute_until(loop(2));
      have __rust_mir_62_remaining == 4u64;
      have __rust_mir_62_remaining <= 4u64 by { rewrite(__rust_mir_62_remaining == 4u64); normalize(); }
@@ -199,7 +199,7 @@ impl adler2::Adler32 {
        execute_until(assignment(__rust_mir_71, 0));
        have __rust_mir_62_cursor == old(bytes) + 4 by simp() using { at(lane_head, __rust_mir_62_cursor) == old(bytes); at(lane_head, __rust_mir_62_size) == 4u64; at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) == 4; };
        have ((__rust_mir_62_remaining as u32) as i32) == 0 by simp() using { at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) == 4; at(lane_head, __rust_mir_62_size) == 4u64; };
-       # next() consumes four bytes before either original helper call.
+       // next() consumes four bytes before either original helper call.
        have ((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) - 4 by {
         rewrite(at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) == 4); simp() using { ((__rust_mir_62_remaining as u32) as i32) == 0; }
        }
@@ -311,7 +311,7 @@ impl adler2::Adler32 {
        have at(vector_a, a_vec.0[3]) == 0u32;
        have at(vector_a, __rust_mir_68.0[3]) == old(bytes[3]) by simp() using { __rust_mir_68.0[3] == old(bytes[3]); };
        have to_integer(at(vector_a, __rust_mir_68.0[3])) <= 255 by simp() using { to_integer(__rust_mir_68.0[3]) <= 255; };
-       # Retain the entry lanes for both checked helper calls.
+       // Retain the entry lanes for both checked helper calls.
        have 0 <= to_integer(at(vector_a, a_vec.0[0]));
        have to_integer(at(vector_a, a_vec.0[0])) <= adler_lane_a_ceiling(adler_lane_vectors_consumed(4, at(lane_head, ((__rust_mir_62_remaining as u32) as i32)))) by simp() using { to_integer(a_vec.0[0]) <= adler_lane_a_ceiling(adler_lane_vectors_consumed(4, at(lane_head, ((__rust_mir_62_remaining as u32) as i32)))); };
        have 0 <= to_integer(at(vector_a, b_vec.0[0]));
@@ -500,7 +500,7 @@ impl adler2::Adler32 {
        rewrite(at(vector_b, b_vec.0[3]) == 0u32);
        rewrite(at(vector_b, a_vec.0[3]) == old(bytes[3])); simp() using {};
        }
-       # Both actual helper results satisfy the ceiling at next()'s new state.
+       // Both actual helper results satisfy the ceiling at next()'s new state.
        have ((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) - 4;
        have adler_lane_a_ceiling(adler_lane_vectors_consumed(4, ((__rust_mir_62_remaining as u32) as i32))) == adler_lane_a_ceiling(adler_lane_vectors_consumed(4, at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) - 4)) by {
         rewrite(((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) - 4); simp() using {};
@@ -1402,7 +1402,7 @@ impl adler2::Adler32 {
      execute_until(assignment(a, 1)); step();
      have a == (1u32 + (old((bytes[0] as u32)))) by simp() using { __rust_mir_122 == (1u32 + (old((bytes[0] as u32)))); };
      have to_integer(a) <= 256 by simp() using { to_integer(__rust_mir_122) <= 256; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      execute_until(assignment(__rust_mir_121, 0));
      have __rust_mir_115_cursor == at(before_sum_a, __rust_mir_115_cursor) + 2;
@@ -1431,7 +1431,7 @@ impl adler2::Adler32 {
      execute_until(assignment(a, 1)); step();
      have a == ((1u32 + (old((bytes[0] as u32)))) + (old((bytes[1] as u32)))) by simp() using { __rust_mir_122 == ((1u32 + (old((bytes[0] as u32)))) + (old((bytes[1] as u32)))); };
      have to_integer(a) <= 511 by simp() using { to_integer(__rust_mir_122) <= 511; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      execute_until(assignment(__rust_mir_121, 0));
      have __rust_mir_115_cursor == at(before_sum_a, __rust_mir_115_cursor) + 3;
@@ -1460,7 +1460,7 @@ impl adler2::Adler32 {
      execute_until(assignment(a, 1)); step();
      have a == (((1u32 + (old((bytes[0] as u32)))) + (old((bytes[1] as u32)))) + (old((bytes[2] as u32)))) by simp() using { __rust_mir_122 == (((1u32 + (old((bytes[0] as u32)))) + (old((bytes[1] as u32)))) + (old((bytes[2] as u32)))); };
      have to_integer(a) <= 766 by simp() using { to_integer(__rust_mir_122) <= 766; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      execute_until(assignment(__rust_mir_121, 0));
      have __rust_mir_115_cursor == at(before_sum_a, __rust_mir_115_cursor) + 4;
@@ -1489,7 +1489,7 @@ impl adler2::Adler32 {
      execute_until(assignment(a, 1)); step();
      have a == ((((1u32 + (old((bytes[0] as u32)))) + (old((bytes[1] as u32)))) + (old((bytes[2] as u32)))) + (old((bytes[3] as u32)))) by simp() using { __rust_mir_122 == ((((1u32 + (old((bytes[0] as u32)))) + (old((bytes[1] as u32)))) + (old((bytes[2] as u32)))) + (old((bytes[3] as u32)))); };
      have to_integer(a) <= 1021 by simp() using { to_integer(__rust_mir_122) <= 1021; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      have ((__rust_mir_115_remaining as u32) as i32) == 0;
      execute_until(loop(4));
@@ -1525,7 +1525,7 @@ impl adler2::Adler32 {
      execute_until(assignment(b, 5)); step();
      have b == (4u32 + (old((bytes[0] as u32)) * 4u32)) by simp() using { __rust_mir_134 == (4u32 + (old((bytes[0] as u32)) * 4u32)); };
      have to_integer(b) <= 1024 by simp() using { to_integer(__rust_mir_134) <= 1024; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      execute_until(assignment(__rust_mir_133, 0));
      have __rust_mir_127_cursor == at(before_sum_b, __rust_mir_127_cursor) + 2;
@@ -1554,7 +1554,7 @@ impl adler2::Adler32 {
      execute_until(assignment(b, 5)); step();
      have b == ((4u32 + (old((bytes[0] as u32)) * 4u32)) + (old((bytes[1] as u32)) * 4u32 + (65521u32 - old((bytes[1] as u32))))) by simp() using { __rust_mir_134 == ((4u32 + (old((bytes[0] as u32)) * 4u32)) + (old((bytes[1] as u32)) * 4u32 + (65521u32 - old((bytes[1] as u32))))); };
      have to_integer(b) <= 67565 by simp() using { to_integer(__rust_mir_134) <= 67565; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      execute_until(assignment(__rust_mir_133, 0));
      have __rust_mir_127_cursor == at(before_sum_b, __rust_mir_127_cursor) + 3;
@@ -1583,7 +1583,7 @@ impl adler2::Adler32 {
      execute_until(assignment(b, 5)); step();
      have b == (((4u32 + (old((bytes[0] as u32)) * 4u32)) + (old((bytes[1] as u32)) * 4u32 + (65521u32 - old((bytes[1] as u32))))) + (old((bytes[2] as u32)) * 4u32 + ((65521u32 - old((bytes[2] as u32))) * 2u32))) by simp() using { __rust_mir_134 == (((4u32 + (old((bytes[0] as u32)) * 4u32)) + (old((bytes[1] as u32)) * 4u32 + (65521u32 - old((bytes[1] as u32))))) + (old((bytes[2] as u32)) * 4u32 + ((65521u32 - old((bytes[2] as u32))) * 2u32))); };
      have to_integer(b) <= 199627 by simp() using { to_integer(__rust_mir_134) <= 199627; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      execute_until(assignment(__rust_mir_133, 0));
      have __rust_mir_127_cursor == at(before_sum_b, __rust_mir_127_cursor) + 4;
@@ -1612,7 +1612,7 @@ impl adler2::Adler32 {
      execute_until(assignment(b, 5)); step();
      have b == ((((4u32 + (old((bytes[0] as u32)) * 4u32)) + (old((bytes[1] as u32)) * 4u32 + (65521u32 - old((bytes[1] as u32))))) + (old((bytes[2] as u32)) * 4u32 + ((65521u32 - old((bytes[2] as u32))) * 2u32))) + (old((bytes[3] as u32)) * 4u32 + ((65521u32 - old((bytes[3] as u32))) * 3u32))) by simp() using { __rust_mir_134 == ((((4u32 + (old((bytes[0] as u32)) * 4u32)) + (old((bytes[1] as u32)) * 4u32 + (65521u32 - old((bytes[1] as u32))))) + (old((bytes[2] as u32)) * 4u32 + ((65521u32 - old((bytes[2] as u32))) * 2u32))) + (old((bytes[3] as u32)) * 4u32 + ((65521u32 - old((bytes[3] as u32))) * 3u32))); };
      have to_integer(b) <= 397210 by simp() using { to_integer(__rust_mir_134) <= 397210; };
-     # Finish the storage-end and block-exit nodes, then return to the loop head.
+     // Finish the storage-end and block-exit nodes, then return to the loop head.
      step(); step(); step(); step(); step(); step(); step(); step();
      have ((__rust_mir_127_remaining as u32) as i32) == 0;
      execute_until(loop(5));

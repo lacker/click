@@ -27,7 +27,7 @@ resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
     fact AugmentRotate(augment->rotate);
 }
 
-# Red-leaf deletion below the root, retaining a balanced context.
+// Red-leaf deletion below the root, retaining a balanced context.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);

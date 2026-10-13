@@ -26,7 +26,10 @@ const GENERAL_COMPUTE: &str =
     include_str!("../../design/charon-trial/adler2/general-compute.click");
 
 fn compute_proof(contract: &str) -> String {
-    let getters = HELPERS.split_once("# Imported scalar constants").unwrap().1;
+    let getters = HELPERS
+        .split_once("// Imported scalar constants")
+        .unwrap()
+        .1;
     // Function-contract imports are not admitted yet. Assemble one verification
     // unit from the canonical helper/getter bodies and this alternative compute
     // contract, rather than duplicating or assuming their interfaces.
@@ -201,7 +204,7 @@ fn adler2_helpers_project() -> Project {
 }
 
 fn helper_library() -> &'static str {
-    HELPERS.split_once("# Empty-input boundary").unwrap().0
+    HELPERS.split_once("// Empty-input boundary").unwrap().0
 }
 
 fn helper_proof(index: usize) -> String {
@@ -1068,10 +1071,10 @@ fn charon_adler2_iterator_bounds_tools_expand_native_certificates() {
 fn reject_empty_compute(before: &str, after: &str) {
     let p = adler2_helpers_project();
     let prepared = load_import(&p.config()).unwrap();
-    let (library, computation) = HELPERS.split_once("# Empty-input boundary").unwrap();
+    let (library, computation) = HELPERS.split_once("// Empty-input boundary").unwrap();
     let changed = computation.replacen(before, after, 1);
     assert_ne!(computation, changed, "missing mutation: {before}");
-    let invalid = format!("{library}# Empty-input boundary{changed}");
+    let invalid = format!("{library}// Empty-input boundary{changed}");
     // Reject this claim without reproving unrelated helper bodies for every
     // mutation; the complete fixture is checked separately below.
     let offset = invalid.find("execute_until(assignment(b, 0))").unwrap();
@@ -1416,7 +1419,7 @@ fn charon_adler2_four_byte_compute_rejects_false_native_step_bounds() {
     // regression. These mutations target the bounds after both original calls,
     // independently of the final checksum expressions.
     let post_step = FOUR_BYTE_COMPUTE
-        .split_once("# Both actual helper results satisfy the ceiling at next()'s new state.")
+        .split_once("// Both actual helper results satisfy the ceiling at next()'s new state.")
         .unwrap()
         .1;
     for field in ["a", "b"] {
@@ -1440,8 +1443,8 @@ fn charon_adler2_four_byte_compute_rejects_false_native_step_bounds() {
     );
     reject_compute(
         FOUR_BYTE_COMPUTE,
-        "# Both actual helper results satisfy the ceiling at next()'s new state.\n       have ((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) - 4",
-        "# Both actual helper results satisfy the ceiling at next()'s new state.\n       have ((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32))",
+        "// Both actual helper results satisfy the ceiling at next()'s new state.\n       have ((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32)) - 4",
+        "// Both actual helper results satisfy the ceiling at next()'s new state.\n       have ((__rust_mir_62_remaining as u32) as i32) == at(lane_head, ((__rust_mir_62_remaining as u32) as i32))",
     );
 }
 

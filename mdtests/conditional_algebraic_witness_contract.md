@@ -18,7 +18,7 @@ int32 found(int32 from) {
     ensures result != 0 implies exists (path: Path) { endpoint(from, path) == from };
 } by {
     have exists (path: Path) { endpoint(from, path) == from } by {
-        witness { path: Path::Left(Path::Here) }
+        witness { path: Path::Left(Path::Here) };
         unfold(endpoint(from, Path::Left(Path::Here)));
         unfold(endpoint(from, Path::Here));
         normalize();

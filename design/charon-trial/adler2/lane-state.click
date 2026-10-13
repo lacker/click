@@ -1,14 +1,14 @@
-# Integer observations of the optimized four-lane state.
-# Assemble after design/adler32-spec.click; every lemma is source-proved.
-# These relations do not assume machine arithmetic is free of overflow.
-# The computation must supply checked observations of its native operations.
+// Integer observations of the optimized four-lane state.
+// Assemble after design/adler32-spec.click; every lemma is source-proved.
+// These relations do not assume machine arithmetic is free of overflow.
+// The computation must supply checked observations of its native operations.
 
 function adler_lane_a(a: Integer, a0: Integer, a1: Integer, a2: Integer, a3: Integer) -> Integer {
  a + a0 + a1 + a2 + a3
 }
-# The original final recombination adds 6 * 65521 and subtracts
-# lane weights 1, 2, 3. Keep this offset in the representative between
-# batches; it vanishes after reduction. B representatives use Integer.
+// The original final recombination adds 6 * 65521 and subtracts
+// lane weights 1, 2, 3. Keep this offset in the representative between
+// batches; it vanishes after reduction. B representatives use Integer.
 function adler_lane_b(b: Integer, a1: Integer, a2: Integer, a3: Integer, b0: Integer, b1: Integer, b2: Integer, b3: Integer) -> Integer {
  b + 4 * (b0 + b1 + b2 + b3) + 393126 - a1 - 2 * a2 - 3 * a3
 }
@@ -49,9 +49,9 @@ theorem adler_lane_a_reduction(a: Integer, a0: Integer, a1: Integer, a2: Integer
  }
 }
 
-# Reducing A lanes can increase this representative. The congruence
-# witness may therefore be negative, even though every lane is unsigned.
-# The old representative must be nonnegative for truncating remainder.
+// Reducing A lanes can increase this representative. The congruence
+// witness may therefore be negative, even though every lane is unsigned.
+// The old representative must be nonnegative for truncating remainder.
 theorem adler_lane_b_reduction(b: Integer, a1: Integer, a2: Integer, a3: Integer, b0: Integer, b1: Integer, b2: Integer, b3: Integer) {
  requires 0 <= b;
  requires 0 <= a1;

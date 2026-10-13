@@ -45,7 +45,7 @@ fixture_targets=(--test mdtests --test examples)
 unit_targets=(
     --lib --bin click --test documentation --test condition_transport_api
     --test compiler_import --test cpp_import --test rust_import
-    --test bitcoin_core_money_range
+    --test bitcoin_core_money_range --test libcxx_span
 )
 
 if [[ "${1:-}" == "--ci-shard" ]]; then
@@ -242,8 +242,8 @@ if reason="$(scripts/build-cpp-exporter.sh --check 2>&1)"; then
     CLICK_CPP_EXPORTER="$(scripts/build-cpp-exporter.sh)"
 else
     frontend_missing "C++" "$reason" \
-        "tests/cpp_import.rs, tests/bitcoin_core_money_range.rs, C++ mdtests and examples"
-    drop_test_targets cpp_import bitcoin_core_money_range
+        "tests/cpp_import.rs, tests/bitcoin_core_money_range.rs, tests/libcxx_span.rs, C++ mdtests and examples"
+    drop_test_targets cpp_import bitcoin_core_money_range libcxx_span
     # The `click` command tests that run a C++ mdtest through the exporter.
     unit_filter=(--filterset 'not (binary_id(clicklang::bin/click) & (
         test(=audit::tests::cpp_mdtest_audit_inventories_imported_semantics)

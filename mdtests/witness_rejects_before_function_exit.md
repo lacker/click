@@ -18,7 +18,7 @@ int32 pick(int32 x) {
     requires x >= 0;
 
     ensures exists: (0..1).any(|k| result == x) by {
-        witness { k: 0 }
+        witness { k: 0 };
         execute();
         simp();
     }

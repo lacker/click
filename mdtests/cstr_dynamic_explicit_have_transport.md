@@ -54,7 +54,7 @@ int32 read_terminator(uint8 bytes[], uint64 known_len) {
             bytes[len] == '\0' and
             forall (k: uint64) { k < len + 1u64 implies defined(bytes[k]) }
         } by {
-            witness { len: known_len }
+            witness { len: known_len };
             simp();
         }
         step();

@@ -7,11 +7,11 @@ theorem scoped_witness(x: int32) {
         have exists (a: int32) { a == x } by {
             obtain (k: int32) { k == x }
             have k == x by assumption();
-            witness { a: k }
+            witness { a: k };
             assumption();
         }
         have k == x by assumption();
-        witness { z: x }
+        witness { z: x };
         normalize();
     }
 }

@@ -1,4 +1,4 @@
-# Three-byte public API fragment; the harness adds public-constructors.click.
+// Three-byte public API fragment; the harness adds public-constructors.click.
 impl adler2::Adler32 {
     fn write_slice(&mut self, bytes: &[u8]) {
      requires bytes.len() == 3u64;

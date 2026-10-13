@@ -7140,7 +7140,10 @@ impl Parser {
                 if bindings.is_empty() {
                     return Err(self.error("`witness` needs at least one `binder: value`"));
                 }
-                self.skip_redundant_semicolon();
+                if self.peek() != Some(&Token::Semicolon) {
+                    return Err(self.error("expected `;` after `witness { ... }`"));
+                }
+                self.position += 1;
                 return Ok(ProofTactic::Witness(ProofWitness::new(bindings)));
             }
             "obtain" => return self.parse_obtain(),

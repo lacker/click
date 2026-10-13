@@ -27,7 +27,7 @@ resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
     fact AugmentRotate(augment->rotate);
 }
 
-# Zero- and one-child deletion at the root; general contexts follow.
+// Zero- and one-child deletion at the root; general contexts follow.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);

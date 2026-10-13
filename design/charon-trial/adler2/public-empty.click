@@ -1,4 +1,4 @@
-# Empty public API fragment; no input-byte authority or dereference is needed.
+// Empty public API fragment; no input-byte authority or dereference is needed.
 impl adler2::Adler32 {
     fn write_slice(&mut self, bytes: &[u8]) {
      requires bytes.len() == 0u64;

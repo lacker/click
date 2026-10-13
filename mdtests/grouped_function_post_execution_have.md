@@ -40,12 +40,12 @@ int32 identity(int32 x) {
 } by {
     execute();
     have exists (j: int32) { j == result } by {
-        witness { j: result }
+        witness { j: result };
         simp();
     }
     have exists (j: int32) { j == x } by {
         obtain (k: int32) { k == x }
-        witness { j: k }
+        witness { j: k };
         simp();
     }
     simp();
@@ -63,7 +63,7 @@ int32 current_have(int32 x) {
     ensures exists (j: int32) { j == result };
 } by {
     have exists (j: int32) { j == x } by {
-        witness { j: x }
+        witness { j: x };
         simp();
     }
     execute();

@@ -13,7 +13,9 @@ use click::surface::{
     project_smart_tactic_source_sites, project_tactic_source_position,
     verify_program_prepared_project,
 };
-use sha2::{Digest, Sha256};
+#[path = "support/pinned_clang.rs"]
+mod pinned_clang;
+use pinned_clang::{output, pinned_clang, sha256};
 
 const ARCHIVE: &[u8] =
     include_bytes!("../integrations/bitcoin-core-money-range/input-closure.tar.gz");
@@ -1352,50 +1354,6 @@ fn pinned_byte_template_metadata_and_span_authority_are_checked() {
         let project = read_click_project(&root.join("bad.click"), &bad).unwrap();
         assert!(verify_program_prepared_project(&project, &import).is_err());
     }
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
-fn output(program: &Path, args: &[&str]) -> String {
-    let result = Command::new(program).args(args).output().unwrap();
-    assert!(
-        result.status.success(),
-        "{} {:?} failed: {}",
-        program.display(),
-        args,
-        String::from_utf8_lossy(&result.stderr)
-    );
-    String::from_utf8(result.stdout).unwrap().trim().to_owned()
-}
-
-fn pinned_clang() -> PathBuf {
-    let llvm_config = std::env::var_os("LLVM_CONFIG")
-        .map(PathBuf::from)
-        .or_else(|| {
-            [
-                "/usr/bin/llvm-config-19",
-                "/usr/lib/llvm-19/bin/llvm-config",
-                "/opt/homebrew/opt/llvm@19/bin/llvm-config",
-            ]
-            .into_iter()
-            .map(PathBuf::from)
-            .find(|path| path.is_file())
-        })
-        .expect("scripts/check.sh requires LLVM 19.1.7");
-    assert_eq!(output(&llvm_config, &["--version"]), "19.1.7");
-    let clang = std::env::var_os("CLANGXX")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(output(&llvm_config, &["--bindir"])).join("clang++"));
-    assert!(
-        output(&clang, &["--version"])
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .contains("19.1.7")
-    );
-    clang
 }
 
 #[test]
@@ -3304,7 +3262,11 @@ fn check_generic_span_cases(cases: Vec<GenericSpanCase>) {
     for case in cases {
         let (root, import) = axiomatic_span_fixture(
             case.name,
-            &format!("#include <span>\n{}\n", case.harness),
+            &if case.harness.starts_with("#include") {
+                format!("{}\n", case.harness)
+            } else {
+                format!("#include <span>\n{}\n", case.harness)
+            },
             case.dependencies,
         );
         let source = format!("verifying \"span-probe.cpp\";\n{}\n", case.sidecar);
@@ -3611,6 +3573,269 @@ fn axiomatic_span_element_reference_returns_and_int_access() {
             harness: "void probe(std::span<int>& s, int v) noexcept { s[0] = v; }",
             sidecar: format!(
                 "void probe({int_span}& s, int32 v) {{ views std_span_data(s); views std_span_size(s); owns std_span_data(s)[0]; requires 1u64 <= std_span_size(s); requires separate(memory(std_span_data(s)[0]), memory(std_span_data(s))); requires separate(memory(std_span_data(s)[0]), memory(std_span_size(s))); ensures std_span_data(s)[0] == v; }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![],
+        },
+    ]);
+}
+
+const ARRAY_DEPENDENCIES: &[&str] = &[
+    "sysroot/usr/include/c++/12/array",
+    "sysroot/usr/include/x86_64-linux-gnu/c++/12/bits/c++config.h",
+];
+const CONST_INT_SPAN: &str = "struct span__const_int__value_unsigned_long_18446744073709551615";
+const STATIC_INT_SPAN: &str = "struct span__int__value_unsigned_long_4";
+const INT_ARRAY: &str = "struct array__int__value_unsigned_long_4";
+
+/// Imports `harness` and checks that `sidecar` is refused with `expected`:
+/// the claim is about a program the catalog contracts do not admit.
+fn check_refused_span_case(
+    name: &str,
+    dependencies: &[&str],
+    harness: &str,
+    sidecar: &str,
+    expected: &str,
+) {
+    let (root, import) = axiomatic_span_fixture(name, harness, dependencies);
+    let source = format!("verifying \"span-probe.cpp\";\n{sidecar}\n");
+    let path = root.join("span.click");
+    fs::write(&path, &source).unwrap();
+    let parsed = read_click_project(&path, &source).unwrap();
+    let error = verify_program_prepared_project(&parsed, &import)
+        .expect_err("an unsupported claim must not verify");
+    assert!(
+        error.message().contains(expected),
+        "{name}: {}\n{source}",
+        error.message()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+// `std::span<const T>` names its const element in the record, holds a
+// `const T*`, and uses the same generic entries with const element types.
+#[test]
+fn axiomatic_const_element_spans_verify() {
+    let read = r#"uint8 probe(struct span__const_unsigned_char__value_unsigned_long_18446744073709551615& s) {
+    views std_span_data(s);
+    views std_span_size(s);
+    views std_span_data(s)[0];
+    requires 1u64 <= std_span_size(s);
+    ensures result == std_span_data(s)[0];
+} by {
+    execute();
+    simp();
+}"#
+    .to_string();
+    check_generic_span_cases(vec![
+        GenericSpanCase {
+            name: "const-element-read",
+            dependencies: SPAN_DEPENDENCIES,
+            harness: "unsigned char probe(std::span<const unsigned char>& s) noexcept { return s[0]; }",
+            refusals: vec![(
+                read.replace("    views std_span_data(s)[0];\n", ""),
+                "missing resource fact `views",
+            )],
+            sidecar: read,
+        },
+        GenericSpanCase {
+            name: "const-element-data",
+            dependencies: SPAN_DEPENDENCIES,
+            harness: "const int* probe(std::span<const int>& s) noexcept { return s.data(); }",
+            sidecar: format!(
+                "const int32* probe({CONST_INT_SPAN}& s) {{ views std_span_data(s); ensures result == std_span_data(s); }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![],
+        },
+    ]);
+}
+
+#[test]
+#[ignore = "nightly: three more pinned C++ exports"]
+fn axiomatic_const_element_span_subviews_verify() {
+    check_generic_span_cases(vec![
+        GenericSpanCase {
+            name: "const-element-size-bytes",
+            dependencies: SPAN_DEPENDENCIES,
+            harness: "unsigned long probe(std::span<const int>& s) noexcept { return s.size_bytes(); }",
+            sidecar: format!(
+                "uint64 probe({CONST_INT_SPAN}& s) {{ views std_span_size(s); ensures result == std_span_size(s) * 4u64; }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![],
+        },
+        GenericSpanCase {
+            name: "const-element-first",
+            dependencies: SPAN_DEPENDENCIES,
+            harness: "std::span<const int> probe(std::span<const int>& s) noexcept { return s.first(1); }",
+            sidecar: format!(
+                "{CONST_INT_SPAN} probe({CONST_INT_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 1u64 <= std_span_size(s); ensures std_span_data(result) == std_span_data(s); ensures std_span_size(result) == 1u64; }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![],
+        },
+        GenericSpanCase {
+            name: "const-element-back",
+            dependencies: SPAN_DEPENDENCIES,
+            harness: "const int& probe(std::span<const int>& s) noexcept { return s.back(); }",
+            sidecar: format!(
+                "const int32& probe({CONST_INT_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 1u64 <= std_span_size(s); ensures &result == std_span_data(s) + (std_span_size(s) - 1u64); }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![],
+        },
+    ]);
+}
+
+// A static-extent span keeps its extent in the type: libstdc++'s extent
+// member is stateless, so the record holds only the data pointer, and the
+// contracts state the size as the literal `N`.
+#[test]
+fn axiomatic_static_extent_spans_verify() {
+    check_generic_span_cases(vec![
+        GenericSpanCase {
+            name: "static-extent-read",
+            dependencies: SPAN_DEPENDENCIES,
+            harness: "int probe(std::span<int, 4>& s) noexcept { return s[3]; }",
+            sidecar: format!(
+                "int32 probe({STATIC_INT_SPAN}& s) {{ views std_span_data(s); views std_span_data(s)[3]; ensures result == std_span_data(s)[3]; }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![],
+        },
+        GenericSpanCase {
+            name: "static-extent-size-bytes",
+            dependencies: &["sysroot/usr/include/c++/12/span"],
+            harness: "unsigned long probe(std::span<const unsigned char, 32>& s) noexcept { return s.size_bytes(); }",
+            sidecar: "uint64 probe(struct span__const_unsigned_char__value_unsigned_long_32& s) { ensures result == 32u64; } by { execute(); simp(); }".into(),
+            refusals: vec![(
+                "uint64 probe(struct span__const_unsigned_char__value_unsigned_long_32& s) { ensures result == 33u64; } by { execute(); simp(); }".into(),
+                "ensures",
+            )],
+        },
+    ]);
+    // The fifth element of a four-element span is outside the view.
+    check_refused_span_case(
+        "static-extent-out-of-bounds",
+        SPAN_DEPENDENCIES,
+        "#include <span>\nint probe(std::span<int, 4>& s) noexcept { return s[4]; }\n",
+        &format!(
+            "int32 probe({STATIC_INT_SPAN}& s) {{ views std_span_data(s); views std_span_data(s)[4]; ensures result == std_span_data(s)[4]; }} by {{ execute(); simp(); }}"
+        ),
+        "operator_index",
+    );
+}
+
+#[test]
+#[ignore = "nightly: a static-extent subview export"]
+fn axiomatic_static_extent_span_subviews_verify() {
+    check_generic_span_cases(vec![GenericSpanCase {
+        name: "static-extent-first",
+        dependencies: SPAN_DEPENDENCIES,
+        harness: "std::span<int> probe(std::span<int, 4>& s) noexcept { return s.first(2); }",
+        sidecar: format!(
+            "{} probe({STATIC_INT_SPAN}& s) {{ views std_span_data(s); ensures std_span_data(result) == std_span_data(s); ensures std_span_size(result) == 2u64; }} by {{ execute(); simp(); }}",
+            "struct span__int__value_unsigned_long_18446744073709551615"
+        ),
+        refusals: vec![],
+    }]);
+}
+
+// A defaulted argument is the constant Clang evaluates for it: `subspan(1)`
+// passes `std::dynamic_extent` as its count, and verifies as a subview to
+// the end.
+#[test]
+fn defaulted_span_arguments_import_as_compiler_constants() {
+    let (root, import) = axiomatic_span_fixture(
+        "default-argument",
+        "#include <span>\nstd::span<int> probe(std::span<int>& s) noexcept { return s.subspan(1); }\n",
+        SPAN_DEPENDENCIES,
+    );
+    let body = serde_json::to_value(&import.export().function.body).unwrap();
+    let arguments = &body[0]["arguments"];
+    assert_eq!(arguments[2]["value"]["kind"], "compiler_constant", "{body}");
+    assert_eq!(
+        arguments[2]["value"]["value"], "18446744073709551615",
+        "{body}"
+    );
+    // The defaulted count runs to the end of the view.
+    let span = "struct span__int__value_unsigned_long_18446744073709551615";
+    let source = format!(
+        "verifying \"span-probe.cpp\";\n{span} probe({span}& s) {{ views std_span_data(s); views std_span_size(s); requires 1u64 <= std_span_size(s); ensures std_span_data(result) == std_span_data(s) + 1u64; ensures std_span_size(result) == std_span_size(s) - 1u64; }} by {{ execute(); simp(); }}\n"
+    );
+    let path = root.join("span.click");
+    fs::write(&path, &source).unwrap();
+    let parsed = read_click_project(&path, &source).unwrap();
+    verify_program_prepared_project(&parsed, &import)
+        .unwrap_or_else(|error| panic!("{}\n{source}", error.message()));
+    fs::remove_dir_all(root).unwrap();
+}
+
+// `std::array<T, N>` holds its elements inline, named by
+// `std_array_data(a)`. Its element accessors have const and mutable
+// overloads; a read needs a view of the array and a write needs to own it.
+#[test]
+fn axiomatic_std_array_element_access_verifies() {
+    let write = format!(
+        r#"int32 probe({INT_ARRAY}& a, int32 v) {{
+    owns a;
+    ensures std_array_data(a)[3] == v;
+    ensures std_array_data(a)[0] == old(std_array_data(a)[0]);
+    ensures result == v;
+}} by {{
+    execute();
+    simp();
+}}"#
+    );
+    check_generic_span_cases(vec![
+        GenericSpanCase {
+            name: "array-element-read",
+            dependencies: ARRAY_DEPENDENCIES,
+            harness: "#include <array>\nint probe(std::array<int, 4>& a) noexcept { return a[1]; }",
+            sidecar: format!(
+                "int32 probe({INT_ARRAY}& a) {{ views a; ensures result == std_array_data(a)[1]; }} by {{ execute(); simp(); }}"
+            ),
+            refusals: vec![(
+                format!(
+                    "int32 probe({INT_ARRAY}& a) {{ views a; ensures result == std_array_data(a)[2]; }} by {{ execute(); simp(); }}"
+                ),
+                "ensures",
+            )],
+        },
+        GenericSpanCase {
+            name: "array-element-write",
+            dependencies: ARRAY_DEPENDENCIES,
+            harness: "#include <array>\nint probe(std::array<int, 4>& a, int v) noexcept { a[3] = v; return a.back(); }",
+            refusals: vec![(
+                write.replace("owns a;", "views a;"),
+                "missing resource fact `owns",
+            )],
+            sidecar: write,
+        },
+    ]);
+    check_refused_span_case(
+        "array-out-of-bounds",
+        ARRAY_DEPENDENCIES,
+        "#include <array>\nint probe(std::array<int, 4>& a) noexcept { return a[4]; }\n",
+        &format!(
+            "int32 probe({INT_ARRAY}& a) {{ views a; ensures result == 0; }} by {{ execute(); simp(); }}"
+        ),
+        "operator_index",
+    );
+}
+
+#[test]
+#[ignore = "nightly: two more pinned C++ exports"]
+fn axiomatic_std_array_size_and_data_verify() {
+    check_generic_span_cases(vec![
+        GenericSpanCase {
+            name: "array-size",
+            dependencies: &["sysroot/usr/include/c++/12/array"],
+            harness: "#include <array>\nunsigned long probe(std::array<unsigned char, 32>& a) noexcept { return a.size(); }",
+            sidecar: "uint64 probe(struct array__unsigned_char__value_unsigned_long_32& a) { ensures result == 32u64; } by { execute(); simp(); }".into(),
+            refusals: vec![],
+        },
+        GenericSpanCase {
+            name: "array-data",
+            dependencies: &["sysroot/usr/include/c++/12/array"],
+            harness: "#include <array>\nint* probe(std::array<int, 4>& a) noexcept { return a.data(); }",
+            sidecar: format!(
+                "int32* probe({INT_ARRAY}& a) {{ ensures result == &std_array_data(a)[0]; }} by {{ execute(); simp(); }}"
             ),
             refusals: vec![],
         },

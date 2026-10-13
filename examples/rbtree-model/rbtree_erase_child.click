@@ -1,8 +1,8 @@
 import "rbtree_erase_splice.click";
 import "rbtree_erase_root.click";
 
-# The replacement child of the minimum has height zero. If nonempty,
-# it is red and its parent is black; blackening it closes the hole.
+// The replacement child of the minimum has height zero. If nonempty,
+// it is red and its parent is black; blackening it closes the hole.
 
 theorem rb_minimum_child_valid(tree: RbTree, successor: struct rb_node*, min_color: Color, child: RbTree) {
     requires rb_minimum(tree) == RbMinimum::Found(successor, min_color, child);
@@ -239,7 +239,7 @@ theorem rb_minimum_child_blackens_without_deficit(tree: RbTree, up: Context, suc
     }
 }
 
-# The immediate successor keeps its right child and blackens that child's root.
+// The immediate successor keeps its right child and blackens that child's root.
 function rb_immediate_successor_child(successor: struct rb_node*, parent: struct rb_node*,
         color: Color, left: RbTree, child: RbTree) -> RbTree {
     RbTree::Node(successor, parent, color, rb_reparent(left, successor),
@@ -351,7 +351,7 @@ function rb_erase_immediate_child_model(tree: RbTree) -> RbTree {
     }
 }
 
-# The minimum's nonempty right child is blackened when it replaces the minimum.
+// The minimum's nonempty right child is blackened when it replaces the minimum.
 function rb_remove_min_blackened(tree: RbTree) -> RbTree
     decreases tree
 {

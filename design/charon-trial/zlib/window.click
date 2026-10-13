@@ -1,6 +1,6 @@
 import "block.click";
 
-# Mathematical observations of the original remaining count within one batch.
+// Mathematical observations of the original remaining count within one batch.
 theorem zlib_remaining_step(total: uint64, remaining: uint64, amount: uint64) {
  requires remaining <= total;
  requires total <= 5551u64;

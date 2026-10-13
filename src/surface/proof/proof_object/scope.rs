@@ -552,6 +552,19 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    /// Closes the body's `int32` or `int64` definedness goal from the
+    /// operands' indexed constant bounds.
+    pub(in crate::surface::proof) fn try_signed_definedness_closure(
+        &self,
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_signed_definedness_closure()? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
     pub(in crate::surface::proof) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
         let Some(mut body) = self.body.try_simp_closure()? else {
             return Ok(None);

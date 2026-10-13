@@ -1,4 +1,4 @@
-# General public API composition; the harness checks all unchanged callee bodies.
+// General public API composition; the harness checks all unchanged callee bodies.
 impl adler2::Adler32 {
     fn write_slice(&mut self, bytes: &[u8]) {
      requires bytes.len() <= 2147483647u64;

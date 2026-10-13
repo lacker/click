@@ -2031,7 +2031,7 @@ function plug(ctx: Context, sub: RbTree) -> RbTree
     }
 }
 
-# Join the successor descent spine to the context above the erased node.
+// Join the successor descent spine to the context above the erased node.
 function ctx_concat(inner: Context, outer: Context) -> Context
     decreases inner
 {
@@ -3299,8 +3299,8 @@ theorem ctx_rb_right_frame(identity: struct rb_node*, grandparent: struct rb_nod
     }
 }
 
-# A valid context fragment ending at a subtree boundary, not the tree root.
-# The boundary can be red. Only the outer ctx_rb imposes root blackness.
+// A valid context fragment ending at a subtree boundary, not the tree root.
+// The boundary can be red. Only the outer ctx_rb imposes root blackness.
 function ctx_rb_between(ctx: Context, bh: Nat, focus_color: Color,
                        boundary_bh: Nat, boundary_color: Color) -> int32
     decreases ctx
@@ -6242,8 +6242,8 @@ theorem ctx_rb_black_focus(ctx: Context, bh: Nat, focus_color: Color) {
     }
 }
 
-# The black sibling of an erase cursor whose children are both black, made
-# red: what `rb_set_parent_color(sibling, parent, RB_RED)` leaves in case 2.
+// The black sibling of an erase cursor whose children are both black, made
+// red: what `rb_set_parent_color(sibling, parent, RB_RED)` leaves in case 2.
 theorem ctx_erase_case2_left_sibling(parent: struct rb_node*, sibling: struct rb_node*,
                                      cursor_bh: Nat, sl: RbTree, sr: RbTree) {
     requires is_rb(RbTree::Node(sibling, parent, Color::Black, sl, sr)) == 1;

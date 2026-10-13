@@ -1,4 +1,4 @@
-# Four-byte public API fragment; the harness checks all original callees.
+// Four-byte public API fragment; the harness checks all original callees.
 impl adler2::Adler32 {
     fn write_slice(&mut self, bytes: &[u8]) {
      requires bytes.len() == 4u64;

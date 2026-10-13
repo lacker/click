@@ -1,8 +1,8 @@
-# The 32-bit view of a 64-bit iterator count.
-# A chunk iterator counts its remaining bytes as `usize`. The lane and tail
-# bound libraries state their ceilings over an `int32` count; within one
-# batch the count is at most 22208, where the view `(int32)(uint32)count`
-# is the count itself. These carry the iterator's 64-bit facts to that view.
+// The 32-bit view of a 64-bit iterator count.
+// A chunk iterator counts its remaining bytes as `usize`. The lane and tail
+// bound libraries state their ceilings over an `int32` count; within one
+// batch the count is at most 22208, where the view `(int32)(uint32)count`
+// is the count itself. These carry the iterator's 64-bit facts to that view.
 
 theorem adler_count_observation(r: uint64) {
  requires r <= 22208u64;
@@ -113,8 +113,8 @@ theorem adler_count_zero(r: uint64) {
  }
 }
 
-# Within the checked small-count range, the native cursor and the signed
-# specification index denote exactly the same byte address.
+// Within the checked small-count range, the native cursor and the signed
+// specification index denote exactly the same byte address.
 theorem adler_count_byte_pointer(base: const uint8*, count: uint64) {
  requires count <= 22208u64;
  ensures base + count == base + (int32)(uint32)count by {
@@ -123,7 +123,7 @@ theorem adler_count_byte_pointer(base: const uint8*, count: uint64) {
  }
 }
 
-# Read equality first, then transport the native byte into the Integer spec.
+// Read equality first, then transport the native byte into the Integer spec.
 theorem adler_count_byte_observation(bytes: uint8[], count: uint64) {
  requires count <= 22208u64;
  ensures to_integer((int32)bytes[count]) == to_integer((int32)bytes[(int32)(uint32)count]) by {
@@ -153,8 +153,8 @@ theorem adler_count_chunk_byte_observation(bytes: uint8[], count: uint64, lane: 
  }
 }
 
-# After Next has consumed four bytes, recover their positions from the actual
-# remaining count. No auxiliary processed count supplies the input position.
+// After Next has consumed four bytes, recover their positions from the actual
+// remaining count. No auxiliary processed count supplies the input position.
 theorem adler_count_previous_chunk_byte_observation(bytes: uint8[], total: uint64, remaining: uint64, lane: int32) {
  requires remaining <= total;
  requires 4u64 <= total - remaining;
@@ -182,7 +182,7 @@ theorem adler_count_previous_chunk_byte_observation(bytes: uint8[], total: uint6
  }
 }
 
-# Exact prefix advance used by the deferred scalar B contribution.
+// Exact prefix advance used by the deferred scalar B contribution.
 theorem adler_small_prefix_integer_advance(total: int32, remaining: int32) {
  requires 0 <= remaining;
  requires remaining <= total;
@@ -198,7 +198,7 @@ theorem adler_small_prefix_integer_advance(total: int32, remaining: int32) {
  }
 }
 
-# Recover the scalar byte from the actual post-Next remaining count.
+// Recover the scalar byte from the actual post-Next remaining count.
 theorem adler_count_previous_byte_observation(bytes: uint8[], total: uint64, remaining: uint64) {
  requires remaining <= total;
  requires 1u64 <= total - remaining;

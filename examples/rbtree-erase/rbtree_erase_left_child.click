@@ -29,7 +29,7 @@ resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
     fact AugmentRotate(augment->rotate);
 }
 
-# A node at any position whose only child is on the left; colors follow from validity.
+// A node at any position whose only child is on the left; colors follow from validity.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);

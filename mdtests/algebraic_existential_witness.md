@@ -7,7 +7,7 @@ of a later constructor witness.
 ```click
 theorem nat_zero_exists() {
     ensures exists (fuel: Nat) { fuel == Nat::Zero } by {
-        witness { fuel: Nat::Zero }
+        witness { fuel: Nat::Zero };
         normalize();
     }
 }
@@ -16,7 +16,7 @@ theorem nat_successor_exists() {
     requires exists (fuel: Nat) { fuel == Nat::Zero };
     ensures exists (next: Nat) { next == Nat::Succ(Nat::Zero) } by {
         obtain (fuel: Nat) { fuel == Nat::Zero }
-        witness { next: Nat::Succ(fuel) }
+        witness { next: Nat::Succ(fuel) };
         rewrite(fuel == Nat::Zero);
         normalize();
     }

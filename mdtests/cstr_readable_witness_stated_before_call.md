@@ -33,7 +33,7 @@ uint64 fixed_string_length(uint8 bytes[]) {
     ensures result < 18446744073709551615u64 by {
         execute_until(statement(1));
         have exists (len: uint64) { len + 1u64 <= 9223372036854775807u64 } by {
-            witness { len: 2u64 }
+            witness { len: 2u64 };
             simp();
         }
         have viewable(bytes[0..2u64 + 1u64]) by {
@@ -65,7 +65,7 @@ uint64 fixed_string_length(uint8 bytes[]) {
                 bytes[len] == '\0' and
                 forall (k: uint64) { k < len + 1u64 implies defined(bytes[k]) }
         } by {
-            witness { len: 2u64 }
+            witness { len: 2u64 };
             simp();
         }
         execute();

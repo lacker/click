@@ -1444,11 +1444,11 @@ fn post_execution_closer_continues_the_proof_intros_opened() {
 /// (`post_execution_choose_and_witness_share_the_retained_outcome_proof`).
 #[test]
 fn post_execution_closer_continues_the_proof_a_witness_opened() {
-    let anchor = "witness { len: found_len }\n        simp();";
+    let anchor = "witness { len: found_len };\n        simp();";
     let expanded = expand_mdtest_site_and_reverify(
         "mdtests/cstr_stdlib.md",
         anchor,
-        "witness { len: found_len }\n        ".len(),
+        "witness { len: found_len };\n        ".len(),
     );
     assert!(!expanded.contains("have exists (len: int32)"), "{expanded}");
 }
@@ -3421,9 +3421,9 @@ const char *version() {
 }
 
 #[test]
-fn source_locator_ignores_hash_comments_and_preserves_literals() {
+fn source_locator_ignores_line_comments_and_preserves_literals() {
     let source =
-        "# Click's ü } verifying \"fake.c\"\r\nverifying \"real#file.c\"; # \"unterminated";
+        "// Click's ü } verifying \"fake.c\"\r\nverifying \"real#file.c\"; // \"unterminated";
     assert_eq!(
         verifying_source_paths(source).expect("comments must not become source tokens"),
         vec!["real#file.c"]
@@ -3431,17 +3431,17 @@ fn source_locator_ignores_hash_comments_and_preserves_literals() {
 }
 
 #[test]
-fn source_locator_hash_comments_preserve_proof_expansion_offsets() {
+fn source_locator_line_comments_preserve_proof_expansion_offsets() {
     let c_source = "int32 identity(int32 x) { return x; }";
-    let click_source = r#"# Click's proof: ü } identity() { "
+    let click_source = r#"// Click's proof: ü } identity() { "
 verifying "identity.c";
 int32 identity(int32 x) {
     ensures result == x;
 } by {
-    execute(); # unmatched ' } "
+    execute(); // unmatched ' } "
     simp();
 }
-# trailing comment without newline: '"#;
+// trailing comment without newline: '"#;
     let sources = [("identity.c", c_source)];
     verify_c0_sources(click_source, &sources).expect("commented proof should verify");
     let offset = click_source.find("simp();").unwrap();
@@ -3450,7 +3450,7 @@ int32 identity(int32 x) {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("comments must not disturb proof source offsets");
     assert_eq!(&expanded[..offset], &click_source[..offset]);
-    assert!(expanded.ends_with("# trailing comment without newline: '"));
+    assert!(expanded.ends_with("// trailing comment without newline: '"));
     verify_c0_sources(&expanded, &sources).expect("expanded commented proof should verify");
 }
 
@@ -17174,7 +17174,7 @@ fn padded_struct_field_loop_expansion_reverifies() {
 #[test]
 fn smart_inventory_positions_are_compatible_and_scale() {
     use crate::surface::{c0_smart_tactic_source_sites, c0_tactic_source_position};
-    let source = "# Unicode: λ\ntheorem named() { ensures 0 == 0 by { have 1 == 1 by { simp(); } simp(); } }\ntheorem implicit() { ensures 0 == 0; }\ntheorem short() { ensures 0 == 0 by simp; }\n";
+    let source = "// Unicode: λ\ntheorem named() { ensures 0 == 0 by { have 1 == 1 by { simp(); } simp(); } }\ntheorem implicit() { ensures 0 == 0; }\ntheorem short() { ensures 0 == 0 by simp; }\n";
     for site in c0_smart_tactic_source_sites(source, &[]).unwrap() {
         assert_eq!(
             site.position,

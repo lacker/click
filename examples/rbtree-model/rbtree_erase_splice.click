@@ -1,7 +1,7 @@
 import "rbtree_model.click";
 
-# The minimum's identity, original color, and right child. The parent is
-# deliberately absent: moving the right subtree changes only that payload.
+// The minimum's identity, original color, and right child. The parent is
+// deliberately absent: moving the right subtree changes only that payload.
 spec enum RbMinimum {
     Absent,
     Found(struct rb_node*, Color, RbTree),
@@ -19,9 +19,9 @@ function rb_minimum(tree: RbTree) -> RbMinimum
     }
 }
 
-# This accumulator is the context carried by the C successor descent loop.
-# At an immediate successor no frame is pushed. At a deeper successor the
-# nearest Left frame identifies the parent whose left link becomes empty.
+// This accumulator is the context carried by the C successor descent loop.
+// At an immediate successor no frame is pushed. At a deeper successor the
+// nearest Left frame identifies the parent whose left link becomes empty.
 function rb_min_context(tree: RbTree, up: Context) -> Context
     decreases tree
 {
@@ -563,8 +563,8 @@ theorem rb_successor_splice_cut(successor: struct rb_node*, parent: struct rb_no
     }
 }
 
-# The black-successor/no-right-child branch of __rb_erase_augmented.
-# The result is deliberately a deficit context, not a red-black whole tree.
+// The black-successor/no-right-child branch of __rb_erase_augmented.
+// The result is deliberately a deficit context, not a red-black whole tree.
 theorem rb_erase_black_successor_splice(erased: struct rb_node*, successor: struct rb_node*,
         parent: struct rb_node*, color: Color, left: RbTree, right: RbTree,
         up: Context, root_parent: struct rb_node*) {
@@ -636,8 +636,8 @@ theorem rb_erase_black_successor_splice(erased: struct rb_node*, successor: stru
     }
 }
 
-# A red leaf successor removes no black level. Its empty hole can be plugged
-# immediately, and the returned whole tree needs no erase-color fixup.
+// A red leaf successor removes no black level. Its empty hole can be plugged
+// immediately, and the returned whole tree needs no erase-color fixup.
 theorem rb_erase_red_successor_splice(erased: struct rb_node*, successor: struct rb_node*,
         parent: struct rb_node*, color: Color, left: RbTree, right: RbTree,
         up: Context, root_parent: struct rb_node*) {
@@ -698,7 +698,7 @@ theorem rb_erase_red_successor_splice(erased: struct rb_node*, successor: struct
     }
 }
 
-# Exact leaf-successor replacement, retaining the erased node's parent and color.
+// Exact leaf-successor replacement, retaining the erased node's parent and color.
 function rb_erase_immediate_leaf_model(tree: RbTree) -> RbTree {
     match tree {
         RbTree::Empty => RbTree::Empty,
@@ -721,9 +721,9 @@ function rb_erase_immediate_black_context(tree: RbTree, up: Context) -> Context 
     }
 }
 
-# The parent whose child link is replaced when removing this subtree's minimum.
-# Reparenting the subtree first makes the immediate case name the successor;
-# every deeper minimum keeps its original parent.
+// The parent whose child link is replaced when removing this subtree's minimum.
+// Reparenting the subtree first makes the immediate case name the successor;
+// every deeper minimum keeps its original parent.
 function rb_min_parent(tree: RbTree) -> struct rb_node*
     decreases tree
 {
@@ -753,7 +753,7 @@ theorem rb_min_parent_nonempty_left(node: struct rb_node*, parent: struct rb_nod
     }
 }
 
-# Reconstruct the exact cut for both empty and nonempty replacement children.
+// Reconstruct the exact cut for both empty and nonempty replacement children.
 theorem rb_min_context_cut_child(tree: RbTree, up: Context, successor: struct rb_node*,
         min_color: Color, child: RbTree) {
     requires rb_minimum(tree) == RbMinimum::Found(successor, min_color, child);

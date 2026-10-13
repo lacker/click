@@ -22,7 +22,7 @@ int32 exists_and_symbolic_any(int32 x, int32 n) {
     ensures same_any: (0..n).any(|k| { k == x }) by auto;
     ensures concrete_any_still_unrolls: (0..3).any(|k| { k == 1 }) by {
         execute();
-        witness { k: 1 }
+        witness { k: 1 };
         simp();
     }
 }

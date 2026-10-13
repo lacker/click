@@ -1224,25 +1224,34 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Option<u32> {
+        if let Some(value) = term.as_const() {
+            return Some(value);
+        }
+        // Every literal reached by a true equality settles its constant
+        // class. An unknown class therefore needs no adjacency walk. This
+        // is only a negative shortcut: folded class values must not broaden
+        // the exact-equality judgment below.
+        if matches!(
+            self.constant_classes.class_constant(term),
+            None | Some(SignedConstantResolution::Unknown)
+        ) {
+            return None;
+        }
         let mut pending = vec![term.clone()];
         let mut visited = BTreeSet::new();
         while let Some(current) = pending.pop() {
+            crate::instrumentation::record_deterministic_work(1);
             if !visited.insert(current.clone()) {
                 continue;
             }
             if let Some(value) = current.as_const() {
                 return Some(value);
             }
-            for (condition, value) in self.condition_facts.iter() {
-                let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
-                else {
-                    continue;
-                };
-                if left.as_ref() == &current {
-                    pending.push(right.as_ref().clone());
-                }
-                if right.as_ref() == &current {
-                    pending.push(left.as_ref().clone());
+            if let Some(neighbors) = self.direct_bitvector_equalities.get(&current) {
+                for (_, other) in neighbors.iter() {
+                    crate::instrumentation::record_deterministic_work(1);
+                    count_condition_fact_visit();
+                    pending.push(other.clone());
                 }
             }
         }

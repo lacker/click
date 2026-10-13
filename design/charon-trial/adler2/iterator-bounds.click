@@ -1,7 +1,7 @@
 import "bounds.click";
 
-# The vector index is a logical observation of existing remaining-byte state.
-# No runtime counter is added, and no loop invariant is assumed established.
+// The vector index is a logical observation of existing remaining-byte state.
+// No runtime counter is added, and no loop invariant is assumed established.
 function adler_lane_vectors_consumed(total: int32, remaining: int32) -> Integer {
     truncating_quotient(to_integer(total) - to_integer(remaining), 4)
 }
@@ -157,7 +157,7 @@ theorem adler_lane_iterator_successor(total: int32, remaining: int32) {
     }
 }
 
-# Compose the native lane updates with the index observed at the iterator head.
+// Compose the native lane updates with the index observed at the iterator head.
 theorem adler_lane_iterator_native_step(total: int32, remaining: int32, a: uint32, b: uint32, byte: uint32) {
     requires 0 <= remaining;
     requires 4 <= remaining;
@@ -279,7 +279,7 @@ theorem adler_lane_iterator_boundaries() {
     ensures adler_lane_vectors_consumed(22208, 0) == 5552 by { unfold(adler_lane_vectors_consumed(22208, 0)); normalize(); }
 }
 
-# Initialization after construction or MOD reduction uses only the real lengths.
+// Initialization after construction or MOD reduction uses only the real lengths.
 theorem adler_lane_iterator_reduced_initial(total: int32, a: uint32, b: uint32) {
     requires to_integer(a) <= 65520;
     requires to_integer(b) <= 65520;
@@ -297,7 +297,7 @@ theorem adler_lane_iterator_reduced_initial(total: int32, a: uint32, b: uint32) 
     }
 }
 
-# Match both Integer-sum preconditions of the unchanged AddAssign helper.
+// Match both Integer-sum preconditions of the unchanged AddAssign helper.
 theorem adler_lane_iterator_add_contracts(total: int32, remaining: int32, a: uint32, b: uint32, byte: uint32) {
     requires 0 <= remaining;
     requires 4 <= remaining;

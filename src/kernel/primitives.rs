@@ -11973,6 +11973,13 @@ pub struct PureFactContext {
     /// normalization is a class lookup rather than a walk over every fact
     /// the term is connected to.
     pub(super) constant_classes: super::assumptions::ConstantClasses,
+    /// True int32 equalities filed under their exact written endpoints.
+    /// Fact order preserves the direct constant walk's deterministic choice;
+    /// no memory canonicalization, pointer-offset edges, or arithmetic folding.
+    pub(super) direct_bitvector_equalities: crate::persistent::PersistentMap<
+        Bitvector32Term,
+        crate::persistent::PersistentMap<ConditionTerm, Bitvector32Term>,
+    >,
     pub(super) exact_constant_equalities: crate::persistent::PersistentMap<
         Bitvector32Term,
         crate::persistent::PersistentMap<ConditionTerm, i64>,
@@ -12445,9 +12452,8 @@ pub struct SymbolicCExecution {
 }
 
 /// One complete path set contract certification may judge a claim over: a
-/// checked execution reused at the contract's entry, the union of two
-/// complementary entry partitions, or the kernel's own execution when no
-/// artifact was supplied. Its paths jointly cover the function from the
+/// checked execution reused at the contract's entry, or the kernel's own
+/// execution when no artifact was supplied. Its paths jointly cover the function from the
 /// entry they name, so a claim that holds on every one of them holds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CContractPathSet {

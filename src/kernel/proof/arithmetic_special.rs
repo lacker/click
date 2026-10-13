@@ -500,14 +500,33 @@ fn float_condition_identity(left: &CFloatCondition, right: &CFloatCondition) -> 
 
 /// Compare the selected certificate result with the requested goal without
 /// invoking recursive `Proposition`/`ConditionTerm` equality.
+/// A conjunction, such as a `defined(..)` result that carries its operands'
+/// own definedness, compares conjunct by conjunct; a conjunct that is not a
+/// condition compares by its exact fact identity key.
 fn proposition_identity(left: &Proposition, right: &Proposition) -> bool {
-    let Proposition::ConditionIs(left_condition, left_expected) = left else {
-        return false;
-    };
-    let Proposition::ConditionIs(right_condition, right_expected) = right else {
-        return false;
-    };
-    left_expected == right_expected && condition_identity(left_condition, right_condition)
+    match (left, right) {
+        (
+            Proposition::ConditionIs(left_condition, left_expected),
+            Proposition::ConditionIs(right_condition, right_expected),
+        ) => left_expected == right_expected && condition_identity(left_condition, right_condition),
+        (Proposition::And(_, _), Proposition::And(_, _)) => {
+            let (left, right) = (conjunct_list(left), conjunct_list(right));
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(&right)
+                    .all(|(left, right)| match (left, right) {
+                        (Proposition::ConditionIs(_, _), _) | (_, Proposition::ConditionIs(_, _)) => {
+                            proposition_identity(left, right)
+                        }
+                        _ => {
+                            let key = crate::kernel::proof::fact_keys::proposition_identity_key;
+                            matches!((key(left), key(right)), (Some(left), Some(right)) if left == right)
+                        }
+                    })
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -999,6 +1018,95 @@ pub(crate) fn signed_constant_bound_on(
 }
 
 /// The range `term` has from its width and the listed bounds on it.
+/// The operation a `defined(a + b)` or `defined(a - b)` result checks. A
+/// result whose operands carry definedness of their own, such as a read
+/// through a resource view or an inner sum, lowers to a conjunction: its
+/// operation is the one overflow conjunct no other conjunct takes as an
+/// operand, and every other conjunct must be a conjunct of a cited premise,
+/// which marks that premise used.
+fn signed_defined_operation<'r>(
+    result: &'r Proposition,
+    bounds: &[(usize, &Proposition)],
+    used: &mut [bool],
+) -> Option<(
+    SignedDefinedWidth,
+    &'r Bitvector32Term,
+    &'r Bitvector32Term,
+    bool,
+)> {
+    if !matches!(result, Proposition::And(_, _)) {
+        return signed_definedness_operands(result);
+    }
+    let conjuncts = conjunct_list(result);
+    let operations = conjuncts
+        .iter()
+        .map(|conjunct| signed_definedness_operands(conjunct))
+        .collect::<Vec<_>>();
+    let operation_term = |(_, left, right, subtract): (
+        SignedDefinedWidth,
+        &Bitvector32Term,
+        &Bitvector32Term,
+        bool,
+    )| {
+        let (left, right) = (Box::new(left.clone()), Box::new(right.clone()));
+        if subtract {
+            Bitvector32Term::Subtract(left, right)
+        } else {
+            Bitvector32Term::Add(left, right)
+        }
+    };
+    let mut outermost = operations
+        .iter()
+        .enumerate()
+        .filter_map(|(position, operation)| {
+            let term = operation_term((*operation)?);
+            let operand_of_another = operations
+                .iter()
+                .flatten()
+                .any(|(_, left, right, _)| **left == term || **right == term);
+            (!operand_of_another).then_some(position)
+        });
+    let chosen = outermost.next()?;
+    if outermost.next().is_some() {
+        return None;
+    }
+    let premise_conjuncts = bounds
+        .iter()
+        .map(|(_, premise)| conjunct_list(premise))
+        .collect::<Vec<_>>();
+    for (position, conjunct) in conjuncts.iter().enumerate() {
+        if position == chosen {
+            continue;
+        }
+        let mut justified = false;
+        for (premise, parts) in premise_conjuncts.iter().enumerate() {
+            if parts.contains(conjunct) {
+                used[premise] = true;
+                justified = true;
+            }
+        }
+        if !justified {
+            return None;
+        }
+    }
+    operations[chosen]
+}
+
+fn conjunct_list(proposition: &Proposition) -> Vec<&Proposition> {
+    let mut conjuncts = Vec::new();
+    let mut pending = vec![proposition];
+    while let Some(next) = pending.pop() {
+        match next {
+            Proposition::And(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            other => conjuncts.push(other),
+        }
+    }
+    conjuncts
+}
+
 fn signed_operand_range(
     width: SignedDefinedWidth,
     term: &Bitvector32Term,
@@ -1046,13 +1154,13 @@ fn signed_defined(
     bounds: &[(usize, &Proposition)],
     result: &Proposition,
 ) -> Result<(), SpecialArithmeticCheckError> {
-    let (claimed, left, right, subtract) = signed_definedness_operands(result)
+    let mut used = vec![false; bounds.len()];
+    let (claimed, left, right, subtract) = signed_defined_operation(result, bounds, &mut used)
         .ok_or(SpecialArithmeticCheckError::NodeResultMismatch(index))?;
     // The node's spelling names the width; it must be the claim's own.
     if claimed != width {
         return Err(SpecialArithmeticCheckError::NodeResultMismatch(index));
     }
-    let mut used = vec![false; bounds.len()];
     let left_range = signed_operand_range(width, left, bounds, &mut used);
     let right_range = signed_operand_range(width, right, bounds, &mut used);
     if let Some(position) = used.iter().position(|used| !used) {
@@ -2872,6 +2980,42 @@ mod tests {
             Err(SpecialArithmeticCheckError::SignedDefinedRangeExceeded { .. })
         ));
         assert_eq!(check_int32_defined(&constant, &premises, vec![0]), Ok(()));
+    }
+
+    #[test]
+    fn int32_defined_accepts_an_operands_own_definedness_only_from_a_cited_premise() {
+        let (a, b) = (int64_var(1), int64_var(2));
+        let c = |value: i32| Bitvector32Term::Constant(value as u32);
+        let sum = Bitvector32Term::Add(Box::new(a.clone()), Box::new(b.clone()));
+        // `defined((a + b) - 1)` lowers with the inner sum's own definedness.
+        let inner = int32_defined_goal(a.clone(), b.clone(), false);
+        let goal = Proposition::And(
+            Box::new(int32_defined_goal(sum.clone(), c(1), true)),
+            Box::new(inner.clone()),
+        );
+        let premises = vec![
+            int64_fact(
+                ConditionTerm::Bitvector32Equal(Box::new(sum.clone()), Box::new(c(5))),
+                true,
+            ),
+            inner.clone(),
+        ];
+        assert_eq!(check_int32_defined(&goal, &premises, vec![0, 1]), Ok(()));
+        // The inner conjunct is not the operation's overflow; without the
+        // premise that states it, nothing establishes it.
+        assert_eq!(
+            check_int32_defined(&goal, &premises, vec![0]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        );
+        // Two unrelated operations leave no single outermost one.
+        let unrelated = Proposition::And(
+            Box::new(int32_defined_goal(a.clone(), c(1), false)),
+            Box::new(int32_defined_goal(b.clone(), c(1), false)),
+        );
+        assert_eq!(
+            check_int32_defined(&unrelated, &premises, vec![0, 1]),
+            Err(SpecialArithmeticCheckError::NodeResultMismatch(0))
+        );
     }
 
     fn pointer(offset: PointerOffsetTerm) -> Pointer {

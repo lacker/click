@@ -21,7 +21,7 @@ void rb_erase_augmented(struct rb_node* node, struct rb_root* root,
     ensures rb_tree_parent_consistent(whole.model) == 1;
     ensures rb_inorder(whole.model) == rb_inorder(plug(old(up.model), RbTree::Empty));
 } by {
-    step(); # Declare rebalance before its initializer call.
+    step(); // Declare rebalance before its initializer call.
     let { hole: hole, remaining: deficit } = step(__rb_erase_augmented(node, root, augment), { tree: tree, up: up });
     have deficit.model == old(up.model);
     have ctx_consistent(deficit.model, RbTree::Empty, 0) == 1 by { rewrite(RbTree::Empty == hole.model); assumption(); }
@@ -38,7 +38,7 @@ void rb_erase_augmented(struct rb_node* node, struct rb_root* root,
         }
         have erase_leaf_result(old(up.model), rb_color(old(tree.model))) == erase_flips_red_all_result(deficit.model, RbTree::Empty);
         unfold(hole);
-        step(); # Select the nonnull rebalance branch.
+        step(); // Select the nonnull rebalance branch.
         open(erase_callbacks(augment)) {
             mark repair;
             let { whole: whole } = step(__rb_erase_color(rebalance, root, augment->rotate), { c: deficit });

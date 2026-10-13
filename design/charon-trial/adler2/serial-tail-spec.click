@@ -1,4 +1,4 @@
-# Checked native serial-tail sums and their connection to the common spec.
+// Checked native serial-tail sums and their connection to the common spec.
 theorem adler_serial_byte_observation(value: uint8) {
  ensures to_integer((uint32)value) == to_integer((int32)value)
      and 0 <= to_integer((uint32)value) and to_integer((uint32)value) <= 255 by {

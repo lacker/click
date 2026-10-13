@@ -1,5 +1,5 @@
-# Exact native B transitions for a deferred full-batch contribution.
-# Assemble after the common specification, lane-state and vector-prefix.
+// Exact native B transitions for a deferred full-batch contribution.
+// Assemble after the common specification, lane-state and vector-prefix.
 
 theorem adler_native_deferred_b_step(pos: int32, a: uint32, b: uint32, a0: uint32, a1: uint32, a2: uint32, a3: uint32, b0: uint32, b1: uint32, b2: uint32, b3: uint32, v0: uint32, v1: uint32, v2: uint32, v3: uint32) {
  requires 0 <= pos;
@@ -170,8 +170,8 @@ theorem adler_canonical_lane_b_floor(b: Integer, a1: Integer, a2: Integer, a3: I
  }
 }
 
-# Observe the checked native position as a whole, after its iterator endpoint
-# is established. This also retains the int32 subtraction guard explicitly.
+// Observe the checked native position as a whole, after its iterator endpoint
+// is established. This also retains the int32 subtraction guard explicitly.
 theorem adler_empty_full_batch_position(remaining: int32) {
  requires remaining == 22208;
  ensures to_integer(22208 - remaining) == 0 by {
@@ -188,7 +188,7 @@ theorem adler_complete_full_batch_position(remaining: int32) {
  }
 }
 
-# Couple the batch-local deferred state to the original input global prefix.
+// Couple the batch-local deferred state to the original input global prefix.
 theorem adler_native_deferred_b_prefix_step(bytes: uint8[], n: int32, pos: int32, a_seed: Integer, b_seed: Integer, a: uint32, b: uint32, a0: uint32, a1: uint32, a2: uint32, a3: uint32, b0: uint32, b1: uint32, b2: uint32, b3: uint32, v0: uint32, v1: uint32, v2: uint32, v3: uint32) {
  requires 0 <= n;
  requires n <= 2147483643;

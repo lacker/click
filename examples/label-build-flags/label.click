@@ -62,7 +62,7 @@ uint64 label_copy(char* dst, const char* src) {
             ((uint8*)src)[len] == 0u8 and
             forall (k: uint64) { k < len + 1u64 implies defined(((uint8*)src)[k]) }
         ) }
-        witness { len: len }
+        witness { len: len };
         extract(at(function.entry, len) < at(function.entry, 18446744073709551615u64));
         transport(at(function.entry, viewable(((uint8*)src)[0..len + 1u64])),
                   viewable(((uint8*)src)[0..len + 1u64])) using {

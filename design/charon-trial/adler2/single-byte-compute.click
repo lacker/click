@@ -1,6 +1,6 @@
-# Single-byte boundary of the original, locked Adler32::compute body.
-# The fixture harness combines this contract with the helper/getter contracts
-# from helpers.click, checks all their bodies, and rechecks the proof tools.
+// Single-byte boundary of the original, locked Adler32::compute body.
+// The fixture harness combines this contract with the helper/getter contracts
+// from helpers.click, checks all their bodies, and rechecks the proof tools.
 impl adler2::Adler32 {
     fn compute(&mut self, bytes: &[u8]) {
      requires bytes.len() == 1u64;
@@ -36,8 +36,8 @@ impl adler2::Adler32 {
      have 393126 + (1 + to_integer((bytes[0] as u32))) == (1 + to_integer((bytes[0] as u32))) + 65521 * 6 by arithmetic() using {};
      apply(adler_residue_congruent(393126 + (1 + to_integer((bytes[0] as u32))), 1 + to_integer((bytes[0] as u32)), 6));
 
-     # The empty chunk iterators execute no body. Prove the scalar reduction
-     # from its checked transition before following lane recombination.
+     // The empty chunk iterators execute no body. Prove the scalar reduction
+     // from its checked transition before following lane recombination.
      execute_until(assignment(b, 0)); step();
      have b == 0u32;
      execute_until(assignment(b, 3));
@@ -55,9 +55,9 @@ impl adler2::Adler32 {
      rewrite(at(scalar_mod, b) == 0u32);
      simp();
      }
-     # Marks bind the operands before each original lane update. __rust_checked
-     # locals are the adapter's actual captured call/arithmetic operands, not
-     # proof counters. These names are checked against the frozen import.
+     // Marks bind the operands before each original lane update. __rust_checked
+     // locals are the adapter's actual captured call/arithmetic operands, not
+     // proof counters. These names are checked against the frozen import.
      execute_until(assignment(__rust_mir_94, 0));
      mark add_lane_1;
      have at(add_lane_1, b_vec.0[1]) == 0u32;
@@ -173,7 +173,7 @@ impl adler2::Adler32 {
      have b_vec.0[1] == 65521u32;
      have b_vec.0[2] == 131042u32;
      have b_vec.0[3] == 196563u32;
-     # Read-only array iteration sums all four original lanes in order.
+     // Read-only array iteration sums all four original lanes in order.
      mark before_sum_a;
      have at(before_sum_a, a) == 1u32;
      have at(before_sum_a, a_vec.0[0]) == 0u32;

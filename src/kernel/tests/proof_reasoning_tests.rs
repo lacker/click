@@ -8094,6 +8094,138 @@ fn lower_bound_search_ignores_unrelated_facts() {
     );
 }
 
+#[test]
+fn direct_constant_lookup_ignores_unrelated_condition_facts() {
+    let var = |id| Bitvector32Term::Variable(Variable(id));
+    for size in [16u64, 64, 256, 1024] {
+        let mut context = PureFactContext::new()
+            .assume_condition(ConditionTerm::equal(var(97_000), var(97_001)), true)
+            .assume_condition(ConditionTerm::equal(var(97_001), 7u32.into()), true);
+        for index in 0..size {
+            context = context
+                .assume_condition(
+                    ConditionTerm::equal(var(100_000 + index), 9u32.into()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(var(200_000 + index), 4u32.into()),
+                    true,
+                );
+        }
+        PureFactContext::reset_condition_fact_visits();
+        let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(
+                context.bitvector_constant_from_direct_equalities(&var(97_000)),
+                Some(7)
+            );
+            assert_eq!(
+                context.bitvector_constant_from_direct_equalities(&var(300_000)),
+                None
+            );
+        });
+        let visits = PureFactContext::condition_fact_visits();
+        assert!(visits <= 4, "size={size}, visits={visits}, work={work}");
+        assert!(work <= 12, "size={size}, work={work}");
+        let start = std::time::Instant::now();
+        for _ in 0..2048 {
+            std::hint::black_box(context.bitvector_constant_from_direct_equalities(&var(97_000)));
+            std::hint::black_box(context.bitvector_constant_from_direct_equalities(&var(300_000)));
+        }
+        eprintln!(
+            "direct constant lookup: size={size}, visits={visits}, work={work}, 4096 queries={:?}",
+            start.elapsed()
+        );
+    }
+}
+
+#[test]
+fn direct_constant_index_tracks_exact_premises_and_forks() {
+    let a = Bitvector32Term::Variable(Variable(97_010));
+    let b = Bitvector32Term::Variable(Variable(97_011));
+    let edge = ConditionTerm::equal(a.clone(), b.clone());
+    let reverse = ConditionTerm::equal(b.clone(), a.clone());
+    let pin = ConditionTerm::equal(b.clone(), 7u32.into());
+    let context = PureFactContext::new()
+        .assume_condition(edge.clone(), true)
+        .assume_condition(reverse.clone(), true)
+        .assume_condition(pin.clone(), true);
+    assert_eq!(
+        context.bitvector_constant_from_direct_equalities(&a),
+        Some(7)
+    );
+    let without_edge = context.without_exact_fact(&Proposition::ConditionIs(edge.clone(), true));
+    assert_eq!(
+        without_edge.bitvector_constant_from_direct_equalities(&a),
+        Some(7)
+    );
+    let disconnected = without_edge.without_exact_fact(&Proposition::ConditionIs(reverse, true));
+    assert_eq!(
+        disconnected.bitvector_constant_from_direct_equalities(&a),
+        None
+    );
+    let unpinned = context.without_exact_fact(&Proposition::ConditionIs(pin.clone(), true));
+    assert_eq!(unpinned.bitvector_constant_from_direct_equalities(&a), None);
+    let replaced = context.clone().assume_condition(pin.clone(), false);
+    assert_eq!(replaced.bitvector_constant_from_direct_equalities(&a), None);
+    assert_eq!(
+        context.bitvector_constant_from_direct_equalities(&a),
+        Some(7)
+    );
+    let restored = replaced.assume_condition(pin, true);
+    assert_eq!(
+        restored.bitvector_constant_from_direct_equalities(&a),
+        Some(7)
+    );
+    // Folding and wide equality have different judgments. Only exact written
+    // int32 equalities are traversed by this query.
+    let compound = Bitvector32Term::add(a.clone(), 1u32.into());
+    assert_eq!(
+        context.bitvector_constant_from_direct_equalities(&compound),
+        None
+    );
+    let explicit =
+        context.assume_condition(ConditionTerm::equal(compound.clone(), 8u32.into()), true);
+    assert_eq!(
+        explicit.bitvector_constant_from_direct_equalities(&compound),
+        Some(8)
+    );
+    let wide = PureFactContext::new().assume_condition(
+        ConditionTerm::uint64_equal(a.clone(), Bitvector32Term::UInt64Constant(7)),
+        true,
+    );
+    assert_eq!(wide.bitvector_constant_from_direct_equalities(&a), None);
+    // Conflicting premises still select the literal reached first by the
+    // original fact-ordered stack walk, rather than a new graph policy.
+    let conflicting = explicit.assume_condition(ConditionTerm::equal(a.clone(), 9u32.into()), true);
+    assert_eq!(
+        conflicting.bitvector_constant_from_direct_equalities(&a),
+        Some(7)
+    );
+    let restricted = conflicting.restricted_to_facts(&[(edge, true)], &[]);
+    assert_eq!(
+        restricted.bitvector_constant_from_direct_equalities(&a),
+        None
+    );
+}
+
+#[test]
+fn direct_constant_lookup_work_scales_with_the_reached_chain() {
+    let var = |id| Bitvector32Term::Variable(Variable(400_000 + id));
+    for size in [16u64, 64, 256] {
+        let mut context = PureFactContext::new();
+        for index in 0..size {
+            context =
+                context.assume_condition(ConditionTerm::equal(var(index), var(index + 1)), true);
+        }
+        context = context.assume_condition(ConditionTerm::equal(var(size), 7u32.into()), true);
+        let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context.bitvector_constant_from_direct_equalities(&var(0))
+        });
+        assert_eq!(result, Some(7));
+        assert!(work <= 6 * size as usize + 8, "size={size}, work={work}");
+    }
+}
+
 /// The guarded-implication index selects `defined(e) implies a == b` facts
 /// by the consequent's operands: a goal naming `a` finds the one guarded
 /// equality about `a`, and the lookup's work does not grow with unrelated

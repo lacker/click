@@ -1,6 +1,6 @@
 import "rbtree_model.click";
 
-# A shared termination measure for context reconstruction.
+// A shared termination measure for context reconstruction.
 function ctx_depth(ctx: Context) -> Integer
 decreases ctx
 {

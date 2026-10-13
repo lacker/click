@@ -176,7 +176,7 @@ theorem deep_red_right_subtree(erased: struct rb_node*, successor: struct rb_nod
     }
 }
 
-# The empty cursor has height zero, but the context needs one missing black.
+// The empty cursor has height zero, but the context needs one missing black.
 theorem immediate_successor_rejects_zero_height(erased: struct rb_node*,
         successor: struct rb_node*, l: struct rb_node*, above: struct rb_node*) {
     ensures ctx_rb(rb_successor_context(successor, above, Color::Black,
@@ -206,8 +206,8 @@ theorem immediate_successor_rejects_zero_height(erased: struct rb_node*,
     }
 }
 
-# A red successor needs no black-deficit fixup; a successor with a child takes
-# the separate child-recoloring branch. Neither satisfies the leaf theorem.
+// A red successor needs no black-deficit fixup; a successor with a child takes
+// the separate child-recoloring branch. Neither satisfies the leaf theorem.
 theorem other_successor_cases(successor: struct rb_node*, parent: struct rb_node*,
                               child: struct rb_node*) {
     ensures not(rb_minimum(RbTree::Node(successor, parent, Color::Red, RbTree::Empty, RbTree::Empty))

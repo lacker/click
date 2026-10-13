@@ -106,10 +106,8 @@ also verifies and is no longer quarantined.
 
 Linked pointer initializers resolve in their defining translation unit
 (`mdtests/a_linked_pointer_initializer_names_a_private_object_of_its_defining_file.md`).
-[private-static-helper-ownership.md](private-static-helper-ownership.md)
-retains the unchanged upstream PCG wrapper/client acceptance work. It is not
-an additional global-storage implementation milestone or a demonstrated
-rbtree dependency.
+The unchanged upstream PCG wrappers and a separate client of them verify in
+`examples/pcg-basic/` and `examples/pcg-client/`.
 
 ## Deferred language coverage
 

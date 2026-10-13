@@ -507,6 +507,11 @@ private:
     llvm::json::Array statements;
     if (constructor != nullptr) {
       const auto *record = constructor->getParent()->getDefinition();
+      if (has_stateless_field(record)) {
+        fail(constructor->getLocation(),
+             "supported constructors require records without stateless members");
+        return std::nullopt;
+      }
       for (const clang::FieldDecl *field : record->fields()) {
         const clang::CXXCtorInitializer *initializer = nullptr;
         for (const clang::CXXCtorInitializer *candidate : constructor->inits()) {
@@ -706,6 +711,25 @@ private:
     return nullptr;
   }
 
+  // A `[[no_unique_address]]` member of an empty, trivially copyable and
+  // destructible class, such as libstdc++'s static-extent storage in
+  // `std::span<T, N>`, occupies no bytes and holds no state. It is left out
+  // of the record's fields.
+  bool stateless_field(const clang::FieldDecl *field) const {
+    const auto *type = field->getType()->getAsCXXRecordDecl();
+    return field->hasAttr<clang::NoUniqueAddressAttr>() && !field->isBitField() &&
+        !field->getType().hasQualifiers() && type != nullptr &&
+        type->getDefinition() != nullptr && type->getDefinition()->isEmpty() &&
+        type->getDefinition()->isTriviallyCopyable() &&
+        type->getDefinition()->hasTrivialDestructor();
+  }
+
+  bool has_stateless_field(const clang::CXXRecordDecl *record) const {
+    for (const clang::FieldDecl *field : record->fields())
+      if (stateless_field(field)) return true;
+    return false;
+  }
+
   bool supported_pointer_element(clang::QualType type) const {
     const auto unqualified = type.getUnqualifiedType();
     return !type.isVolatileQualified() && !type.isRestrictQualified() &&
@@ -765,6 +789,19 @@ private:
       llvm::json::Object result;
       result["kind"] = "lvalue_reference";
       result["pointee"] = std::move(*pointee);
+      return Json(std::move(result));
+    }
+    // A fixed-length array of a native element; the record profile admits
+    // one only as a field, such as `std::array`'s `_M_elems`.
+    if (const auto *array = context_.getAsConstantArrayType(type)) {
+      auto element = lower_type(array->getElementType(), location);
+      if (!element) {
+        return std::nullopt;
+      }
+      llvm::json::Object result;
+      result["kind"] = "array";
+      result["element"] = std::move(*element);
+      result["length"] = static_cast<std::int64_t>(array->getSize().getZExtValue());
       return Json(std::move(result));
     }
     if (const auto *pointer = type->getAs<clang::PointerType>()) {
@@ -1962,6 +1999,11 @@ private:
       }
       const unsigned field_count = std::distance(record->field_begin(),
                                                  record->field_end());
+      if (has_stateless_field(record)) {
+        fail(source_initializer->getExprLoc(),
+             "supported C++ aggregate locals require records without stateless members");
+        return std::nullopt;
+      }
       if (local->getInitStyle() != clang::VarDecl::ListInit ||
           syntactic_list == nullptr || syntactic_list->getNumInits() != field_count) {
         fail(source_initializer->getExprLoc(),
@@ -2968,6 +3010,34 @@ private:
             llvm::dyn_cast<clang::SubstNonTypeTemplateParmExpr>(expression)) {
       return lower_expression(substitution->getReplacement(), function);
     }
+    // A defaulted integral argument, as in `s.subspan(1)`, is the constant
+    // Clang evaluates for it, spanned at the call that uses it.
+    if (const auto *defaulted =
+            llvm::dyn_cast<clang::CXXDefaultArgExpr>(expression)) {
+      const clang::Expr *value = defaulted->getExpr();
+      clang::Expr::EvalResult evaluated;
+      if (!value->getType()->isIntegerType() ||
+          !supported_integer_type(value->getType()) ||
+          !value->isCXX11ConstantExpr(context_) ||
+          !value->EvaluateAsInt(evaluated, context_, clang::Expr::SE_NoSideEffects,
+                                /*InConstantContext=*/true)) {
+        fail(defaulted->getUsedLocation(),
+             "C++ default arguments require an integral constant expression");
+        return std::nullopt;
+      }
+      auto value_type = lower_type(defaulted->getType(), defaulted->getUsedLocation());
+      if (!value_type)
+        return std::nullopt;
+      llvm::SmallString<32> text;
+      evaluated.Val.getInt().toString(text, 10);
+      llvm::json::Object result;
+      result["kind"] = "compiler_constant";
+      result["value"] = text.str().str();
+      result["value_type"] = std::move(*value_type);
+      result["span"] = span(clang::SourceRange(defaulted->getUsedLocation(),
+                                               defaulted->getUsedLocation()));
+      return Json(std::move(result));
+    }
     if (const auto *boolean =
             llvm::dyn_cast<clang::CXXBoolLiteralExpr>(expression)) {
       return boolean_constant(boolean->getValue(), boolean->getSourceRange(),
@@ -3501,7 +3571,12 @@ private:
       fail(record->getLocation(), "the supported C++ record must be standard-layout");
       return false;
     }
-    if (record->field_empty() && record->getNumBases() == 0) {
+    bool has_state = false;
+    for (const clang::FieldDecl *field : record->fields())
+      has_state = has_state || !stateless_field(field);
+    // `field_empty` is kept as the first test: it is what refuses a record
+    // Clang has not completed, as it did before stateless members existed.
+    if ((record->field_empty() || !has_state) && record->getNumBases() == 0) {
       fail(record->getLocation(),
            "the supported C++ record must contain at least one field");
       return false;
@@ -3518,6 +3593,8 @@ private:
       return false;
     }
     for (const clang::FieldDecl *field : record->fields()) {
+      if (stateless_field(field))
+        continue;
       const clang::QualType type = field->getType();
       const auto *pointer = type->getAs<clang::PointerType>();
       const bool mutable_int =
@@ -3526,10 +3603,17 @@ private:
            (type->isIntegerType() && !type->isBooleanType() &&
             (context_.hasSameType(type.getUnqualifiedType(), context_.UnsignedCharTy) ||
              context_.getTypeSize(type) == 32 || context_.getTypeSize(type) == 64)));
+      // The pointer field itself is mutable; its native element may be
+      // const, as in `std::span<const int>`'s data pointer.
       const bool mutable_int_pointer =
           pointer != nullptr && !type.hasQualifiers() &&
-          !pointer->getPointeeType().hasQualifiers() &&
           supported_pointer_element(pointer->getPointeeType());
+      const auto *array = context_.getAsConstantArrayType(type);
+      const bool native_array = array != nullptr && !type.hasQualifiers() &&
+          !array->getElementType().hasQualifiers() &&
+          supported_pointer_element(array->getElementType()) &&
+          !array->getSize().isZero() &&
+          array->getSize().getZExtValue() <= std::numeric_limits<std::uint32_t>::max();
       const auto *embedded = type->getAsCXXRecordDecl();
       const bool mutable_record = embedded != nullptr && !type.hasQualifiers();
       // Access control is checked by Clang at each source use. It does not
@@ -3537,11 +3621,11 @@ private:
       if (field->isBitField() ||
           field->isMutable() || field->hasInClassInitializer() ||
           field->getName().empty() ||
-          (!mutable_int && !mutable_int_pointer && !mutable_record)) {
+          (!mutable_int && !mutable_int_pointer && !mutable_record && !native_array)) {
         fail(
             field->getLocation(),
             "the supported C++ record fields must be named mutable 32/64-bit "
-            "integers, unsigned char, mutable native int/unsigned int/unsigned char pointers, or embedded record fields without bit-fields");
+            "integers, unsigned char, mutable pointers to or nonempty arrays of native int/unsigned int/unsigned char/std::byte elements, or embedded record fields without bit-fields");
         return false;
       }
       if (mutable_record) {
@@ -3591,6 +3675,11 @@ private:
 
     const unsigned field_count =
         std::distance(record->field_begin(), record->field_end());
+    if (has_stateless_field(record)) {
+      fail(constructor->getLocation(),
+           "supported constructors require records without stateless members");
+      return false;
+    }
     if (constructor->getNumCtorInitializers() != field_count) {
       fail(constructor->getLocation(),
            "the supported constructor must explicitly initialize every field in declaration order");
@@ -3668,6 +3757,8 @@ private:
     unsigned index = 0;
     for (const clang::FieldDecl *field : record->fields()) {
       const std::uint64_t bit_offset = layout.getFieldOffset(index++);
+      if (stateless_field(field))
+        continue;
       const std::uint64_t field_size =
           context_.getTypeSizeInChars(field->getType()).getQuantity();
       if (bit_offset % 8 != 0 ||
@@ -4060,7 +4151,16 @@ private:
           value.replace(0, 1, "neg_");
         suffix += "__value_" + std::string(name) + "_" + value;
       } else if (argument.getKind() == clang::TemplateArgument::Type) {
-        const auto type = context_.getCanonicalType(argument.getAsType());
+        clang::QualType type = context_.getCanonicalType(argument.getAsType());
+        // A class template may take a const native element, as in
+        // `std::span<const int>`; other qualifiers stay refused.
+        std::string qualifier;
+        if (allow_tags && type.isLocalConstQualified() &&
+            !type.isLocalVolatileQualified() && !type.isLocalRestrictQualified() &&
+            supported_pointer_element(type)) {
+          qualifier = "const_";
+          type = type.getUnqualifiedType();
+        }
         if (type.hasQualifiers()) {
           fail(location,
                "qualified C++ template type arguments are unsupported");
@@ -4089,7 +4189,7 @@ private:
           const auto *enumeration = type->getAs<clang::EnumType>()->getDecl();
           if (declaration_id(enumeration) == "c:@N@std@E@byte" &&
               enumeration->getQualifiedNameAsString() == "std::byte") {
-            suffix += "__std_byte";
+            suffix += "__" + qualifier + "std_byte";
             continue;
           }
         }
@@ -4122,7 +4222,7 @@ private:
                          "bool or 32/64-bit builtin integers");
           return {};
         }
-        suffix += "__" + std::string(name);
+        suffix += "__" + qualifier + std::string(name);
       } else {
         fail(location, "C++ template arguments require Boolean or 32/64-bit integral "
                        "values or supported scalar types");

@@ -1,6 +1,6 @@
 import "../rbtree-model/rbtree_model.click";
 
-# Mathematical sizes; a C representation must separately prove its range bound.
+// Mathematical sizes; a C representation must separately prove its range bound.
 function rb_subtree_size(tree: RbTree) -> Integer
     decreases tree
 {
@@ -38,7 +38,7 @@ theorem rb_subtree_size_reparent(tree: RbTree, parent: struct rb_node*) {
     }
 }
 
-# The promoted node copies the old root's summary; the demoted node recomputes.
+// The promoted node copies the old root's summary; the demoted node recomputes.
 theorem rb_subtree_size_rotate_left(node: struct rb_node*, parent: struct rb_node*,
     pivot: struct rb_node*, color: Color, pivot_color: Color,
     a: RbTree, b: RbTree, c: RbTree) {
@@ -62,7 +62,7 @@ theorem rb_subtree_size_rotate_left(node: struct rb_node*, parent: struct rb_nod
     }
 }
 
-# The promoted node copies the old root's summary; the demoted node recomputes.
+// The promoted node copies the old root's summary; the demoted node recomputes.
 theorem rb_subtree_size_rotate_right(node: struct rb_node*, parent: struct rb_node*,
     pivot: struct rb_node*, color: Color, pivot_color: Color,
     a: RbTree, b: RbTree, c: RbTree) {

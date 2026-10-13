@@ -3,7 +3,7 @@
 ```click
 theorem bad(n: int8) {
     ensures exists (x: uint8) { x == x } by {
-        witness { x: n }
+        witness { x: n };
         simp();
     }
 }

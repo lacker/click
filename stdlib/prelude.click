@@ -970,7 +970,7 @@ theorem uint32_add_to_integer(left: uint32, right: uint32) {
     ensures to_integer(left + right) == to_integer(left) + to_integer(right);
 }
 
-# Exact unsigned subtraction needs the native no-underflow guard.
+// Exact unsigned subtraction needs the native no-underflow guard.
 theorem uint32_subtract_to_integer(left: uint32, right: uint32) {
     requires right <= left;
     ensures to_integer(left - right) == to_integer(left) - to_integer(right);
@@ -1035,7 +1035,7 @@ theorem uint32_pack_uint16_high_first_to_integer(low: uint32, high: uint32) {
     ensures to_integer((high << 16) | low) == to_integer(low) + 65536 * to_integer(high);
 }
 
-# Exact round trips of two bounded fields packed with the high field first.
+// Exact round trips of two bounded fields packed with the high field first.
 theorem uint32_unpack_uint16_low(low: uint32, high: uint32) {
     requires low <= 65535u32;
     requires high <= 65535u32;
@@ -1064,7 +1064,7 @@ theorem uint64_to_integer_equal_implies_equal(left: uint64, right: uint64) {
     ensures left == right;
 }
 
-# Exact observations of unsigned division require both evaluation domains.
+// Exact observations of unsigned division require both evaluation domains.
 theorem uint32_divide_to_integer(left: uint32, right: uint32) {
     requires right != 0u32;
     requires to_integer(right) != 0;
@@ -1135,8 +1135,8 @@ theorem uint32_to_integer_bounds(value: uint32) {
     }
 }
 
-# Unsigned zero is the lower endpoint; excluding it gives a strict native order.
-# This proof uses the existing remainder and transitivity laws, not a new axiom.
+// Unsigned zero is the lower endpoint; excluding it gives a strict native order.
+// This proof uses the existing remainder and transitivity laws, not a new axiom.
 theorem uint32_nonzero_implies_positive(value: uint32) {
     requires value != 0u32;
     ensures 0u32 < value by {
@@ -1156,7 +1156,8 @@ theorem uint32_nonzero_implies_positive(value: uint32) {
     }
 }
 
-# Checked source proof of the mathematical domain from native nonzero.
+// Checked source proof of the mathematical domain from native nonzero.
+
 theorem uint32_nonzero_to_integer(value: uint32) {
  requires value != 0u32;
  ensures to_integer(value) != 0 by {

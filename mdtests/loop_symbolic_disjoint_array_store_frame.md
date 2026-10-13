@@ -35,7 +35,7 @@ void traverse(int32 *next, int32 *visited, int32 n, int32 from, int32 to) diverg
     step();
     step();
     have exists (fuel: Nat) { fuel == Nat::Zero } by {
-        witness { fuel: Nat::Zero }
+        witness { fuel: Nat::Zero };
         normalize();
     }
     loop diverges {

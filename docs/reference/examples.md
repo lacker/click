@@ -547,6 +547,11 @@ sequence:
   checked SHA-256 manifest. Proves the PCG32 generator step and output, the
   reentrant seeding helper, and the public wrappers that pass the file's
   private `pcg32_global` to them.
+- `examples/pcg-client/`: a separate client of `examples/pcg-basic/` that
+  imports its contracts, seeds with `pcg32_srandom(42, 54)`, checks the first
+  two outputs against the reference values `0xa15c02b7` and `0x7b47f409`, and
+  checks that reseeding restarts the sequence. The client's proof names the
+  library's private `pcg32_global` through a file alias.
 - `examples/jsonc-existing-source/`: byte-preserved upstream json-c source
   with a checked SHA-256 manifest. Proves its numeric version and NUL-terminated
   version-string contents under the default user-space target.

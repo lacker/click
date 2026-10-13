@@ -1,6 +1,6 @@
-# Checked full-width metadata and actual iterator steps for general Adler batches.
-# The memory/index boundary is explicit: 0..INT32_MAX, never a truncated usize.
-# These lemmas do not establish the computation or checksum postcondition.
+// Checked full-width metadata and actual iterator steps for general Adler batches.
+// The memory/index boundary is explicit: 0..INT32_MAX, never a truncated usize.
+// These lemmas do not establish the computation or checksum postcondition.
 
 theorem adler_general_bounded_quotient_bounds(n: Integer, d: Integer) {
  requires 0 <= n;
@@ -744,8 +744,8 @@ theorem adler_outer_remaining_step_divisible(remaining: int32) {
  }
 }
 
-# Compose a batch start and the actual inner cursor displacement in the
-# original input coordinates. Every native sum has a checked Integer bridge.
+// Compose a batch start and the actual inner cursor displacement in the
+// original input coordinates. Every native sum has a checked Integer bridge.
 theorem adler_defined_byte_pointer_add(base: const uint8*, left: int32, right: int32) {
  requires defined(left + right);
  ensures (base + left) + right == base + (left + right) by normalize() using { defined(left + right); };
@@ -830,7 +830,7 @@ theorem adler_absolute_chunk_access(t: int32, pos: int32, n: int32) {
  }
 }
 
-# Advancing the original outer cursor preserves the absolute byte position.
+// Advancing the original outer cursor preserves the absolute byte position.
 theorem adler_pointer_sum_association(base: const uint8*, left: int32, right: int32) {
  requires defined(left + right);
  ensures (base + left) + right == base + (left + right) by normalize() using { defined(left + right); };
@@ -1032,7 +1032,7 @@ theorem adler_current_window(total: int32, remaining: int32) {
  }
 }
 
-# Global prefix arithmetic for an actual four-byte batch position.
+// Global prefix arithmetic for an actual four-byte batch position.
 theorem adler_signed_prefix_successors(n: int32) {
  requires 0 <= n;
  requires n <= 2147483643;

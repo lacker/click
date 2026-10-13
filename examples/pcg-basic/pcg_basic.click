@@ -1,5 +1,5 @@
-# pcg_basic.c and pcg_basic.h are unchanged from pcg-c-basic at revision
-# bc39cd76ac3d541e618606bcc6e1e5ba5e5e6aa3 (see SOURCE.md).
+// pcg_basic.c and pcg_basic.h are unchanged from pcg-c-basic at revision
+// bc39cd76ac3d541e618606bcc6e1e5ba5e5e6aa3 (see SOURCE.md).
 verifying "pcg_basic.c";
 
 uint32 pcg32_random_r(struct pcg_state_setseq_64* rng) {

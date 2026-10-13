@@ -1,4 +1,4 @@
-# Original constructor contracts shared by the public checksum boundaries.
+// Original constructor contracts shared by the public checksum boundaries.
 impl Default for adler2::Adler32 {
     fn default() -> adler2::Adler32 {
      ensures result.a == 1;

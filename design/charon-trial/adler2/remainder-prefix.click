@@ -1,5 +1,5 @@
-# Checked positions in the aligned remainder after any number of full batches.
-# Assemble after general-partition.click and the mathematical integer library.
+// Checked positions in the aligned remainder after any number of full batches.
+// Assemble after general-partition.click and the mathematical integer library.
 
 theorem adler_checked_subprefix(base: int32, total: int32, remaining: int32) {
  requires 0 <= base;
@@ -78,8 +78,8 @@ theorem adler_checked_chunk_byte_observation(bytes: uint8[], start: int32, pos: 
  }
 }
 
-# Association uses the checked additions in this window, rather than reserving
-# room for an entire full batch after the base.
+// Association uses the checked additions in this window, rather than reserving
+// room for an entire full batch after the base.
 theorem adler_checked_prefix_advance(base: int32, pos: int32) {
  requires defined(base + pos);
  requires defined((base + pos) + 4);
@@ -128,7 +128,7 @@ theorem adler_complete_remainder_position(total: int32, remaining: int32) {
  }
 }
 
-# The native deferred product uses uint32; the prefix position uses int32.
+// The native deferred product uses uint32; the prefix position uses int32.
 theorem adler_remainder_native_count_observation(count: uint64) {
  requires count <= 22204u64;
  ensures to_integer((uint32)count) == to_integer(count) by {

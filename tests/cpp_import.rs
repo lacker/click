@@ -8191,7 +8191,7 @@ fn class_template_instances_retain_argument_and_layout_boundaries() {
             "integral template arguments require",
         ),
         (
-            "template<class T> struct Box { int value; }; int call(const Box<const int>& box) noexcept { return box.value; }",
+            "template<class T> struct Box { int value; }; int call(const Box<volatile int>& box) noexcept { return box.value; }",
             "qualified C++ template type arguments",
         ),
         (

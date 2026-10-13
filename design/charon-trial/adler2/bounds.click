@@ -1,7 +1,7 @@
-# Arithmetic ceilings for the unchanged adler2 deferred-reduction loop.
-# These prove bounds on proposed lane invariants and their next additions.
-# Establishing and preserving those invariants over the actual iterators is
-# a separate obligation; no computed checksum result is assumed here.
+// Arithmetic ceilings for the unchanged adler2 deferred-reduction loop.
+// These prove bounds on proposed lane invariants and their next additions.
+// Establishing and preserving those invariants over the actual iterators is
+// a separate obligation; no computed checksum result is assumed here.
 
 function adler_lane_triangle(n: Integer) -> Integer {
     truncating_quotient(n * (n + 1), 2)
@@ -309,7 +309,7 @@ theorem adler_lane_b_invariant_step(n: Integer, a: Integer, b: Integer, byte: In
     }
 }
 
-# These implications now reach the actual widened guard in U32X4::add_assign.
+// These implications now reach the actual widened guard in U32X4::add_assign.
 theorem adler_lane_native_a_sum_fits(n: Integer, a: uint32, byte: uint32) {
     requires 0 <= n;
     requires n < 5552;

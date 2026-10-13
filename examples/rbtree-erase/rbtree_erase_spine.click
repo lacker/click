@@ -320,7 +320,7 @@ tactic refold_erase_spine(focus: struct rb_node*, anchor: struct rb_node*) {
     }
 }
 
-# A nonempty focus is still the leftmost candidate through every spine frame.
+// A nonempty focus is still the leftmost candidate through every spine frame.
 
 tactic open_erase_spine_link(focus: struct rb_node*, parent: struct rb_node*, anchor: struct rb_node*) {
     consumes c: erase_spine_at(focus, anchor);

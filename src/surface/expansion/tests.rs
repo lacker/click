@@ -2999,7 +2999,7 @@ fn a_declaration_position_skips_uses_inside_bodies() {
 
 #[test]
 fn trace_source_index_preserves_nested_locations_and_containment() {
-    let source = "# αβ UTF-8\nby {\n  have true by { open(resource) { assumption(); } }\n  if true { normalize(); } else { simp(); }\n  cases { true => { step(); } false => { normalize(); } }\n  both { normalize(); } and { simp(); }\n  outcomes { threw => { step(); } returned => { simp(); } }\n  branch ensuring { true } then { step(); } else { simp(); }\n  normalize();\n}\n";
+    let source = "// αβ UTF-8\nby {\n  have true by { open(resource) { assumption(); } }\n  if true { normalize(); } else { simp(); }\n  cases { true => { step(); } false => { normalize(); } }\n  both { normalize(); } and { simp(); }\n  outcomes { threw => { step(); } returned => { simp(); } }\n  branch ensuring { true } then { step(); } else { simp(); }\n  normalize();\n}\n";
     let index = ProofSourceIndex::new(source).unwrap();
     for line in 1..=10 {
         for position in tactic_starts_on_line(source, line).unwrap() {
@@ -3047,7 +3047,7 @@ fn trace_source_index_scales_with_sites_and_unrelated_source() {
     for size in [16, 64, 256] {
         let source = format!(
             "{}\nby {{ {} }}",
-            "# αβ unrelated\n".repeat(size * 4),
+            "// αβ unrelated\n".repeat(size * 4),
             "have true by { normalize(); } ".repeat(size)
         );
         let positions: Vec<_> = source

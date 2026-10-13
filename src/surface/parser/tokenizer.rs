@@ -25,9 +25,9 @@ pub(super) fn tokenize(
         let tokens_before = tokens.len();
         match ch {
             '#' => {
-                while chars.get(index).is_some_and(|ch| *ch != '\n') {
-                    index += 1;
-                }
+                return Err(ClickError::new(format!(
+                    "{position}: Click line comments start with `//`, not `#`"
+                )));
             }
             ch if ch.is_whitespace() => {
                 index += 1;
@@ -504,8 +504,20 @@ mod comment_tests {
     }
 
     #[test]
+    fn a_hash_line_comment_is_refused_with_the_slash_spelling() {
+        let error =
+            tokenize("ensures 0 == 0; # note", None).expect_err("`#` is not a Click comment");
+        assert!(
+            error
+                .message()
+                .contains("Click line comments start with `//`, not `#`"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn comments_do_not_consume_division_or_literal_contents() {
-        let source = r#"8 / 2 '/' "// literal /* */" /* skip */ + 1 # legacy comment"#;
+        let source = r#"8 / 2 '/' "// literal /* */" /* skip */ + 1 // line comment"#;
         let expected = r#"8 / 2 '/' "// literal /* */" + 1"#;
         assert_eq!(
             tokenize(source, None).unwrap().0,

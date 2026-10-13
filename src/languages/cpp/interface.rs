@@ -55,6 +55,7 @@ pub(super) fn prepare_layouts(
             super::budget::MAX_RECORD_LAYOUT_LEAVES,
         )?;
         leaf_counts.insert(record.name.as_str(), leaves);
+        let mut constant_pointees = Vec::new();
         let mut fields = record
             .fields
             .iter()
@@ -77,13 +78,13 @@ pub(super) fn prepare_layouts(
                         Scalar::mutable_kind(value).unwrap().proof_type()
                     }
                     CppType::Pointer { pointee }
-                        if Scalar::pointer_element(pointee, false).is_some() =>
+                        if Scalar::pointer_element(pointee, true).is_some() =>
                     {
-                        Scalar::pointer_element(pointee, false)
-                            .unwrap()
-                            .kind
-                            .pointer_proof_type()
-                            .unwrap()
+                        let element = Scalar::pointer_element(pointee, true).unwrap();
+                        if element.is_const {
+                            constant_pointees.push(field.name.clone());
+                        }
+                        element.kind.pointer_proof_type().unwrap()
                     }
                     CppType::Record {
                         name,
@@ -92,6 +93,19 @@ pub(super) fn prepare_layouts(
                     } => {
                         struct_name = Some(name.clone());
                         C0Type::Int32 // C's nominal embedded-record placeholder.
+                    }
+                    CppType::Array { element, length } => {
+                        match Scalar::pointer_element(element, false).map(|scalar| scalar.kind) {
+                            Some(ScalarKind::Int32) => C0Type::Int32Array(*length),
+                            Some(ScalarKind::UInt32) => C0Type::UInt32Array(*length),
+                            Some(ScalarKind::UInt8) => C0Type::UInt8Array(*length),
+                            _ => {
+                                return Err(format!(
+                                    "C++ record field `{}.{}` has an unsupported array element",
+                                    record.name, field.name
+                                ));
+                            }
+                        }
                     }
                     _ => {
                         return Err(format!(
@@ -125,7 +139,7 @@ pub(super) fn prepare_layouts(
                 ),
             );
         }
-        let layout = syntax::C0StructLayout::from_explicit_fields_with_structs(
+        let mut layout = syntax::C0StructLayout::from_explicit_fields_with_structs(
             fields,
             record.size_bytes,
             record.alignment_bytes,
@@ -133,6 +147,9 @@ pub(super) fn prepare_layouts(
         )
         .map_err(|error| format!("invalid C++ record layout for `{}`: {error}", record.name))?
         .with_cpp_declaration_identity(import.identity(), &record.declaration_id);
+        for name in &constant_pointees {
+            layout.mark_pointee_constant(name)?;
+        }
         if layouts.insert(record.name.clone(), layout).is_some() {
             return Err(format!("duplicate C++ record name `{}`", record.name));
         }
@@ -222,7 +239,7 @@ fn function_interface(
 ) -> Result<syntax::C0Function, String> {
     let return_reference = matches!(source.return_type, CppType::LvalueReference { .. });
     let return_element = super::scalar::reference_element(&source.return_type);
-    let return_constant = return_element.is_some_and(|element| element.is_const);
+    let return_constant = super::scalar::returns_constant_element(&source.return_type);
     let return_type = if source.return_type == CppType::Void {
         C0Type::Void
     } else if let Some(element) = return_element {
@@ -233,7 +250,7 @@ fn function_interface(
     } else if matches!(source.return_type, CppType::Record { .. }) || return_reference {
         C0Type::Int32Pointer
     } else if let CppType::Pointer { pointee } = &source.return_type {
-        Scalar::pointer_element(pointee, false)
+        Scalar::pointer_element(pointee, true)
             .and_then(|scalar| scalar.kind.pointer_proof_type())
             .ok_or("unsupported native pointer return interface")?
     } else {

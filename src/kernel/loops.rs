@@ -9518,15 +9518,14 @@ impl CConditionAssumption {
 /// Every way this guard can leave `state`: one entry per feasible value path,
 /// plus one entry for each path on which the guard could not be evaluated.
 ///
-/// A guard that could not be evaluated is evaluated once more conjunct by
-/// conjunct, because a short-circuit guard's later conjunct is read under the
+/// When the function has composite definitions, a short-circuit guard is
+/// evaluated conjunct by conjunct, because a later conjunct is read under the
 /// truth of its earlier ones and that prefix may publish read authority (D7,
 /// extended to the arms a prefix leaves possible). `parent != 0 &&
 /// node == parent->rb_right` is the shape: the first conjunct refutes the
 /// folded frame's `Top` arm, the `Left` and `Right` arms both own
-/// `parent->rb_right`, and the second conjunct reads it. The second pass costs
-/// one more evaluation of a guard that already failed, and it changes nothing
-/// for a guard the ordinary evaluation decided.
+/// `parent->rb_right`, and the second conjunct reads it. Any other guard is
+/// evaluated whole. Either way the guard is evaluated once.
 pub(super) fn assume_condition_branches(
     state: &CState,
     condition: &CExpression,
@@ -9536,25 +9535,19 @@ pub(super) fn assume_condition_branches(
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CConditionAssumption>> {
-    let branches = assume_condition_branches_at_state(
-        state,
-        condition,
-        assumptions,
-        prefix_facts,
-        prefix_obligations,
-        budget,
-    )?;
-    if definitions.is_empty()
-        || branches
-            .iter()
-            .all(|branch| branch.undecided_outcome().is_none())
-    {
-        return Ok(branches);
-    }
     let mut conjuncts = Vec::new();
-    guard_conjuncts(condition, &mut conjuncts);
+    if !definitions.is_empty() {
+        guard_conjuncts(condition, &mut conjuncts);
+    }
     if conjuncts.len() < 2 {
-        return Ok(branches);
+        return assume_condition_branches_at_state(
+            state,
+            condition,
+            assumptions,
+            prefix_facts,
+            prefix_obligations,
+            budget,
+        );
     }
     assume_guard_conjunct_branches(
         state,
@@ -9587,8 +9580,8 @@ fn guard_conjuncts<'a>(condition: &'a CExpression, conjuncts: &mut Vec<&'a CExpr
 ///
 /// The C is unchanged: the guard is false as soon as one conjunct is false,
 /// true when the last one is, and undecided wherever a conjunct produced no
-/// value — which is the refusal S1 installed, kept here. What the second pass
-/// adds is where each conjunct is read: a folded matched instance publishes the
+/// value — which is the refusal S1 installed, kept here. What evaluating by
+/// conjunct adds is where each conjunct is read: a folded matched instance publishes the
 /// cells every arm the prefix leaves possible owns, so a conjunct may read what
 /// an earlier conjunct unlocked and nothing more.
 ///

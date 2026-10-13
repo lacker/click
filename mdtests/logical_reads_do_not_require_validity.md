@@ -7,7 +7,7 @@ access. No range or permission is required to state these logical values.
 theorem arbitrary_cell(p: int32[]) {
     ensures p[0] == p[0] by simp;
     ensures exists (k: Integer) { p[to_int32(k)] == p[to_int32(k)] } by {
-        witness { k: 0 }
+        witness { k: 0 };
         simp();
     }
 }

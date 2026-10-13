@@ -352,7 +352,7 @@ typical existential-introduction proof names a witness:
 ```click
 ensures found: (0..n).any(|k| { k == result }) by {
     execute();
-    witness { k: 0 }
+    witness { k: 0 };
     simp();
 }
 ```
@@ -366,8 +366,8 @@ contract clause by name or position, and it does not prove the existential.
 requires exists (x: Integer, y: Integer) { x == y };
 ensures exists (a: Integer, b: Integer) { a == b } by {
     obtain (left: Integer, right: Integer) { left == right }
-    witness { a: left }
-    witness { b: right }
+    witness { a: left };
+    witness { b: right };
     assumption();
 }
 ```
@@ -384,7 +384,7 @@ ensures opened_contains: bytes_contains(p, 0, n, 'x') by {
     obtain (found: int32) {
         0 <= found and found < n and p[found] == 'x'
     }
-    witness { k: found }
+    witness { k: found };
     simp();
 }
 ```

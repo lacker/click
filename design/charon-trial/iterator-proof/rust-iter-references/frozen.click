@@ -31,8 +31,8 @@ int32 sum(const uint8* bytes, uint64 bytes_len) {
             prefix(bytes, ((int32)(uint32)bytes_len - __rust_iter_3_5_remaining)) == 0;
         }
     }
-    # This sidecar chooses an input-prefix invariant; the iterator supplies
-    # its remaining slice and cursor, without a processed-count variable.
+    // This sidecar chooses an input-prefix invariant; the iterator supplies
+    // its remaining slice and cursor, without a processed-count variable.
     loop {
         decreases __rust_iter_3_5_remaining;
         views bytes[0..(int32)(uint32)bytes_len];
@@ -300,7 +300,7 @@ int32 sum(const uint8* bytes, uint64 bytes_len) {
             have defined(total + (int32)load_uint8(__rust_iter_3_5_item)) by {
                 rewrite(((int32)load_uint8(__rust_iter_3_5_item)) == (int32)bytes[((int32)(uint32)bytes_len - __rust_iter_3_5_remaining - 1)]); simp();
             }
-            # Connect Rust's captured addition operands to the mathematical sum.
+            // Connect Rust's captured addition operands to the mathematical sum.
             have __rust_checked_1 == (int32)load_uint8(__rust_iter_3_5_item) by { simp(); }
             have __rust_checked_0 == total by { simp(); }
             have defined(__rust_checked_0 + __rust_checked_1) by { simp(); }

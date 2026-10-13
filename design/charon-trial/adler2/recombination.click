@@ -1,6 +1,6 @@
-# Bounds for the original Adler32::compute lane recombination expressions.
-# These conditional arithmetic lemmas do not establish the loop invariants.
-# The unchanged Rust source and Charon import are not modified.
+// Bounds for the original Adler32::compute lane recombination expressions.
+// These conditional arithmetic lemmas do not establish the loop invariants.
+// The unchanged Rust source and Charon import are not modified.
 
 theorem adler_recombine_difference(a: uint32) {
     requires a < 65521u32;

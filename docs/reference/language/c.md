@@ -244,9 +244,9 @@ startup values or receive fresh permissions. Click does not model
 proofs. Owned global ranges can be folded into named resources and transferred
 through helper contracts. Resource tactics retain the current function's
 static bindings, including parameter shadowing; unfolding scalar ranges keeps
-their declared signedness and width. Private-wrapper example coverage remains
-tracked in
-[private static ownership](https://github.com/clicklang/click/blob/master/issues/private-static-helper-ownership.md).
+their declared signedness and width. The unchanged pcg-c-basic wrappers over
+their private `pcg32_global` verify in `examples/pcg-basic/`, and a separate
+client of them in `examples/pcg-client/`.
 
 See `mdtests/program_entry_static_ownership.md` for ownership transferred
 through two calls to a pointer-taking helper without resetting the state.

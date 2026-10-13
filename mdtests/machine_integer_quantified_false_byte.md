@@ -3,7 +3,7 @@
 ```click
 theorem bad(n: uint8) {
     ensures exists (x: uint8) { x + 1 == n } by {
-        witness { x: n }
+        witness { x: n };
         normalize();
     }
 }

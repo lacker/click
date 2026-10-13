@@ -119,7 +119,7 @@ int32 range_helpers() {
     }
     ensures any_has_one: (0..3).any(|k| { k == 1 }) by {
         execute();
-        witness { k: 1 }
+        witness { k: 1 };
         simp();
     }
 }

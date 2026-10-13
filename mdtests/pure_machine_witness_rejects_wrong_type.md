@@ -3,7 +3,7 @@
 ```click
 theorem wrong_type(p: int64*) {
     ensures exists (q: int32*) { q == q } by {
-        witness { q: p }
+        witness { q: p };
         simp();
     }
 }

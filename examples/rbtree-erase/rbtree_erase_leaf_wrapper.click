@@ -8,7 +8,7 @@ function erase_leaf_result(ctx: Context, color: Color) -> RbTree {
     }
 }
 
-# Leaf deletion at any position: return either a balanced context or a deficit.
+// Leaf deletion at any position: return either a balanced context or a deficit.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);
@@ -272,7 +272,7 @@ void rb_erase(struct rb_node* node, struct rb_root* root) {
     apply(dummy_copy_contract());
     apply(dummy_rotate_contract());
     fold(erase_callbacks(&dummy_callbacks));
-    step(); # Declare rebalance.
+    step(); // Declare rebalance.
     let { hole: hole, remaining: deficit } = step(__rb_erase_augmented(node, root, &dummy_callbacks), { tree: tree, up: up });
     have deficit.model == old(up.model);
     have ctx_consistent(deficit.model, RbTree::Empty, 0) == 1 by { rewrite(RbTree::Empty == hole.model); assumption(); }
@@ -289,7 +289,7 @@ void rb_erase(struct rb_node* node, struct rb_root* root) {
         }
         have erase_leaf_result(old(up.model), rb_color(old(tree.model))) == erase_flips_red_all_result(deficit.model, RbTree::Empty);
         unfold(hole);
-        step(); # Select the nonnull rebalance branch.
+        step(); // Select the nonnull rebalance branch.
         mark repair;
         let { whole: whole } = step(____rb_erase_color(rebalance, root, dummy_rotate), { c: deficit });
         have whole.model == erase_leaf_result(old(up.model), rb_color(old(tree.model))) by {

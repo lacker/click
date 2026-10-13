@@ -1,4 +1,4 @@
-# Real two-update client of the unchanged pinned library.
+// Real two-update client of the unchanged pinned library.
 fn adler_incremental::incremental(bytes: &[u8], split: usize) -> u32 {
  requires bytes.len() <= 2147483647u64;
  requires split <= bytes.len();

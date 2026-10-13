@@ -255,8 +255,7 @@ fn lower_function(
         _ if matches!(source.return_type, CppType::Record { .. }) => CType::Int32Pointer,
         _ => cpp_return_scalar_type(&source.return_type)?,
     };
-    let return_constant =
-        scalar::reference_element(&source.return_type).is_some_and(|element| element.is_const);
+    let return_constant = scalar::returns_constant_element(&source.return_type);
     let mut function = c_function(
         return_type,
         names.require(&source.declaration_id)?.to_owned(),
@@ -1339,8 +1338,7 @@ impl LoweringContext<'_> {
                                 false,
                                 false,
                                 false,
-                                scalar::reference_element(value_type)
-                                    .is_some_and(|element| element.is_const),
+                                scalar::returns_constant_element(value_type),
                             ),
                             c_call_assign(
                                 capture.clone(),
@@ -2202,7 +2200,7 @@ fn lower_binary_value(
 
 fn cpp_return_scalar_type(value_type: &CppType) -> Result<CType, String> {
     if let CppType::Pointer { pointee } = value_type {
-        return Scalar::pointer_element(pointee, false)
+        return Scalar::pointer_element(pointee, true)
             .and_then(|scalar| scalar.kind.pointer_kernel_type())
             .ok_or_else(|| "unsupported native C++ pointer result".into());
     }

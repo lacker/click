@@ -30,7 +30,7 @@ resource erase_callbacks(augment: const struct rb_augment_callbacks*) {
     fact AugmentRotate(augment->rotate);
 }
 
-# Non-root immediate successor with a nonempty replacement child.
+// Non-root immediate successor with a nonempty replacement child.
 struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                                     const struct rb_augment_callbacks* augment) {
     consumes tree: rb_at(node);

@@ -4418,6 +4418,18 @@ impl C0StructLayout {
         )
     }
 
+    /// Marks a pointer field's pointee const, as an imported record's
+    /// `const T*` field is: reads through it are allowed, writes refused.
+    pub(crate) fn mark_pointee_constant(&mut self, name: &str) -> Result<(), String> {
+        let field = self
+            .fields
+            .get_mut(name)
+            .filter(|field| field.c_type.is_pointer())
+            .ok_or_else(|| format!("explicit struct field `{name}` is not a pointer"))?;
+        field.pointee_constant = true;
+        Ok(())
+    }
+
     /// Imported embedded declarations use the same nominal field metadata and
     /// physical leaf layout as C structs. Bound materialized leaves before copying
     /// any nested layout, including a shared declaration used more than once.

@@ -293,9 +293,42 @@ fn field_at(
     pointee_constant: bool,
 ) -> Option<&crate::surface::FieldPlace> {
     fields.iter().find(|field| {
-        field.offset_bytes == offset_bytes
+        field.array.is_none()
+            && field.offset_bytes == offset_bytes
             && field.value_type == value_type
             && field.pointee_constant == pointee_constant
+    })
+}
+
+/// The place a typed read at `offset_bytes` names: a scalar field, or an
+/// element `field[k]` of an array field.
+fn field_place_at(
+    fields: &[crate::surface::FieldPlace],
+    offset_bytes: u32,
+    value_type: CType,
+    pointee_constant: bool,
+) -> Option<String> {
+    if let Some(field) = field_at(fields, offset_bytes, value_type, pointee_constant) {
+        return Some(field.name.clone());
+    }
+    fields.iter().find_map(|field| {
+        let (width, length) = field.array?;
+        // The whole array, read as an array, is the field itself.
+        let whole = match field.value_type {
+            CType::Int32 => CType::Int32Array(length),
+            CType::UInt32 => CType::UInt32Array(length),
+            CType::UInt8 => CType::UInt8Array(length),
+            _ => return None,
+        };
+        if offset_bytes == field.offset_bytes && value_type == whole {
+            return Some(field.name.clone());
+        }
+        let within = offset_bytes.checked_sub(field.offset_bytes)?;
+        (field.value_type == value_type
+            && !pointee_constant
+            && within % width == 0
+            && within / width < length)
+            .then(|| format!("{}[{}]", field.name, within / width))
     })
 }
 
@@ -381,8 +414,27 @@ fn describe_read_through_parameter(
                 .then(|| syntax::referent_of_carrier(variable).map(str::to_string))
                 .flatten();
         }
-        let (base, field) = selected_field_place(pointer, value_type, pointee_constant, scope)?;
-        Some(describe_field_place(&base, &field.name))
+        let (base, field) = if let Some((base, field)) =
+            selected_field_place(pointer, value_type, pointee_constant, scope)
+        {
+            (base, field.name.clone())
+        } else {
+            let (base, fields) = struct_pointer_place(base, scope)?;
+            let field = field_place_at(fields, offset_bytes, value_type, pointee_constant)?;
+            (base, field)
+        };
+        // Keep upstream's accessor spelling for standard-library fields,
+        // including their selected array indices.
+        let (path, index) = field
+            .split_once('[')
+            .map_or((field.as_str(), ""), |(path, _)| {
+                (path, &field[path.len()..])
+            });
+        let root = object_at_address(&base).map_or(base.clone(), str::to_string);
+        if let Some(accessor) = cpp_model::describe_model_field_place(&root, path) {
+            return Some(format!("{accessor}{index}"));
+        }
+        Some(describe_field_place(&base, &field))
     })
 }
 

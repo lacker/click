@@ -49,10 +49,10 @@ target "x86_64-linux-userspace";
 runtime "modeled-pthread";
 verifying "mutex_counter_doubled_contribution_rejected.c";
 
-# Each worker that has incremented the counter holds one contribution, and
-# each worker still to run holds one credit. The control owns the counter and
-# both authorities, so the counter equals the number of contributions and the
-# two populations together stay at two.
+// Each worker that has incremented the counter holds one contribution, and
+// each worker still to run holds one credit. The control owns the counter and
+// both authorities, so the counter equals the number of contributions and the
+// two populations together stay at two.
 authorized resource contribution(counter: struct mutex_counter*) {}
 authorized resource credit(counter: struct mutex_counter*) {}
 

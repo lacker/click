@@ -1,5 +1,5 @@
-# Checked signed observations of native counts within the explicit signed limit.
-# Iterator state and slice metadata retain their full unsigned 64-bit width.
+// Checked signed observations of native counts within the explicit signed limit.
+// Iterator state and slice metadata retain their full unsigned 64-bit width.
 theorem adler_bounded_count(count: uint64) {
  requires count <= 2147483647u64;
  ensures to_integer((int32)(uint32)count) == to_integer(count) by {
@@ -142,7 +142,7 @@ theorem adler_bounded_count_native_lower(count: uint64, low: int32) {
  }
 }
 
-# Absolute tail-byte observation across the whole signed observation range.
+// Absolute tail-byte observation across the whole signed observation range.
 theorem adler_bounded_previous_byte_observation(bytes: uint8[], total: uint64, remaining: uint64) {
  requires remaining <= total;
  requires 1u64 <= total - remaining;
@@ -183,7 +183,7 @@ theorem adler_bounded_previous_byte_observation(bytes: uint8[], total: uint64, r
  }
 }
 
-# A guarded logical index denotes an actual byte in the native input range.
+// A guarded logical index denotes an actual byte in the native input range.
 theorem adler_bounded_signed_index(count: uint64, index: int32) {
  requires count <= 2147483647u64;
  requires 0 <= index;

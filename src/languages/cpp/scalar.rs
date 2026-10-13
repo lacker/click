@@ -248,6 +248,16 @@ pub(super) fn reference_element(value: &CppType) -> Option<Scalar> {
     }
 }
 
+/// Whether a returned reference or pointer refers to a const native element.
+pub(super) fn returns_constant_element(value: &CppType) -> bool {
+    match value {
+        CppType::LvalueReference { pointee } | CppType::Pointer { pointee } => {
+            Scalar::pointer_element(pointee, true).is_some_and(|element| element.is_const)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn same_scalar_type(left: &CppType, right: &CppType) -> bool {
     match (left, right) {
         (CppType::Pointer { pointee: left }, CppType::Pointer { pointee: right })

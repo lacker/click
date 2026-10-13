@@ -3125,7 +3125,7 @@ fn checked_view_certificate_initializes_a_pristine_loan_authority() {
 }
 
 #[test]
-fn contract_certification_reuses_complementary_checked_entry_partitions() {
+fn contract_certification_refuses_split_entry_artifacts() {
     let input = Bitvector32Term::Variable(Variable(919_100));
     let branch = ConditionTerm::signed_less_than(input.clone(), Bitvector32Term::Constant(0));
     let function = c_function(
@@ -3190,10 +3190,11 @@ fn contract_certification_reuses_complementary_checked_entry_partitions() {
     assert_eq!(
         crate::kernel::api::take_checked_function_body_execution_count(),
         0,
-        "two complete opposite entry cases should compose without executing the body again"
+        "two opposite entry cases are not one complete contract frontier, and certification must not execute the body instead"
     );
-    assert_eq!(execution.path_count(), 2);
-    assert!(c_verified_function_contract_claims(&function, &execution).is_some());
+    assert_eq!(execution.path_count(), 0);
+    assert!(execution.reuse_diagnostic().is_some());
+    assert!(c_verified_function_contract_claims(&function, &execution).is_none());
 
     let fallback = prove_c_function_contract_execution_paths_with_checked_artifacts(
         state,

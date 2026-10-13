@@ -9,7 +9,7 @@ theorem independent_integer_choice() {
         intro();
         obtain (chosen: Integer) { chosen == 0 }
         have arbitrary == arbitrary by { normalize(); }
-        witness { found: chosen }
+        witness { found: chosen };
         assumption();
     }
 }

@@ -1,11 +1,11 @@
-# The original checksum method packs two u16 fields into a u32.
+// The original checksum method packs two u16 fields into a u32.
 theorem adler_u16_observation(value: uint16) {
  ensures to_integer((uint32)value) == to_integer(value) by {
   have (uint32)value <= 65535u32;
   apply(uint32_to_integer_bounds((uint32)value));
   apply(uint32_less_equal_to_integer((uint32)value, 65535u32));
-  # The promoted word and the narrow field retain the same checked carrier.
-  # Prove its range as a word before observing it as a narrow field.
+  // The promoted word and the narrow field retain the same checked carrier.
+  // Prove its range as a word before observing it as a narrow field.
   have to_integer(value) == to_integer((uint32)value) by {
   arithmetic_certificate rules {
    premise 0: 0 <= to_integer((uint32)value) => 0 <= to_integer((uint32)value);
@@ -34,8 +34,8 @@ theorem adler_pack_fields(a: uint16, b: uint16) {
  }
 }
 
-# Any implementation whose fields meet the shared specification returns its
-# specified checksum through the unchanged native packing expression.
+// Any implementation whose fields meet the shared specification returns its
+// specified checksum through the unchanged native packing expression.
 theorem adler_pack_fields_spec(a: uint16, b: uint16, bytes: uint8[], length: int32, a0: Integer, b0: Integer) {
  requires 0 <= length;
  requires to_integer(a) == adler_spec_a(bytes, length, a0);
@@ -51,7 +51,7 @@ theorem adler_pack_fields_spec(a: uint16, b: uint16, bytes: uint8[], length: int
  }
 }
 
-# Canonical observations are accepted unchanged as the next native seed.
+// Canonical observations are accepted unchanged as the next native seed.
 theorem adler_canonical_observation(value: uint16) {
  requires to_integer(value) <= 65520;
  ensures (uint32)value <= 65520u32 by {

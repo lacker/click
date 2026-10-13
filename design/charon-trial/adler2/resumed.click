@@ -1,4 +1,4 @@
-# Save and restore the prefix checksum before updating the unchanged suffix.
+// Save and restore the prefix checksum before updating the unchanged suffix.
 fn adler_resumed::resumed(bytes: &[u8], split: usize) -> u32 {
  requires bytes.len() <= 2147483647u64;
  requires split <= bytes.len();

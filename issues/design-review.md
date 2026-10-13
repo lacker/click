@@ -264,7 +264,7 @@ Proposed fix: one meaning per word, e.g. `reveal` for predicates and
 `mint`/`burn` for counted members; move certificate step names out of the
 general word index.
 
-Decision: open.
+Decision: open; the maintainer will revisit it after L2–L7.
 
 ### L2. No spec `bool`
 
@@ -274,7 +274,7 @@ is `1` when not `0` (`examples/modeled-binary-tree`).
 
 Proposed fix: a specification `bool`.
 
-Decision: open.
+Decision: fix (maintainer, 2026-10-13): a specification `bool`.
 
 ### L3. Two conversion families
 
@@ -284,7 +284,7 @@ and implicit return conversion follows a third rule
 
 Proposed fix: one checked conversion family plus an explicit wrapping one.
 
-Decision: open.
+Decision: fix (maintainer, 2026-10-13): a C cast `(uint32)x` wraps as in GCC and Clang, `to_uint32(x)` is the checked conversion, and implicit return conversion follows one of the two.
 
 ### L4. Rust and C++ specs still read like C
 
@@ -297,9 +297,9 @@ lengths compare with `4u64`, `bool` results are specified as
 Proposed fix: Rust types and `as` throughout Rust sidecars, including pure
 functions; `bool` results as `bool`.
 
-Decision: open.
+Decision: fix (maintainer, 2026-10-13), after L2: Rust types, `as` and `bool` throughout Rust sidecars.
 
-### L5. Resource clauses overlap and the docs disagree
+### L5. Resource clauses overlap
 
 Today: `consumes X; produces X;` beside `owns X`; per-field `owns` lists;
 frames restated after `produces`.
@@ -317,18 +317,7 @@ Today: `fold(tree_at(result), { model: ... }, { left: lower, right: z })`;
 Proposed fix: infer constructor type arguments and default child maps by
 name; one documented unfold binding form.
 
-Decision: open.
-
-### L7. Small spellings vary
-
-Today: `by auto;`, `by simp;` and `by { simp(); }`; `witness { k: x }`
-without `;`; both `#` and `//` comments; `old(x)` beside
-`at(function.entry, x)`.
-
-Proposed fix: rule on each, keeping sugar only where it is documented as
-sugar.
-
-Decision: open.
+Decision: fix (maintainer, 2026-10-13): infer constructor type arguments and default child maps by name; one documented unfold binding form.
 
 ## M. Memory model, semantics and trust
 

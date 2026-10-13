@@ -1618,13 +1618,16 @@ contract:
 Contracts state a standard type's state through model accessors, never
 through a library's private fields. `std_span_data(s)` and `std_span_size(s)`
 name the data pointer and size of a `std::span`, the view of
-`[data, data + size)`. The parser rewrites an accessor into the one field path
-of the library that was parsed (libstdc++'s `_M_ptr` and
-`_M_extent._M_extent_value`, or libc++'s `__data_` and `__size_`), and checks
-it like a written field access; an argument of another type is refused there.
-A layout that matches neither library, or matches both, binds no accessor, so
-an accessor is never misbound. The libc++ binding is checked against a layout with
-LLVM 19's field names; no libc++ program is imported end to end yet. An accessor works wherever a field
+`[data, data + size)`, and `std_array_data(a)` names the elements a
+`std::array` holds. The parser rewrites an accessor into the one field path
+of the library that was parsed (libstdc++'s `_M_ptr`,
+`_M_extent._M_extent_value` and `_M_elems`, or libc++'s `__data_`, `__size_`
+and `__elems_`), and checks it like a written field access; an argument of
+another type is refused there. A layout that matches neither library, or
+matches both, binds no accessor, so an accessor is never misbound. A libc++
+program verifies with the same proofs as a libstdc++ one
+(`tests/libcxx_span.rs`, against the pinned closure in
+`tests/fixtures/libcxx-span`). An accessor works wherever a field
 does, as in `owns std_span_data(s);`. Diagnostics and expanded proofs print the
 accessor for its field path, so an expanded proof names no private field
 either.
@@ -1634,7 +1637,9 @@ these accessors. Historical reads keep their snapshot qualification, for
 example `at(<state A>, std_span_size(s))`, rather than a carrier-cell index.
 
 The `std::span<T>` entries are generic over the element type `T`, which may
-be `int`, `unsigned int`, `unsigned char` or `std::byte`. They cover a
+be `int`, `unsigned int`, `unsigned char` or `std::byte`, each possibly
+`const`; a `std::span<const T>` holds a `const T*`, and its element accessors
+return `const` references. They cover a
 dynamic-extent span's `size`, `size_bytes`, `data`, `front`, `back`,
 `operator[]`, `first`, `last` and `subspan(offset, count)`:
 
@@ -1658,8 +1663,28 @@ explicit step requirement; recovery still refuses unproved requirements.
 An element type outside that list matches no entry, so its calls are refused
 by name. Element accessors (`front`, `back`, `operator[]`) return native
 element references, which a caller may bind, read or write directly.
-A `std::dynamic_extent` count to `subspan` is refused by a kernel defect
-(`bugs/a-view-returning-call-refuses-a-deferred-precondition.md`).
+A defaulted argument is imported as the constant Clang evaluates for it, so
+`subspan(1)` passes `std::dynamic_extent` as its count and verifies as the
+subview to the end.
+
+A static-extent `std::span<T, N>` keeps its extent in its type. libstdc++'s
+extent member is `[[no_unique_address]]` and empty, so the importer leaves it
+out and the record holds only the data pointer; any such stateless member of
+an empty, trivially copyable class is left out the same way. Its entries
+state the size as the literal `N`: `size()` is `N`, `size_bytes()` is
+`N * sizeof(T)`, and `front`, `back` and `operator[]` require an index below
+`N`. `first`, `last` and `subspan` take a runtime count and return
+dynamic-extent spans.
+
+`std::array<T, N>` holds its elements in an inline array field, which the
+record profile admits for native element types. Its `size()` is `N`; `data()`
+is `&std_array_data(a)[0]`; and `front`, `back` and `operator[]`, in their
+const and mutable overloads, require an index below `N` and return
+`&std_array_data(a)[i]`. A read needs a resource for the array and a write
+needs to own it. A resource clause naming one element through a reference
+parameter is refused by a defect
+(`bugs/a-reference-records-array-element-resource-does-not-lower.md`); naming
+the whole array works.
 
 The catalog also covers dynamic-extent
 `std::as_writable_bytes(std::span<int>)`. It returns a byte view of the

@@ -1,7 +1,7 @@
 import "short-prefix.click";
 import "byte.click";
 
-# One mathematical scalar recurrence, reused for each unchanged DO16 lane.
+// One mathematical scalar recurrence, reused for each unchanged DO16 lane.
 theorem zlib_component_step(bytes: uint8[], n: int32) {
  requires 0 <= n;
  requires n < 2147483647;
@@ -61,9 +61,9 @@ theorem zlib_reduced_result(bytes: uint8[], length: int32, a: uint64, b: uint64)
  }
 }
 
-# A checked native recurrence for one original C addition pair within a batch.
-# The byte equality is over C's promoted value; neither memory nor a callee
-# checksum summary is assumed by this lemma.
+// A checked native recurrence for one original C addition pair within a batch.
+// The byte equality is over C's promoted value; neither memory nor a callee
+// checksum summary is assumed by this lemma.
 theorem zlib_native_component_step(bytes: uint8[], n: int32, a: uint64, b: uint64, value: uint8) {
  requires 0 <= n;
  requires n < 5552;

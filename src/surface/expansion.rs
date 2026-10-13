@@ -4966,7 +4966,7 @@ mod selected_source_position_tests {
         let mut overhead = Vec::new();
         for size in [8, 32, 128] {
             let source = format!(
-                "# Unicode: λ\ntheorem locations() {{ ensures 0 == 0 by {{\n simp();\n // {}\n have 0 == 0 by {{ simp(); }}\n simp();\n}} }}\n",
+                "// Unicode: λ\ntheorem locations() {{ ensures 0 == 0 by {{\n simp();\n // {}\n have 0 == 0 by {{ simp(); }}\n simp();\n}} }}\n",
                 "unrelated λ ".repeat(size),
             );
             let file = parse_source_with_c_layouts(&source, &[]).unwrap();

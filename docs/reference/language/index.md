@@ -685,7 +685,7 @@ function reaches its return frontier:
 ```click
 execute();
 have exists (k: int32) { k == result } by {
-    witness { k: result }
+    witness { k: result };
     simp();
 }
 simp();
@@ -2547,7 +2547,7 @@ For a symbolic `.any`, the range item name is the existential binder:
 ```click
 ensures found: (lo..hi).any(|k| { p[k] == result }) by {
     execute();
-    witness { k: lo }
+    witness { k: lo };
     simp();
 }
 ```
@@ -2555,6 +2555,7 @@ ensures found: (lo..hi).any(|k| { p[k] == result }) by {
 ## `old(...)`
 
 `old(expression)` evaluates a contract expression in the function-entry state.
+It is sugar for `at(function.entry, expression)`.
 It is mainly used in postconditions and invariants:
 
 <!-- verified-example: mdtests/write_second_old_keeps_first.md -->
@@ -2948,7 +2949,7 @@ let k: int32 where k == x;
 
 ensures result == k by {
     execute();
-    witness { k: x }
+    witness { k: x };
     simp();
 }
 ```

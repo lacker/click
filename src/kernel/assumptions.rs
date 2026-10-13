@@ -905,6 +905,7 @@ fn assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
         key.atomic_ground_facts = crate::persistent::PersistentSet::default();
         key.atomic_quantified_facts = crate::persistent::PersistentSet::default();
         key.condition_facts_by_variable = crate::persistent::PersistentMap::default();
+        key.direct_bitvector_equalities = crate::persistent::PersistentMap::default();
         key.snapshot_condition_variable_base = crate::persistent::PersistentMap::default();
         key.snapshot_condition_variable_changes = crate::persistent::PersistentMap::default();
         key.snapshot_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
@@ -3626,11 +3627,13 @@ impl PureFactContext {
         self.bitvector_equality_facts = std::sync::Arc::new(std::sync::OnceLock::new());
         self.bitvector64_equality_facts = crate::persistent::PersistentMap::default();
         self.exact_constant_equalities = crate::persistent::PersistentMap::default();
+        self.direct_bitvector_equalities = crate::persistent::PersistentMap::default();
         self.constant_classes = ConstantClasses::default();
         let conditions = self.condition_facts.clone();
         for (condition, value) in conditions.iter() {
             self.adjust_bitvector64_equality(condition, *value, true);
             self.adjust_exact_constant_equality(condition, *value, true);
+            self.adjust_direct_bitvector_equality(condition, *value, true);
             self.file_constant_class_equality(condition, *value);
         }
     }
@@ -3877,6 +3880,39 @@ impl PureFactContext {
             } else {
                 self.exact_constant_equalities
                     .with_inserted(term.clone(), facts)
+            };
+        }
+    }
+
+    fn adjust_direct_bitvector_equality(
+        &mut self,
+        condition: &ConditionTerm,
+        value: bool,
+        insert: bool,
+    ) {
+        let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
+            return;
+        };
+        for (endpoint, other) in [
+            (left.as_ref(), right.as_ref()),
+            (right.as_ref(), left.as_ref()),
+        ] {
+            crate::instrumentation::record_deterministic_work(1);
+            let entries = self
+                .direct_bitvector_equalities
+                .get(endpoint)
+                .cloned()
+                .unwrap_or_default();
+            let entries = if insert {
+                entries.with_inserted(condition.clone(), other.clone())
+            } else {
+                entries.without_key(condition)
+            };
+            self.direct_bitvector_equalities = if entries.is_empty() {
+                self.direct_bitvector_equalities.without_key(endpoint)
+            } else {
+                self.direct_bitvector_equalities
+                    .with_inserted(endpoint.clone(), entries)
             };
         }
     }
@@ -5541,6 +5577,7 @@ impl PureFactContext {
             );
             self.adjust_bitvector64_equality(&condition, old, false);
             self.adjust_exact_constant_equality(&condition, old, false);
+            self.adjust_direct_bitvector_equality(&condition, old, false);
             self.adjust_condition_match_indexes(&condition, old, false);
             self.adjust_algebraic_predicate_fact(&condition, old, false);
             self.adjust_signed_order_bound(&condition, old, false);
@@ -5569,6 +5606,7 @@ impl PureFactContext {
         }
         self.adjust_bitvector64_equality(&condition, value, true);
         self.adjust_exact_constant_equality(&condition, value, true);
+        self.adjust_direct_bitvector_equality(&condition, value, true);
         self.adjust_condition_match_indexes(&condition, value, true);
         if old == Some(true) && matches!(condition, ConditionTerm::Bitvector32Equal(..)) {
             // A replaced true equality is withdrawn from classes that only

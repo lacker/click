@@ -537,6 +537,12 @@ pub enum CppType {
         name: String,
         is_const: bool,
     },
+    /// A fixed-length array of a native element, admitted only as a record
+    /// field, such as `std::array`'s `_M_elems`.
+    Array {
+        element: Box<CppType>,
+        length: u32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1938,8 +1944,20 @@ impl CppRecord {
                     }
                 }
                 CppType::Pointer { pointee } => {
-                    require_native_pointer_element(pointee, false, "record pointer field")?;
+                    require_native_pointer_element(pointee, true, "record pointer field")?;
                     (8, 8)
+                }
+                CppType::Array { element, length } => {
+                    require_native_pointer_element(element, false, "record array field element")?;
+                    let width = match Scalar::of(element).map(|scalar| scalar.kind) {
+                        Some(ScalarKind::UInt8) => 1u32,
+                        _ => 4,
+                    };
+                    let size = length
+                        .checked_mul(width)
+                        .filter(|size| *length > 0 && *size <= i32::MAX as u32)
+                        .ok_or("C++ record array field has an unsupported length")?;
+                    (size, width)
                 }
                 CppType::Record {
                     declaration_id,
@@ -3871,6 +3889,7 @@ impl CppExpression {
                         }
                         Ok(())
                     }
+                    CppType::Array { .. } => Err("C++ arrays cannot be loaded or copied".into()),
                     CppType::Record { .. } => {
                         Err("C++ record values cannot be loaded or copied".into())
                     }
@@ -5991,6 +6010,7 @@ fn require_return_value_type(value: &CppType, label: &str) -> Result<(), String>
     if require_scalar_integer(value, label).is_ok()
         || require_native_object_pointer(value, label).is_ok()
         || super::scalar::reference_element(value).is_some()
+        || matches!(value, CppType::Pointer { pointee } if Scalar::pointer_element(pointee, true).is_some())
     {
         Ok(())
     } else {

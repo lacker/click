@@ -1,4 +1,4 @@
-# Pure observation of the source counter, not a generated program local.
+// Pure observation of the source counter, not a generated program local.
 import "../adler2/count-bridge.click";
 import "../../adler32-spec.click";
 function zlib_prefix_count(total: uint64, remaining: uint64) -> int32 {
@@ -59,7 +59,7 @@ theorem zlib_equal_byte_integers(left: uint8, right: uint8) {
  }
 }
 
-# Packing after the original C short-path reduction, from exact component sums.
+// Packing after the original C short-path reduction, from exact component sums.
 theorem zlib_short_result(bytes: uint8[], length: int32, a: uint64, b: uint64) {
  requires to_integer(a) == 1 + adler_byte_sum(bytes, length);
  requires to_integer(b) == to_integer(length) + adler_weighted_sum(bytes, length, length);

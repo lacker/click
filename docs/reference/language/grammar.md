@@ -17,8 +17,8 @@ Identifiers start with an ASCII letter or underscore and continue with ASCII
 letters, decimal digits, or underscores. Keywords cannot be identifiers.
 Whitespace separates tokens. Line comments start with `//`; block comments
 start with `/*` and end with `*/`. Block comments do not nest; an unclosed
-block comment is a syntax error. The existing `#` line-comment spelling is
-also accepted. Comments preserve source locations and are ignored when
+block comment is a syntax error. `#` does not start a comment and is refused
+with the `//` spelling. Comments preserve source locations and are ignored when
 loading imports or selecting proof steps.
 
 Integer literals are decimal. Character literals use single quotes, including
@@ -69,7 +69,7 @@ documentation inventory keep the following accepted words synchronized.
 | `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; checked machine families are `arithmetic_certificate signed_int32 { ... }` and `arithmetic_certificate rules { ... }`. |
 | `signed_int32` | Selects the public checked signed-machine arithmetic-certificate family. |
 | `rules` | Selects the pointer, tagged-word, finite-float, and `int32` / `int64` definedness arithmetic-certificate family. |
-| `int32_defined`, `int64_defined` | Proves `defined(a + b)` or `defined(a - b)` over `int32` or `int64` in a `rules` certificate from the operands' width ranges and the listed constant bounds on them. One checker serves both widths. |
+| `int32_defined`, `int64_defined` | Proves `defined(a + b)` or `defined(a - b)` over `int32` or `int64` in a `rules` certificate from the operands' width ranges and the listed constant bounds on them. When an operand carries definedness of its own, such as a field read through a resource or an inner sum, list `defined(a)` too: each part of the claim beyond the operation's overflow must be part of a listed premise (`mdtests/simp_defined_read_through_a_produced_resource.md`). One checker serves both widths. |
 | `premise` | Names an exact premise node in an arithmetic certificate. |
 | `scale` | Scales an earlier arithmetic certificate node by an exact decimal coefficient. |
 | `add` | Adds two earlier arithmetic certificate nodes. |

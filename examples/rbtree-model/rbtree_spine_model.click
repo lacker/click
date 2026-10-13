@@ -15,7 +15,7 @@ function erase_context(spine: EraseSpine) -> Context decreases spine {
     }
 }
 
-# The path ends at anchor->rb_left, leaving anchor's other fields available.
+// The path ends at anchor->rb_left, leaving anchor's other fields available.
 
 function erase_spine_depth(ctx: EraseSpine) -> Integer
     decreases ctx
@@ -84,7 +84,7 @@ theorem erase_spine_minimum(spine: EraseSpine, tree: RbTree) {
     }
 }
 
-# Cutting the minimum below a left-only spine leaves its ancestor frames intact.
+// Cutting the minimum below a left-only spine leaves its ancestor frames intact.
 
 theorem erase_spine_remove_min_blackened(spine: EraseSpine, tree: RbTree) {
     requires tree != RbTree::Empty;
@@ -142,7 +142,7 @@ theorem erase_spine_focus_parent_consistent(spine: EraseSpine, tree: RbTree, anc
     }
 }
 
-# The path with its innermost left link exposed for the C successor splice.
+// The path with its innermost left link exposed for the C successor splice.
 
 function erase_minimum_identity(minimum: RbMinimum) -> struct rb_node* {
     match minimum {

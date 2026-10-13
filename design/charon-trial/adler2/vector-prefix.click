@@ -1,8 +1,8 @@
-# Native vector transitions against the common specification at an arbitrary prefix.
-# Assemble after the common specification and lane-state.click.
-# The scalar B representative accounts for the deferred chunk contribution.
+// Native vector transitions against the common specification at an arbitrary prefix.
+// Assemble after the common specification and lane-state.click.
+// The scalar B representative accounts for the deferred chunk contribution.
 
-# A is independent of the deferred scalar B contribution between full batches.
+// A is independent of the deferred scalar B contribution between full batches.
 theorem adler_four_lane_a_prefix_step(bytes: uint8[], n: int32, a_seed: Integer, a: Integer, a0: Integer, a1: Integer, a2: Integer, a3: Integer) {
  requires 0 <= n;
  requires n <= 2147483643;
@@ -199,7 +199,7 @@ theorem adler_native_four_lane_prefix_step(bytes: uint8[], n: int32, a_seed: Int
  }
 }
 
-# A prefix derived from the stored signed iterator state; no generated count.
+// A prefix derived from the stored signed iterator state; no generated count.
 theorem adler_native_iterator_prefix_step(bytes: uint8[], total: int32, remaining: int32, a_seed: Integer, b_seed: Integer, a: Integer, b: Integer, a0: uint32, a1: uint32, a2: uint32, a3: uint32, b0: uint32, b1: uint32, b2: uint32, b3: uint32, v0: uint32, v1: uint32, v2: uint32, v3: uint32) {
  requires 0 <= total;
  requires total <= 22208;

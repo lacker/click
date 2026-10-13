@@ -1212,7 +1212,7 @@ fn bare_step_proves_an_open_obligation_by_implicit_auto() {
 #[test]
 fn bare_step_fallback_records_a_hidden_prerequisite_derivation() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("mdtests/population_symbolic_increment_bounded.md");
+        .join("mdtests/shared_heap_two_parent_caller.md");
     let loaded = crate::cli::load_target_inputs(&path, None).unwrap();
     let fixture = loaded.mdtest.as_ref().unwrap();
     let inputs = fixture
@@ -1222,7 +1222,7 @@ fn bare_step_fallback_records_a_hidden_prerequisite_derivation() {
         .collect::<Vec<_>>();
     let (verified, planning_transitions) =
         collect_planning_statement_transitions(|| verify_c0_project(&loaded.project, &inputs));
-    verified.expect("the population fixture should verify");
+    verified.expect("the shared-heap fixture should verify");
     assert!(
         planning_transitions
             .iter()

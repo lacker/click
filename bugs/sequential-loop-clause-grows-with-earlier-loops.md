@@ -51,11 +51,18 @@ bound.
 What remains: the clause still makes one candidate decision per earlier
 loop, and each still runs other per-decision rules that read the whole
 path (`has_condition_fact`'s scanned fallback, the 64-bit order-fact
-scan, `bitvector_constant_from_direct_equalities`), so a clause's work and
+scan), so a clause's work and
 time are still about quadratic in the earlier loops. Indexing those rules
 would leave the candidate count linear; a constant clause needs the dead
 copies' facts not to be candidates at all, for example by retiring facts
 whose terms nothing live mentions.
+
+The direct-equality constant lookup no longer scans the path at every
+equality hop. It reads a persistent adjacency index of the exact written
+int32 equality endpoints. With 16, 64, 256 and 1,024 unrelated equality and
+order entries, two queries inspect three relevant edges and charge six
+units at every size. This removes that individual ambient scan; it does not
+remove the growing lower-bound candidate count or close this bug.
 
 Acceptance: a multi-size regression over `loops` shows each loop clause's
 work and time constant in the number of earlier loops, up to logarithmic

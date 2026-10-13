@@ -1,8 +1,8 @@
-# Original compute bounds for every small-batch length and canonical seeds.
-# Length is at most 22207 bytes; both initial fields are below MOD = 65521.
-# The stored vector and scalar iterators supply their actual remaining state.
-# Full outer batches and final checksum postconditions remain separate work.
-# Verification assembles this contract with checked helpers and arithmetic libraries.
+// Original compute bounds for every small-batch length and canonical seeds.
+// Length is at most 22207 bytes; both initial fields are below MOD = 65521.
+// The stored vector and scalar iterators supply their actual remaining state.
+// Full outer batches and final checksum postconditions remain separate work.
+// Verification assembles this contract with checked helpers and arithmetic libraries.
 
 theorem adler_uint64_self_subtract(n: uint64) { ensures n - n == 0u64 by normalize(); }
 theorem adler_i32_below_mod(n: int32) { requires n <= 65520; ensures n < 65521 by arithmetic() using { n <= 65520; }; }

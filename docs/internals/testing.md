@@ -276,7 +276,7 @@ Clang 19.1.7 for the exporter, and the Rust import tests need Charon's pinned
 `scripts/build-charon.sh --check` reports its toolchain missing,
 `scripts/check.sh` skips the suites that need it and runs the rest. Without
 the C++ toolchain it leaves out `tests/cpp_import.rs`,
-`tests/bitcoin_core_money_range.rs`, the four `click` command tests that run a
+`tests/bitcoin_core_money_range.rs`, `tests/libcxx_span.rs`, the four `click` command tests that run a
 C++ mdtest (named in its filterset), and, through `CLICK_SKIP_CPP_FRONTEND`,
 the C++ mdtests and examples. Without Charon it leaves out
 `tests/rust_import.rs`. The gate names each skipped suite when it starts and

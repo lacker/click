@@ -294,7 +294,10 @@ source/contract selection or a semantic profile decision before implementation:
 - **Bounded bytes and serialization.** Select an unchanged span/cursor or
   serialization helper and specify bounds, consumed/produced length, byte meaning,
   and malformed-input behavior. The proposed first target below isolates span
-  bounds and returned-reference lifetime before byte encoding.
+  bounds and returned-reference lifetime before byte encoding. The selected
+  cursor, Bitcoin's `SpanReader`, reports malformed input by throwing
+  `std::ios_base::failure`; that exception model is
+  [cpp-exceptions.md](cpp-exceptions.md).
 - **Owning containers.** Select one `prevector` operation with explicit content,
   ownership, allocation, copy/move, destruction, small-buffer transition, and
   invalidation claims.
