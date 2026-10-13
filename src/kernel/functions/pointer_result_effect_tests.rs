@@ -912,3 +912,222 @@ fn aggregate_contract_views_bind_incoming_images_even_with_a_caller_name_collisi
         assert_eq!(view.resources(), caller.resources());
     }
 }
+
+fn primitive_return_write_allowance(name: &str, body: CStatement) -> CFunction {
+    // A scalar memory clause deliberately has no native record-store effect.
+    // The preservation control must therefore come from the checked body
+    // footprint, rather than reapplying a pointer-field summary after havoc.
+    let storage = CResourceSpec::owned_memory(CMemorySegment::new(
+        c_variable("p"),
+        c_int32_literal(0),
+        c_int32_literal(2),
+    ));
+    c_function(
+        CType::Void,
+        name,
+        vec![c_parameter("p", CType::Int32Pointer)],
+        body,
+    )
+    .with_resource_summary(vec![storage.clone()], vec![storage])
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_resource(0, 0),
+        ],
+        true,
+    )
+    .with_resource_derived_mutable_frame()
+}
+
+fn primitive_return_pointer_cell() -> (CState, Pointer, CValue) {
+    let cell = Pointer {
+        block: "primitive-return-cell".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let backing = Pointer {
+        block: "primitive-return-backing".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new()
+        .with_block(cell.block.clone(), C_POINTER_BYTE_WIDTH)
+        .with_declared_array_block(backing.block.clone(), CType::Int32, 2)
+        .unwrap();
+    let stored = CValue::Pointer(
+        memory
+            .declared_array_pointer(&backing, CType::Int32, 2)
+            .unwrap()
+            .with_pointee_constant(true),
+    );
+    let memory = memory.store(cell.clone(), stored.clone());
+    assert!(memory.has_initialized_bytes_under(
+        &cell,
+        C_POINTER_BYTE_WIDTH,
+        &PureFactContext::new()
+    ));
+    let state = CState::new()
+        .with_population_creation_tracking()
+        .with_memory(memory)
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_memory(CMemoryRange::new(cell.clone(), 0u32.into(), 2u32.into())),
+        ));
+    (state, cell, stored)
+}
+
+fn certify_primitive_return_allowance(function: CFunction) -> CVerifiedFunctionRule {
+    let cell = Pointer::symbolic(Variable(9_898_601));
+    let state = CState::new()
+        .with_memory(CMemory::new().with_block(cell.block.clone(), C_POINTER_BYTE_WIDTH))
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_memory(CMemoryRange::new(cell.clone(), 0u32.into(), 2u32.into())),
+        ));
+    let rule = certify_in_state(state, function, vec![c_pointer_value(cell)]);
+    assert!(
+        rule.pointer_store_effects.is_empty(),
+        "no field effect may mask the footprint test"
+    );
+    rule
+}
+
+fn modular_primitive_return_cell_state(
+    state: &CState,
+    cell: &Pointer,
+    function: &CFunction,
+    environment: &CExecutionEnvironment,
+) -> CState {
+    let paths = execute_c_function_call_paths(
+        state,
+        function,
+        &[c_pointer_value(cell.clone())],
+        &PureFactContext::new(),
+        CExecutionContext::apply_verified_rules(environment),
+        &mut ExecutionBudget::new(),
+    )
+    .expect("the modular call should run");
+    let [path] = paths.as_slice() else {
+        panic!("one modular path expected")
+    };
+    assert!(
+        path.obligations.is_empty(),
+        "all storage requirements are concrete"
+    );
+    let CFunctionOutcome::Return { state, .. } = &path.outcome else {
+        panic!("unexpected modular outcome: {:?}", path.outcome);
+    };
+    state.as_ref().clone()
+}
+
+#[test]
+fn verified_primitive_return_retains_initialized_complete_pointer_cell() {
+    let _session = crate::kernel::VerificationSession::enter();
+    for scoped in [false, true] {
+        let body = c_return(c_void_value());
+        let body = if scoped {
+            CStatement::Scope {
+                body: Box::new(body),
+            }
+        } else {
+            body
+        };
+        let rule = certify_primitive_return_allowance(primitive_return_write_allowance(
+            "readonly_pointer_cell",
+            body,
+        ));
+        let environment = CExecutionEnvironment::new().with_verified_function_rule(rule.clone());
+        let (before, cell, stored) = primitive_return_pointer_cell();
+        let after =
+            modular_primitive_return_cell_state(&before, &cell, &rule.function, &environment);
+        assert_eq!(after.memory().known_value(&cell), Some(stored));
+        assert!(after.memory().has_initialized_bytes_under(
+            &cell,
+            C_POINTER_BYTE_WIDTH,
+            &PureFactContext::new(),
+        ));
+        assert_eq!(
+            after
+                .resources()
+                .facts()
+                .iter()
+                .filter(|fact| fact.is_own())
+                .collect::<Vec<_>>(),
+            before
+                .resources()
+                .facts()
+                .iter()
+                .filter(|fact| fact.is_own())
+                .collect::<Vec<_>>(),
+            "the ownership transfer is conserved independently of the byte frame",
+        );
+    }
+}
+
+#[test]
+fn verified_store_then_return_keeps_conservative_pointer_cell_havoc() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let rule = certify_primitive_return_allowance(primitive_return_write_allowance(
+        "writing_pointer_cell",
+        c_seq(
+            c_typed_store(
+                c_variable("p"),
+                c_pointer_value(Pointer::null()),
+                CType::Int32Pointer,
+            ),
+            c_return(c_void_value()),
+        ),
+    ));
+    let environment = CExecutionEnvironment::new().with_verified_function_rule(rule.clone());
+    let (before, cell, _) = primitive_return_pointer_cell();
+    let after = modular_primitive_return_cell_state(&before, &cell, &rule.function, &environment);
+    assert!(
+        after.memory().known_value(&cell).is_none(),
+        "a writing body cannot retain the old pointer value"
+    );
+    assert_eq!(
+        after
+            .resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_own())
+            .collect::<Vec<_>>(),
+        before
+            .resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_own())
+            .collect::<Vec<_>>(),
+        "the ownership transfer is conserved independently of the byte frame",
+    );
+}
+
+#[test]
+fn external_return_placeholder_keeps_conservative_pointer_cell_havoc() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let function =
+        primitive_return_write_allowance("external_pointer_cell", c_return(c_void_value()));
+    let external =
+        c_external_function_rule(function.clone()).expect("explicit external assumption");
+    let environment = CExecutionEnvironment::new().with_external_function_rule(external);
+    let (before, cell, _) = primitive_return_pointer_cell();
+    let after = modular_primitive_return_cell_state(&before, &cell, &function, &environment);
+    assert!(
+        after.memory().known_value(&cell).is_none(),
+        "an external placeholder is not body evidence"
+    );
+    assert_eq!(
+        after
+            .resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_own())
+            .collect::<Vec<_>>(),
+        before
+            .resources()
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_own())
+            .collect::<Vec<_>>(),
+        "the ownership transfer is conserved independently of the byte frame",
+    );
+}

@@ -5319,6 +5319,30 @@ struct CFunctionContractApplication<'a> {
     representation_copy: Option<RepresentationCopyEffect>,
 }
 
+/// A primitive return evaluates an immutable expression and changes no caller
+/// memory. A surrounding scope has no declared objects to retire. Only a
+/// verified concrete body may refine the contract's permitted write footprint;
+/// external assumptions and construction/aggregate-result boundaries do not.
+fn verified_primitive_return_preserves_memory(
+    application: CFunctionContractApplication<'_>,
+) -> bool {
+    let Some(function) = application.evidence else {
+        return false;
+    };
+    let interface = function.contract_interface();
+    if function.is_program_entry()
+        || interface.construction_parameter().is_some()
+        || interface.return_aggregate_layout().is_some()
+    {
+        return false;
+    }
+    match function.body() {
+        CStatement::Return(_) => true,
+        CStatement::Scope { body } => matches!(body.as_ref(), CStatement::Return(_)),
+        _ => false,
+    }
+}
+
 /// Transfers initialized typed cells across a recognized byte-copy call.
 ///
 /// Only a cell whose complete byte representation lies inside the copied
@@ -8771,7 +8795,11 @@ fn prepare_verified_function_call<'a>(
     // is disjoint from each lent range. Preserve that precise footprint here;
     // rejecting all mutation would also reject the supported viewed-field /
     // owned-field partition.
-    let mutable_ranges = projection.ranges;
+    let mutable_ranges = if verified_primitive_return_preserves_memory(application) {
+        Vec::new()
+    } else {
+        projection.ranges
+    };
     if let Some(error) = mutable_ranges.iter().find_map(|range| {
         super::mutexes::storage_write_refusal(caller_state, range, &effective_assumptions)
     }) {
