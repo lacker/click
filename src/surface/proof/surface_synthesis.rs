@@ -75,6 +75,10 @@ pub(in crate::surface) fn with_synthesis_binder_names<T>(
 
 #[derive(Default)]
 pub(in crate::surface) struct SynthesisStructOwners {
+    // Selected parameter declarations are converted once for the function's
+    // synthesis scope. Repeated field spellings share the immutable indexed
+    // kernel layout; a candidate still needs ordinary checked replay.
+    parameter_layouts: BTreeMap<String, std::sync::Arc<crate::kernel::CAggregateLayout>>,
     locals: BTreeMap<String, syntax::C0StructLayout>,
     cast_parameters: BTreeMap<String, (String, syntax::C0StructLayout)>,
     callback_sources: std::sync::Arc<BTreeMap<String, syntax::C0Expression>>,
@@ -106,7 +110,18 @@ impl LocalStructLayoutScope {
                 ))
             })
             .collect::<BTreeMap<_, _>>();
+        let parameter_layouts = function
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_owned(),
+                    std::sync::Arc::new(parameter.struct_layout()?.to_kernel_aggregate_layout()),
+                ))
+            })
+            .collect();
         let owners = SynthesisStructOwners {
+            parameter_layouts,
             locals,
             cast_parameters,
             callback_sources: function.callback_statement_sources().clone(),
@@ -183,6 +198,43 @@ fn struct_owners(parameter_binding: ParameterBinding<'_>, state: &CState) -> Vec
         }
     }
     found
+}
+
+/// Reconstruct the field access the source parser will produce, including
+/// its checked designation selection. Printing a raw offset as `p->field`
+/// would change the expression when the generated proof is parsed again.
+fn parameter_field_pointer(
+    parameter: &syntax::C0Parameter,
+    layout: &syntax::C0StructLayout,
+    field_name: &str,
+    offset_bytes: u32,
+    value_type: CType,
+) -> CExpression {
+    let base = CExpression::Variable(parameter.name().to_owned());
+    let layout = SYNTHESIS_STRUCT_OWNERS
+        .with(|slot| {
+            slot.borrow()
+                .as_ref()?
+                .parameter_layouts
+                .get(parameter.name())
+                .cloned()
+        })
+        .unwrap_or_else(|| std::sync::Arc::new(layout.to_kernel_aggregate_layout()));
+    let path = field_name.split('.').map(str::to_owned).collect::<Vec<_>>();
+    if layout.member_at_path(&path) != Some((offset_bytes, value_type)) {
+        // Overlapping union/record-array fields outside the bounded selection
+        // profile keep their existing parser offset form. No field domain is
+        // invented from the offset.
+        return owner_field_pointer(&base, offset_bytes);
+    }
+    CExpression::MemberAddress {
+        object: Box::new(base),
+        selection: std::sync::Arc::new(crate::kernel::CAggregateMemberSelection {
+            layout,
+            path: path.into(),
+            value_type,
+        }),
+    }
 }
 
 fn owner_field_pointer(base: &CExpression, offset_bytes: u32) -> CExpression {
@@ -2407,14 +2459,13 @@ fn synthesize_parameter_field_pointer_value(
                 continue;
             }
             let base_expression = CExpression::Variable(parameter.name().to_string());
-            let lowered_pointer = if field.offset_bytes() == 0 {
-                base_expression.clone()
-            } else {
-                CExpression::PointerOffsetBytes {
-                    pointer: Box::new(base_expression.clone()),
-                    bytes: field.offset_bytes(),
-                }
-            };
+            let lowered_pointer = parameter_field_pointer(
+                parameter,
+                layout,
+                field_name,
+                field.offset_bytes(),
+                value_type,
+            );
             return Some(ContractExpression::Field {
                 base: Box::new(ContractExpression::CFragment(base_expression)),
                 field: field_name.clone(),
@@ -3593,14 +3644,8 @@ fn synthesize_parameter_field_load(
             continue;
         }
         let base = CExpression::Variable(parameter.name().to_string());
-        let field_pointer = if offset_bytes == 0 {
-            base.clone()
-        } else {
-            CExpression::PointerOffsetBytes {
-                pointer: Box::new(base.clone()),
-                bytes: offset_bytes,
-            }
-        };
+        let field_pointer =
+            parameter_field_pointer(parameter, layout, field_name, offset_bytes, value_type);
         return Some(ContractExpression::Field {
             base: Box::new(ContractExpression::CFragment(base)),
             field: field_name.clone(),

@@ -1168,6 +1168,16 @@ impl<'a> Proof<'a> {
         // postconditions stays lazy so source expansion preserves their
         // anchored rewrites.
         let at_frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
+        // A nested proposition `have` borrows the same immutable execution
+        // frontier as its enclosing scope. It cannot execute statements, and
+        // joining restores that exact root. Selected checked effect transport
+        // is therefore available here too; function-outcome/pure contexts do
+        // not acquire this frontier boundary.
+        let borrows_frontier = at_frontier
+            || (matches!(self.focused_obligation(), Some(Obligation::Proposition(_)))
+                && matches!(self.context.as_ref(), ProofContext::Execution(_))
+                && self.focused_outcome_data().is_none()
+                && self.execution().is_some());
         let resource_unfolded = self
             .execution()
             .is_some_and(|execution| execution.presentation.resource_unfolded);
@@ -1188,7 +1198,7 @@ impl<'a> Proof<'a> {
         };
         // A `have` stated at an execution frontier may use the frontier's
         // effect facts exactly as the shared mid-execution law offers them.
-        if at_frontier && let Some(execution) = self.execution() {
+        if borrows_frontier && let Some(execution) = self.execution() {
             for fact in execution.core.effect_facts.iter() {
                 if !body_facts.contains(fact.proposition()) {
                     body_facts = body_facts.with_kernel_checked_fact(fact.proposition().clone());
@@ -1209,7 +1219,7 @@ impl<'a> Proof<'a> {
         // cell an earlier fact names can carry a different load variable at
         // the frontier; the equality is proved in this path's context from the
         // goal's own snapshot-blind candidates, never by search.
-        if at_frontier
+        if borrows_frontier
             && !body_facts.contains(&body_kernel)
             && let Some(execution) = self.execution()
             && body_facts.exact_available_across_effects(&body_kernel, &execution.core.effect_facts)
@@ -1221,7 +1231,7 @@ impl<'a> Proof<'a> {
         // across a call is proved only by the explicit preservation equality a
         // callee's postcondition states. The indexed load-variable chain is
         // the checked bridge for that; integer goals keep the exact rule above.
-        if at_frontier
+        if borrows_frontier
             && matches!(
                 &body_kernel,
                 Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true)

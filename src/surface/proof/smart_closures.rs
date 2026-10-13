@@ -1949,12 +1949,82 @@ impl<'a> Proof<'a> {
         }
         let result = match self.try_simp_closure_after_direct(false)? {
             Some(proof) => Some(proof),
-            None => self.try_restated_constant_upper_bound()?,
+            None => match self.try_selected_pointer_read_prerequisite()? {
+                Some(proof) => Some(proof),
+                None => self.try_restated_constant_upper_bound()?,
+            },
         };
         if result.is_some() {
             scope.succeed();
         }
         Ok(result)
+    }
+
+    /// A scalar read through a pointer field may need the field's own
+    /// unchanged-read fact before its frame can be checked. Select fields only
+    /// from the goal and its indexed equality premises, and publish each
+    /// prerequisite through an ordinary `have`; no pointer identity or scalar
+    /// equality is granted by this search.
+    fn try_selected_pointer_read_prerequisite(&self) -> Result<Option<Self>, ClickError> {
+        let Some(
+            goal @ Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(..) | ConditionTerm::Bitvector64Equal(..),
+                true,
+            ),
+        ) = self.goal()
+        else {
+            return Ok(None);
+        };
+        let Some(view) = self.premise_fixed_state_view() else {
+            return Ok(None);
+        };
+        let Some(_scope) = SimpFallbackScope::enter(SimpFallback::PointerReadPrerequisite) else {
+            return Ok(None);
+        };
+        let mut fields = Vec::new();
+        if let Some(surface) = self.surface_goal() {
+            collect_selected_pointer_read_fields(surface, &mut fields);
+        }
+        // This is the same goal-local equality index used by rewrite planning.
+        // At most four selected source forms are inspected, not ambient facts
+        // or snapshot history. A field absent from the goal can occur in the
+        // selected scalar premise (e.g. `data[1]` from `owner->data[1]`).
+        let mut remaining = 4usize;
+        for premise in self
+            .facts()
+            .load_equalities_mentioning(goal)
+            .into_iter()
+            .take(4)
+        {
+            for surface in view.surface_propositions.surfaces(&premise).take(remaining) {
+                collect_selected_pointer_read_fields(surface, &mut fields);
+                remaining -= 1;
+            }
+            if remaining == 0 || fields.len() == 4 {
+                break;
+            }
+        }
+        for field in fields {
+            check_verification_deadline()?;
+            let prerequisite = ClickProposition::Comparison {
+                left: field.clone(),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::Old(Box::new(field)),
+            };
+            let Some(scope) = attempt::candidate_outcome(self.begin_have(prerequisite))? else {
+                continue;
+            };
+            let Some(closed) = scope.try_simp_closure()? else {
+                continue;
+            };
+            let Some(with_read) = attempt::candidate_outcome(closed.join())? else {
+                continue;
+            };
+            if let Some(proof) = with_read.try_simp_closure_after_direct(false)? {
+                return Ok(Some(proof));
+            }
+        }
+        Ok(None)
     }
 
     /// Closes `value <= c` over a constant by proving the same bound
@@ -3986,8 +4056,9 @@ impl<'a> Proof<'a> {
             if let Some(surface) = self.available_surface_fact(surface_facts, anchor, premise) {
                 return Some((premise.clone(), surface));
             }
-            if let Some(surface) =
-                self.available_surface_fact(self.local_surface_facts(), anchor, premise)
+            let local_facts = self.local_surface_facts();
+            if !Arc::ptr_eq(&surface_facts.storage, &local_facts.storage)
+                && let Some(surface) = self.available_surface_fact(local_facts, anchor, premise)
             {
                 return Some((premise.clone(), surface));
             }
@@ -4004,6 +4075,9 @@ impl<'a> Proof<'a> {
             }
             condition_polarity_forms(premise)
                 .into_iter()
+                // The original form was already tried against these exact
+                // source maps. Only its other checked polarity forms remain.
+                .filter(|form| form != premise)
                 .find_map(|form| {
                     let surface = self.available_surface_fact(surface_facts, anchor, &form);
                     surface.map(|surface| (form, surface))
@@ -4026,7 +4100,7 @@ impl<'a> Proof<'a> {
                 Some(SnapshotSelector::Mark(_)) | None => None,
             })
             .collect::<BTreeSet<_>>();
-        if anchors.len() == 1 {
+        if anchors.len() == 1 && anchors.first() != premise_anchor {
             let inferred = anchors.first().expect("one inferred anchor");
             let anchored_pairs = premises
                 .iter()
@@ -4096,6 +4170,107 @@ impl<'a> Proof<'a> {
             })
             .then_some(named)
             .or(Some(surface))
+    }
+
+    /// A rewrite citation must survive ordinary lowering when its source is
+    /// replayed. Historical presentation records can instead name an earlier
+    /// nested pointer read. Transport just the selected fact explicitly before
+    /// using its new spelling; the simple transport and rewrite checkers remain
+    /// the only operations that publish and consume the resulting equality.
+    fn replayable_equality_surface(
+        &self,
+        surface_facts: &SurfacePropositionMap,
+        premise_anchor: Option<&ProgramPointRef>,
+        kernel: &Proposition,
+    ) -> Option<(Self, ClickProposition)> {
+        let candidate = self.available_surface_fact(surface_facts, premise_anchor, kernel);
+        if let Some(surface) = &candidate
+            && let Some(published) = self.publish_replayed_equality(surface)
+        {
+            return Some((published, surface.clone()));
+        }
+        // A selected field spelling may name a different canonical load than
+        // the retained premise. It cannot be cited as that exact premise, but
+        // an ordinary checked `have ... by assumption` can establish and
+        // publish its actual lowering. Retain that step before strict rewrite.
+        for source in surface_facts.surfaces(kernel).take(4) {
+            let Some(surface) = surface_with_entry_pointer_reads(source) else {
+                continue;
+            };
+            if let Some(published) = self.publish_replayed_equality(&surface) {
+                return Some((published, surface));
+            }
+        }
+        // Opaque/pure premises have no memory frame to transport. The selected
+        // scalar-read equality is the bounded case with an existing frame rule.
+        if self.premise_fixed_state_view().is_none()
+            || !matches!(
+                kernel,
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+            )
+        {
+            return None;
+        }
+        let entry = ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        };
+        for source in surface_facts.surfaces(kernel) {
+            if surface_facts
+                .available_kernel_matching(source, |fact| {
+                    self.facts().materialization_available(fact)
+                })
+                .is_none_or(|fact| fact != kernel && !condition_polarity_equivalent(fact, kernel))
+            {
+                continue;
+            }
+            let anchored = surface_at_snapshot(source, &entry).ok();
+            for target in candidate.iter().chain(anchored.iter()) {
+                let Ok(lowered) = self.lower_surface_proposition_direct(
+                    target,
+                    "replayed transported rewrite premise",
+                ) else {
+                    continue;
+                };
+                if &lowered == kernel || self.facts().materialization_available(&lowered) {
+                    // A directly replayable form requires no transport.
+                    if let Some(published) = self.publish_replayed_equality(target) {
+                        return Some((published, target.clone()));
+                    }
+                    continue;
+                }
+                let Ok(transported) = self.apply_step(ProofStep::TransportUsing {
+                    source: source.clone(),
+                    target: target.clone(),
+                    premises: Vec::new(),
+                }) else {
+                    continue;
+                };
+                if let Some(published) = transported.publish_replayed_equality(target) {
+                    return Some((published, target.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Publish the citation that replay actually lowers, using only checked
+    /// proof operations. Availability through a frame or congruence is not an
+    /// excuse to omit the explicit step that later strict rewrite consumes.
+    fn publish_replayed_equality(&self, surface: &ClickProposition) -> Option<Self> {
+        let lowered = self
+            .lower_surface_proposition_direct(surface, "published rewrite premise")
+            .ok()?;
+        if self.facts().contains_top_level(&lowered) {
+            return Some(self.clone());
+        }
+        let scope = self.begin_have(surface.clone()).ok()?;
+        let closed = scope.apply_step(ProofStep::Assumption).ok()?;
+        let published = closed.join().ok()?;
+        published
+            .facts()
+            .contains_top_level(&lowered)
+            .then_some(published)
     }
 
     fn available_surface_fact_raw(
@@ -4202,6 +4377,31 @@ impl<'a> Proof<'a> {
         }) {
             return Some(surface.clone());
         }
+        // A scalar premise can retain its entry pointer value while its
+        // outer read names the current scalar memory. Anchoring the whole
+        // expression changes both reads and misses this shape. Try freezing
+        // only pointer fields in the selected recorded scalar form; direct
+        // lowering must recover the exact retained premise before it is cited.
+        if self.premise_fixed_state_view().is_some()
+            && matches!(
+                kernel,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(..) | ConditionTerm::Bitvector64Equal(..),
+                    true,
+                )
+            )
+            && let Some(surface) = surface_facts.surfaces(kernel).take(4).find_map(|surface| {
+                let candidate = surface_with_entry_pointer_reads(surface)?;
+                self.lower_surface_proposition_direct(&candidate, "selected entry pointer premise")
+                    .is_ok_and(|lowered| {
+                        (lowered == *kernel || condition_polarity_equivalent(&lowered, kernel))
+                            && self.facts().materialization_available(&lowered)
+                    })
+                    .then_some(candidate)
+            })
+        {
+            return Some(surface);
+        }
         // Function requirements retain their original unanchored Surface
         // form while their kernel fact is entry-relative. Probe that one
         // canonical source form before the moving statement-entry anchor;
@@ -4267,42 +4467,9 @@ impl<'a> Proof<'a> {
         {
             return Some(anchored);
         }
-        // Before accepting an unanchored recorded form, which may have been
-        // stated at an earlier value of a variable that later changed,
-        // spell the fact against the recorded snapshot where it was read.
-        if let Some(anchor) = premise_anchor
-            && let Some((parameters, arguments, recorded_snapshots)) = match self.context.as_ref() {
-                ProofContext::Pure(_) => None,
-                ProofContext::FixedState(context) => Some((
-                    context.parameter_binding.parameters,
-                    context.parameter_binding.arguments,
-                    context.fixed_state.recorded_snapshots,
-                )),
-                ProofContext::Execution(_) => self.premise_fixed_state_view().map(|view| {
-                    (
-                        view.parameter_binding.parameters,
-                        view.parameter_binding.arguments,
-                        view.fixed_state.recorded_snapshots,
-                    )
-                }),
-            }
-            && let Some(anchored) = crate::instrumentation::measure_operation(
-                "surface",
-                "simp premise",
-                "simp premise surface at recorded snapshots",
-                || {
-                    synthesize_surface_at_recorded_snapshots(
-                        kernel,
-                        ParameterBinding::new(parameters, arguments),
-                        recorded_snapshots,
-                        anchor,
-                    )
-                    .find(|surface| matches_kernel(surface).is_some())
-                },
-            )
-        {
-            return Some(anchored);
-        }
+        // Directly replay-checked recorded/current forms precede speculative
+        // history synthesis. The final fallback below searches that same
+        // selected premise and anchor exactly once, after these cheap forms.
         if crate::instrumentation::deadline_exceeded() {
             return None;
         }
@@ -4726,15 +4893,17 @@ impl<'a> Proof<'a> {
                 {
                     continue;
                 }
-                let Some(surface) =
-                    proof.available_surface_fact(surface_facts, premise_anchor, &equality)
+                let Some((rewrite_base, surface)) =
+                    proof.replayable_equality_surface(surface_facts, premise_anchor, &equality)
                 else {
                     continue;
                 };
-                // `available_surface_fact` has already resolved the spelling
-                // that still lowers to this fact, anchoring a stale constructor
-                // equality at function entry when the written form stopped
-                // denoting it, so only the orientation is open here.
+                if rewrite_base.is_complete() {
+                    return Ok(Some(rewrite_base));
+                }
+                // A changed historical read is now an explicitly checked
+                // transported fact; ordinary rewrite still requires exact
+                // availability of the citation it actually lowers.
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
                     // Automatic refinement reduces symbolic operands to known
@@ -4773,7 +4942,7 @@ impl<'a> Proof<'a> {
                     if crate::instrumentation::deadline_exceeded() {
                         return Err(Vec::new());
                     }
-                    let rewrite = proof.apply_step(ProofStep::Rewrite(oriented));
+                    let rewrite = rewrite_base.apply_step(ProofStep::Rewrite(oriented));
                     let Ok(rewritten) = rewrite else {
                         continue;
                     };
@@ -8329,6 +8498,156 @@ impl<'a> Proof<'a> {
     }
 }
 
+/// Visit only scalar places in the selected source form. A pointer-valued
+/// field is a prerequisite when it supplies a scalar load's address. Historical
+/// wrappers select the source, but the proposed current/entry equation still
+/// has to be independently checked. The fixed cap bounds speculative work in
+/// a large source expression; it does not enumerate declarations or facts.
+fn collect_selected_pointer_read_fields(
+    surface: &ClickProposition,
+    fields: &mut Vec<ContractExpression>,
+) {
+    let mut expressions = match surface {
+        ClickProposition::Comparison { left, right, .. } => vec![(left, false), (right, false)],
+        ClickProposition::At { proposition, .. } => {
+            collect_selected_pointer_read_fields(proposition, fields);
+            return;
+        }
+        _ => return,
+    };
+    let mut visited = 0;
+    while let Some((expression, address)) = expressions.pop() {
+        if visited == 64 || fields.len() == 4 {
+            break;
+        }
+        visited += 1;
+        crate::instrumentation::record_deterministic_work(1);
+        match expression {
+            ContractExpression::Field { base, lowered, .. } => {
+                if address
+                    && matches!(lowered, CExpression::TypedLoad { value_type, .. } if value_type.is_pointer())
+                    && !fields.contains(expression)
+                {
+                    fields.push(expression.clone());
+                }
+                expressions.push((base, true));
+            }
+            ContractExpression::Index(base, _) | ContractExpression::ArrayIndex { base, .. } => {
+                expressions.push((base, true));
+            }
+            ContractExpression::CUnary { operand, lowered } => {
+                expressions.push((
+                    operand,
+                    address
+                        || matches!(
+                            lowered,
+                            CExpression::Load(_) | CExpression::TypedLoad { .. }
+                        ),
+                ));
+            }
+            ContractExpression::Old(operand)
+            | ContractExpression::At {
+                expression: operand,
+                ..
+            } => {
+                expressions.push((operand, address));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Freeze nested pointer-field values, leaving the surrounding scalar read
+/// at its original snapshot. This proposes source syntax only: its caller must
+/// re-lower and check exact premise availability, so it cannot transport a
+/// changed field or read merely because the spelling looks historical.
+fn surface_with_entry_pointer_reads(surface: &ClickProposition) -> Option<ClickProposition> {
+    fn rewrite(expression: &mut ContractExpression, address: bool, remaining: &mut usize) -> bool {
+        if *remaining == 0 {
+            return false;
+        }
+        *remaining -= 1;
+        crate::instrumentation::record_deterministic_work(1);
+        match expression {
+            ContractExpression::Field { lowered, .. }
+                if address
+                    && matches!(&*lowered, CExpression::TypedLoad { value_type, .. } if value_type.is_pointer()) =>
+            {
+                *expression = ContractExpression::Old(Box::new(expression.clone()));
+                true
+            }
+            ContractExpression::Field { base, .. } => rewrite(base, true, remaining),
+            ContractExpression::Index(base, index) => {
+                let Some(element_type) = (match base.as_ref() {
+                    ContractExpression::Field {
+                        lowered: CExpression::TypedLoad { value_type, .. },
+                        ..
+                    } => value_type.pointee_type(),
+                    _ => None,
+                }) else {
+                    return false;
+                };
+                let changed = rewrite(base, true, remaining);
+                if changed {
+                    // `old(pointer)[i]` also selects the old array memory.
+                    // The existing explicit typed load instead reads current
+                    // memory through the independently historical pointer.
+                    *expression = ContractExpression::CUnary {
+                        operand: Box::new(ContractExpression::Add(base.clone(), index.clone())),
+                        lowered: crate::kernel::c_typed_load(
+                            CExpression::Variable("@click:selected-pointer-read".into()),
+                            element_type,
+                        ),
+                    };
+                }
+                changed
+            }
+            ContractExpression::ArrayIndex { .. } => false,
+            ContractExpression::CUnary { operand, lowered } => rewrite(
+                operand,
+                address
+                    || matches!(
+                        &*lowered,
+                        CExpression::Load(_) | CExpression::TypedLoad { .. }
+                    ),
+                remaining,
+            ),
+            // Already historical expressions must not be shifted to another
+            // snapshot or acquire a redundant nested `old` selector.
+            ContractExpression::Old(_) | ContractExpression::At { .. } => false,
+            _ => false,
+        }
+    }
+    let ClickProposition::Comparison { left, right, .. } = surface else {
+        return None;
+    };
+    let mut fields = Vec::new();
+    collect_selected_pointer_read_fields(surface, &mut fields);
+    if fields.is_empty() {
+        return None;
+    }
+    let mut left = left.clone();
+    let mut right = right.clone();
+    let mut remaining = 64;
+    let left_changed = rewrite(&mut left, false, &mut remaining);
+    let right_changed = rewrite(&mut right, false, &mut remaining);
+    if !left_changed && !right_changed {
+        return None;
+    }
+    let mut result = surface.clone();
+    let ClickProposition::Comparison {
+        left: selected_left,
+        right: selected_right,
+        ..
+    } = &mut result
+    else {
+        unreachable!("selected comparison");
+    };
+    *selected_left = left;
+    *selected_right = right;
+    Some(result)
+}
+
 /// How many variables simp's bound selection visits from a goal's own
 /// variables before it stops following bounds to further variables.
 const MAX_BOUND_VARIABLES: usize = 8;
@@ -8341,6 +8660,7 @@ thread_local! {
 enum SimpFallback {
     EqualityRewrite = 1,
     FunctionUnfold = 2,
+    PointerReadPrerequisite = 4,
 }
 
 /// A candidate can try the other fallback and descend through logical
@@ -9165,6 +9485,487 @@ mod synthesized_literal_tests {
             );
             assert_eq!(work, 0, "size {size}: no candidate should be rendered");
         }
+    }
+
+    #[test]
+    fn current_premise_spelling_precedes_unrelated_snapshot_history() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let function = syntax::parse_function("int32 noop() { return 0; }").unwrap();
+        let value = Bitvector32Term::Variable(Variable(8_179_501));
+        let kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(value.clone()), Box::new(0u32.into())),
+            true,
+        );
+        let pre_state = CState::new().with_local(
+            "value",
+            int32(Bitvector32Term::Variable(Variable(8_179_502))),
+        );
+        let state = CState::new().with_local("value", int32(value));
+        let surfaces = SurfacePropositionMap::default();
+        let predicates = PredicateEnvironment::new(&[]);
+        let functions = ClickFunctionEnvironment::new(&[]);
+        let theorems = TheoremEnvironment::new(&[]);
+        let anchor = ProgramPointRef {
+            region: CodeRegionRef::Statement(1),
+            kind: ProgramPointKind::Entry,
+        };
+        let premises = [kernel.clone()];
+        let mut measured = Vec::new();
+        for size in [16usize, 64, 256, 1024] {
+            let mut snapshots = RecordedSnapshots::new();
+            for index in 0..size {
+                // These states cannot name the selected value. The current
+                // state can, and must not pay for probing these older states.
+                snapshots.insert(
+                    ProgramPointRef {
+                        region: CodeRegionRef::Statement(index),
+                        kind: ProgramPointKind::Entry,
+                    },
+                    CState::new(),
+                );
+            }
+            let proof = Proof::for_fixed_state_goal(
+                "current premise spelling",
+                0,
+                &premises,
+                kernel.clone(),
+                ParameterBinding::new(function.parameters(), &[]),
+                &pre_state,
+                &state,
+                &snapshots,
+                &surfaces,
+                SpecDefinitions::new(&predicates, &functions),
+                &theorems,
+                &[],
+                &[],
+            );
+            let (surface, work) = crate::instrumentation::measure_deterministic_work(|| {
+                proof.available_surface_fact(&surfaces, Some(&anchor), &kernel)
+            });
+            let surface = surface.expect("the current local names the selected premise");
+            assert_eq!(
+                proof
+                    .lower_surface_proposition_direct(&surface, "replayed current premise")
+                    .unwrap(),
+                kernel,
+            );
+            assert!(!proposition_contains_at_expression(&surface));
+            measured.push(work);
+        }
+        assert!(
+            measured.windows(2).all(|pair| pair[0] == pair[1]),
+            "unrelated snapshot history must not add premise spelling work: {measured:?}",
+        );
+    }
+
+    #[test]
+    fn premise_resolver_visits_each_selected_source_and_polarity_once() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let function = syntax::parse_function("int32 noop() { return 0; }").unwrap();
+        let state = CState::new();
+        let predicates = PredicateEnvironment::new(&[]);
+        let functions = ClickFunctionEnvironment::new(&[]);
+        let theorems = TheoremEnvironment::new(&[]);
+        let variable = Variable(8_185_000);
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::Variable(variable)),
+                Box::new(0u32.into()),
+            ),
+            true,
+        );
+        let forms = condition_polarity_forms(&goal);
+        assert_eq!(forms.len(), 2);
+        assert_eq!(forms[0], goal);
+        let anchor = ProgramPointRef {
+            region: CodeRegionRef::Statement(0),
+            kind: ProgramPointKind::Entry,
+        };
+        let sources = SurfacePropositionMap::default();
+        let mut attempts = Vec::new();
+        for size in [16u32, 64, 256, 1024] {
+            let facts = (0..size)
+                .map(|index| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::Variable(Variable(
+                                8_186_000 + u64::from(index),
+                            ))),
+                            Box::new(0u32.into()),
+                        ),
+                        true,
+                    )
+                })
+                .chain(std::iter::once(goal.clone()))
+                .collect::<Vec<_>>();
+            let mut snapshots = RecordedSnapshots::new();
+            for index in 0..size as usize {
+                snapshots.insert(
+                    ProgramPointRef {
+                        region: CodeRegionRef::Statement(index),
+                        kind: ProgramPointKind::Entry,
+                    },
+                    CState::new(),
+                );
+            }
+            let proof = Proof::for_fixed_state_goal_with_requirements(
+                "distinct selected premise spellings",
+                0,
+                &facts,
+                goal.clone(),
+                ParameterBinding::new(function.parameters(), &[]),
+                FixedStateFrame::new(&state, &state, None, &snapshots),
+                Some(&anchor),
+                &sources,
+                SpecDefinitions::new(&predicates, &functions),
+                &theorems,
+                &[],
+                &[],
+                &[],
+            );
+            assert!(!Arc::ptr_eq(
+                &sources.storage,
+                &proof.local_surface_facts().storage
+            ));
+            let (resolved, events) = crate::instrumentation::collect(|| {
+                proof.resolve_simp_premises(std::slice::from_ref(&goal), &[])
+            });
+            assert!(
+                resolved.unwrap().is_empty(),
+                "an unnamed scalar has no replayable source"
+            );
+            let count = events
+                .iter()
+                .filter(|event| {
+                    matches!(event,
+                        crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                        if name == "simp premise surface at recorded snapshots"
+                    )
+                })
+                .count();
+            // Original/global, original/local, then the distinct negated
+            // polarity/global. The original/global lookup is not repeated.
+            assert_eq!(count, 2 + forms.len() - 1, "history size {size}");
+            attempts.push(count);
+
+            let alternate = ClickProposition::Not(Box::new(ClickProposition::Comparison {
+                left: ContractExpression::CFragment(CExpression::Value(int32(
+                    Bitvector32Term::Variable(variable),
+                ))),
+                operator: ComparisonOperator::NotEqual,
+                right: ContractExpression::IntegerLiteral("0".into()),
+            }));
+            let mut alternate_sources = sources.clone();
+            alternate_sources
+                .record_lowering(&alternate, &forms[1])
+                .unwrap();
+            let proof = Proof::for_fixed_state_goal_with_requirements(
+                "retained alternate premise polarity",
+                0,
+                &facts,
+                goal.clone(),
+                ParameterBinding::new(function.parameters(), &[]),
+                FixedStateFrame::new(&state, &state, None, &snapshots),
+                Some(&anchor),
+                &alternate_sources,
+                SpecDefinitions::new(&predicates, &functions),
+                &theorems,
+                &[],
+                &[],
+                &[],
+            );
+            let resolved = proof
+                .resolve_simp_premises(std::slice::from_ref(&goal), &[])
+                .unwrap();
+            assert_eq!(resolved.len(), 1, "the distinct polarity remains available");
+            assert!(condition_polarity_equivalent(&resolved[0].0, &forms[1]));
+            assert!(condition_polarity_equivalent(
+                &proof
+                    .lower_surface_proposition_direct(&resolved[0].1, "alternate polarity")
+                    .unwrap(),
+                &forms[1]
+            ));
+        }
+        assert!(attempts.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn selected_pointer_read_prerequisite_checks_mutation_and_scales_with_unrelated_facts() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let function = syntax::parse_function("int32 noop() { return 0; }").unwrap();
+        let pointer = |block: &str| Pointer {
+            block: block.into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let owner = pointer("pointer-prerequisite-owner");
+        let first = pointer("pointer-prerequisite-first");
+        let second = pointer("pointer-prerequisite-second");
+        let scalar = Bitvector32Term::Variable(Variable(8_178_501));
+        let field_value = |pointer: Pointer| CValue::typed_pointer(pointer, CType::Int32Pointer);
+        let memory = CMemory::new()
+            .with_block("pointer-prerequisite-owner", 8)
+            .with_block("pointer-prerequisite-first", 4)
+            .with_block("pointer-prerequisite-second", 4)
+            .store(owner.clone(), field_value(first.clone()))
+            .store(first.clone(), int32(scalar.clone()))
+            .store(second.clone(), int32(9));
+        let mut resources = ResourceContext::new();
+        for (pointer, width) in [(owner.clone(), 8), (first, 4), (second.clone(), 4)] {
+            resources = resources.unchecked_with_fact(CResourceFact::own_memory(
+                CMemoryRange::new_with_element_width(pointer, 0u32.into(), 1u32.into(), width),
+            ));
+        }
+        let entry = CState::new()
+            .with_local(
+                "owner",
+                CValue::typed_pointer(owner.clone(), CType::UInt8Pointer),
+            )
+            .with_memory(memory.clone())
+            .with_resource_context(resources);
+        let field = ContractExpression::Field {
+            base: Box::new(ContractExpression::CBinding("owner".into())),
+            field: "data".into(),
+            lowered: crate::kernel::c_typed_load(
+                CExpression::Variable("owner".into()),
+                CType::Int32Pointer,
+            ),
+            offset_bytes: 0,
+        };
+        let surface = ClickProposition::Comparison {
+            left: ContractExpression::Index(
+                Box::new(field),
+                Box::new(ContractExpression::IntegerLiteral("0".into())),
+            ),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::IntegerLiteral("7".into()),
+        };
+        let goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(scalar.clone()), Box::new(7u32.into())),
+            true,
+        );
+        let snapshots = RecordedSnapshots::new();
+        let surfaces = SurfacePropositionMap::default();
+        let predicates = PredicateEnvironment::new(&[]);
+        let functions = ClickFunctionEnvironment::new(&[]);
+        let theorems = TheoremEnvironment::new(&[]);
+        let states = [
+            // A distinct snapshot still contains the same complete field value.
+            entry
+                .clone()
+                .with_memory(memory.clone().store(second.clone(), int32(8))),
+            // The changed carrier selects a different actual scalar value.
+            entry
+                .clone()
+                .with_memory(memory.clone().store(owner.clone(), field_value(second))),
+            // A partial write invalidates the complete pointer-cell observation.
+            entry.clone().with_memory(memory.clone().store(
+                Pointer {
+                    block: owner.block.clone(),
+                    offset: PointerOffsetTerm::Constant(4),
+                },
+                int32(0),
+            )),
+            // Equal pointee contents do not justify preserving the pointer
+            // field itself after changing its complete value.
+            entry.clone().with_memory(
+                memory
+                    .store(
+                        owner.clone(),
+                        field_value(pointer("pointer-prerequisite-second")),
+                    )
+                    .store(pointer("pointer-prerequisite-second"), int32(scalar)),
+            ),
+        ];
+        // Replaying a retained scalar premise can need the entry pointer but
+        // the current scalar cell. A whole-expression entry anchor instead
+        // reads the old scalar cell, and the current source follows the changed
+        // pointer. Only the nested historical form denotes this exact premise.
+        let mixed = entry.clone().with_memory(
+            entry
+                .memory()
+                .clone()
+                .store(
+                    owner.clone(),
+                    field_value(pointer("pointer-prerequisite-second")),
+                )
+                .store(pointer("pointer-prerequisite-first"), int32(8))
+                .store(pointer("pointer-prerequisite-second"), int32(9)),
+        );
+        let selected_surface = match &surface {
+            ClickProposition::Comparison { left, operator, .. } => ClickProposition::Comparison {
+                left: left.clone(),
+                operator: *operator,
+                right: ContractExpression::IntegerLiteral("8".into()),
+            },
+            _ => unreachable!(),
+        };
+        // The comparison of these known values canonically lowers to true.
+        let selected_goal = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+        let proof = Proof::for_fixed_state_surface_goal(
+            "nested entry pointer premise",
+            0,
+            std::slice::from_ref(&selected_goal),
+            selected_goal.clone(),
+            selected_surface.clone(),
+            ParameterBinding::new(function.parameters(), &[]),
+            &entry,
+            &mixed,
+            &snapshots,
+            &surfaces,
+            SpecDefinitions::new(&predicates, &functions),
+            &theorems,
+            &[],
+            &[],
+        );
+        let nested = surface_with_entry_pointer_reads(&selected_surface)
+            .expect("selected scalar source has a pointer field");
+        assert_eq!(
+            proof
+                .lower_surface_proposition_direct(&nested, "mixed snapshot replay")
+                .unwrap(),
+            selected_goal
+        );
+        assert_ne!(
+            proof
+                .lower_surface_proposition_direct(&selected_surface, "current pointer replay")
+                .unwrap(),
+            selected_goal
+        );
+        let anchored = surface_at_snapshot(
+            &selected_surface,
+            &ProgramPointRef {
+                region: CodeRegionRef::Function,
+                kind: ProgramPointKind::Entry,
+            },
+        )
+        .unwrap();
+        assert_ne!(
+            proof
+                .lower_surface_proposition_direct(&anchored, "whole entry replay")
+                .unwrap(),
+            selected_goal
+        );
+        assert!(
+            surface_with_entry_pointer_reads(&nested).is_none(),
+            "an already historical pointer is not shifted again"
+        );
+
+        let mut measured = Vec::new();
+        for size in [16u32, 64, 256, 1024] {
+            let unrelated = (0..size)
+                .map(|index| {
+                    Proposition::ConditionIs(
+                        ConditionTerm::Bitvector32Equal(
+                            Box::new(Bitvector32Term::Variable(Variable(
+                                8_179_800 + u64::from(index),
+                            ))),
+                            Box::new(0u32.into()),
+                        ),
+                        true,
+                    )
+                })
+                .chain(std::iter::once(goal.clone()))
+                .collect::<Vec<_>>();
+            for (index, state) in states.iter().enumerate() {
+                let proof = Proof::for_fixed_state_surface_goal(
+                    "selected pointer prerequisite",
+                    0,
+                    &unrelated,
+                    goal.clone(),
+                    surface.clone(),
+                    ParameterBinding::new(function.parameters(), &[]),
+                    &entry,
+                    state,
+                    &snapshots,
+                    &surfaces,
+                    SpecDefinitions::new(&predicates, &functions),
+                    &theorems,
+                    &[],
+                    &[],
+                );
+                if index != 0 {
+                    let ClickProposition::Comparison {
+                        left: ContractExpression::Index(field, _),
+                        ..
+                    } = &surface
+                    else {
+                        unreachable!()
+                    };
+                    let unchanged = ClickProposition::Comparison {
+                        left: field.as_ref().clone(),
+                        operator: ComparisonOperator::Equal,
+                        right: ContractExpression::Old(field.clone()),
+                    };
+                    let scope = proof.begin_have(unchanged).unwrap();
+                    assert!(
+                        scope.try_simp_closure().unwrap().is_none(),
+                        "a changed pointer value cannot publish an unchanged-field fact, even when pointee values match (case {index})"
+                    );
+                }
+                // A surface goal and its semantic goal must denote the same
+                // current read. Supplying the literal kernel goal 7 == 7 for
+                // every state would make the mutation cases trivially true.
+                let actual_goal = match proof
+                    .lower_surface_proposition_direct(&surface, "current scalar read")
+                {
+                    Ok(goal) => goal,
+                    Err(error) => {
+                        assert_eq!(
+                            index, 2,
+                            "only the partial pointer overwrite may prevent the current read: {error:?}"
+                        );
+                        assert!(proof.certificate().steps().is_empty());
+                        continue;
+                    }
+                };
+                let proof = Proof::for_fixed_state_surface_goal(
+                    "selected pointer prerequisite",
+                    0,
+                    &unrelated,
+                    actual_goal,
+                    surface.clone(),
+                    ParameterBinding::new(function.parameters(), &[]),
+                    &entry,
+                    state,
+                    &snapshots,
+                    &surfaces,
+                    SpecDefinitions::new(&predicates, &functions),
+                    &theorems,
+                    &[],
+                    &[],
+                );
+                let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    proof.try_selected_pointer_read_prerequisite()
+                });
+                let result = result.unwrap();
+                if index == 0 {
+                    let completed =
+                        result.expect("the unchanged complete pointer field must be checked");
+                    assert!(completed.is_complete());
+                    assert!(
+                        completed
+                            .certificate()
+                            .steps()
+                            .iter()
+                            .any(|step| matches!(step, ProofStep::Have { .. }))
+                    );
+                    measured.push(work);
+                } else {
+                    assert!(
+                        result.is_none(),
+                        "changed or partially overwritten pointer field cannot justify the current scalar equality (case {index})"
+                    );
+                    assert!(
+                        proof.certificate().steps().is_empty(),
+                        "a declined search publishes no prerequisite"
+                    );
+                }
+            }
+        }
+        assert!(
+            measured.windows(2).all(|pair| pair[1] <= pair[0] + 64),
+            "only selected source/facts may affect prerequisite work: {measured:?}"
+        );
     }
 
     #[test]

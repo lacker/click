@@ -718,6 +718,13 @@ the designated result, and are reported as external assumptions. That exception
 must not accidentally authorize external initialized-range effects on arbitrary
 output buffers.
 
+A permitted mutable footprint is an upper bound on byte writes. Checked concrete
+body evidence can establish a smaller footprint without changing ownership or
+lifetime transfers. The delivered refinement covers a primitive return, alone
+or in a scope with no declarations: expression evaluation changes no memory.
+Construction, aggregate results, program entry, and external body placeholders
+do not qualify for this refinement.
+
 Proof-entry naming must be observational. It can give a name to a value allowed
 by the contract, but cannot execute a store into raw output or turn a constructor
 placeholder into a completion certificate. Body checking must consider every

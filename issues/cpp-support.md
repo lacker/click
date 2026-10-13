@@ -32,13 +32,14 @@ does not guarantee that a loaded or returned pointer can be dereferenced. The
 affected branch and abstract-callback proofs need an explicit typed-place
 guarantee (or a separately designed full-pointer-value contract), preserving
 their original C and retaining the insufficient contracts as rejection cases.
-Implement explicit C allocation/access rules and typed-place guarantees for
-the affected contracts. Do not restore the old numeric-alias fallback to make
-the compatibility tests pass. Approval of these boundaries does not establish
-that their implementation or the acceptance matrix is complete.
+The explicit C allocation/access rules and shared `valid_place` guarantees are
+implemented for the affected contracts. Their caller and rejection controls
+preserve the distinction between address equality and pointer designation.
+The complete acceptance matrix still needs to pass before this checkpoint can
+be published.
 
 The integration checkpoint is not green and has not been published or merged.
-The latest completed focused selection passes 116 of 121 tests. It covers
+An earlier focused selection passed 116 of 121 tests. It covered
 constructor and embedded self-pointers, nested qualified pointer fields,
 aggregate return claims, row-copy modular forwarding, by-value byte-output
 initialization, pointer-field setters and wrappers through expansion/rechecking,
@@ -64,9 +65,21 @@ C++ source and exact word, descriptor, and backing-object claims are unchanged.
 The helper, decoder, and outer probe all expand and independently recheck in the
 offline pinned test.
 
-Five focused failures remain: indexed scalar reads across snapshots, linked-list
-full-pointer transport, and a pointer-field tactic whose smart proof verifies
-but whose expanded rewrite does not independently check. The range-membership
+The original linked-list regression now passes: independently checked resource
+guard cases preserve universal entry certification, and verified bodies that
+consist of a primitive return preserve byte contents. Ownership and lifetime
+transfers remain separate checks. Positive and negative controls distinguish
+these read-only bodies from writing bodies and external declarations.
+
+The original scalar-anchor and unchanged-prefix regressions now pass through
+expansion and independent rechecking using checked pointer-read prerequisites.
+The original indexed pointer-field proof now also verifies and expands into an
+independently checkable nested `have` and rewrite. Historical spellings are
+re-lowered and checked; an earlier recorded source pair is not proof authority.
+Nested proposition scopes borrowing an immutable execution frontier use the
+same checked fact transport as their enclosing scope.
+The remaining integration blocker is excessive work during scalar-frame proof
+expansion. The range-membership
 repair now accepts an index pinned to zero while retaining that exact equality
 and the complete access width; withdrawing the equality or extending the access
 outside the range rejects the certificate.

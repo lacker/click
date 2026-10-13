@@ -502,6 +502,15 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             .surface_propositions
             .available_kernel_matching(surface, &fact_is_available)
             == Some(kernel)
+            && lower_surface_candidate_in_state_with_assumptions(
+                view,
+                surface,
+                assumptions,
+                parameter_binding,
+                state,
+                spec_definitions,
+            )
+            .is_ok_and(|lowered| matches_kernel(&lowered) && fact_is_available(&lowered))
         {
             return Ok(surface.clone());
         }
@@ -513,11 +522,10 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 .surface_propositions
                 .available_kernel_matching(surface, &fact_is_available)
                 .is_some_and(&matches_kernel)
-            // A recorded pair can name a program point outside the current
-            // view scope (for example a function-prefix statement inside a
-            // loop-region proof). The candidate lowering resolves recorded
-            // snapshots without demanding current loadability, so it is the
-            // right scope check here.
+            // Recorded syntax is only a candidate: resolving the same
+            // selector can now construct different nested pointer reads. Check
+            // the proposition replay actually lowers, not merely the old
+            // Surface-to-kernel pair. A transport needs its own checked step.
             && lower_surface_candidate_in_state_with_assumptions(
                 view,
                 surface,
@@ -526,7 +534,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 state,
                 spec_definitions,
             )
-            .is_ok()
+            .is_ok_and(|lowered| matches_kernel(&lowered) && fact_is_available(&lowered))
         {
             return Ok(surface.clone());
         }

@@ -13287,6 +13287,8 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
                 simp();
             }
         "#;
+    verify_c0_sources(click_source, &[("holder.c", c_source)])
+        .expect("the original indexed pointer-field proof should check");
     let have_offset = click_source
         .find("have data[1] == value")
         .expect("proof should contain the selected indexed have");
@@ -13305,9 +13307,75 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
             .expect("the indexed pointer-field fact should have a surface form");
-    assert!(expanded.contains("owner->data[1] == value"), "{expanded}");
-    verify_c0_sources(&expanded, &[("holder.c", c_source)])
-        .expect("the indexed pointer-field expansion should check");
+    assert!(
+        expanded.contains("have load_int32((old(owner->data) + 1)) == value"),
+        "the checked historical pointer, scalar width, and index must be explicit: {expanded}",
+    );
+    verify_c0_sources(&expanded, &[("holder.c", c_source)]).unwrap_or_else(|error| {
+        panic!("the indexed pointer-field expansion should check: {error:?}\n{expanded}")
+    });
+}
+
+#[test]
+fn nested_have_borrows_only_checked_immutable_frontier_reads() {
+    let contract = r#"
+        verifying "nested-holder.c";
+        predicate second_is(owner: struct holder*, value: int32) {
+            owner->data[1] == value
+        }
+        int32 holder_scope(struct holder* owner, int32 data[], int32 other[], uint8 bytes[], int32 value) {
+            requires owner->data == data;
+            requires second_is(owner, value);
+            requires other[1] != value;
+            requires value < 2147483647;
+            requires bytes == (uint8*)owner + 4;
+            requires separate(memory(*owner), memory(data[1..2]));
+            requires separate(memory(*owner), memory(other[1..2]));
+            consumes *owner;
+            produces *owner;
+            consumes data[1..2];
+            produces data[1..2];
+            views other[1..2];
+            ensures result == 0;
+        } by {
+            unfold(second_is);
+            @STEP@
+            have owner->data[1] == value by {
+                have load_int32(old(owner->data) + 1) == value by {
+                    assumption();
+                }
+                simp();
+            }
+            execute();
+            simp();
+        }
+    "#;
+    for (body, changed) in [
+        ("", false),
+        ("owner->data = other;", true),
+        ("data[1] = value + 1;", true),
+        // A real one-byte write through a C character alias invalidates the
+        // complete stored pointer value. The whole owner supplies write
+        // authority; no duplicate overlapping byte ownership is introduced.
+        ("bytes[0] = 0;", true),
+    ] {
+        let c_source = format!(
+            "struct holder {{ int32* data; }}; int32 holder_scope(struct holder* owner, int32 data[], int32 other[], uint8 bytes[], int32 value) {{ {body} return 0; }}"
+        );
+        let click_source = contract.replace("@STEP@", if changed { "step();" } else { "" });
+        let result = verify_c0_sources(&click_source, &[("nested-holder.c", &c_source)]);
+        if changed {
+            let error = result.expect_err("a changed pointer, scalar cell, or partial pointer write cannot reuse the earlier read");
+            assert!(
+                error.message().contains("`have`"),
+                "the actual store must execute before selected-read refusal ({body}): {error:?}"
+            );
+        } else {
+            result.expect(
+                "a nested have at the same immutable frontier retains the checked read transport",
+            );
+        }
+    }
 }
 
 #[test]
