@@ -129,9 +129,12 @@ original decoder. The executable range-contract documentation fixture and
 Clippy across all targets pass. The full unit sweep passed 5,960 tests and
 found one obsolete expansion-syntax assertion; that assertion was updated
 without changing the proved separation claim, and its regression passes on
-recheck. The two C tagged-pointer audit examples still
-need an explicit integer-origin contract design decision before this PR can
-be green; their numeric-only contracts have not been weakened.
+recheck. By user direction, integer-carried pointer contracts are deferred to
+the P2 [shared origin-contract design issue](integer-pointer-origin-contracts-design.md).
+The two original numeric-only tagged-pointer audit fixtures now explicitly
+check refusal in verification and expansion. Their C source and contract
+claims are preserved; positive audit coverage returns with explicit origin
+promises in that issue. No origin predicate is implemented in this checkpoint.
 
 Run the complete C/Rust/C++ acceptance matrix after these repairs, then remove
 resolved bug documents and publish the coherent update to PR 646.
