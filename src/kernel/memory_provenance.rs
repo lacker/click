@@ -2448,26 +2448,37 @@ pub(in crate::kernel) fn typed_range_disjoint_from_pointer_evidence(
         }
     }
     let memberships = std::cell::RefCell::new(Vec::new());
-    let composition = range_blocks.iter().find_map(|range_block| {
-        access_blocks.iter().find_map(|access_block| {
-            assumptions.composition_separated_members(
-                range_block,
-                access_block,
-                contained,
-                |member| {
-                    let Some(membership) =
-                        AccessInRangeEvidence::for_access(pointer, bytes, member, assumptions)
-                    else {
-                        return false;
-                    };
-                    memberships.borrow_mut().push((member.clone(), membership));
-                    true
-                },
-                separated,
-            )
-        })
-    });
-    if let Some((resources, range_member, access_member)) = composition {
+    let access_contained = |member: &CMemoryRange| {
+        let Some(membership) =
+            AccessInRangeEvidence::for_access(pointer, bytes, member, assumptions)
+        else {
+            return false;
+        };
+        memberships.borrow_mut().push((member.clone(), membership));
+        true
+    };
+    // The owner/view partition is selected by its two explicit address keys.
+    // Probe it before the legacy ownership-composition frontier.
+    let composition = assumptions
+        .borrow_partition_separated_members(range.base(), pointer, contained, access_contained)
+        .map(|members| (members, true))
+        .or_else(|| {
+            range_blocks
+                .iter()
+                .find_map(|range_block| {
+                    access_blocks.iter().find_map(|access_block| {
+                        assumptions.composition_separated_members(
+                            range_block,
+                            access_block,
+                            contained,
+                            access_contained,
+                            separated,
+                        )
+                    })
+                })
+                .map(|members| (members, false))
+        });
+    if let Some(((resources, range_member, access_member), borrowed)) = composition {
         let range_membership = range_memberships
             .into_inner()
             .into_iter()
@@ -2481,7 +2492,11 @@ pub(in crate::kernel) fn typed_range_disjoint_from_pointer_evidence(
             &Proposition::CResourceComposition(resources.clone()),
         );
         return Some(RangeDisjointFromPointerEvidence::SeparatedRanges {
-            authority: StoreSeparatedRangesAuthority::ResourceComposition(resources.clone()),
+            authority: if borrowed {
+                StoreSeparatedRangesAuthority::BorrowPartition(resources.clone())
+            } else {
+                StoreSeparatedRangesAuthority::ResourceComposition(resources.clone())
+            },
             range_member: range_member.clone(),
             access_member: access_member.clone(),
             range_membership,
