@@ -8642,6 +8642,9 @@ pub(super) struct ResourceContextIndex {
     /// canonicalization can recover these even when raw address encodings differ.
     pub(super) exact_shapes_by_pointer_read:
         PersistentMap<(ResourceFamily, String, usize, PointerLoadId), ResourceEntryIds>,
+    /// Publication keys are retained for exact withdrawal even when a later
+    /// producer edge changes the read's canonical frame endpoint.
+    pub(super) pointer_read_keys_by_entry: PersistentMap<ResourceEntryId, Arc<[PointerLoadId]>>,
     pub(super) memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
     /// Iterated guarded-ownership facts keyed by both blocks their
     /// denotation depends on: the element base and the guard cells. A store,

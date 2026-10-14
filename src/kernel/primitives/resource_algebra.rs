@@ -521,7 +521,13 @@ impl ResourceContextIndex {
                 shape_root_key(fact.family(), name, arguments),
                 entry,
             );
-            for read in shape_pointer_reads(arguments) {
+            let reads = shape_pointer_reads(arguments);
+            if !reads.is_empty() {
+                result.pointer_read_keys_by_entry = result
+                    .pointer_read_keys_by_entry
+                    .with_inserted(entry, reads.iter().copied().collect::<Vec<_>>().into());
+            }
+            for read in reads {
                 result.exact_shapes_by_pointer_read = insert_resource_index_entry(
                     &result.exact_shapes_by_pointer_read,
                     (fact.family(), name.clone(), arguments.len(), read),
@@ -737,7 +743,14 @@ impl ResourceContextIndex {
                 &shape_root_key(fact.family(), name, arguments),
                 entry,
             );
-            for read in shape_pointer_reads(arguments) {
+            let reads = result
+                .pointer_read_keys_by_entry
+                .get(&entry)
+                .cloned()
+                .unwrap_or_default();
+            result.pointer_read_keys_by_entry =
+                result.pointer_read_keys_by_entry.without_key(&entry);
+            for read in reads.iter().copied() {
                 result.exact_shapes_by_pointer_read = remove_resource_index_entry(
                     &result.exact_shapes_by_pointer_read,
                     &(fact.family(), name.clone(), arguments.len(), read),

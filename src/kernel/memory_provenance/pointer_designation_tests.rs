@@ -608,3 +608,40 @@ fn resource_candidate_lookup_retains_checked_pointer_frames_without_ambient_scan
         );
     }
 }
+
+#[test]
+fn resource_read_index_withdraws_original_keys_after_late_frame_edges() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let cell = slot();
+    let base = CMemory::new().with_block(cell.block.clone(), 32);
+    let base_ref = intern_c_memory_ref(&base);
+    let mut forgotten = base.clone();
+    forgotten.mark_forgotten_from(&base_ref);
+    let after = forgotten.clone().store(cell.offset_by_bytes(8), int32(7));
+    let read = |memory: &CMemory| {
+        let snapshot = intern_c_memory_ref(memory);
+        CPointerValue::new(Pointer::loaded_value(&snapshot, &cell), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+                snapshot,
+                cell.clone(),
+            )))
+    };
+    let fact = |pointer| {
+        CResourceFact::own(CResource::Composite {
+            name: "late-index-frame".into(),
+            arguments: vec![AlgebraicValue::C(CValue::Pointer(pointer))].into(),
+        })
+    };
+    let held = fact(read(&after));
+    let resources = ResourceContext::new().unchecked_with_fact(held.clone());
+    record_c_memory_derivation(
+        &mut forgotten,
+        CMemoryDerivation::CellsForgotten { base: base_ref },
+    );
+    let withdrawn = resources.without_exact_representation(&held).unwrap();
+    assert!(
+        withdrawn
+            .directly_supporting_fact(&fact(read(&forgotten)), &PureFactContext::new())
+            .is_none()
+    );
+}

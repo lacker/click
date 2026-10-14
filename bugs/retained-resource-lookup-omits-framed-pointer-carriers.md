@@ -109,3 +109,9 @@ repair, not this index candidate.
 The original reduction now passes the retained `unfold`, but fails later at its
 post-store `fold(cells(h->data, n))`. Arena still exhausts its unchanged control
 budget. This is not a green activation or a complete repair of the reduction.
+
+A follow-up safeguard retains each entry's publication-time read-index keys
+for withdrawal instead of recomputing them after late producer frame edges.
+The multi-size lookup regression and a dedicated late-edge withdrawal test both
+pass on this follow-up. The 39/52 example-stage verdict above is for the initial
+candidate; no additional full stage is claimed for the withdrawal-only change.
