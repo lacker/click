@@ -475,6 +475,38 @@ pub(crate) fn check_native_composite_formation(
     }
     bind_composite_witnesses(definition, arguments, &mut evaluation, assumptions)
         .ok_or("native composite witness arguments are not established")?;
+    // Ordinary C layout annotations have no native object promise to check
+    // for a legacy carrier. Determine that before demanding a body's guard:
+    // a verified conditional head remains usable with an undecided outcome.
+    let mut has_native_promise = false;
+    for spec in definition.contains() {
+        if !spec.native_span_requirements().is_empty() {
+            has_native_promise = true;
+            break;
+        }
+        for requirement in spec.native_record_places() {
+            if requirement.prefix_count.is_some() {
+                has_native_promise = true;
+                break;
+            }
+            let pointer = requirement_pointer(&evaluation, requirement, assumptions, false)?;
+            let legacy = legacy_record_carrier(&evaluation, &pointer, &requirement.layout)
+                || (matches!(pointer.designation(), Some(PointerDesignation::Loaded(_)))
+                    && evaluation.typed_access_policy()
+                        == CTypedAccessPolicy::CAllocatedAccessAllowed
+                    && requirement.layout.declaration_identity().is_none());
+            if !legacy {
+                has_native_promise = true;
+                break;
+            }
+        }
+        if has_native_promise {
+            break;
+        }
+    }
+    if !has_native_promise {
+        return Ok(());
+    }
     // A held checked head already carries its immediate body's authority.
     // Expose only that actual supporting occurrence while rechecking native
     // carrier reads; an absent requested head must supply its real body units.
@@ -905,6 +937,64 @@ mod tests {
         let native = state.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
         assert!(assume_native_record_specs(&native, &specs, &facts).is_err());
         assert!(check_native_record_specs(&native, &specs, &facts).is_err());
+    }
+
+    #[test]
+    fn conditional_legacy_layout_metadata_needs_no_decided_native_guard() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            4,
+            4,
+            vec![CAggregateField::new("value", 0, CType::Int32)],
+        ));
+        let pointer = CPointerValue::new(Pointer::symbolic(Variable(988_231)), CType::Int32Pointer);
+        let definition = CCompositeResourceDefinition::new(
+            "MaybeRecord",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            Some(SpecProposition::Comparison {
+                operator: CComparisonOperator::NotEqual,
+                left: SpecExpression::CExpression(c_variable("p")),
+                right: SpecExpression::CExpression(c_int32_literal(0)),
+            }),
+            false,
+            vec![
+                CResourceSpec::owned_memory(CMemorySegment::new(
+                    c_variable("p"),
+                    c_int32_literal(0),
+                    c_int32_literal(1),
+                ))
+                .with_native_record_places(vec![CNativeRecordPlaceRequirement {
+                    carrier: c_variable("p"),
+                    layout: layout.clone(),
+                    prefix_count: None,
+                }]),
+            ],
+            vec![],
+        );
+        let head = CResourceFact::own_composite(
+            "MaybeRecord".into(),
+            vec![CValue::Pointer(pointer.clone())],
+        );
+        let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
+        let facts = PureFactContext::new();
+        let definitions = [definition];
+        check_native_composite_formation(&state, &head, &definitions, &facts).unwrap();
+        assert!(!super::valid_places::holds(
+            state.memory(),
+            &pointer,
+            &CPlaceType::Record(layout),
+            CTypedAccessPolicy::CAllocatedAccessAllowed,
+            &facts,
+        ));
+        assert!(
+            check_native_composite_formation(
+                &state.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly),
+                &head,
+                &definitions,
+                &facts,
+            )
+            .is_err()
+        );
     }
 
     #[test]
