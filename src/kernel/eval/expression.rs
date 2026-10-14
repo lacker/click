@@ -2501,6 +2501,7 @@ pub(in crate::kernel) fn c_expression_pointee_type(
     expression: &CExpression,
 ) -> Option<CType> {
     match expression {
+        CExpression::Value(value) => value.c_type().pointee_type(),
         CExpression::Variable(name) => match state.locals.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => c_type.pointee_type(),
