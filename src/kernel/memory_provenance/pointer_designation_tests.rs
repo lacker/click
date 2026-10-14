@@ -528,3 +528,83 @@ fn copied_loaded_pointer_designations_resolve_with_linear_total_work() {
         );
     }
 }
+
+#[test]
+fn resource_candidate_lookup_retains_checked_pointer_frames_without_ambient_scan() {
+    for size in [16u64, 64, 256, 1024] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let cell = slot();
+        let read = |memory: &CMemory| {
+            let snapshot = intern_c_memory_ref(memory);
+            CPointerValue::new(Pointer::loaded_value(&snapshot, &cell), CType::Int32Pointer)
+                .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+                    snapshot,
+                    cell.clone(),
+                )))
+        };
+        let fact = |pointer| {
+            CResourceFact::own(CResource::Composite {
+                name: "indexed-carrier".into(),
+                arguments: vec![AlgebraicValue::C(CValue::Pointer(pointer))].into(),
+            })
+        };
+        let before = CMemory::new().with_block(cell.block.clone(), 32);
+        let old = read(&before);
+        let after = before.clone().store(cell.offset_by_bytes(8), int32(7));
+        let current = read(&after);
+        let context = PureFactContext::new();
+        assert!(c_values_proven_equal_for_memory_resolution(
+            &CValue::Pointer(old.clone()),
+            &CValue::Pointer(current.clone()),
+            &context
+        ));
+        let held = fact(old.clone());
+        let required = fact(current);
+        let mut resources = ResourceContext::new().unchecked_with_fact(held.clone());
+        for index in 0..size {
+            let address = cell.offset_by_bytes(64 + (index as u32) * 8);
+            let snapshot = intern_c_memory_ref(&before);
+            resources = resources.unchecked_with_fact(fact(
+                CPointerValue::new(
+                    Pointer::loaded_value(&snapshot, &address),
+                    CType::Int32Pointer,
+                )
+                .with_designation(PointerDesignation::Loaded(
+                    PointerLoadIdentity::new(snapshot, address),
+                )),
+            ));
+        }
+        let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
+            resources
+                .directly_supporting_fact(&required, &context)
+                .cloned()
+        });
+        assert_eq!(found, Some(held.clone()), "size={size}, work={work}");
+        assert!(work < 100, "size={size}, work={work}");
+        let withdrawn = resources
+            .clone()
+            .without_exact_representation(&held)
+            .unwrap();
+        assert!(
+            withdrawn
+                .directly_supporting_fact(&required, &context)
+                .is_none()
+        );
+        let partial = before.clone().store(cell.offset_by_bytes(4), int32(7));
+        let changed = fact(read(&partial));
+        assert!(
+            resources
+                .directly_supporting_fact(&changed, &context)
+                .is_none()
+        );
+        let numeric = context.assume_condition(
+            ConditionTerm::pointer_equal(old.pointer().clone(), read(&partial).pointer().clone()),
+            true,
+        );
+        assert!(
+            resources
+                .directly_supporting_fact(&changed, &numeric)
+                .is_none()
+        );
+    }
+}

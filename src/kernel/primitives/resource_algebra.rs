@@ -521,6 +521,13 @@ impl ResourceContextIndex {
                 shape_root_key(fact.family(), name, arguments),
                 entry,
             );
+            for read in shape_pointer_reads(arguments) {
+                result.exact_shapes_by_pointer_read = insert_resource_index_entry(
+                    &result.exact_shapes_by_pointer_read,
+                    (fact.family(), name.clone(), arguments.len(), read),
+                    entry,
+                );
+            }
         }
         result
     }
@@ -730,6 +737,13 @@ impl ResourceContextIndex {
                 &shape_root_key(fact.family(), name, arguments),
                 entry,
             );
+            for read in shape_pointer_reads(arguments) {
+                result.exact_shapes_by_pointer_read = remove_resource_index_entry(
+                    &result.exact_shapes_by_pointer_read,
+                    &(fact.family(), name.clone(), arguments.len(), read),
+                    entry,
+                );
+            }
         }
         result
     }
@@ -2615,11 +2629,27 @@ impl ResourceContext {
         };
         let shape = (fact.family(), name.clone(), arguments.len());
         let mut entries = BTreeSet::new();
-        let roots = std::iter::once(None).chain(
-            related_pointer_roots(pointer, assumptions)
-                .into_iter()
-                .map(Some),
-        );
+        let mut related_roots = related_pointer_roots(pointer, assumptions);
+        let mut read_ids = BTreeSet::new();
+        for read in shape_pointer_reads(arguments) {
+            read_ids.insert(read);
+        }
+        if let Some(AlgebraicValue::C(CValue::Pointer(carrier))) = arguments.first()
+            && let Some(canonical) =
+                crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+                    carrier,
+                    assumptions,
+                )
+        {
+            // The exact stored-value relation also checks complete-cell frames.
+            // Include their canonical carrier in candidate discovery; equality
+            // and quantity are still checked separately before accepting a fact.
+            related_roots.extend(related_pointer_roots(canonical.pointer(), assumptions));
+            if let Some(PointerDesignation::Loaded(origin)) = canonical.designation() {
+                read_ids.insert(origin.id());
+            }
+        }
+        let roots = std::iter::once(None).chain(related_roots.into_iter().map(Some));
         for root in roots {
             crate::instrumentation::record_deterministic_work(1);
             if let Some(found) = self.storage.index.exact_shapes_by_root.get(&(
@@ -2627,6 +2657,17 @@ impl ResourceContext {
                 shape.1.clone(),
                 shape.2,
                 root,
+            )) {
+                entries.extend(found.iter().copied());
+            }
+        }
+        for read in read_ids {
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(found) = self.storage.index.exact_shapes_by_pointer_read.get(&(
+                shape.0,
+                shape.1.clone(),
+                shape.2,
+                read,
             )) {
                 entries.extend(found.iter().copied());
             }
@@ -6787,6 +6828,27 @@ fn shape_root_key(
         arguments.len(),
         normalization_root_pointer(arguments).map(memory_base_root),
     )
+}
+
+fn shape_pointer_reads(arguments: &[AlgebraicValue]) -> BTreeSet<PointerLoadId> {
+    let Some(AlgebraicValue::C(CValue::Pointer(pointer))) = arguments.first() else {
+        return BTreeSet::new();
+    };
+    let Some(PointerDesignation::Loaded(origin)) = pointer.designation() else {
+        return BTreeSet::new();
+    };
+    let mut reads = BTreeSet::from([origin.id()]);
+    // Index unconditional complete-cell frames at publication too. Discovery
+    // never assumes the resulting equivalence: the actual query still checks
+    // both arguments under its own retained facts.
+    if let Some(canonical) = crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+        pointer,
+        &PureFactContext::new(),
+    ) && let Some(PointerDesignation::Loaded(origin)) = canonical.designation()
+    {
+        reads.insert(origin.id());
+    }
+    reads
 }
 
 /// The first argument of a token or composite when it is a pointer.

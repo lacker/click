@@ -8638,6 +8638,10 @@ pub(super) struct ResourceContextIndex {
     /// parameter shares one block, so a lookup by shape alone would compare
     /// a parameter's fact with every other parameter's.
     pub(super) exact_shapes_by_root: PersistentMap<ShapeRootKey, ResourceEntryIds>,
+    /// Exact producer read identities for loaded first arguments. Checked frame
+    /// canonicalization can recover these even when raw address encodings differ.
+    pub(super) exact_shapes_by_pointer_read:
+        PersistentMap<(ResourceFamily, String, usize, PointerLoadId), ResourceEntryIds>,
     pub(super) memory_by_block: PersistentMap<PointerBlock, ResourceEntryIds>,
     /// Iterated guarded-ownership facts keyed by both blocks their
     /// denotation depends on: the element base and the guard cells. A store,

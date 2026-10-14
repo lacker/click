@@ -3016,6 +3016,19 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     {
         abstract_resource = authority.clone();
     }
+    if let CResource::Composite { arguments, .. } = abstract_resource.resource() {
+        // The selected occurrence's arguments are immutable logical values.
+        // Re-expanding the written selectors can introduce different read
+        // spellings than the kernel's independently checked body exchange.
+        for (parameter, argument) in definition.parameters().iter().zip(arguments.iter()) {
+            if let Some(value) = argument.as_c_value() {
+                substitutions.insert(
+                    parameter.name().to_string(),
+                    ContractExpression::CFragment(CExpression::Value(value.clone())),
+                );
+            }
+        }
+    }
     state = crate::kernel::assume_checked_native_composite_places(
         &state,
         &abstract_resource,
