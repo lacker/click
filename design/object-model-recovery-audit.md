@@ -84,10 +84,22 @@ cargo clean -p clicklang
 scripts/check.sh
 ```
 
-The rebuilt normal gate is tracked separately below. Check the compiled
+The rebuilt baseline normal gate **passes, exit 0**: 5,577 selected unit,
+import and CLI tests pass (1,486 skipped), all 52 normal example projects pass,
+and the normal Markdown corpus passes. All fixture paths identify the baseline
+checkout. The unit stage takes 191.305 seconds, examples 122.50 seconds and
+Markdown fixtures 104.67 seconds. The total is 20m17s and emits the ten-minute
+budget warning: the cold test compilation alone takes 9m09s, with another
+3m39s for Clippy. This is a correct functional verdict, not an under-budget
+run or a verifier performance claim. No limits or test selection are changed.
+The archive's full normal gate remains unestablished; its example stage fails.
+
+Check the compiled
 manifest/fixture paths as well as the command's exit status. Never share
 mutable Click artifacts between concurrent worktree builds when comparing
-revisions. The independent baseline and archive example executables used in
+revisions. Prefer a separate `CARGO_TARGET_DIR` per concurrently built worktree;
+when reusing a directory sequentially, remove the package's artifacts on a
+revision switch and inspect the resulting paths. The independent baseline and archive example executables used in
 the comparison above were tied to their correct checkout before switching
 builds; their recorded 52-versus-35 result remains valid.
 
@@ -97,7 +109,11 @@ Every row below passes on fixed master and fails on the archive with the
 unchanged source and claims. Classification is **branch verification regression**;
 introducing commit and semantic cause remain unassigned. Similar errors suggest
 reduction groups, not proven shared causes. Engineering owner is the shared
-object-model recovery workstream.
+object-model recovery workstream. This records changed verification behavior,
+not a conclusion that every previously accepted contract is sufficient under
+the sound pointer laws. A demonstrated necessary semantic narrowing must be
+recorded separately, with source-language evidence and explicit compatibility
+accounting; baseline acceptance alone cannot establish that judgment.
 
 | Project | Selected failure on archive | Required follow-up |
 | --- | --- | --- |
@@ -255,7 +271,9 @@ failures as proof regressions.
 - [x] Record all 17 branch failures and one independent master defect.
 - [x] Recheck the ordinary C scalar-subobject P1 reproduction on both revisions.
 - [x] Record a responsibility inventory and conservative dependency boundaries.
-- [ ] Establish full normal-gate results for master and the archived candidate.
+- [x] Establish the fixed master's normal-gate result with correct artifacts.
+- [ ] Establish the archived candidate's full normal-gate result; its example
+  stage is already a reproduced failure.
 - [ ] Attribute the introducing changes for the 17 failures with reductions or
   bisect; choose the minimal sound pointer-activation closure.
 - [ ] Complete and publish the first isolated green extraction; settle #646's

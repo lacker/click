@@ -129,6 +129,9 @@ one-case correction and paired Markdown controls are committed in a separate
 master-based worktree and rebased onto `2010b27f1` for delivery. Alignment typing is dependent on branch-only machinery
 and is not bundled into that extraction. Full normal-gate results and publication
 remain tracked separately; focused successes are not a green-tree verdict.
+The rebuilt fixed master normal gate passes all selected tests, with correct
+fixture paths; its cold 20m17s run exceeds the ten-minute budget. The archived
+candidate has no full green verdict and fails its normal example stage.
 
 ## Recovery and delivery sequence
 
