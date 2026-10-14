@@ -42,6 +42,61 @@ mod empty_loop_rule_tests {
     }
 
     #[test]
+    fn member_write_preserves_carrier_but_address_taken_slot_is_havocked() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (state, pointer, replacement) = pointer_carrier_state();
+        let layout = std::sync::Arc::new(CAggregateLayout::new(
+            4,
+            4,
+            vec![CAggregateField::new("value", 0, CType::Int32)],
+        ));
+        let member = |object| CExpression::MemberAddress {
+            object: Box::new(object),
+            selection: std::sync::Arc::new(CAggregateMemberSelection {
+                layout: layout.clone(),
+                path: vec!["value".into()].into(),
+                value_type: CType::Int32,
+            }),
+        };
+        for (body, changes_carrier) in [
+            (
+                c_typed_store(member(c_variable("p")), c_int32_literal(1), CType::Int32),
+                false,
+            ),
+            (
+                c_typed_store(
+                    CExpression::AddressOf(Box::new(c_variable("p"))),
+                    CExpression::Value(CValue::Pointer(replacement)),
+                    CType::Int32Pointer,
+                ),
+                true,
+            ),
+            (
+                c_typed_store(
+                    member(CExpression::AddressOf(Box::new(c_variable("p")))),
+                    c_int32_literal(1),
+                    CType::Int32,
+                ),
+                true,
+            ),
+        ] {
+            let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+            let head = havoc_loop_modified_locals(
+                &state,
+                &body,
+                &mut variables,
+                &mut ExecutionBudget::default(),
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                head.locals.get("p") != Some(&CValue::Pointer(pointer.clone())),
+                changes_carrier
+            );
+        }
+    }
+
+    #[test]
     fn loop_havoc_preserves_pointer_declaration_qualifiers() {
         let _session = crate::kernel::VerificationSession::enter();
         let (mut state, pointer, _) = pointer_carrier_state();
@@ -10512,9 +10567,15 @@ pub(super) fn collect_address_taken_in_expression(
     match expression {
         // `&target`: any local reachable in the target may have its address
         // escape, so conservatively record every variable it mentions.
-        CExpression::MemberAddress { object: target, .. }
-        | CExpression::AddressOf(target)
-        | CExpression::CheckedObjectAddress(target) => collect_variable_names(target, names),
+        CExpression::AddressOf(target) | CExpression::CheckedObjectAddress(target) => {
+            collect_variable_names(target, names)
+        }
+        // Selecting a member through a pointer reads that carrier; it does
+        // not expose the pointer variable's own slot. Explicit address-taking
+        // within the object expression still propagates normally.
+        CExpression::MemberAddress { object, .. } => {
+            collect_address_taken_in_expression(object, names)
+        }
         CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => {
             collect_address_taken_in_expression(expression, names)
