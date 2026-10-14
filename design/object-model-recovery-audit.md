@@ -252,7 +252,7 @@ This is a responsibility inventory, not permission to split by directory:
    importer validation, kernel support and profile-specific controls. C/Rust
    adapter changes cannot be pulled in as incidental fixes without their
    unchanged-source comparison and own admission evidence.
-6. **Proof tools and audits:** source synthesis, snapshots, retained replay and
+6. **Proof tools and audits:** source synthesis, snapshots, retained rechecking and
    instrumentation must agree with the selected semantic slice. Extract
    standalone defects where reproduced on master; keep semantic identity and
    certificate compatibility changes with their corresponding kernel change.
@@ -282,3 +282,14 @@ failures as proof regressions.
 Command logs for this session are in `/tmp/object-model-*.log`; commands,
 revisions, error summaries and the small reproductions above remain committed
 so the audit does not depend on those transient files.
+
+## Delivery transition
+
+[PR #926](https://github.com/clicklang/click/pull/926) publishes the recovery
+issue, baseline ledger, ordinary C P1 reproduction and isolated captured-value
+typing fix. Its submitted head is `f85ea4372`; GitHub confirms auto-merge enabled
+at `2026-10-14T04:09:41Z`, with no queue entry yet. Required CI remains pending.
+PR #646 is closed as the superseded delivery attempt. Its published head is an
+ancestor of the preserved `e3d84a785` archive; the original fork head and archive
+are retained. This transition does not complete the bounded object model or
+resolve the 17 archive failures.
