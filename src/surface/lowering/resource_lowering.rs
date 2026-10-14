@@ -352,7 +352,10 @@ pub(in crate::surface) fn aggregate_object_inputs_for_contract(
                 continue;
             };
             let parameter = &parameters[parameter_index];
-            if parameter.is_struct_value() || parameter.array_element_width().is_some() {
+            if parameter.is_struct_value()
+                || parameter.array_element_width().is_some()
+                || !parameter.is_native_pointer_input()
+            {
                 continue;
             }
             let Some(source_layout) = parameter.pointee_struct_layout() else {
@@ -731,6 +734,25 @@ pub(in crate::surface) fn native_span_requirements_for_resource(
         layouts: &BTreeMap<String, syntax::C0StructLayout>,
     ) -> Option<(syntax::C0Type, Option<String>, CExpression)> {
         match expression {
+            ContractExpression::CFragment(
+                expression @ CExpression::TypedLoad {
+                    pointer,
+                    value_type: CType::UInt64,
+                    ..
+                },
+            ) if matches!(pointer.as_ref(), CExpression::MemberAddress { selection, .. }
+                if selection.layout.declaration_identity().is_some()
+                    && selection.value_type == CType::UInt64
+                    && selection.layout.member_at_path(&selection.path)
+                        .is_some_and(|(_, ty)| ty == CType::UInt64)) =>
+            {
+                Some((
+                    syntax::C0Type::UInt64(syntax::LongRank::Long),
+                    None,
+                    expression.clone(),
+                ))
+            }
+
             ContractExpression::Binding(name)
             | ContractExpression::CBinding(name)
             | ContractExpression::CFragment(CExpression::Variable(name)) => {
@@ -890,7 +912,7 @@ pub(in crate::surface) fn native_span_requirements_for_resource(
             // recipe. Preserve the existing symbolic zero-prefix boundary.
             continue;
         }
-        let (source_pointer, mut count_expression) = match base {
+        let (source_pointer, mut count_expression, count_surface) = match base {
             ContractExpression::CUnary {
                 operand,
                 lowered: CExpression::AddressOf(_),
@@ -902,28 +924,40 @@ pub(in crate::surface) fn native_span_requirements_for_resource(
                 let ContractExpression::Index(pointer, index) = operand.as_ref() else {
                     continue;
                 };
-                let ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                if let ContractExpression::CFragment(CExpression::Value(CValue::Int32(
                     Bitvector32Term::Constant(index),
                 ))) = index.as_ref()
-                else {
+                {
+                    let Some(count) = index
+                        .checked_add(1)
+                        .filter(|count| i32::try_from(*count).is_ok())
+                    else {
+                        continue;
+                    };
+                    (pointer.as_ref(), c_int32_literal(count), None)
+                } else if let ContractExpression::Subtract(bound, one) = index.as_ref()
+                    && resource_argument_to_c_expression(one).ok()
+                        == Some(crate::kernel::c_uint64_literal(1))
+                    && let Some((syntax::C0Type::UInt64(_), None, lowered)) =
+                        declared_type(bound, parameters, layouts)
+                {
+                    // A typed last-element place promises the prefix geometry
+                    // ending at its retained native size, not byte authority
+                    // or initialization of any preceding element.
+                    (pointer.as_ref(), lowered, Some(bound.as_ref()))
+                } else {
                     continue;
-                };
-                let Some(count) = index
-                    .checked_add(1)
-                    .filter(|count| i32::try_from(*count).is_ok())
-                else {
-                    continue;
-                };
-                (pointer.as_ref(), c_int32_literal(count))
+                }
             }
-            _ => (base, segment.end.clone()),
+            _ => (base, segment.end.clone(), Some(end)),
         };
         let constant_count = positive_bound(&count_expression);
         if constant_count.is_none() {
             // Retain only an explicit native integer count from this exact
             // source range. Its value, positivity, and byte extent are checked
             // by the selected typed-prefix query; it is not an array bound.
-            let Some((declared, nominal_record, lowered)) = declared_type(end, parameters, layouts)
+            let Some((declared, nominal_record, lowered)) =
+                declared_type(count_surface.unwrap_or(end), parameters, layouts)
             else {
                 continue;
             };
@@ -935,7 +969,10 @@ pub(in crate::surface) fn native_span_requirements_for_resource(
                         | syntax::C0Type::Int64(_)
                         | syntax::C0Type::UInt64(_)
                 )
-                || resource_argument_to_c_expression(end).ok().as_ref() != Some(&count_expression)
+                || resource_argument_to_c_expression(count_surface.unwrap_or(end))
+                    .ok()
+                    .as_ref()
+                    != Some(&count_expression)
             {
                 continue;
             }
@@ -4993,8 +5030,20 @@ mod input_identity_tests {
         let requires = file.function_blocks()[0].requires();
         let direct =
             aggregate_object_inputs_for_contract(requires, parsed.parameters(), &raw).unwrap();
-        assert_eq!(direct.len(), 1);
-        assert_eq!(direct[0].parameter_index, 0);
+        assert!(
+            direct.is_empty(),
+            "ordinary C member authority does not activate the native profile"
+        );
+        let native_parameters = parsed
+            .parameters()
+            .iter()
+            .cloned()
+            .map(|parameter| parameter.with_native_pointer_input(true))
+            .collect::<Vec<_>>();
+        let native =
+            aggregate_object_inputs_for_contract(requires, &native_parameters, &raw).unwrap();
+        assert_eq!(native.len(), 1);
+        assert_eq!(native[0].parameter_index, 0);
         assert!(
             aggregate_object_inputs_for_contract(&[], parsed.parameters(), &raw)
                 .unwrap()
@@ -5036,10 +5085,10 @@ mod input_identity_tests {
         let CExpression::Value(CValue::Pointer(pointer)) = &arguments[0] else {
             panic!("record entry argument");
         };
-        assert!(matches!(
-            pointer.designation(),
-            Some(crate::kernel::PointerDesignation::Unresolved(_))
-        ));
+        assert!(
+            pointer.designation().is_none(),
+            "an unprofiled C record is a legacy input"
+        );
         let mut indexed = resource.clone();
         let ResourceClause::ViewMemory(segment) = &mut indexed else {
             panic!("direct view segment");

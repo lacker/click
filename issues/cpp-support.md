@@ -153,6 +153,15 @@ control at `list_next`, whose numeric-only resource contract cannot justify
 pointer reconstruction. Its positive modular traversal remains part of the P2
 origin-contract issue, rather than a quarantined verifier failure.
 
+Integration with the expanded C++ catalog exposed reference getters whose
+numerical axioms could not retain a dereferenceable result. Checked, pinned
+non-reading models now cover the selected span/array getters. Modular result
+selection authenticates declared array decay and keeps its actual element
+extent. Execution-theorem wrappers also retain nominal pointee layouts while
+preserving their generated call body. These are repairs within the approved
+object model, not an integer-origin contract implementation. The original
+unsigned-byte span and array probes pass; broader integration is being checked.
+
 The follow-up focused matrix passes all 361 tests, including the original C++
 span helper/write caller, rbtree expansion and mutations, marked-list construction
 and origin refusal, and the mutex regression. The rbtree bug document is removed

@@ -44,6 +44,67 @@ fn native_operands(left: &IntegerTerm, right: &IntegerTerm) -> Option<(i64, i64)
     Some((left.as_const()?.to_i64()?, right.as_const()?.to_i64()?))
 }
 
+/// Recover an element count only from a proved nonwrapping native byte
+/// product. Dividing a wrapping product would otherwise enlarge an allocation.
+/// Signed observation is equivalent only when its sign bit is independently
+/// known clear; no pointer identity or storage authority is inferred here.
+fn allocated_element_count(
+    bytes: &IntegerTerm,
+    stride: u32,
+    assumptions: &PureFactContext,
+) -> IntegerTerm {
+    let recovered = (|| {
+        let IntegerTerm::Machine(machine) = bytes else {
+            return None;
+        };
+        if machine.ty() != MachineIntegerType::UInt32 || stride == 0 {
+            return None;
+        }
+        let Bitvector32Term::Multiply(left, right) = machine.value() else {
+            return None;
+        };
+        let factor = match (left.as_ref(), right.as_ref()) {
+            (factor, Bitvector32Term::Constant(scale))
+            | (Bitvector32Term::Constant(scale), factor)
+                if *scale == stride =>
+            {
+                factor
+            }
+            _ => return None,
+        };
+        let nonnegative = assumptions.decide(&ConditionTerm::signed_less_equal(
+            0u32.into(),
+            factor.clone(),
+        )) == Some(true);
+        let fits_unsigned = assumptions.decide(&ConditionTerm::unsigned_less_equal(
+            factor.clone(),
+            (u32::MAX / stride).into(),
+        )) == Some(true);
+        let fits_signed = nonnegative
+            && assumptions.decide(&ConditionTerm::signed_less_equal(
+                factor.clone(),
+                (i32::MAX as u32 / stride).into(),
+            )) == Some(true);
+        if !fits_unsigned && !fits_signed {
+            return None;
+        }
+        native_count_observation(
+            if nonnegative {
+                MachineIntegerType::Int32
+            } else {
+                MachineIntegerType::UInt32
+            },
+            factor.clone(),
+        )
+    })();
+    recovered.unwrap_or_else(|| {
+        IntegerTerm::truncating_quotient(
+            bytes.clone(),
+            IntegerTerm::constant_i64(i64::from(stride)),
+        )
+    })
+}
+
 fn domain_add(left: IntegerTerm, right: IntegerTerm) -> IntegerTerm {
     if let Some(value) =
         native_operands(&left, &right).and_then(|(left, right)| left.checked_add(right))
@@ -478,10 +539,7 @@ fn authenticated_domain(
             let stride = element_type.byte_width();
             // Only complete, aligned scalar elements belong to this bounded
             // C access profile. A trailing byte suffix is not another element.
-            let count = IntegerTerm::truncating_quotient(
-                bytes.as_ref().clone(),
-                IntegerTerm::constant_i64(i64::from(stride)),
-            );
+            let count = allocated_element_count(bytes.as_ref(), stride, assumptions);
             return Ok(Some(AuthenticatedDomain {
                 base: origin.pointer().clone(),
                 element_type,
@@ -1350,6 +1408,59 @@ fn checked_pointer_span_with_type(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn allocated_scalar_product_geometry_requires_nonwrapping_factor() {
+        let factor = Bitvector32Term::Variable(Variable(989_789));
+        let bytes = native_count_observation(
+            MachineIntegerType::UInt32,
+            Bitvector32Term::multiply(factor.clone(), 4u32.into()),
+        )
+        .unwrap();
+        let quotient = IntegerTerm::truncating_quotient(bytes.clone(), 4.into());
+        assert_eq!(
+            allocated_element_count(&bytes, 4, &PureFactContext::new()),
+            quotient
+        );
+        let context = assumptions_with_propositions(
+            &PureFactContext::new(),
+            &[
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(0u32.into(), factor.clone()),
+                    true,
+                ),
+                Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(factor.clone(), 536_870_911u32.into()),
+                    true,
+                ),
+            ],
+        );
+        assert_eq!(
+            allocated_element_count(&bytes, 4, &context),
+            native_count_observation(MachineIntegerType::Int32, factor.clone()).unwrap()
+        );
+        let unsigned = assumptions_with_propositions(
+            &PureFactContext::new(),
+            &[Proposition::ConditionIs(
+                ConditionTerm::unsigned_less_equal(factor.clone(), 1_073_741_823u32.into()),
+                true,
+            )],
+        );
+        assert_eq!(
+            allocated_element_count(&bytes, 4, &unsigned),
+            native_count_observation(MachineIntegerType::UInt32, factor.clone()).unwrap()
+        );
+        assert_eq!(
+            allocated_element_count(&bytes, 8, &context),
+            IntegerTerm::truncating_quotient(bytes, 8.into())
+        );
+        let wrapped = native_count_observation(
+            MachineIntegerType::UInt32,
+            Bitvector32Term::multiply(Bitvector32Term::Constant(1_073_741_825), 4u32.into()),
+        )
+        .unwrap();
+        assert_eq!(allocated_element_count(&wrapped, 4, &context), 1.into());
+    }
 
     #[test]
     fn allocated_scalar_domain_is_c_only_bounded_and_does_not_initialize() {

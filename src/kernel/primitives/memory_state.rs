@@ -3235,6 +3235,40 @@ impl CMemory {
         )
     }
 
+    /// Reconstruct a certified result selector from the actual input domain.
+    /// Scalar reference results may select a declared array's element domain;
+    /// neither numeric equality nor byte ownership can authenticate that decay.
+    pub(in crate::kernel) fn checked_pointer_result_selection(
+        &self,
+        input: &CPointerValue,
+        child_path: &[String],
+        result_type: CType,
+    ) -> Option<CPointerValue> {
+        let selected = if child_path.is_empty() {
+            input.clone()
+        } else {
+            self.checked_member_pointer_by_path(input, child_path)?
+        };
+        let array = match selected.designation()? {
+            PointerDesignation::Object { element_type, .. }
+            | PointerDesignation::InputSelected { element_type, .. } => {
+                element_type.array_element_and_count().is_some()
+            }
+            _ => false,
+        };
+        if array
+            && let Some((decayed, guards)) =
+                self.guarded_declared_array_decay(&selected, &PureFactContext::new())
+            && decayed.c_type() == result_type
+            && guards
+                .iter()
+                .all(|guard| guard == &ConditionTerm::Constant(true))
+        {
+            return Some(decayed);
+        }
+        Some(selected)
+    }
+
     /// Select a relative child of an authenticated record carrier. The root
     /// layout comes from its declaration/input witness, never an address
     /// search; the existing selected path remains part of the result domain.

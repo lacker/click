@@ -2968,12 +2968,21 @@ fn recursive_child_numeric_model_alias_cannot_replace_the_parent_carrier() {
             .join(fixture);
         let fixture = crate::cli::read_mdtest(&path).unwrap();
         let source = fixture.click_source.as_deref().unwrap();
+        // Address-only C inputs retain their legacy compatibility boundary.
+        // This control explicitly selects the native record place whose full
+        // carrier must not be replaced by the model's numerical alias.
+        let source = source.replace(
+            " owns t: tree(p);",
+            " requires valid_place(p);\n owns t: tree(p);",
+        );
         // Restore the complete original proof, with identical C and model
         // claims: only the refold's resource argument changes back to id.
         let original = source.replace("fold(tree(p)", "fold(tree(id)");
         assert_ne!(original, source);
         let sources = crate::cli::source_refs(&fixture.c_sources);
-        let error = verify_c0_sources(&original, &sources).unwrap_err();
+        let error =
+            crate::surface::verification::verify_native_c0_sources_for_test(&original, &sources)
+                .unwrap_err();
         assert!(
             error
                 .message()

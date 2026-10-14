@@ -5,6 +5,8 @@ use crate::kernel::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+mod reference_models;
+
 const SPAN_HEADER: &str = "sysroot/usr/include/c++/12/span";
 const SPAN_SHA256: &str = "f1e67ea2c1e2e0faef697f37d995abb59eeb7fb0c0cf13a586fe2799ed9196bd";
 const INT_RECORD: &str = "c:@N@std@S@span>#I#Vl18446744073709551615";
@@ -18,6 +20,7 @@ pub(super) enum Model {
     ByteData,
     IntBack,
     IntFirst,
+    Reference,
 }
 
 /// Declaration candidate only. This admits no execution or equivalence claim:
@@ -193,6 +196,11 @@ fn receiver_matches(source: &CppFunction, expected_record: &str, constant: bool)
 }
 
 pub(super) fn selected(import: &PreparedCppImport, source: &CppFunction) -> Option<Model> {
+    selected_pinned(import, source)
+        .or_else(|| reference_models::selected(import, source).map(|_| Model::Reference))
+}
+
+fn selected_pinned(import: &PreparedCppImport, source: &CppFunction) -> Option<Model> {
     let kind = candidate(source)?;
     if source.axiom.as_ref()?.declaration_header.as_deref() != Some(SPAN_HEADER) {
         return None;
@@ -208,6 +216,7 @@ pub(super) fn selected(import: &PreparedCppImport, source: &CppFunction) -> Opti
         return None;
     }
     let types_match = match kind {
+        Model::Reference => false,
         Model::IntBack => {
             source.parameters.len() == 1
                 && receiver_matches(source, INT_RECORD, true)
@@ -275,6 +284,7 @@ pub(super) fn selected(import: &PreparedCppImport, source: &CppFunction) -> Opti
 
 pub(super) fn assumptions(import: &PreparedCppImport) -> Vec<String> {
     std::iter::once(&import.export().function).chain(&import.export().reachable_functions).filter_map(|source| selected(import, source).map(|kind| {
+        if kind == Model::Reference { return reference_models::selected(import, source).unwrap().assumption(source); }
         format!("assumed source-to-model equivalence for {} [{}; span SHA256 {}]; model implementation requires independent checked certification", source.axiom.as_ref().unwrap().qualified_name, if matches!(kind, Model::IntBack | Model::IntFirst) { "Clang 19.1.7 LP64 native typed-prefix profile" } else { super::schema::DECLARED_UINT32_BYTE_GUARANTEE }, SPAN_SHA256)
     })).collect()
 }
@@ -304,6 +314,11 @@ pub(super) fn implementation(
     let Some(kind) = selected(import, source) else {
         return Ok(function);
     };
+    if kind == Model::Reference {
+        return reference_models::selected(import, source)
+            .ok_or("reference model selection missing")?
+            .implementation(source, function, layouts);
+    }
     let argument_record =
         record_name(&source.parameters[0].value_type).ok_or("model input record missing")?;
     let input_layout = layouts
@@ -333,6 +348,7 @@ pub(super) fn implementation(
         CType::UInt64,
     );
     let body = match kind {
+        Model::Reference => unreachable!("reference model handled above"),
         Model::IntBack => c_return(c_checked_object_address(c_typed_load(
             c_add(
                 c_typed_load(pointer, CType::Int32Pointer),
@@ -447,6 +463,9 @@ pub(super) fn contract(
     let kind = selected(import, source)?;
     let record = record_name(&source.parameters[0].value_type)?;
     Some(match kind {
+        Model::Reference => {
+            return reference_models::selected(import, source)?.contract(source, name);
+        }
         Model::IntBack => format!(
             "int32& {name}(const struct {record}* this) {{\n views std_span_data(this);\n views std_span_size(this);\n requires 1u64 <= std_span_size(this);\n requires valid_place(std_span_data(this)[0..std_span_size(this)]);\n ensures &result == std_span_data(this) + (std_span_size(this) - 1u64);\n}} by {{ execute(); simp(); }}\n"
         ),

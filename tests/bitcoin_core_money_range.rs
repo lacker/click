@@ -3490,6 +3490,7 @@ fn axiomatic_span_element_references_read_and_write() {
     views std_span_size(s);
     views std_span_data(s)[std_span_size(s) - 1u64];
     requires 1u64 <= std_span_size(s);
+    requires std_span_size(s) <= 2305843009213693951u64;
     ensures result == std_span_data(s)[std_span_size(s) - 1u64];
 }} by {{
     execute();
@@ -3505,7 +3506,7 @@ fn axiomatic_span_element_references_read_and_write() {
                 // The read needs permission for the element itself.
                 (
                     read.replace("    views std_span_data(s)[0];\n", ""),
-                    "missing resource fact `views",
+                    "precondition clause 4 of `span__unsigned_char__value_unsigned_long_18446744073709551615_operator_index`",
                 ),
                 // `s[0]` reads the first element, not the second.
                 (
@@ -3533,10 +3534,19 @@ fn axiomatic_span_element_references_read_and_write() {
             name: "element-back",
             dependencies: SPAN_DEPENDENCIES,
             harness: "unsigned int probe(std::span<unsigned int>& s) noexcept { return s.back(); }",
-            refusals: vec![(
-                back.replace("    requires 1u64 <= std_span_size(s);\n", ""),
-                "precondition clause 3 of `span__unsigned_int__value_unsigned_long_18446744073709551615_back`",
-            )],
+            refusals: vec![
+                (
+                    back.replace("    requires 1u64 <= std_span_size(s);\n", ""),
+                    "precondition clause 3 of `span__unsigned_int__value_unsigned_long_18446744073709551615_back`",
+                ),
+                (
+                    back.replace(
+                        "    requires std_span_size(s) <= 2305843009213693951u64;\n",
+                        "",
+                    ),
+                    "precondition clause 4 of `span__unsigned_int__value_unsigned_long_18446744073709551615_back`",
+                ),
+            ],
             sidecar: back,
         },
     ]);
@@ -3633,7 +3643,7 @@ fn axiomatic_const_element_spans_verify() {
             harness: "unsigned char probe(std::span<const unsigned char>& s) noexcept { return s[0]; }",
             refusals: vec![(
                 read.replace("    views std_span_data(s)[0];\n", ""),
-                "missing resource fact `views",
+                "precondition clause 4 of `span__const_unsigned_char__value_unsigned_long_18446744073709551615_operator_index`",
             )],
             sidecar: read,
         },
@@ -4597,35 +4607,9 @@ fn pinned_std_span_models_require_the_actual_header_pin_after_refresh() {
     let original_lock_bytes = fs::read(&lock_path).unwrap();
     let artifact: serde_json::Value = serde_json::from_slice(&original_artifact_bytes).unwrap();
     let lock: serde_json::Value = serde_json::from_slice(&original_lock_bytes).unwrap();
-    fn lock_identity(lock: &serde_json::Value, exporter_schema: u64) -> String {
-        let dependencies: std::collections::BTreeMap<String, String> =
-            serde_json::from_value(lock["dependencies"].clone()).unwrap();
-        // These two fields have the same canonical order as the checked lock row.
-        let files: std::collections::BTreeMap<String, serde_json::Value> =
-            serde_json::from_value(lock["preprocessor_files"].clone()).unwrap();
-        let profile: click::languages::cpp::CppProfile =
-            serde_json::from_value(lock["profile"].clone()).unwrap();
-        sha256(
-            &serde_json::to_vec(&(
-                lock["schema"].as_u64().unwrap(),
-                exporter_schema,
-                "click-cpp-semantic-import-v6",
-                lock["config_sha256"].as_str().unwrap(),
-                lock["compilation_database_sha256"].as_str().unwrap(),
-                lock["source_sha256"].as_str().unwrap(),
-                lock["logical_source_sha256"].as_str().unwrap(),
-                dependencies,
-                files,
-                lock["exporter_sha256"].as_str().unwrap(),
-                lock["artifact_sha256"].as_str().unwrap(),
-                profile,
-            ))
-            .unwrap(),
-        )
-    }
     let schema = artifact["schema"].as_u64().unwrap();
     assert_eq!(
-        lock_identity(&lock, schema),
+        pinned_model_lock_identity(&lock, schema),
         lock["identity"].as_str().unwrap(),
         "hostile model metadata controls must reconstruct the actual import identity"
     );
@@ -4670,7 +4654,7 @@ fn pinned_std_span_models_require_the_actual_header_pin_after_refresh() {
         let mut altered_lock = lock.clone();
         altered_lock["artifact_sha256"] = sha256(&bytes).into();
         altered_lock["artifact_bytes"] = bytes.len().into();
-        altered_lock["identity"] = lock_identity(&altered_lock, schema).into();
+        altered_lock["identity"] = pinned_model_lock_identity(&altered_lock, schema).into();
         fs::write(&artifact_path, bytes).unwrap();
         fs::write(
             &lock_path,
@@ -4737,7 +4721,7 @@ fn pinned_std_span_models_require_the_actual_header_pin_after_refresh() {
         let mut altered_lock = lock.clone();
         altered_lock["artifact_sha256"] = sha256(&bytes).into();
         altered_lock["artifact_bytes"] = bytes.len().into();
-        altered_lock["identity"] = lock_identity(&altered_lock, schema).into();
+        altered_lock["identity"] = pinned_model_lock_identity(&altered_lock, schema).into();
         fs::write(&artifact_path, bytes).unwrap();
         fs::write(
             &lock_path,
@@ -4802,5 +4786,93 @@ fn pinned_std_span_models_require_the_actual_header_pin_after_refresh() {
             .is_empty(),
         "rehashed header identity cannot authenticate the pinned implementation model"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn pinned_model_lock_identity(lock: &serde_json::Value, exporter_schema: u64) -> String {
+    let dependencies: std::collections::BTreeMap<String, String> =
+        serde_json::from_value(lock["dependencies"].clone()).unwrap();
+    // These two fields have the same canonical order as the checked lock row.
+    let files: std::collections::BTreeMap<String, serde_json::Value> =
+        serde_json::from_value(lock["preprocessor_files"].clone()).unwrap();
+    let profile: click::languages::cpp::CppProfile =
+        serde_json::from_value(lock["profile"].clone()).unwrap();
+    sha256(
+        &serde_json::to_vec(&(
+            lock["schema"].as_u64().unwrap(),
+            exporter_schema,
+            "click-cpp-semantic-import-v6",
+            lock["config_sha256"].as_str().unwrap(),
+            lock["compilation_database_sha256"].as_str().unwrap(),
+            lock["source_sha256"].as_str().unwrap(),
+            lock["logical_source_sha256"].as_str().unwrap(),
+            dependencies,
+            files,
+            lock["exporter_sha256"].as_str().unwrap(),
+            lock["artifact_sha256"].as_str().unwrap(),
+            profile,
+        ))
+        .unwrap(),
+    )
+}
+
+#[test]
+fn pinned_reference_model_rejects_changed_declaration_metadata() {
+    let (root, original) = axiomatic_span_fixture(
+        "reference-model-metadata",
+        "#include <span>\nunsigned char probe(std::span<unsigned char>& s) noexcept { return s[0]; }",
+        SPAN_DEPENDENCIES,
+    );
+    assert_eq!(original.library_model_equivalence_assumptions().len(), 1);
+    let artifact_path = root.join("span.click-cpp.json");
+    let lock_path = root.join("span.click.import.json.lock");
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
+    let lock: serde_json::Value = serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+    for change in 0..5 {
+        let mut altered = artifact.clone();
+        let function = altered["reachable_functions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|function| {
+                function["axiom"]["qualified_name"] == "std::span<unsigned char>::operator[]"
+            })
+            .unwrap();
+        match change {
+            0 => function["axiom"]["declaration_header"] = serde_json::Value::Null,
+            1 => {
+                function["axiom"]["declaration_header"] = "sysroot/usr/include/c++/12/array".into()
+            }
+            2 => function["declared_noexcept"] = false.into(),
+            3 => {
+                function["axiom"]["signature"] =
+                    "unsigned char &(unsigned int) const noexcept".into()
+            }
+            4 => {
+                function["declaration_id"] =
+                    "c:@N@std@S@span>#c#Vl18446744073709551615@F@front#1".into()
+            }
+            _ => unreachable!(),
+        }
+        let bytes = serde_json::to_vec_pretty(&altered).unwrap();
+        let mut changed_lock = lock.clone();
+        changed_lock["artifact_sha256"] = sha256(&bytes).into();
+        changed_lock["artifact_bytes"] = bytes.len().into();
+        changed_lock["identity"] =
+            pinned_model_lock_identity(&changed_lock, artifact["schema"].as_u64().unwrap()).into();
+        fs::write(&artifact_path, bytes).unwrap();
+        fs::write(
+            &lock_path,
+            serde_json::to_vec_pretty(&changed_lock).unwrap(),
+        )
+        .unwrap();
+        if let Ok(import) = load_import(&root.join("span.click.import.json")) {
+            assert!(
+                import.library_model_equivalence_assumptions().is_empty(),
+                "change {change} authenticated a reference model"
+            );
+        }
+    }
     fs::remove_dir_all(root).unwrap();
 }

@@ -15990,13 +15990,10 @@ fn instantiate_pointer_result_effect(
         let Some(CValue::Pointer(input)) = arguments.get(*parameter) else {
             continue;
         };
-        let selected = if child_path.is_empty() {
-            input.clone()
-        } else {
-            let Some(selected) = memory.checked_member_pointer_by_path(input, child_path) else {
-                continue;
-            };
-            selected
+        let Some(selected) =
+            memory.checked_pointer_result_selection(input, child_path, result_pointer.c_type())
+        else {
+            continue;
         };
         if let Some(designation) = selected.designation() {
             // This certified effect returns the selected parameter carrier,
@@ -16908,7 +16905,8 @@ fn coerce_c_contract_argument_without_obligations(
         parameter.pointee_is_constant(),
         &mut obligations,
         &PureFactContext::new(),
-    )?;
+    );
+    let value = value?;
     obligations.is_empty().then_some(value)
 }
 

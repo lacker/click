@@ -1082,3 +1082,54 @@ fn native_loaded_prefix_normalization_has_linear_selected_history_work() {
     );
     assert!(samples.last().unwrap().1 < 64 * 64, "{samples:?}");
 }
+
+#[test]
+fn pointer_result_selection_preserves_declared_member_array_extent() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let layout = Arc::new(CAggregateLayout::new(
+        20,
+        4,
+        vec![
+            CAggregateField::new("tag", 0, CType::Int32),
+            CAggregateField::new("items", 4, CType::Int32Array(4)),
+        ],
+    ));
+    let origin = unresolved(989_240, Pointer::symbolic(Variable(989_241)));
+    let memory = CMemory::new()
+        .with_native_record_prefix(origin.clone(), layout, IntegerTerm::constant_i64(1).into())
+        .unwrap();
+    let path = ["items".into()];
+    let selected = memory
+        .checked_pointer_result_selection(&origin, &path, CType::Int32Pointer)
+        .unwrap();
+    let PointerDesignation::InputSelected {
+        element_type,
+        stride,
+        count,
+        ..
+    } = selected.designation().unwrap()
+    else {
+        panic!("selected native array expected")
+    };
+    assert_eq!(*element_type, CType::Int32);
+    assert_eq!(*stride, 4);
+    assert_eq!(*count, IntegerTerm::constant_i64(4).into());
+    assert!(
+        memory
+            .checked_pointer_result_selection(
+                &CPointerValue::new(origin.pointer().clone(), CType::UInt8Pointer),
+                &path,
+                CType::Int32Pointer,
+            )
+            .is_none()
+    );
+    assert!(
+        memory
+            .checked_pointer_result_selection(&origin, &["missing".into()], CType::Int32Pointer)
+            .is_none()
+    );
+    let wrong_type = memory
+        .checked_pointer_result_selection(&origin, &path, CType::UInt32Pointer)
+        .unwrap();
+    assert!(!wrong_type.same_designation(&selected));
+}

@@ -305,6 +305,42 @@ impl CMemory {
 
     /// Select one declared row. Expression-provided dimensions must exactly
     /// equal the remaining declaration dimensions; they are not evidence.
+    /// Preserve the existing C allocated-access boundary without issuing an
+    /// object designation. The resolved source dimensions still constrain the
+    /// row index; native carriers always use declaration authentication below.
+    pub(in crate::kernel) fn legacy_array_row_pointer(
+        array: &CPointerValue,
+        index: &IntegerTerm,
+        element: CType,
+        shape: &[u32],
+    ) -> Option<(CPointerValue, Vec<ConditionTerm>)> {
+        if array.designation().is_some()
+            || array.c_type().pointee_type() != Some(element)
+            || shape.len() < 2
+        {
+            return None;
+        }
+        let (_, stride, count) = array_element_geometry(element, shape)?;
+        let offset = array_index_offset(index, stride)?;
+        let pointer = array.clone().with_pointer(Pointer {
+            block: array.pointer().block.clone(),
+            offset: PointerOffsetTerm::add(array.pointer().offset.clone(), offset),
+        });
+        Some((
+            pointer,
+            vec![
+                crate::kernel::eval::pointer_domains::domain_less_equal(
+                    IntegerTerm::constant_i64(0),
+                    index.clone(),
+                ),
+                crate::kernel::eval::pointer_domains::domain_less_than(
+                    index.clone(),
+                    IntegerTerm::constant_i64(i64::from(count)),
+                ),
+            ],
+        ))
+    }
+
     pub(in crate::kernel) fn guarded_array_row_pointer(
         &self,
         array: &CPointerValue,
@@ -1006,6 +1042,68 @@ mod tests {
         assert!(
             samples.windows(2).all(|pair| pair[0] == pair[1]),
             "{samples:?}"
+        );
+    }
+    #[test]
+    fn legacy_array_rows_keep_no_native_designation_and_enforce_source_dimensions() {
+        let array = CPointerValue::new(Pointer::symbolic(Variable(989_300)), CType::Int32Pointer);
+        let (row, guards) = CMemory::legacy_array_row_pointer(
+            &array,
+            &IntegerTerm::constant_i64(1),
+            CType::Int32,
+            &[2, 3],
+        )
+        .unwrap();
+        assert!(row.designation().is_none());
+        assert_eq!(row.pointer(), &array.pointer().offset_by_bytes(12));
+        assert!(
+            guards
+                .iter()
+                .all(|guard| PureFactContext::new().decide(guard) == Some(true))
+        );
+        for index in [-1, 2] {
+            let (_, guards) = CMemory::legacy_array_row_pointer(
+                &array,
+                &IntegerTerm::constant_i64(index),
+                CType::Int32,
+                &[2, 3],
+            )
+            .unwrap();
+            assert!(
+                guards
+                    .iter()
+                    .any(|guard| PureFactContext::new().decide(guard) == Some(false))
+            );
+        }
+        let native = array
+            .clone()
+            .with_designation(PointerDesignation::Unresolved(Variable(989_300)));
+        assert!(
+            CMemory::legacy_array_row_pointer(
+                &native,
+                &IntegerTerm::constant_i64(0),
+                CType::Int32,
+                &[2, 3]
+            )
+            .is_none()
+        );
+        assert!(
+            CMemory::legacy_array_row_pointer(
+                &array,
+                &IntegerTerm::constant_i64(0),
+                CType::UInt32,
+                &[2, 3]
+            )
+            .is_none()
+        );
+        assert!(
+            CMemory::legacy_array_row_pointer(
+                &array,
+                &IntegerTerm::constant_i64(0),
+                CType::Int32,
+                &[2, 0]
+            )
+            .is_none()
         );
     }
 }

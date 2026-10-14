@@ -297,7 +297,9 @@ pub(super) fn verify_execution_theorem(
             )),
         )
     };
-    let parsed = crate::surface::verification::external_c0_function(&block).with_proof_body(body);
+    let parsed = crate::surface::verification::external_c0_function(&block)
+        .with_parameter_pointee_layouts(resources.struct_layouts())
+        .with_proof_body(body);
     // The wrapper may rename parameters, but calls forward them in the
     // already-checked order. Retain the target contract's actual requirements
     // rather than deriving stronger inputs from the callee's signature.

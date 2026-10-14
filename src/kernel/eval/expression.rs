@@ -1446,13 +1446,27 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                         obligations,
                     }];
                 };
-                let selected = state.memory().guarded_array_row_pointer(
-                    &array,
-                    index.into(),
-                    *element_type,
-                    shape,
-                    &context,
-                );
+                let selected = state
+                    .memory()
+                    .guarded_array_row_pointer(
+                        &array,
+                        index.clone().into(),
+                        *element_type,
+                        shape,
+                        &context,
+                    )
+                    .or_else(|| {
+                        (state.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed)
+                            .then(|| {
+                                CMemory::legacy_array_row_pointer(
+                                    &array,
+                                    &index,
+                                    *element_type,
+                                    shape,
+                                )
+                            })
+                            .flatten()
+                    });
                 let Some((pointer, guards)) = selected else {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(

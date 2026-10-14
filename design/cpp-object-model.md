@@ -898,6 +898,18 @@ word; these contracts do not claim general span conversion coverage. The
 library equivalence assumptions are separate from the compiler byte-access
 assumption and from proofs of the model bodies.
 
+Pinned scalar reference getters (`operator[]`, `front`, and `back`) for the
+selected libstdc++ spans/arrays and libc++ spans use the same explicit
+source-to-model boundary. Their non-reading bodies load the span's complete
+backing pointer or decay the actual declared array member, then form a checked
+element address. Span contracts require the corresponding `valid_place`
+prefix; array contracts require the containing record place. These requirements
+grant no element read/write permission or initialization. Certified result
+selectors preserve the declared array's element type, extent and enclosing
+identity at modular calls; numerical postconditions constrain the returned
+position independently. Model selection also checks the canonical template and
+method declaration identities and the appropriate locked header digest.
+
 Artifact schema 60 requires the marker and target facts in both the semantic
 artifact and import lock. They participate in import identity; older artifacts,
 missing or changed markers, and mismatched target dimensions cannot silently

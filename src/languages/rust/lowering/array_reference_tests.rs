@@ -243,3 +243,49 @@ fn charon_external_array_operations_keep_lowering_and_proof_work_bounded() {
         );
     }
 }
+
+#[test]
+fn fixed_array_reference_inputs_keep_exact_compact_geometry() {
+    let original = crate::languages::rust::charon::decode(
+        include_bytes!("../../../../examples/rust-arrays/arrays.ullbc"),
+        "arrays.rs",
+        include_bytes!("../../../../examples/rust-arrays/arrays.rs"),
+    )
+    .unwrap();
+    let mut samples = Vec::new();
+    for count in [0, 16, 1024, 1_048_576] {
+        let mut export = original.clone();
+        export
+            .functions
+            .retain(|function| function.name == "length");
+        let Type::Reference { pointee, .. } = &mut export.functions[0].parameters[0].value_type
+        else {
+            panic!("array reference")
+        };
+        let Type::Array { length, .. } = pointee.as_mut() else {
+            panic!("array type")
+        };
+        *length = count;
+        // This fixture exercises declaration lowering, not the original MIR's
+        // copy temporary whose type still describes the original three words.
+        export.functions[0].mir = None;
+        export.functions[0].body = vec![S::Return { value: None }];
+        export.functions[0].return_type = Type::Unit;
+        let ((functions, _), work) =
+            crate::instrumentation::measure_deterministic_work(|| lower(&export).unwrap());
+        let kernel = functions[0].to_kernel_function();
+        let [input] = kernel.contract_interface().aggregate_object_inputs() else {
+            panic!("one exact array input")
+        };
+        assert_eq!(
+            input.layout.scalar_array(),
+            Some((CType::UInt32, count as u32))
+        );
+        assert!(input.layout.fields().is_empty());
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[0] == pair[1]),
+        "{samples:?}"
+    );
+}

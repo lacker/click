@@ -460,7 +460,7 @@ const CATALOG: &[CatalogEntry] = &[CatalogEntry {
 
 /// The catalog contract template for a standard function, with its span
 /// element, if any, substituted.
-fn catalog_contract(axiom: &super::schema::CppAxiom) -> Option<String> {
+pub(super) fn catalog_contract(axiom: &super::schema::CppAxiom) -> Option<String> {
     if let Some(entry) = CATALOG.iter().find(|entry| {
         entry.qualified_name == axiom.qualified_name && entry.signature == axiom.signature
     }) {

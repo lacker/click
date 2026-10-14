@@ -3146,17 +3146,12 @@ fn pointer_result_effect_holds(
     else {
         return false;
     };
-    let selected = if child_path.is_empty() {
-        input.clone()
-    } else {
-        let Some(selected) = path
-            .entry_state
-            .memory()
-            .checked_member_pointer_by_path(input, child_path)
-        else {
-            return false;
-        };
-        selected
+    let Some(selected) = path.entry_state.memory().checked_pointer_result_selection(
+        input,
+        child_path,
+        result.c_type(),
+    ) else {
+        return false;
     };
     selected.designation().is_some()
         && selected.same_designation(result)

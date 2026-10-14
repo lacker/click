@@ -11,7 +11,7 @@ pub(crate) mod api;
 /// artifacts.  This is deliberately separate from source and compiler
 /// identities: changing the authority interpretation must invalidate an old
 /// certificate even when its inputs are byte-identical.
-pub const RESOURCE_SEMANTICS_VERSION: u32 = 77;
+pub const RESOURCE_SEMANTICS_VERSION: u32 = 78;
 
 pub(crate) mod assumptions;
 // Phase 1 of issues/difference-logic.md: tested, not yet consulted. Phase 2

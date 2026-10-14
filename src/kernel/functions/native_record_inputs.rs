@@ -26,7 +26,10 @@ fn requirement_pointer(
             .allow_symbolic_contract_loads()
             .observe_pointer_addresses()
     } else {
-        assumptions.clone().observe_pointer_addresses()
+        // A call checks the complete current pointer value. Address-only
+        // observation replaces even a checked stored carrier with a fresh
+        // loaded identity and cannot validate its existing object domain.
+        assumptions.clone().without_pointer_address_observation()
     };
     let mut budget = ExecutionBudget::beside_live_state();
     let paths = evaluate_c_expression_paths(state, &requirement.carrier, &observer, &mut budget)
@@ -174,7 +177,11 @@ pub(crate) fn check_native_record_specs(
                 continue;
             }
             let pointer = requirement_pointer(state, requirement, assumptions, false)?;
-            if legacy_record_carrier(state, &pointer, &requirement.layout) {
+            if legacy_record_carrier(state, &pointer, &requirement.layout)
+                || (matches!(pointer.designation(), Some(PointerDesignation::Loaded(_)))
+                    && state.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed
+                    && requirement.layout.declaration_identity().is_none())
+            {
                 continue;
             }
             check_record_place(state, requirement, assumptions)?;

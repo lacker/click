@@ -324,30 +324,44 @@ fn lower_function(
         .enumerate()
         .map(|(index, parameter)| (parameter.name(), index))
         .collect::<BTreeMap<_, _>>();
-    let native_record_inputs = f
-        .parameters
-        .iter()
-        .filter_map(|parameter| match &parameter.value_type {
-            Type::Reference { pointee, .. } => match pointee.as_ref() {
-                Type::Record { name } => Some((parameter.name.as_str(), name.as_str())),
-                _ => None,
-            },
+    let mut native_record_inputs = Vec::new();
+    let mut native_scalar_inputs = Vec::new();
+    for parameter in &f.parameters {
+        let Type::Reference { pointee, .. } = &parameter.value_type else {
+            continue;
+        };
+        let parameter_index = kernel_parameter_indices[parameter.name.as_str()];
+        let layout = match pointee.as_ref() {
+            Type::Record { name } => Some(
+                layouts
+                    .get(name)
+                    .ok_or("native Rust record reference layout is missing")?
+                    .to_kernel_aggregate_layout(),
+            ),
+            Type::Array { element, length } => {
+                let element = scalar_type(element)?.to_kernel_type();
+                let count = arrays::array_length(element, *length)?;
+                Some(
+                    CAggregateLayout::new_scalar_array_with_fields(element, count, Vec::new())
+                        .ok_or("native Rust array reference layout is invalid")?,
+                )
+            }
+            Type::I32 | Type::U8 | Type::U16 | Type::U32 => {
+                native_scalar_inputs.push(CScalarObjectInput {
+                    parameter_index,
+                    element_type: scalar_type(pointee)?.to_kernel_type(),
+                });
+                None
+            }
             _ => None,
-        })
-        .map(|(parameter, record)| {
-            Ok(CAggregateObjectInput {
-                parameter_index: *kernel_parameter_indices
-                    .get(parameter)
-                    .ok_or("native Rust record reference parameter is missing")?,
-                layout: Arc::new(
-                    layouts
-                        .get(record)
-                        .ok_or("native Rust record reference layout is missing")?
-                        .to_kernel_aggregate_layout(),
-                ),
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+        };
+        if let Some(layout) = layout {
+            native_record_inputs.push(CAggregateObjectInput {
+                parameter_index,
+                layout: Arc::new(layout),
+            });
+        }
+    }
     let native_span_inputs = f
         .parameters
         .iter()
@@ -406,6 +420,7 @@ fn lower_function(
     )
     .with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly)
     .with_aggregate_object_inputs(native_record_inputs)
+    .with_scalar_object_inputs(native_scalar_inputs)
     .with_native_span_inputs(native_span_inputs);
     if let Some((_, layout)) = return_layout {
         kernel = kernel.with_return_aggregate_layout(layout.to_kernel_aggregate_layout());

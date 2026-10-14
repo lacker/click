@@ -72,15 +72,39 @@ fn mappings(
         .enumerate()
         .filter_map(|(target_index, (formal, argument))| {
             crate::instrumentation::record_deterministic_work(1);
-            let CExpression::Variable(name) = argument else {
-                return None;
+            let (name, argument_type) = match argument {
+                CExpression::Variable(name) => (name, source.get(name.as_str())?.1),
+                CExpression::TypedLoad {
+                    pointer,
+                    value_type,
+                    ..
+                } => {
+                    let CExpression::MemberAddress { object, selection } = pointer.as_ref() else {
+                        return None;
+                    };
+                    let CExpression::Variable(name) = object.as_ref() else {
+                        return None;
+                    };
+                    if selection.value_type != *value_type
+                        || selection
+                            .layout
+                            .member_at_path(&selection.path)
+                            .is_none_or(|(_, declared)| declared != *value_type)
+                    {
+                        return None;
+                    }
+                    (name, *value_type)
+                }
+                _ => return None,
             };
             if shadowed.contains(name.as_str()) {
                 return None;
             }
             let &(source_index, source_type) = source.get(name.as_str())?;
-            (source_type.is_object_pointer() && source_type == formal.c_type())
-                .then_some((source_index, target_index))
+            (source_type.is_object_pointer()
+                && argument_type.is_object_pointer()
+                && argument_type == formal.c_type())
+            .then_some((source_index, target_index))
         })
         .collect()
 }
@@ -101,6 +125,38 @@ fn add_specs(
                 && let Some(&(index, c_type)) = source.get(name.as_str())
                 && c_type.pointee_type() == Some(requirement.element_type)
             {
+                edges.direct.insert(index);
+            }
+        }
+        for requirement in spec.native_span_requirements() {
+            let CExpression::TypedLoad {
+                pointer,
+                value_type,
+                ..
+            } = &requirement.carrier
+            else {
+                continue;
+            };
+            let CExpression::MemberAddress { object, selection } = pointer.as_ref() else {
+                continue;
+            };
+            let CExpression::Variable(name) = object.as_ref() else {
+                continue;
+            };
+            if !shadowed.contains(name.as_str())
+                && value_type.pointee_type() == Some(requirement.element_type)
+                && selection.value_type == *value_type
+                && selection
+                    .layout
+                    .member_at_path(&selection.path)
+                    .is_some_and(|(_, ty)| ty == *value_type)
+                && let Some(&(index, c_type)) = source.get(name.as_str())
+                && c_type.is_object_pointer()
+            {
+                // An explicit typed prefix through this declared field selects
+                // its containing opaque input, not every C record signature.
+                // The exact record and loaded-prefix promises still need their
+                // independent guarded admission below.
                 edges.direct.insert(index);
             }
         }
@@ -408,6 +464,45 @@ mod tests {
             }],
         });
         assert!(selected(&[a, leaf]).is_empty());
+    }
+
+    #[test]
+    fn declared_child_prefix_selects_checked_field_head_only() {
+        let layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+        ));
+        let field = crate::kernel::c_typed_load(
+            CExpression::MemberAddress {
+                object: Box::new(c_variable("p")),
+                selection: CAggregateMemberSelection {
+                    layout: layout.clone(),
+                    path: vec!["data".into()].into(),
+                    value_type: CType::Int32Pointer,
+                },
+            },
+            CType::Int32Pointer,
+        );
+        let leaf = definition("B", vec![prefix()], Vec::new());
+        let parent = definition("A", Vec::new(), vec![child("B", field.clone())]);
+        assert_eq!(selected(&[parent.clone(), leaf]), BTreeSet::from([0]));
+        assert!(selected(&[parent, definition("B", Vec::new(), Vec::new())]).is_empty());
+        let CExpression::TypedLoad { mut pointer, .. } = field else {
+            unreachable!()
+        };
+        let CExpression::MemberAddress { selection, .. } = pointer.as_mut() else {
+            unreachable!()
+        };
+        selection.path = vec!["missing".into()].into();
+        let invalid = crate::kernel::c_typed_load(*pointer, CType::Int32Pointer);
+        assert!(
+            selected(&[
+                definition("A", Vec::new(), vec![child("B", invalid)]),
+                definition("B", vec![prefix()], Vec::new())
+            ])
+            .is_empty()
+        );
     }
 
     #[test]

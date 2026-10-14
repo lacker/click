@@ -42,6 +42,46 @@ mod empty_loop_rule_tests {
     }
 
     #[test]
+    fn loop_havoc_preserves_pointer_declaration_qualifiers() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (mut state, pointer, _) = pointer_carrier_state();
+        state.locals.set_typed_with_all_qualifiers(
+            "p",
+            CValue::Pointer(pointer.with_pointee_constant(true)),
+            CType::Int32Pointer,
+            true,
+            true,
+            false,
+            true,
+        );
+        let body = c_assign("p", c_add(c_variable("p"), c_int32_literal(1)));
+        let mut variables = KernelVariableGenerator::fresh_for_execution(BTreeSet::new());
+        let (head, _) = havoc_loop_modified_locals_with_carriers(
+            &state,
+            &body,
+            &mut variables,
+            &mut ExecutionBudget::new(),
+            None,
+            true,
+        )
+        .unwrap();
+        let CLocalBinding::Object {
+            volatile,
+            pointee_volatile,
+            constant,
+            pointee_constant,
+            ..
+        } = head.locals.binding("p").unwrap()
+        else {
+            panic!("pointer local")
+        };
+        assert!(*volatile);
+        assert!(*pointee_volatile);
+        assert!(!*constant);
+        assert!(*pointee_constant);
+    }
+
+    #[test]
     fn checked_loop_pointer_carriers_preserve_identity_and_selected_work() {
         let _session = crate::kernel::VerificationSession::enter();
         let (state, p, q) = pointer_carrier_state();
@@ -9805,8 +9845,21 @@ fn havoc_loop_modified_locals_with_carriers(
         let Some(binding) = state.locals.binding(&name) else {
             continue;
         };
-        let c_type = match binding {
-            CLocalBinding::Object { c_type, .. } => *c_type,
+        let (c_type, volatile, pointee_volatile, constant, pointee_constant) = match binding {
+            CLocalBinding::Object {
+                c_type,
+                volatile,
+                pointee_volatile,
+                constant,
+                pointee_constant,
+                ..
+            } => (
+                *c_type,
+                *volatile,
+                *pointee_volatile,
+                *constant,
+                *pointee_constant,
+            ),
             CLocalBinding::GlobalObject { .. } => {
                 // File-scope globals and function-local statics are
                 // represented only by memory. The memory havoc below
@@ -9836,7 +9889,15 @@ fn havoc_loop_modified_locals_with_carriers(
             value = CValue::Pointer(entry.clone().with_pointer(fresh.pointer().clone()));
         }
         sync_stack_local(&mut state, &name, &value);
-        state.locals.set_typed(name, value, c_type);
+        state.locals.set_typed_with_all_qualifiers(
+            name,
+            value,
+            c_type,
+            volatile,
+            pointee_volatile,
+            constant,
+            pointee_constant,
+        );
     }
     if may_write_memory {
         // Keep only scalar stack local cells (havoced above and re-synced via

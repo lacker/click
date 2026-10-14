@@ -1062,6 +1062,34 @@ pub(in crate::surface) fn proof_unit_erased_click_file(
     file
 }
 
+#[cfg(test)]
+pub(in crate::surface) fn verify_native_c0_sources_for_test(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let sources = CSourceContext::bundle(c_sources);
+    for (path, _) in c_sources {
+        let mut unit = c_frontend::parse_c_source_unit(path, &sources, CTarget::SUPPORTED)?;
+        unit.functions = unit
+            .functions
+            .into_iter()
+            .map(|parsed| {
+                let parsed = parsed
+                    .with_native_parameter_inputs_for_test()
+                    .with_typed_access_policy(crate::kernel::CTypedAccessPolicy::NativeObjectOnly);
+                let kernel = parsed.to_kernel_function();
+                parsed.with_prelowered_kernel_function(kernel)
+            })
+            .collect();
+        sources
+            .parsed_units
+            .borrow_mut()
+            .insert((*path).into(), Arc::new(unit));
+    }
+    verify_c0_sources_with_context(click_source, &sources, None, None, None, None)
+        .map(|(verified, _)| verified)
+}
+
 pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
