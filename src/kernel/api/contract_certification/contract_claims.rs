@@ -1614,8 +1614,13 @@ fn function_claim_holds_on_prepared_path(
                 && (!spec.native_record_places().is_empty()
                     || !spec.native_span_requirements().is_empty())
                 && post_state.as_ref().is_none_or(|state| {
-                    check_native_record_specs(state, std::slice::from_ref(spec), assumptions)
-                        .is_err()
+                    crate::kernel::functions::check_native_return_resource_spec(
+                        entry_state,
+                        state,
+                        spec,
+                        assumptions,
+                    )
+                    .is_err()
                 })
             {
                 return false;

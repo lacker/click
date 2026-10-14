@@ -3575,9 +3575,14 @@ fn axiomatic_span_element_reference_returns_and_int_access() {
             dependencies: SPAN_DEPENDENCIES,
             harness: "unsigned char& probe(std::span<unsigned char>& s) noexcept { return s[1]; }",
             sidecar: format!(
-                "uint8& probe({UCHAR_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 2u64 <= std_span_size(s); ensures &result == std_span_data(s) + 1u64; }} by {{ execute(); simp(); }}"
+                "uint8& probe({UCHAR_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 2u64 <= std_span_size(s); requires valid_place(std_span_data(s)[0..2u64]); ensures &result == std_span_data(s) + 1u64; }} by {{ execute(); simp(); }}"
             ),
-            refusals: vec![],
+            refusals: vec![(
+                format!(
+                    "uint8& probe({UCHAR_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 2u64 <= std_span_size(s); ensures &result == std_span_data(s) + 1u64; }} by {{ execute(); simp(); }}"
+                ),
+                "precondition clause 4",
+            )],
         },
         GenericSpanCase {
             name: "int-element-read",
@@ -3698,9 +3703,14 @@ fn axiomatic_const_element_span_subviews_verify() {
             dependencies: SPAN_DEPENDENCIES,
             harness: "const int& probe(std::span<const int>& s) noexcept { return s.back(); }",
             sidecar: format!(
-                "const int32& probe({CONST_INT_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 1u64 <= std_span_size(s); ensures &result == std_span_data(s) + (std_span_size(s) - 1u64); }} by {{ execute(); simp(); }}"
+                "const int32& probe({CONST_INT_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 1u64 <= std_span_size(s); requires std_span_size(s) <= 2305843009213693951u64; requires valid_place(std_span_data(s)[0..std_span_size(s)]); ensures &result == std_span_data(s) + (std_span_size(s) - 1u64); }} by {{ execute(); simp(); }}"
             ),
-            refusals: vec![],
+            refusals: vec![(
+                format!(
+                    "const int32& probe({CONST_INT_SPAN}& s) {{ views std_span_data(s); views std_span_size(s); requires 1u64 <= std_span_size(s); ensures &result == std_span_data(s) + (std_span_size(s) - 1u64); }} by {{ execute(); simp(); }}"
+                ),
+                "precondition clause 4",
+            )],
         },
     ]);
 }

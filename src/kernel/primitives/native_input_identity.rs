@@ -480,7 +480,8 @@ mod tests {
                     layout: layout.clone(),
                     path: vec!["data".into()].into(),
                     value_type: CType::Int32Pointer,
-                },
+                }
+                .into(),
             },
             CType::Int32Pointer,
         );
@@ -494,7 +495,7 @@ mod tests {
         let CExpression::MemberAddress { selection, .. } = pointer.as_mut() else {
             unreachable!()
         };
-        selection.path = vec!["missing".into()].into();
+        Arc::make_mut(selection).path = vec!["missing".into()].into();
         let invalid = crate::kernel::c_typed_load(*pointer, CType::Int32Pointer);
         assert!(
             selected(&[

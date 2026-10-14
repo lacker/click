@@ -1297,6 +1297,7 @@ fn marked_list_construction_verifies_before_the_deferred_origin_boundary() {
 }
 
 #[test]
+#[ignore = "nightly: expansion and retained-session audit of the original rbtree proof"]
 fn rbtree_change_child_expansion_and_retained_rechecking_verify() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let path = root.join("examples/rbtree-erase/rbtree_change_child.click");

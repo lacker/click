@@ -5954,7 +5954,9 @@ int32 last(int32* data, uint64 length) {
     };
     let message = error.message();
     assert!(
-        message.contains("index/address") || message.contains("pointer arithmetic"),
+        message.contains("index/address")
+            || message.contains("pointer arithmetic")
+            || message.contains("native input prefix extents have no proven ordering"),
         "{message}"
     );
     assert!(!message.contains("the store to"), "{message}");

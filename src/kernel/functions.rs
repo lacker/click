@@ -31,7 +31,7 @@ pub(crate) use native_record_inputs::c_state_with_assumed_native_record_inputs;
 pub(crate) use native_record_inputs::{
     assume_checked_native_composite_places, assume_checked_native_output_places,
     assume_native_record_specs, check_native_composite_formation, check_native_output_places,
-    check_native_record_specs, check_native_required_formations,
+    check_native_record_specs, check_native_required_formations, check_native_return_resource_spec,
     interface_has_native_output_places,
 };
 #[cfg(test)]

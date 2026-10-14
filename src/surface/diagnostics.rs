@@ -5032,10 +5032,18 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
             format!("address of live object `{}`", describe_c_expression(target))
         }
         CExpression::MemberAddress { object, selection } => {
-            format!(
-                "&{}",
-                describe_field_place(&describe_c_expression(object), &selection.path.join("."))
-            )
+            let base = describe_c_expression(object);
+            let field = selection.path.join(".");
+            let (path, indices) = field
+                .split_once('[')
+                .map_or((field.as_str(), ""), |(path, _)| {
+                    (path, &field[path.len()..])
+                });
+            let root = object_at_address(&base).unwrap_or(&base);
+            if let Some(accessor) = cpp_model::describe_model_field_place(root, path) {
+                return format!("&{accessor}{indices}");
+            }
+            format!("&{}", describe_field_place(&base, &field))
         }
         CExpression::ArrayRowAddress { array, index, .. } => format!(
             "{}[{}]",

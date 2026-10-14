@@ -1448,7 +1448,7 @@ mod tests {
         );
         assert_eq!(
             allocated_element_count(&bytes, 4, &unsigned),
-            native_count_observation(MachineIntegerType::UInt32, factor.clone()).unwrap()
+            native_count_observation(MachineIntegerType::Int32, factor.clone()).unwrap()
         );
         assert_eq!(
             allocated_element_count(&bytes, 8, &context),

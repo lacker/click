@@ -39,6 +39,30 @@ The complete acceptance matrix still needs to pass before this checkpoint can
 be published.
 
 The integration checkpoint is not green and has not been published or merged.
+The October 14 integration selection passed 676 of 688 tests, with eight
+failures and four timeouts; this included ignored audits and is not the normal
+gate. The unfiltered example harness still reports C and Rust regressions.
+Callback replacement, observed cursor certificates, linked-list canonical
+terms, and the two-parent shared-heap proof pass after the C input-boundary
+repair. Remaining work includes the [C pointer-field frame regression](../bugs/c-pointer-field-postconditions-lose-frame-evidence.md),
+legacy composite/caller compatibility, Rust chunks and byte-sum proofs, and
+bounded audit/scaling failures. Repairs to returned native ranges must keep
+borrowed entry selectors while checking the selected objects in post-state;
+Cpp accessor expansion and descriptor-only reference contracts need their
+focused rechecks before publication.
+The isolated repair recheck passed 10 of 11 tests, including the unchanged
+decoder (26.9 seconds), rbtree expansion/retained checking (19.0 seconds),
+reference-return validity controls, array accessor expansion, and the new
+borrowed-entry selector/lifetime control. The span-pop-back write fixture still
+fails its last-cell ownership claim. Its raw `owns` range uses the descriptor's
+current size, which changes during the call; the retained input cell must be
+specified with the appropriate entry binding rather than a moving selector.
+Changing the contract to an entry-bound composite also currently refuses a
+conflicting native prefix witness, so that adapter needs investigation rather
+than another local proof variation. Clippy across all targets and book generation
+pass at this checkpoint; it remains unmerged.
+
+
 Focused selections have passed constructor and backing-reference tests, the
 field-reference write-through test, and the unchanged decoder with expansion
 and independent rechecking. The broader selections also cover

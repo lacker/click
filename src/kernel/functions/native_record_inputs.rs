@@ -110,6 +110,61 @@ fn requirement_count(
 
 /// Validate typed place metadata against existing semantic authority. This is
 /// deliberately separate from address-only resource-expression evaluation.
+/// Borrowed return clauses retain their entry selectors. Check the same
+/// complete carriers in the post-state, rather than reevaluating a mutable
+/// descriptor's fields and accidentally checking a different byte range.
+pub(crate) fn check_native_return_resource_spec(
+    entry: &CState,
+    post: &CState,
+    spec: &CResourceSpec,
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    if spec.snapshot() != CResourceSnapshot::Entry {
+        return check_native_record_specs(post, std::slice::from_ref(spec), assumptions);
+    }
+    let mut budget = ExecutionBudget::beside_live_state();
+    let active = resource_spec_guard_is_active(entry, entry, spec, assumptions, &mut budget)
+        .map_err(|_| "native return guard evaluation exceeded its budget".to_string())?
+        .map_err(|_| "native return guard is not established".to_string())?;
+    if !active {
+        return Ok(());
+    }
+    let freeze = |expression: &CExpression| {
+        super::native_span_inputs::component(entry, expression, assumptions, false)
+            .map(|(value, _)| CExpression::Value(value))
+    };
+    let records = spec
+        .native_record_places()
+        .iter()
+        .map(|requirement| {
+            let mut requirement = requirement.clone();
+            requirement.carrier = freeze(&requirement.carrier)?;
+            requirement.prefix_count = requirement.prefix_count.as_ref().map(freeze).transpose()?;
+            Ok(requirement)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let spans = spec
+        .native_span_requirements()
+        .iter()
+        .map(|requirement| {
+            let mut requirement = requirement.clone();
+            requirement.carrier = freeze(&requirement.carrier)?;
+            requirement.count = freeze(&requirement.count)?;
+            Ok(requirement)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let frozen = spec
+        .clone()
+        .with_native_record_places(records)
+        .with_native_span_requirements(spans)
+        .with_guard(SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_int32_literal(0)),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        });
+    check_native_record_specs(post, &[frozen], assumptions)
+}
+
 pub(crate) fn check_native_record_specs(
     state: &CState,
     specs: &[CResourceSpec],
@@ -754,6 +809,65 @@ pub(crate) fn c_state_with_assumed_native_record_inputs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_native_prefix_rechecks_entry_selectors_in_live_post_memory() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = CMemory::local_pointer("returned-prefix");
+        let memory = CMemory::new()
+            .with_declared_array_block(address.block.clone(), CType::Int32, 4)
+            .unwrap();
+        let pointer = memory
+            .declared_array_pointer(&address, CType::Int32, 4)
+            .unwrap();
+        let entry = CState::new()
+            .with_memory(memory)
+            .with_local("p", CValue::Pointer(pointer))
+            .with_local("n", CValue::UInt64(Bitvector32Term::UInt64Constant(2)));
+        let spec = CResourceSpec::owned_memory(CMemorySegment::new(
+            c_variable("p"),
+            c_int32_literal(0),
+            c_variable("n"),
+        ))
+        .with_snapshot(CResourceSnapshot::Entry)
+        .with_native_span_requirements(vec![CNativeSpanRequirement {
+            carrier: c_variable("p"),
+            count: c_variable("n"),
+            element_type: CType::Int32,
+            access_policy: CTypedAccessPolicy::NativeObjectOnly,
+        }]);
+        let post = entry
+            .clone()
+            .with_local(
+                "n",
+                CValue::UInt64(Bitvector32Term::UInt64Constant(u64::MAX)),
+            )
+            .with_local(
+                "p",
+                CValue::typed_pointer(Pointer::null(), CType::Int32Pointer),
+            );
+        let facts = PureFactContext::new();
+        assert!(check_native_return_resource_spec(&entry, &post, &spec, &facts).is_ok());
+        assert!(
+            check_native_return_resource_spec(
+                &entry,
+                &post,
+                &spec.clone().with_snapshot(CResourceSnapshot::Current),
+                &facts
+            )
+            .is_err()
+        );
+        let dead = post
+            .clone()
+            .with_memory(post.memory().clone().without_local_block(&address.block));
+        assert!(check_native_return_resource_spec(&entry, &dead, &spec, &facts).is_err());
+        assert!(post.resources().facts().is_empty());
+        assert!(
+            !post
+                .memory()
+                .has_initialized_bytes_under(&address, 16, &facts)
+        );
+    }
 
     #[test]
     fn automatic_record_metadata_preserves_legacy_absence_but_never_native_validity() {

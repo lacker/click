@@ -66,7 +66,7 @@ fn is_declared_private_member_read(state: &CState, expression: &CExpression) -> 
             .is_some_and(|(_, declared)| declared == *value_type)
 }
 
-fn component(
+pub(super) fn component(
     state: &CState,
     expression: &CExpression,
     assumptions: &PureFactContext,
