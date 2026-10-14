@@ -96,7 +96,10 @@ pub(super) fn component(
         // read through a pointer field or an address-equal alias.
         assumptions.clone().without_pointer_address_observation()
     } else {
-        assumptions.clone().require_owned_expression_loads()
+        assumptions
+            .clone()
+            .without_pointer_address_observation()
+            .require_owned_expression_loads()
     };
     let mut budget = ExecutionBudget::beside_live_state();
     let paths = evaluate_c_expression_paths(state, expression, &executable, &mut budget)
@@ -257,6 +260,34 @@ pub(super) fn check_native_span_requirements(
     Ok(())
 }
 
+// Resource annotations preserve the ordinary C allocated-access boundary.
+// Absence of a typed domain is compatibility, not evidence for valid_place.
+fn legacy_resource_span(
+    state: &CState,
+    requirement: &CNativeSpanRequirement,
+    assumptions: &PureFactContext,
+    source_entry: bool,
+) -> Result<bool, String> {
+    if state.typed_access_policy() != CTypedAccessPolicy::CAllocatedAccessAllowed
+        || requirement.access_policy != CTypedAccessPolicy::CAllocatedAccessAllowed
+    {
+        return Ok(false);
+    }
+    let (pointer, count, context) =
+        requirement_values(state, requirement, assumptions, source_entry)?;
+    Ok(matches!(
+        span_geometry(
+            state,
+            &pointer,
+            requirement.element_type,
+            &count,
+            requirement.access_policy,
+            &context
+        ),
+        Ok(crate::kernel::eval::pointer_domains::PointerDomainCheck::Legacy)
+    ))
+}
+
 pub(super) fn check_native_span_specs(
     state: &CState,
     specs: &[CResourceSpec],
@@ -273,7 +304,15 @@ pub(super) fn check_native_span_specs(
         if !active {
             continue;
         }
-        check_native_span_requirements(state, spec.native_span_requirements(), assumptions)?;
+        for requirement in spec.native_span_requirements() {
+            if !legacy_resource_span(state, requirement, assumptions, false)? {
+                check_native_span_requirements(
+                    state,
+                    std::slice::from_ref(requirement),
+                    assumptions,
+                )?;
+            }
+        }
     }
     Ok(())
 }
@@ -378,12 +417,16 @@ pub(super) fn assume_native_span_specs_in(
         if !active {
             continue;
         }
-        next = assume_native_span_requirements_in(
-            &next,
-            spec.native_span_requirements(),
-            assumptions,
-            source_entry,
-        )?;
+        for requirement in spec.native_span_requirements() {
+            if !legacy_resource_span(&next, requirement, assumptions, source_entry)? {
+                next = assume_native_span_requirements_in(
+                    &next,
+                    std::slice::from_ref(requirement),
+                    assumptions,
+                    source_entry,
+                )?;
+            }
+        }
     }
     Ok(next)
 }
@@ -445,6 +488,106 @@ mod tests {
             assert!(!is_declared_private_member_read(&external, &expression));
             assert!(component(&external, &expression, &assumptions, false).is_err());
         }
+    }
+
+    #[test]
+    fn legacy_resource_span_never_establishes_explicit_typed_validity() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = CPointerValue::new(Pointer::symbolic(Variable(989_792)), CType::Int32Pointer);
+        let state = CState::new().with_local("p", CValue::Pointer(pointer.clone()));
+        let requirement = CNativeSpanRequirement {
+            carrier: c_variable("p"),
+            count: c_int32_literal(1),
+            element_type: CType::Int32,
+            access_policy: CTypedAccessPolicy::CAllocatedAccessAllowed,
+        };
+        let spec =
+            span(c_variable("p"), 1).with_native_span_requirements(vec![requirement.clone()]);
+        let context = PureFactContext::new();
+        assert!(check_native_span_specs(&state, std::slice::from_ref(&spec), &context).is_ok());
+        assert_eq!(
+            assume_native_span_specs(&state, std::slice::from_ref(&spec), &context).unwrap(),
+            state
+        );
+        assert!(!super::super::valid_places::holds(
+            state.memory(),
+            &pointer,
+            &CPlaceType::Scalar(CType::Int32),
+            CTypedAccessPolicy::CAllocatedAccessAllowed,
+            &context
+        ));
+        assert!(
+            check_native_span_requirements(&state, std::slice::from_ref(&requirement), &context)
+                .is_err()
+        );
+        assert!(
+            assume_native_span_requirements_in(&state, &[requirement], &context, false).is_err()
+        );
+        let strict = state.with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+        assert!(check_native_span_specs(&strict, std::slice::from_ref(&spec), &context).is_err());
+        assert!(assume_native_span_specs(&strict, &[spec], &context).is_err());
+    }
+
+    #[test]
+    fn c_resource_span_compatibility_never_widens_a_known_domain() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let address = CMemory::local_pointer("known-c-resource-domain");
+        let memory = CMemory::new()
+            .with_declared_array_block(address.block.clone(), CType::Int32, 1)
+            .unwrap();
+        let pointer = memory
+            .declared_array_pointer(&address, CType::Int32, 1)
+            .unwrap();
+        let state = CState::new()
+            .with_memory(memory)
+            .with_local("p", CValue::Pointer(pointer));
+        let spec =
+            span(c_variable("p"), 2).with_native_span_requirements(vec![CNativeSpanRequirement {
+                carrier: c_variable("p"),
+                count: c_int32_literal(2),
+                element_type: CType::Int32,
+                access_policy: CTypedAccessPolicy::CAllocatedAccessAllowed,
+            }]);
+        let context = PureFactContext::new();
+        assert!(check_native_span_specs(&state, std::slice::from_ref(&spec), &context).is_err());
+        assert!(assume_native_span_specs(&state, &[spec], &context).is_err());
+    }
+
+    #[test]
+    fn actual_span_observation_preserves_stored_carrier_under_address_observer() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let slot = CMemory::local_pointer("stored-span-carrier");
+        let value = CValue::Pointer(
+            CPointerValue::new(Pointer::symbolic(Variable(989_790)), CType::Int32Pointer)
+                .with_designation(PointerDesignation::Unresolved(Variable(989_791))),
+        );
+        let memory = CMemory::new()
+            .with_declared_scalar_block(slot.block.clone(), 8, CType::Int32Pointer)
+            .store(slot.clone(), value.clone());
+        let storage = memory
+            .declared_scalar_pointer(&slot, CType::Int32Pointer)
+            .unwrap();
+        let expression = c_typed_load(
+            CExpression::Value(CValue::Pointer(storage)),
+            CType::Int32Pointer,
+        );
+        let assumptions = PureFactContext::new().observe_pointer_addresses();
+        let state = CState::new().with_memory(memory);
+        assert!(component(&state, &expression, &assumptions, false).is_err());
+        let readable = state.with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::view_memory(CMemoryRange::new_with_element_width(
+                slot,
+                0.into(),
+                1.into(),
+                8,
+            )),
+        ));
+        assert_eq!(
+            component(&readable, &expression, &assumptions, false)
+                .unwrap()
+                .0,
+            value
+        );
     }
 
     #[test]
