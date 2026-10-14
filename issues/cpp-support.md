@@ -50,17 +50,31 @@ bounded audit/scaling failures. Repairs to returned native ranges must keep
 borrowed entry selectors while checking the selected objects in post-state;
 Cpp accessor expansion and descriptor-only reference contracts need their
 focused rechecks before publication.
-The isolated repair recheck passed 10 of 11 tests, including the unchanged
-decoder (26.9 seconds), rbtree expansion/retained checking (19.0 seconds),
-reference-return validity controls, array accessor expansion, and the new
-borrowed-entry selector/lifetime control. The span-pop-back write fixture still
-fails its last-cell ownership claim. Its raw `owns` range uses the descriptor's
-current size, which changes during the call; the retained input cell must be
-specified with the appropriate entry binding rather than a moving selector.
-Changing the contract to an entry-bound composite also currently refuses a
-conflicting native prefix witness, so that adapter needs investigation rather
-than another local proof variation. Clippy across all targets and book generation
-pass at this checkpoint; it remains unmerged.
+The earlier isolated repair recheck passed 10 of 11 tests, including the
+unchanged decoder (26.9 seconds) and rbtree expansion/retained checking (19.0
+seconds). After integration with upstream `325f9f604`, four focused kernel
+checks and all four selected span/reference/array checks pass. The span-pop-back
+write fixture now returns ownership of the exact entry backing pointer and
+entry last-cell index through a captured composite. Its original C++ body,
+helper value claims and backing-ownership/validity rejection controls remain
+unchanged. The corrected contract no longer promises the descriptor's new
+last cell after its size changes.
+
+Two shared repairs support that contract: captured pointer values retain their
+scalar pointee type when an indexed resource body is instantiated, and a fold
+captures explicit `old(...)` arguments at entry before substituting them into
+an executable indexed address. Reduced plain C regressions cover both repairs,
+including a view-only write and a different-index fold rejection. The mutable
+entry-count proof also passes expansion, rewritten verification and retained
+rechecking. The original vector pointer-field/frame failure still reproduces;
+C/Rust compatibility and importer scaling repairs remain before publication.
+The current normal example-project run passes 35 of 52 projects and rejects
+17, including the original vector/string frame proofs, nullable allocated
+composites, several buffer/cursor callers, two Rust projects, refcount and
+rbtree-augmented. These are reproduced integration failures, not 17 established
+independent defects. The six selected Markdown regressions, all-target Clippy,
+book generation and structural documentation lint pass. This checkpoint is
+still local and unmerged.
 
 
 Focused selections have passed constructor and backing-reference tests, the

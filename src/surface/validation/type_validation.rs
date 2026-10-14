@@ -3160,8 +3160,8 @@ fn infer_c_expression_type(
         | CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)
         }
-        CExpression::PointerAligned { .. }
-        | CExpression::LessThan(_, _)
+        CExpression::PointerAligned { .. } => Some(C0Type::Bool),
+        CExpression::LessThan(_, _)
         | CExpression::LessEqual(_, _)
         | CExpression::GreaterThan(_, _)
         | CExpression::GreaterEqual(_, _)

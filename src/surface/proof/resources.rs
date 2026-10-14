@@ -3636,8 +3636,6 @@ fn fold_composite_resources_on_outcome_with_facts(
         let composite_body = definition
             .composite_body()
             .expect("composite_resource_law_definition should require a composite body");
-        let mut substitutions =
-            resource_argument_substitutions(definition, resource, claim_label, path_index)?;
         let (guard_result, guard_state) = match &outcome {
             CFunctionOutcome::Return { value, state } => (value.clone(), state.clone()),
             _ => {
@@ -3648,6 +3646,50 @@ fn fold_composite_resources_on_outcome_with_facts(
                 )));
             }
         };
+        // A body contains executable indexed addresses. Capture an explicit
+        // entry argument before substituting it there: an Old spec expression
+        // cannot be embedded in a C address, and rereading it in the fold's
+        // current state would select a different resource.
+        let mut frozen_resource = resource.clone();
+        let frozen_arguments = match &mut frozen_resource {
+            ResourceClause::Quantified { resource, .. } => resource.as_mut(),
+            resource => resource,
+        };
+        if let ResourceClause::Declared { arguments, .. } = frozen_arguments
+            && arguments
+                .iter()
+                .any(|argument| matches!(argument, ContractExpression::Old(_)))
+        {
+            let values = parameter_values(parameter_binding)?;
+            let array_refs = array_refs_for_parameters(
+                parameter_binding.parameters,
+                &values,
+                guard_state.memory(),
+            );
+            let snapshots = RecordedSnapshots::new();
+            for argument in arguments {
+                if matches!(argument, ContractExpression::Old(_)) {
+                    let value = evaluate_fixed_state_expression_through_kernel(
+                        argument,
+                        pure_facts.assumptions(),
+                        ContractEnvironment::new(&values, &array_refs),
+                        FixedStateFrame::new(
+                            pre_state,
+                            &guard_state,
+                            Some(&guard_result),
+                            &snapshots,
+                        ),
+                        spec_definitions,
+                        &BTreeSet::new(),
+                    )
+                    .map_err(ClickError::new)?;
+                    *argument = ContractExpression::CFragment(CExpression::Value(value));
+                }
+            }
+        }
+        let resource = &frozen_resource;
+        let mut substitutions =
+            resource_argument_substitutions(definition, resource, claim_label, path_index)?;
         extend_substitutions_with_witnesses(
             &mut substitutions,
             definition,

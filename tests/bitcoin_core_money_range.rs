@@ -3980,6 +3980,7 @@ fn axiomatic_span_pop_back_write_needs_backing_ownership() {
         .clone();
     let source = format!(
         r#"verifying "span-probe.cpp";
+resource fixed_cell(p: int32*, n: uint64) {{ owns p[n - 1u64]; }}
 theorem uint64_predecessor_below(n: uint64) {{
     requires 1u64 <= n;
     ensures n - 1u64 <= n by {{
@@ -4011,14 +4012,16 @@ int32& {pop_back}(struct span__int__value_unsigned_long_18446744073709551615& sp
 int32 probe(struct span__int__value_unsigned_long_18446744073709551615& span, int32 input) {{
     owns std_span_data(span);
     owns std_span_size(span);
-    owns std_span_data(span)[std_span_size(span) - 1u64];
+    owns fixed_cell(old(std_span_data(span)), old(std_span_size(span)));
     requires 1u64 <= std_span_size(span);
     requires valid_place(std_span_data(span)[0..std_span_size(span)]);
     requires separate(memory(std_span_data(span)), memory(std_span_data(span)[std_span_size(span) - 1u64]));
     requires separate(memory(std_span_size(span)), memory(std_span_data(span)[std_span_size(span) - 1u64]));
     ensures result == input;
 }} by {{
+    unfold(fixed_cell(std_span_data(span), std_span_size(span)));
     execute();
+    fold(fixed_cell(old(std_span_data(span)), old(std_span_size(span))));
     simp();
 }}
 "#
@@ -4038,11 +4041,22 @@ int32 probe(struct span__int__value_unsigned_long_18446744073709551615& span, in
     verify_program_prepared_project(&parsed, &import).expect_err(
         "the helper needs typed backing geometry independently of descriptor ownership",
     );
-    let unowned = source.replacen(
-        "    owns std_span_data(span)[std_span_size(span) - 1u64];\n",
-        "",
-        1,
-    );
+    let unowned = source
+        .replacen(
+            "    owns fixed_cell(old(std_span_data(span)), old(std_span_size(span)));\n",
+            "",
+            1,
+        )
+        .replacen(
+            "    unfold(fixed_cell(std_span_data(span), std_span_size(span)));\n",
+            "",
+            1,
+        )
+        .replacen(
+            "    fold(fixed_cell(old(std_span_data(span)), old(std_span_size(span))));\n",
+            "",
+            1,
+        );
     let parsed = read_click_project(&sidecar, &unowned).unwrap();
     verify_program_prepared_project(&parsed, &import)
         .expect_err("a write through the returned reference needs its cell");
