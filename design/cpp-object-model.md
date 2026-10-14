@@ -11,9 +11,12 @@ The implementation baseline includes the construction work recorded in
 [Aggregate construction](aggregate-construction.md) and the explicit output
 initialization work in [PR 646](https://github.com/clicklang/click/pull/646).
 The [byte representation record](../docs/internals/byte-representation.md)
-describes current byte behavior; the [C++ issue](../issues/cpp-support.md)
-owns delivery status and source profiles. This document owns the combined
-semantic target and stabilization criteria. Where current behavior falls short,
+describes current byte behavior; the [shared object-model issue](../issues/object-model.md)
+owns the recovery plan, baseline audit and delivery sequence. The
+[C++ issue](../issues/cpp-support.md) owns subsequent feature coverage and source
+profiles. This document owns the combined semantic target and stabilization
+criteria. Its implementation notes describe their recorded checkpoints and
+must be audited before being presented as current upstream behavior. Where current behavior falls short,
 the gap is identified below. Historical delivery notes remain historical.
 
 The principal conclusion is that typed cells, allocation identities, persistent

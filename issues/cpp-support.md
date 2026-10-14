@@ -15,14 +15,14 @@ Bitcoin Core as a whole.
 
 ## Current remaining work
 
-**Current priority: stabilize the bounded object model before widening C++
-coverage.** The [consolidated object-model design](../design/cpp-object-model.md)
-owns the shared storage, object lifetime, initialization, representation and
-authority invariants. Its finite next steps are to audit evidence for currently
-admitted operations, unify typed/byte observations for the declared uint32
-profile, close demonstrated lifecycle/call-path inconsistencies, and validate
-the acceptance matrix before resuming the unchanged decoder proof. This is
-remaining work, not a claim that the consolidated model is implemented.
+**Current priority: recover and deliver the shared object model through
+[object-model.md](object-model.md).** That issue owns the fixed-baseline audit,
+change decomposition, sequential green deliveries and bounded acceptance
+criteria for the accumulated PR 646 work. New C++ feature admission is paused
+while that foundation is established. The [consolidated semantic design](../design/cpp-object-model.md)
+records the accepted laws; the checkpoint evidence below is historical/partial
+implementation status, not a green-tree verdict. Once the shared milestone is
+closed, this issue resumes ownership of C++ coverage and Bitcoin Core targets.
 
 Two compatibility boundaries have been approved. C allocated storage needs
 an explicit allocation/effective-access policy, distinct from C++ construction
