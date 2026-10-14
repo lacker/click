@@ -1728,6 +1728,7 @@ int32 last(int32* data, uint64 length) {
 }
 
 #[test]
+#[ignore = "nightly: 4.3s in the parallel gate"]
 fn unfinished_callback_scripts_report_the_missing_authority_to_continue() {
     for (fixture_name, expected) in [
         (
@@ -1792,6 +1793,7 @@ fn unfinished_callback_scripts_report_the_missing_authority_to_continue() {
 }
 
 #[test]
+#[ignore = "nightly: 1.2s in the parallel gate"]
 fn unfinished_callback_scripts_keep_a_bounded_diagnostic_preview() {
     for fixture_name in [
         "rb_augment_callbacks_helper_owns.md",
@@ -1953,6 +1955,7 @@ fn pure_theorem_arithmetic_obeys_its_tactic_budget() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn wide_conjunction_expansion_stays_parseable_and_checked() {
     let conjuncts: Vec<_> = (1..=40).map(|i| format!("x <= {i}")).collect();
     let source = format!(
@@ -2994,6 +2997,7 @@ fn failed_invariant_closure_trace_keeps_its_branch_guard() {
 /// Exercise the presentation boundary and retain its exact stage and counts
 /// in both ordinary CLI reports and traces, including a nested written simp.
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn native_view_simp_reports_the_actual_premise_spelling_limit() {
     let source = |extra_bounds: usize, body: &str| {
         let mut source = String::from(
@@ -3007,7 +3011,9 @@ fn native_view_simp_reports_the_actual_premise_spelling_limit() {
         ));
         source
     };
-    for extra_bounds in [29, 30] {
+    // Connected bounds within the bounded reduction now retain just the
+    // source view and its coverage bound, even beyond the spelling limit.
+    for extra_bounds in [29, 30, 31, 62] {
         verify_c0_sources(&source(extra_bounds, "simp();"), &[])
             .expect("a derivation within the 64-premise spelling budget should check");
     }
@@ -3015,7 +3021,9 @@ fn native_view_simp_reports_the_actual_premise_spelling_limit() {
         "simp();",
         "have viewable(p[0u64..1u64]) by { simp(); } assumption();",
     ] {
-        let source = source(31, body);
+        // A selection outside the bounded reduction still obeys the same
+        // 64-premise source-spelling limit and must report it accurately.
+        let source = source(63, body);
         let check = |error: &ClickError| {
             for report in [error.message().to_owned(), error.concise_report()] {
                 assert!(
@@ -3024,7 +3032,7 @@ fn native_view_simp_reports_the_actual_premise_spelling_limit() {
                 );
                 assert!(report.contains("simp view premise spelling"), "{report}");
                 assert!(
-                    report.contains("contains 66 premises; source spelling permits at most 64"),
+                    report.contains("contains 130 premises; source spelling permits at most 64"),
                     "{report}"
                 );
                 assert!(!report.contains("what is left"), "{report}");
@@ -3040,14 +3048,14 @@ fn native_view_simp_reports_the_actual_premise_spelling_limit() {
             check(&error);
             let trace = error.trace_context_report().expect("requested proof trace");
             assert!(
-                trace.contains("contains 66 premises; source spelling permits at most 64"),
+                trace.contains("contains 130 premises; source spelling permits at most 64"),
                 "{trace}"
             );
             assert!(trace.contains("bytes:uint64=1u64"), "{trace}");
         });
     }
     verify_c0_sources(
-        &source(31, "simp() using { 1u64 <= n; viewable(p[0u64..n]); };"),
+        &source(63, "simp() using { 1u64 <= n; viewable(p[0u64..n]); };"),
         &[],
     )
     .expect("the same view checks with its two relevant explicit premises");

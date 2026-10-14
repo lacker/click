@@ -289,7 +289,9 @@ an unsigned source's value, and reduces modulo the destination width. This
 implements the constant policy of C++20 integral conversions and Rust integer
 `as`, and of C as GCC and Clang compile it: C source conversions use the
 `CConversion` cast mode, which reduces modulo the destination width for
-signed destinations too. A specification's casts keep the checked policy.
+signed destinations too. A specification's casts use the same `CConversion`
+mode, and `SpecExpression::Cast` evaluates with the same modular conversion;
+`to_T(...)` is the checked conversion.
 The ordinary reverse conversion from Integer always uses the checked operation.
 
 The runtime machine types use the shared format for their bounds,

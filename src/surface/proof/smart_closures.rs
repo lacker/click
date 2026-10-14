@@ -4484,6 +4484,31 @@ impl<'a> Proof<'a> {
         // Directly recheck-checked recorded/current forms precede speculative
         // history synthesis. The final fallback below searches that same
         // selected premise and anchor exactly once, after these cheap forms.
+        // A fact can mix states: a call's `ensures` that names its own
+        // `old(..)` value holds a value only that call's entry state reads,
+        // beside values the current state names. Spell it at the current
+        // state with one recorded statement entry as the further snapshot.
+        if let Some(anchor) = premise_anchor
+            && let Some(view) = self.premise_fixed_state_view()
+            && let Some(mixed) = crate::instrumentation::measure_operation(
+                "surface",
+                "simp premise",
+                "simp premise surface across recorded snapshots",
+                || {
+                    synthesize_surface_with_recorded_snapshot(
+                        kernel,
+                        view.parameter_binding,
+                        view.fixed_state.pre_state,
+                        view.fixed_state.state,
+                        view.fixed_state.recorded_snapshots,
+                        anchor,
+                    )
+                    .find(|surface| matches_kernel(surface).is_some())
+                },
+            )
+        {
+            return Some(mixed);
+        }
         if crate::instrumentation::deadline_exceeded() {
             return None;
         }
@@ -9552,6 +9577,40 @@ pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
         }
         synthesize_surface_equality_across_points(kernel, parameter_binding, &points)
     })
+}
+
+/// [`synthesize_surface_at_recorded_snapshots`] for a fact that mixes states:
+/// spelled at `current`, with each recorded statement entry nearest `anchor`
+/// in turn as the one further snapshot for a value only that entry state
+/// reads, such as `link.link == ParentLink::Linked(at(statement(3).entry,
+/// p->kid))`. The same bounded neighborhood as the whole-fact probe.
+fn synthesize_surface_with_recorded_snapshot<'a>(
+    kernel: &'a Proposition,
+    parameter_binding: ParameterBinding<'a>,
+    entry: &'a CState,
+    current: &'a CState,
+    recorded_snapshots: &'a RecordedSnapshots,
+    anchor: &ProgramPointRef,
+) -> impl Iterator<Item = ClickProposition> + 'a {
+    let anchor_index = match &anchor.region {
+        CodeRegionRef::Statement(index) => *index,
+        _ => usize::MAX,
+    };
+    const MAX_SNAPSHOT_CANDIDATES: usize = 256;
+    recorded_snapshots
+        .statement_entries_nearest(anchor_index)
+        .take(MAX_SNAPSHOT_CANDIDATES)
+        .take_while(|_| !crate::instrumentation::deadline_exceeded())
+        .filter_map(move |(point, state)| {
+            let selector = SnapshotSelector::ProgramPoint(point.clone());
+            super::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                kernel,
+                parameter_binding,
+                entry,
+                current,
+                Some((state, &selector)),
+            )
+        })
 }
 
 /// Whether a fact the last step checked is the focused goal under another

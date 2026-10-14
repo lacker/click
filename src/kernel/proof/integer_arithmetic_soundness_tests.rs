@@ -139,6 +139,7 @@ fn cases_from_pairs(pairs: impl IntoIterator<Item = (Expression, Expression)>) -
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn integer_certificate_comparison_normalization_preserves_small_models() {
     assert!(check_comparison_normalization(cases()) > 100);
 }
@@ -306,10 +307,12 @@ fn check_binary_rule_family(family: usize, rule_index: usize) {
 macro_rules! binary_rule_family_tests {
     ($add:ident, $bounds:ident, $family:expr) => {
         #[test]
+        #[ignore = "nightly: 2s each in the parallel gate"]
         fn $add() {
             check_binary_rule_family($family, 0);
         }
         #[test]
+        #[ignore = "nightly: 2s each in the parallel gate"]
         fn $bounds() {
             check_binary_rule_family($family, 1);
         }

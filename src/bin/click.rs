@@ -195,6 +195,7 @@ mod tests {
     /// audit) and `--trace-proof` also select a claim by a line its clause or
     /// proof covers.
     #[test]
+    #[ignore = "nightly: 1.4s in the parallel gate"]
     fn claims_are_labelled_per_clause_kind_and_selected_by_line() {
         let directory =
             std::env::temp_dir().join(format!("click-claim-lines-{}", std::process::id()));
@@ -996,6 +997,7 @@ theorem bad(p: int32*, q: int32*) {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn trace_accepts_an_exact_historical_call_guarantee() {
         let directory =
             std::env::temp_dir().join(format!("click-trace-call-guarantee-{}", std::process::id()));
@@ -1154,6 +1156,7 @@ int32 parent(int32 *a, int32 *b, int32 n, int32 i) {
     /// lines up to the failing tactic, a `--trace-to` target in a passing
     /// proof, and only the named theorem verified.
     #[test]
+    #[ignore = "nightly: 0.5s in the parallel gate"]
     fn trace_proof_accepts_a_pure_theorem() {
         let directory =
             std::env::temp_dir().join(format!("click-trace-theorem-{}", std::process::id()));
@@ -1459,6 +1462,7 @@ int32 f() { ensures result == 2; } by { step(); simp(); }
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn integer_product_bounds_tools_agree_on_wide_ranges_and_retained_audit() {
         let mdtest = click::cli::parse_mdtest(
             std::path::Path::new("integer_product_bounds.md"),
@@ -1644,6 +1648,7 @@ int32 f() { ensures result == 2; } by { step(); simp(); }
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn supported_implication_boundary_audits() {
         audit_supported_boundary(
             "implication-audit",

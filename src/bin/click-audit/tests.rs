@@ -418,6 +418,7 @@ fn performance_comparison_requires_ratio_and_absolute_slack() {
 /// expanded proof that genuinely does more work fails, and fails with the
 /// same counts every time, whatever the clock says.
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn an_expansion_that_does_more_work_fails_the_comparison_deterministically() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/scalar.md");
     let source = load_audit_source(&path).unwrap();
@@ -470,6 +471,7 @@ fn an_expansion_that_does_more_work_fails_the_comparison_deterministically() {
 /// Machine load changes only the reported wall clock: every audit phase
 /// spends the same deterministic work on a machine whose cores are all busy.
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn an_audit_under_cpu_load_spends_the_same_work() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/scalar.md");
     let sites = inventory_sites(std::slice::from_ref(&path)).unwrap();
@@ -949,6 +951,7 @@ fn prepared_audit_reuses_validated_inputs_across_sites() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn smart_have_inside_an_open_scope_audits_instead_of_reporting_a_missing_tactic() {
     // Reduced from `object_retain_many` in `examples/refcount` and the two
     // `have`s of `arena_write` in `examples/arena`. The resource-scope driver
@@ -1038,6 +1041,7 @@ void object_retain_many(struct object* obj, int32 amount) {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn numeric_only_witness_contract_refuses_a_masked_pointer_return() {
     let directory =
         std::env::temp_dir().join(format!("click-audit-witness-{}", std::process::id()));
@@ -1107,6 +1111,7 @@ struct node* unpack(struct node* node) {
 }
 
 #[test]
+#[ignore = "nightly: 1.2s in the parallel gate"]
 fn numeric_only_recursive_contract_refuses_a_masked_pointer_argument() {
     // Preserve the original recursive-call/wide-guard audit program. Its
     // positive expansion coverage needs an integer-origin contract first;
@@ -1512,6 +1517,7 @@ fn short_circuit_conditions_audit_every_site() {
 /// every rewrite parses, re-verifies in the retained session and directly,
 /// reaches an expansion fixed point, and respects the ordinary work limits.
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn ranked_loops_without_invariants_audit_every_site() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for relative in [
@@ -1645,6 +1651,7 @@ fn nested_call_outcomes_audit_every_site() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn exceptional_call_paths_audit_every_site() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for (relative, expected_sites) in [

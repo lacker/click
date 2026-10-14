@@ -2134,8 +2134,8 @@ fn evaluate_c_cast_paths(
             CExpressionOutcome::Value(value) => {
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                // A cast C source wrote or its lowering inserted converts
-                // modulo 2^N; a specification's cast owes the range.
+                // A cast C source or a specification wrote converts modulo
+                // 2^N; any other `Standard` cast owes the range.
                 let conversion = if integer_mode == CIntegerCastMode::CConversion {
                     IntegerConversion::Modular
                 } else {

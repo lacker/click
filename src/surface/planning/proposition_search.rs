@@ -373,6 +373,7 @@ impl PropositionSearch for PureFactContext {
             return Some(derivation);
         }
         self.atomic_derivation_premises(proposition, true, true)
+            .and_then(|selected| reduce_simp_atomic_premises(proposition, true, selected))
             .map(|(premises, premises_id, evidence)| {
                 proposition_derivation(
                     proposition,
@@ -414,6 +415,7 @@ impl PropositionSearch for PureFactContext {
             return None;
         }
         self.atomic_derivation_premises(proposition, for_simp, false)
+            .and_then(|selected| reduce_simp_atomic_premises(proposition, for_simp, selected))
             .map(|(premises, premises_id, evidence)| {
                 proposition_derivation(
                     proposition,
@@ -960,6 +962,7 @@ impl PropositionSearch for PureFactContext {
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
         self.atomic_derivation_premises(proposition, for_simp, false)
+            .and_then(|selected| reduce_simp_atomic_premises(proposition, for_simp, selected))
             .map(
                 |(premises, premises_id, evidence)| PropositionDerivationRule::ContextualAtomic {
                     premises: RetainedPremises::from_context(&premises),
@@ -1788,6 +1791,7 @@ mod condition_premise_tests {
     }
 
     #[test]
+    #[ignore = "nightly: 4.8s in the parallel gate"]
     fn connected_condition_selection_scales_linearly_in_chain_and_context() {
         for grow_chain in [false, true] {
             let mut samples = Vec::new();
@@ -2138,9 +2142,131 @@ mod disjunction_work_tests {
     }
 }
 
+/// A compatibility atomic decision can retain a connected component rather
+/// than the facts it consumed. Before simp spells historical source forms,
+/// discard chunks that the same kernel query proves unnecessary. Each trial
+/// holds only the remaining selected facts; no ambient fact participates.
+/// Typed evidence already records its dependencies and needs no such search.
+///
+/// This is bounded smart planning, not certificate validation: at most 128
+/// facts and 255 restricted queries. A missed reduction keeps the checked
+/// selection, and the final evidence is rebuilt against the retained context.
+fn reduce_simp_atomic_premises(
+    proposition: &Proposition,
+    for_simp: bool,
+    selected: (PureFactContext, u64, AtomicPropositionDerivationEvidence),
+) -> Option<(PureFactContext, u64, AtomicPropositionDerivationEvidence)> {
+    let (mut context, mut context_id, mut evidence) = selected;
+    if !for_simp || !matches!(evidence, AtomicPropositionDerivationEvidence::Legacy) {
+        return Some((context, context_id, evidence));
+    }
+    let premises = RetainedPremises::from_context(&context);
+    let premises = premises.named();
+    if !(8..=128).contains(&premises.len()) {
+        return Some((context, context_id, evidence));
+    }
+    let _timing = crate::instrumentation::OperationTiming::new(
+        "surface",
+        "simp closure",
+        "simp selected premise reduction",
+    );
+    let mut retained = vec![true; premises.len()];
+    let mut pending = vec![(0, premises.len())];
+    while let Some((start, end)) = pending.pop() {
+        crate::instrumentation::record_deterministic_work(premises.len() + 1);
+        if simp_reasoning_interrupted() {
+            return None;
+        }
+        let mut conditions = Vec::new();
+        let mut propositions = Vec::new();
+        for (index, premise) in premises.iter().enumerate() {
+            if !retained[index] || (start..end).contains(&index) {
+                continue;
+            }
+            match premise {
+                Proposition::ConditionIs(condition, value) => {
+                    conditions.push((condition.clone(), *value));
+                }
+                _ => propositions.push(premise.clone()),
+            }
+        }
+        let trial = context.restricted_to_facts(&conditions, &propositions);
+        let (trial_evidence, trial_id) =
+            trial.proves_atomic_for_derivation_with_id(proposition, for_simp);
+        if let Some(trial_evidence) = trial_evidence {
+            retained[start..end].fill(false);
+            context = trial;
+            context_id = trial_id;
+            evidence = trial_evidence;
+        } else if end - start > 1 {
+            let middle = start + (end - start) / 2;
+            pending.push((middle, end));
+            pending.push((start, middle));
+        }
+    }
+    (!simp_reasoning_interrupted()).then_some((context, context_id, evidence))
+}
+
 #[cfg(test)]
 mod shared_atomic_premise_tests {
     use super::*;
+
+    // Connected pointer aliases used to make simp spell every historical
+    // premise even though the checked equality uses just these two links.
+    #[test]
+    fn simp_reduces_connected_pointer_premises_before_spelling() {
+        let mut samples = Vec::new();
+        for count in [8, 16, 32, 64, 128] {
+            let pointer = |index| Pointer::symbolic(Variable(index));
+            let left = pointer(1);
+            let middle = pointer(2);
+            let right = pointer(3);
+            let equality = |left, right| {
+                Proposition::ConditionIs(ConditionTerm::pointer_equal(left, right), true)
+            };
+            let first = equality(left.clone(), middle.clone());
+            let second = equality(middle.clone(), right.clone());
+            let goal = equality(left, right);
+            let mut context = PureFactContext::new()
+                .assume_proposition(first.clone())
+                .assume_proposition(second.clone());
+            for index in 2..count {
+                context = context
+                    .assume_proposition(equality(middle.clone(), pointer(10 + index as u64)));
+            }
+            let (evidence, id) = context.proves_atomic_for_derivation_with_id(&goal, true);
+            let evidence = evidence.expect("the alias chain proves the goal");
+            let (selected, work) = crate::instrumentation::measure_deterministic_work(|| {
+                reduce_simp_atomic_premises(&goal, true, (context, id, evidence)).unwrap()
+            });
+            let (reduced, id, evidence) = selected;
+            let premises = RetainedPremises::from_context(&reduced);
+            assert_eq!(premises.named().len(), 2);
+            assert!(premises.named().contains(&first));
+            assert!(premises.named().contains(&second));
+            let derivation = proposition_derivation(
+                &goal,
+                PropositionDerivationRule::ContextualAtomic {
+                    premises,
+                    premises_id: id,
+                    for_simp: true,
+                    evidence,
+                },
+            );
+            assert!(derivation.check(&reduced));
+            // Neither required link can be supplied by the discarded aliases.
+            for missing in [&first, &second] {
+                assert!(!derivation.check(&reduced.without_exact_fact(missing)));
+            }
+            samples.push((count, work));
+        }
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1.saturating_mul(3),
+                "bounded premise reduction grew too quickly: {samples:?}"
+            );
+        }
+    }
 
     #[test]
     fn wide_atomic_premise_cloning_scales_with_its_syntax() {

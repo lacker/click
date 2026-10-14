@@ -5579,21 +5579,17 @@ impl C0Statement {
 
 impl C0Expression {
     /// Lowers an expression a Click specification wrote in C syntax. Its
-    /// integer casts owe the destination range, as every specification cast
-    /// does; the same cast in C source converts modulo 2^N.
+    /// integer casts convert modulo 2^N, as the same cast in C source does;
+    /// a specification states a checked conversion with `to_T(...)`.
     pub fn to_kernel_specification_expression(&self) -> crate::kernel::CExpression {
-        self.lower_expression(true)
+        self.lower_expression()
     }
 
     pub fn to_kernel_expression(&self) -> crate::kernel::CExpression {
-        self.lower_expression(false)
+        self.lower_expression()
     }
 
-    /// Lowers this expression; `specification` marks one a Click
-    /// specification wrote in C syntax, whose integer casts keep the
-    /// specification's checked rule, where the same cast in C source
-    /// converts modulo 2^N.
-    fn lower_expression(&self, specification: bool) -> crate::kernel::CExpression {
+    fn lower_expression(&self) -> crate::kernel::CExpression {
         match self {
             Self::Void => crate::kernel::c_void_value(),
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
@@ -5624,35 +5620,33 @@ impl C0Expression {
                     crate::kernel::c_cast_with_pointee_qualifiers_and_struct
                 };
                 let lowered = cast(
-                    expression.lower_expression(specification),
+                    expression.lower_expression(),
                     c_type.to_kernel_type(),
                     *pointee_volatile,
                     *pointee_constant,
                     struct_name.clone(),
                 );
-                if specification {
-                    lowered
-                } else {
-                    crate::kernel::c_source_integer_conversion(lowered)
-                }
+                // A C cast converts modulo 2^N wherever it is written,
+                // in C source or in a specification.
+                crate::kernel::c_source_integer_conversion(lowered)
             }
             Self::Conditional {
                 condition,
                 then_branch,
                 else_branch,
             } => crate::kernel::c_conditional(
-                condition.lower_expression(specification),
-                then_branch.lower_expression(specification),
-                else_branch.lower_expression(specification),
+                condition.lower_expression(),
+                then_branch.lower_expression(),
+                else_branch.lower_expression(),
             ),
             Self::FloatNegate(expression) => {
-                crate::kernel::c_float_negate(expression.lower_expression(specification))
+                crate::kernel::c_float_negate(expression.lower_expression())
             }
             Self::FloatClassification {
                 expression,
                 classification,
             } => crate::kernel::c_float_classification(
-                expression.lower_expression(specification),
+                expression.lower_expression(),
                 match classification {
                     C0FloatClassification::Finite => crate::kernel::CFloatClassification::Finite,
                     C0FloatClassification::Infinite => {
@@ -5667,17 +5661,17 @@ impl C0Expression {
             ),
             Self::AddressOf(target) => match target.as_ref() {
                 Self::AggregateAddress { pointer, .. } | Self::UnionAddress { pointer, .. } => {
-                    pointer.lower_expression(specification)
+                    pointer.lower_expression()
                 }
-                target => crate::kernel::CExpression::AddressOf(Box::new(
-                    target.lower_expression(specification),
-                )),
+                target => {
+                    crate::kernel::CExpression::AddressOf(Box::new(target.lower_expression()))
+                }
             },
-            Self::AggregateAddress { pointer, .. } => pointer.lower_expression(specification),
-            Self::UnionAddress { pointer, .. } => pointer.lower_expression(specification),
+            Self::AggregateAddress { pointer, .. } => pointer.lower_expression(),
+            Self::UnionAddress { pointer, .. } => pointer.lower_expression(),
             Self::MemberAddress { pointer, selection } => {
                 crate::kernel::CExpression::MemberAddress {
-                    object: Box::new(pointer.lower_expression(specification)),
+                    object: Box::new(pointer.lower_expression()),
                     selection: selection.clone(),
                 }
             }
@@ -5687,8 +5681,8 @@ impl C0Expression {
                 element_type,
                 shape,
             } => crate::kernel::CExpression::ArrayRowAddress {
-                array: Box::new(array.lower_expression(specification)),
-                index: Box::new(index.lower_expression(specification)),
+                array: Box::new(array.lower_expression()),
+                index: Box::new(index.lower_expression()),
                 element_type: element_type.to_kernel_type(),
                 shape: shape.clone(),
             },
@@ -5699,15 +5693,14 @@ impl C0Expression {
                 subtract,
                 ..
             } => crate::kernel::CExpression::RecordPointerOffset {
-                pointer: Box::new(pointer.lower_expression(specification)),
-                index: Box::new(index.lower_expression(specification)),
+                pointer: Box::new(pointer.lower_expression()),
+                index: Box::new(index.lower_expression()),
                 layout: layout.clone(),
                 subtract: *subtract,
             },
-            Self::PointerOffsetBytes { pointer, bytes } => crate::kernel::c_pointer_offset_bytes(
-                pointer.lower_expression(specification),
-                *bytes,
-            ),
+            Self::PointerOffsetBytes { pointer, bytes } => {
+                crate::kernel::c_pointer_offset_bytes(pointer.lower_expression(), *bytes)
+            }
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
             Self::UInt32Literal(value) => crate::kernel::c_uint32_literal(*value),
@@ -5719,93 +5712,72 @@ impl C0Expression {
                 crate::kernel::c_uint64_literal(u64::from(*bytes))
             }
             Self::SizeOfUnion { bytes, .. } => crate::kernel::c_uint64_literal(u64::from(*bytes)),
-            Self::LessThan(left, right) => crate::kernel::c_less_than(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::LessEqual(left, right) => crate::kernel::c_less_equal(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::GreaterThan(left, right) => crate::kernel::c_greater_than(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::GreaterEqual(left, right) => crate::kernel::c_greater_equal(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Equal(left, right) => crate::kernel::c_equal(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::NotEqual(left, right) => crate::kernel::c_not_equal(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Not(expression) => {
-                crate::kernel::c_not(expression.lower_expression(specification))
+            Self::LessThan(left, right) => {
+                crate::kernel::c_less_than(left.lower_expression(), right.lower_expression())
             }
-            Self::And(left, right) => crate::kernel::c_and(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Or(left, right) => crate::kernel::c_or(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Add(left, right) => crate::kernel::c_add(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Subtract(left, right) => crate::kernel::c_subtract(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Multiply(left, right) => crate::kernel::c_multiply(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Divide(left, right) => crate::kernel::c_divide(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::Remainder(left, right) => crate::kernel::c_remainder(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::ShiftLeft(left, right) => crate::kernel::c_shift_left(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::ShiftRight(left, right) => crate::kernel::c_shift_right(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::BitwiseAnd(left, right) => crate::kernel::c_bitwise_and(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::BitwiseOr(left, right) => crate::kernel::c_bitwise_or(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
-            Self::BitwiseXor(left, right) => crate::kernel::c_bitwise_xor(
-                left.lower_expression(specification),
-                right.lower_expression(specification),
-            ),
+            Self::LessEqual(left, right) => {
+                crate::kernel::c_less_equal(left.lower_expression(), right.lower_expression())
+            }
+            Self::GreaterThan(left, right) => {
+                crate::kernel::c_greater_than(left.lower_expression(), right.lower_expression())
+            }
+            Self::GreaterEqual(left, right) => {
+                crate::kernel::c_greater_equal(left.lower_expression(), right.lower_expression())
+            }
+            Self::Equal(left, right) => {
+                crate::kernel::c_equal(left.lower_expression(), right.lower_expression())
+            }
+            Self::NotEqual(left, right) => {
+                crate::kernel::c_not_equal(left.lower_expression(), right.lower_expression())
+            }
+            Self::Not(expression) => crate::kernel::c_not(expression.lower_expression()),
+            Self::And(left, right) => {
+                crate::kernel::c_and(left.lower_expression(), right.lower_expression())
+            }
+            Self::Or(left, right) => {
+                crate::kernel::c_or(left.lower_expression(), right.lower_expression())
+            }
+            Self::Add(left, right) => {
+                crate::kernel::c_add(left.lower_expression(), right.lower_expression())
+            }
+            Self::Subtract(left, right) => {
+                crate::kernel::c_subtract(left.lower_expression(), right.lower_expression())
+            }
+            Self::Multiply(left, right) => {
+                crate::kernel::c_multiply(left.lower_expression(), right.lower_expression())
+            }
+            Self::Divide(left, right) => {
+                crate::kernel::c_divide(left.lower_expression(), right.lower_expression())
+            }
+            Self::Remainder(left, right) => {
+                crate::kernel::c_remainder(left.lower_expression(), right.lower_expression())
+            }
+            Self::ShiftLeft(left, right) => {
+                crate::kernel::c_shift_left(left.lower_expression(), right.lower_expression())
+            }
+            Self::ShiftRight(left, right) => {
+                crate::kernel::c_shift_right(left.lower_expression(), right.lower_expression())
+            }
+            Self::BitwiseAnd(left, right) => {
+                crate::kernel::c_bitwise_and(left.lower_expression(), right.lower_expression())
+            }
+            Self::BitwiseOr(left, right) => {
+                crate::kernel::c_bitwise_or(left.lower_expression(), right.lower_expression())
+            }
+            Self::BitwiseXor(left, right) => {
+                crate::kernel::c_bitwise_xor(left.lower_expression(), right.lower_expression())
+            }
             Self::BitwiseNot(expression) => {
-                crate::kernel::c_bitwise_not(expression.lower_expression(specification))
+                crate::kernel::c_bitwise_not(expression.lower_expression())
             }
-            Self::Load(pointer) => crate::kernel::c_load(pointer.lower_expression(specification)),
+            Self::Load(pointer) => crate::kernel::c_load(pointer.lower_expression()),
             Self::SequentialRead {
                 target,
                 c_type,
                 pointee_constant,
                 ..
             } => crate::kernel::c_qualified_volatile_typed_load(
-                C0Expression::AddressOf(Box::new(target.as_ref().clone()))
-                    .lower_expression(specification),
+                C0Expression::AddressOf(Box::new(target.as_ref().clone())).lower_expression(),
                 c_type.to_kernel_type(),
                 *pointee_constant,
             ),
@@ -5821,7 +5793,7 @@ impl C0Expression {
                 source,
                 ..
             } => crate::kernel::c_qualified_typed_load_with_source(
-                pointer.lower_expression(specification),
+                pointer.lower_expression(),
                 field_type.to_kernel_type(),
                 *pointee_constant,
                 source.as_ref().and_then(|source| {
@@ -5840,15 +5812,13 @@ impl C0Expression {
                 pointer,
                 field_type,
                 ..
-            } => crate::kernel::c_typed_load(
-                pointer.lower_expression(specification),
-                field_type.to_kernel_type(),
-            ),
-            Self::Index(base, index) => crate::kernel::c_index(
-                base.lower_expression(specification),
-                index.lower_expression(specification),
-            ),
-            Self::CheckedArrayIndex { index, .. } => index.lower_expression(specification),
+            } => {
+                crate::kernel::c_typed_load(pointer.lower_expression(), field_type.to_kernel_type())
+            }
+            Self::Index(base, index) => {
+                crate::kernel::c_index(base.lower_expression(), index.lower_expression())
+            }
+            Self::CheckedArrayIndex { index, .. } => index.lower_expression(),
         }
     }
 }

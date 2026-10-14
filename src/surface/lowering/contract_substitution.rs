@@ -3030,7 +3030,7 @@ pub(in crate::surface) fn pure_function_parameter_argument(
                 contract_expression_as_c_fragment(argument).unwrap_or(CExpression::Value(int32(0))),
             ),
             target_type,
-            integer_mode: crate::kernel::CIntegerCastMode::Standard,
+            integer_mode: crate::kernel::CIntegerCastMode::CConversion,
             pointee_struct: None,
             pointee_volatile: false,
             pointee_constant: false,

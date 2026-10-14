@@ -486,6 +486,16 @@ fn expand_declared_resources_in_function_block(
             CFunctionDecrease::Numeric(expression) => Ok(CFunctionDecrease::Numeric(
                 expand_declared_resource_expression(expression, resource_definitions)?,
             )),
+            // Every component of a tuple is numeric: a structural measure
+            // is one resource, never a component of a tuple.
+            CFunctionDecrease::Lexicographic(components) => Ok(CFunctionDecrease::Lexicographic(
+                components
+                    .into_iter()
+                    .map(|component| {
+                        expand_declared_resource_expression(component, resource_definitions)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
             CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
                 expand_declared_resource_clause(resource, resource_definitions)?,
             )),

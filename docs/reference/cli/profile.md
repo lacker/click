@@ -55,6 +55,10 @@ and known driver overhead. `INTERRUPTED` is unfinished time after a limit stoppe
 `UNATTRIBUTED` indicates inconsistent or unknown accounting rather than a
 healthy miscellaneous bucket.
 
+Tactic rows identify written source sites that expansion can select. Generated
+contract closers have no independent source site and remain part of shared
+verification work rather than appearing as selectable tactics.
+
 Function and claim rankings are two views of the same work and must not be
 added together. A slow smart success may be expanded. A slow simple tactic is an
 engine defect. A prompt bounded smart failure has no successful proof to expand;

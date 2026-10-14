@@ -270,6 +270,7 @@ fn extending_a_candidate_retains_payload_and_classifies_only_new_facts() {
 
 /// Each returned path reads its guards, but stores only its own suffix.
 #[test]
+#[ignore = "nightly: 3.4s in the parallel gate"]
 fn early_return_paths_share_guard_fact_storage() {
     let mut samples = Vec::new();
     for returns in [8, 16, 32, 64] {
@@ -5239,10 +5240,10 @@ fn drain_with_expression_measure() -> CFunction {
         vec![CFunctionContractClaim::ensure_proposition(0, 0)],
         true,
     )
-    .with_recursion_measure(CRankingComponent::Pure {
+    .with_recursion_measure(vec![CRankingComponent::Pure {
         source: "level(n)".to_string(),
         expression: SpecExpression::CExpression(c_variable("n")),
-    })
+    }])
 }
 
 fn opaque_rule_environment(function: CFunction) -> CExecutionEnvironment {

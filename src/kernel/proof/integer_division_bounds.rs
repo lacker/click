@@ -159,6 +159,7 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "nightly: 0.5s in the parallel gate"]
     fn division_bounds_match_independent_small_signed_oracles() {
         for lo in -3..=3 {
             for hi in lo..=3 {

@@ -138,6 +138,7 @@ fn checked_attachment_is_flat_beside_unrelated_equality_history() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn checked_composition_attaches_only_new_resource_occurrences() {
     let mut samples = Vec::new();
     let base = Pointer::symbolic(Variable(870_000));
@@ -175,6 +176,7 @@ fn checked_composition_attaches_only_new_resource_occurrences() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn forks_before_publication_keep_indexed_candidates_without_input_rescans() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -246,6 +248,7 @@ fn forks_before_publication_keep_indexed_candidates_without_input_rescans() {
 }
 
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn normalization_keeps_fork_pairing_without_deferred_input_scans() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -335,6 +338,7 @@ fn normalization_keeps_fork_pairing_without_deferred_input_scans() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn first_memory_occurrence_on_a_sibling_uses_closed_equality_state() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -652,6 +656,7 @@ fn typed_cell_candidates_follow_raw_offset_syntax_and_check_ownership() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn whole_cell_write_merges_and_queries_do_not_scan_other_payloads() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -721,6 +726,7 @@ fn whole_cell_write_merges_and_queries_do_not_scan_other_payloads() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn late_offset_cell_hits_scale_with_affected_entries() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -871,6 +877,7 @@ fn exact_address_classes_survive_unspellable_affine_shifts() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn scratch_queries_do_not_force_input_registration_at_the_next_boundary() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -1284,6 +1291,7 @@ fn interval_completeness_is_local_and_follows_late_offset_dependencies() {
 }
 
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn interval_selection_is_indexed_beside_same_class_non_suppliers() {
     let base = Pointer::symbolic(Variable(895_030));
     let alias = Pointer::symbolic(Variable(895_031));
@@ -1413,6 +1421,7 @@ fn write_permission_does_not_enumerate_covering_views() {
 }
 
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn symbolic_write_permission_does_not_search_views() {
     let base = Pointer::symbolic(Variable(961_000));
     let alias = Pointer::symbolic(Variable(961_001));
@@ -1541,6 +1550,7 @@ fn sole_symbolic_write_owner_preserves_bounds_authority_and_forks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn symbolic_partition_read_start_is_indexed_without_searching_other_ranges() {
     let base = Pointer::symbolic(Variable(899_000));
     let i = Bitvector32Term::Variable(Variable(899_001));
@@ -1626,6 +1636,7 @@ fn memory_support_returns_retained_occurrences_through_transitive_aliases() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn indexed_memory_support_and_fragment_consumption_ignore_unrelated_spans() {
     let p = Pointer::symbolic(Variable(975_000));
     let q = Pointer::symbolic(Variable(975_001));
@@ -1776,6 +1787,7 @@ fn explicit_memory_fragment_composition_scales_with_selected_input() {
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn direct_memory_support_does_not_enumerate_overlapping_views() {
     let p = Pointer::symbolic(Variable(976_000));
     let q = Pointer::symbolic(Variable(976_001));
@@ -1820,6 +1832,7 @@ fn direct_memory_support_does_not_enumerate_overlapping_views() {
 }
 
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn symbolic_fragment_support_follows_indexed_endpoint_successors() {
     let p = Pointer::symbolic(Variable(977_000));
     let i = Bitvector32Term::Variable(Variable(977_001));
@@ -1890,6 +1903,7 @@ fn symbolic_fragment_support_follows_indexed_endpoint_successors() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn ordered_symbolic_subrange_selects_its_retained_residual_without_scanning() {
     let p = Pointer::symbolic(Variable(978_000));
     let i = Bitvector32Term::Variable(Variable(978_001));
@@ -2176,6 +2190,7 @@ fn composition_object_evidence_ignores_unrelated_admitted_sources() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn composition_provenance_admission_follows_sibling_deltas_not_the_shared_frame() {
     let pointer = |id: u64| Pointer::symbolic(Variable(901_000 + id));
     let dormant = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
@@ -2250,6 +2265,7 @@ fn composition_provenance_admission_follows_sibling_deltas_not_the_shared_frame(
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn captured_interior_pointer_reads_keep_owned_bounds_and_opaque_base_identity() {
     let _session = crate::kernel::VerificationSession::enter();
     let memory = CMemory::new();
@@ -2356,6 +2372,7 @@ fn captured_interior_pointer_reads_keep_owned_bounds_and_opaque_base_identity() 
 // owners in the same external address space. Equality selects that occurrence;
 // the existing owner, width and signed bounds still authorize the access.
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn captured_interior_address_selects_its_base_beside_same_block_owners() {
     let _session = crate::kernel::VerificationSession::enter();
     let base = Pointer {

@@ -256,6 +256,7 @@ fn owned_composite_frontier_selects_the_prior_child_by_graph_address() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn owned_frontier_attachment_ignores_unrelated_facts_and_caller_resources() {
     let mut samples = Vec::new();
     for size in [16, 64, 256, 1024] {
@@ -506,6 +507,7 @@ fn resource_satisfaction_uses_transitive_addresses_without_restoring_consumed_ow
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn resource_satisfaction_does_not_scan_unrelated_resources_or_equalities() {
     let mut samples = Vec::new();
     for size in [16, 64, 256, 1024] {
@@ -598,6 +600,7 @@ fn fresh_resource_publication_tracks_late_equalities_and_persistent_deltas() {
 }
 
 #[test]
+#[ignore = "nightly: 1.3s in the parallel gate"]
 fn fresh_and_framing_publication_do_not_scan_ambient_inputs() {
     let mut samples = Vec::new();
     for size in [16, 64, 256, 1024] {

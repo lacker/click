@@ -74,6 +74,7 @@ fn builtin_header_null_pointer_expansion_round_trips() {
 // A synthesized read through a struct-pointer field must keep the scalar
 // stride when printed; `p->kid[1]` would advance by an entire child record.
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn struct_pointer_field_scalar_read_expansion_keeps_its_width() {
     let c = r#"
         struct child { int32 refs; int32 payload; };
@@ -128,6 +129,7 @@ fn struct_pointer_field_scalar_read_expansion_keeps_its_width() {
 // Whole-claim expansion must print hidden record ownership and fold inputs
 // in the syntax the author can write, then independently verify them.
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn hidden_record_resource_expansion_round_trips() {
     for name in [
         "a_hidden_record_resource_is_held_without_a_name",
@@ -236,6 +238,7 @@ fn selected_tactic_batch_captures_multiple_sites_inside_one_have() {
 }
 
 #[test]
+#[ignore = "nightly: 2.5s in the parallel gate"]
 fn selected_tactic_batch_preserves_checked_loop_and_branch_routing() {
     for relative in [
         "mdtests/loop_after_proof_branch_expands.md",
@@ -299,6 +302,7 @@ fn selected_tactic_batch_retains_the_unselected_prefix_and_suffix() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn partial_tactic_capture_runs_once_as_selected_sites_grow() {
     let c = [("identity.c", "int32 identity(int32 x) { return x; }")];
     let samples = [4, 8, 16, 32].map(|size| {
@@ -370,6 +374,7 @@ fn post_execution_have_expansion_preserves_later_smart_proofs() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn an_arms_invariant_closer_expands_with_that_arms_checked_body() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/c_decreases_recursive_in_loop.md");
@@ -558,6 +563,7 @@ int32 caller(int32 x, int32 y) {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
     let c_source = r#"
         uint64 read_terminator(uint8 haystack[], uint64 known_len) {
@@ -780,6 +786,7 @@ fn exists_loadable_range_call_requirement_expands_and_deletion_rejects() {
 /// arm's continuation a level of its own, so this rewrite reached the region
 /// bound at six and was declined as an unimplemented shape.
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn nested_null_check_chain_expands_and_reverifies() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/nested_null_check_chain_expands.md");
@@ -868,6 +875,7 @@ fn proof_cases_after_c_branch_expand_and_reverify() {
 /// independent fresh binders; the rewrite re-verifies only because
 /// `assumption` matches that guarded quantifier up to its binders.
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn guarded_quantified_postcondition_expands_and_reverifies() {
     for (relative, function) in [
         (
@@ -914,6 +922,7 @@ fn guarded_quantified_postcondition_expands_and_reverifies() {
 /// of the consequent, and the rewrite that uses it. The rewrite re-verifies
 /// with no smart tactic left in the claim.
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn guarded_postcondition_consequent_expands_and_reverifies() {
     let relative = "mdtests/guarded_postcondition_closes_after_call.md";
     let (click_source, c_sources) = mdtest_sources(relative);
@@ -947,6 +956,7 @@ fn guarded_postcondition_consequent_expands_and_reverifies() {
 /// certificates that verify. The array case can transport its entry contract
 /// directly; pointer chains use explicit rewrites.
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn scope_equality_chain_and_loaded_pointer_rewrite_expand_and_reverify() {
     for (relative, function, expected) in [
         (
@@ -1090,6 +1100,7 @@ fn int32_guarded_postcondition_expands_to_int32_defined_and_reverifies() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn branch_continuation_match_expands_and_reverifies() {
     for relative in [
         "mdtests/branch_continuation_nested_match.md",
@@ -1181,6 +1192,7 @@ fn ranked_loops_with_no_invariant_expand_and_reverify() {
 /// the flattened index, so the expansion printed `p->words[((1 * 2) + 1)]`,
 /// which the parser itself rejects for a two-dimensional field.
 #[test]
+#[ignore = "nightly: 1.3s in the parallel gate"]
 fn multidimensional_array_field_expands_with_every_subscript() {
     let anchor = "ensures p->words[1][1] == value by ";
     let expanded = expand_mdtest_site_and_reverify(
@@ -1319,6 +1331,7 @@ fn a_conditional_produces_clause_is_located_in_its_place() {
 /// replaces from the first of them: left in place, the leading `unfold` ran
 /// before every generated step and the phase no longer closed its goal.
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn shared_initialize_closer_expansion_replaces_the_script_before_it() {
     let anchor = "initialize by { unfold(head(box)); ";
     let expanded = expand_mdtest_site_and_reverify(
@@ -1531,6 +1544,7 @@ fn symbolic_branch_source_requirement_have_expands_and_deletion_rejects() {
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn integer_sum_range_fold_expands_and_reverifies() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/integer_sum_range_fold.md");
@@ -1792,6 +1806,7 @@ theorem indexed_integer_exists(values: int32[]) {
 }
 
 #[test]
+#[ignore = "nightly: 2.2s in the parallel gate"]
 fn c_valued_range_fold_rejects_unsupported_carriers_before_lowering() {
     // Keep the report's original C body and proof, including its array reads.
     let c_source = r#"int32 g(uint8 p[], uint8 x) {
@@ -2689,6 +2704,7 @@ fn whole_claim_expansion_keeps_a_call_steps_empty_binder_map() {
 /// must check it the same way; without the rigid type the proof cannot be
 /// lowered at all.
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn a_tactic_in_a_generic_theorem_expands() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("examples/modeled-binary-tree/modeled_binary_tree.click");
@@ -2940,6 +2956,7 @@ theorem unsigned_compound(n: int32) {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn arithmetic_producers_retain_only_structural_certificates() {
     let pure = r#"
 theorem pure_arithmetic_producer(n: int32) {
@@ -2980,6 +2997,7 @@ theorem pure_arithmetic_producer(n: int32) {
 // The join's exported fact must remain writable after proof-local resolution:
 // the old metadata made this valid snapshot rewrite expand to a literal `…`.
 #[test]
+#[ignore = "nightly: 1.2s in the parallel gate"]
 fn branch_interface_model_pointer_snapshot_rewrite_expands_and_rechecks() {
     let (source, c) = mdtest_sources("mdtests/branch_interface_keeps_model_pointer_names.md");
     let c = c
@@ -3010,6 +3028,7 @@ fn branch_interface_address_alias_does_not_authenticate_the_loaded_child() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn branch_interface_fixture_proofs_verify_expand_and_recheck() {
     for name in [
         "frontier_branch_return.md",
@@ -3081,6 +3100,7 @@ fn branch_interface_service_simp_expands_and_rechecks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn callback_branch_ground_premises_verify_expand_and_recheck() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/c_step_contract_frontier_branch.md");
@@ -3098,6 +3118,7 @@ fn callback_branch_ground_premises_verify_expand_and_recheck() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn serialized_loop_premises_reject_a_changed_snapshot_or_polarity() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/loop_stable_invariant_export.md");
@@ -3279,6 +3300,7 @@ int main() {{ ensures result == 7; }} {main}"#
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn program_entry_resource_bindings_expand_and_reverify() {
     for (c_type, click_type, suffix) in [("unsigned int", "uint32", "u32")] {
         let c_source = format!(
@@ -3672,6 +3694,7 @@ fn returning_malloc_result_expands_to_checkable_statement_steps() {
 }
 
 #[test]
+#[ignore = "nightly: 1.9s in the parallel gate"]
 fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
     let callee_source = r#"
             struct cell_owner {
@@ -4793,6 +4816,7 @@ fn source_expansion_preserves_proof_marks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn marked_constant_store_transport_retains_load_identity() {
     let touch_c = r#"
         struct cell { int32 value; int32 other; };
@@ -5282,6 +5306,7 @@ fn selected_branched_post_execution_have_shares_identical_path_certificates() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn selected_pure_case_split_simp_expands_by_removal() {
     // A smart exit `simp` whose claims all close by exact checks contributes
     // no surface tactics of its own. Its expansion must remove the tactic —
@@ -7618,6 +7643,7 @@ fn restricted_simp_rewrites_a_named_successor_before_increment_order() {
 }
 
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
     let c_source = r#"
         struct vector {
@@ -9577,6 +9603,7 @@ fn linear_open_retains_a_direct_bare_theorem_application() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn linear_open_retains_a_direct_bare_fact_transport() {
     let c_source = r#"
         int32 set_second_return_first(int32 p[2]) {
@@ -9728,6 +9755,7 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
     let c_source = r#"
         int32 read_if(int32 p[], int32 flag) {
@@ -10930,6 +10958,7 @@ fn expand_nested_callback_lift_site(source: &str, c_sources: &[(&str, &str)], so
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn nested_callback_status_cases_verify() {
     let (source, c_sources) = nested_callback_status_sources();
     let c_sources = c_sources
@@ -11047,6 +11076,7 @@ fn acquired_callback_ownership_expands_at_every_smart_site() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn callback_pool_cycle_expands_at_every_smart_site() {
     let markdown = include_str!("../../../mdtests/c_callback_pool_cycle.md");
     let mdtest = crate::cli::parse_mdtest(std::path::Path::new("cycle.md"), markdown).unwrap();
@@ -11077,6 +11107,7 @@ fn callback_pool_cycle_expands_at_every_smart_site() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn callback_counter_refinement_expands_at_every_smart_site() {
     let markdown = include_str!("../../../mdtests/c_contract_executes_counter.md");
     let mdtest = crate::cli::parse_mdtest(std::path::Path::new("counter.md"), markdown).unwrap();
@@ -11107,6 +11138,7 @@ fn callback_counter_refinement_expands_at_every_smart_site() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn const_callback_contract_expands_at_every_smart_site() {
     let markdown = include_str!("../../../mdtests/const_callback_contract.md");
     let mdtest =
@@ -11849,6 +11881,7 @@ fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     let c_source = r#"
         int32 sort_three_cells(int32 p[3]) {
@@ -12148,6 +12181,7 @@ fn assert_bound_universal_fixture_has_no_outcome_fallbacks(filename: &str, funct
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn bound_universal_bubble_pass3_max_suffix_has_no_outcome_fallbacks() {
     let (filename, function) = BOUND_UNIVERSAL_FIXTURE_CASES[0];
     assert_bound_universal_fixture_has_no_outcome_fallbacks(filename, function);
@@ -12161,6 +12195,7 @@ fn bound_universal_bubble_sort3_two_pass_sorted_has_no_outcome_fallbacks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn matched_resource_quantified_fact_expands_and_reverifies() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/resource_match_quantified_fact_round_trip.md");
@@ -12241,6 +12276,7 @@ fn matched_resource_dependent_clauses_expand_and_reverify() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn early_return_postcondition_path_selection_expands_and_reverifies() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/early_return_indexed_postcondition_path_selection.md");
@@ -12277,6 +12313,7 @@ fn early_return_postcondition_path_selection_expands_and_reverifies() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
     for (filename, function, claim, retained_step) in [
         (
@@ -12510,6 +12547,7 @@ fn recursive_zero_list_pipeline_has_no_outcome_fallbacks() {
 }
 
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn vector_push_pipeline_has_no_outcome_fallbacks() {
     let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[5];
     assert_resource_example_pipeline_has_no_outcome_fallbacks(
@@ -12651,6 +12689,7 @@ fn negative_outcome_diagnostic_manifests_have_no_fallbacks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn branch_continuation_claims_retain_their_selected_outcome_step() {
     for (filename, function, claim, _) in [
         (
@@ -12774,6 +12813,7 @@ fn outcome_simp_transports_loadability_on_the_checked_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn outcome_simp_retains_checked_unchanged_old_equality_on_the_proof() {
     let c_source = r#"
         int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
@@ -12866,6 +12906,7 @@ fn outcome_simp_instantiates_an_unfolded_byte_predicate_on_the_checked_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 1.3s in the parallel gate"]
 fn outcome_simp_materializes_selected_composite_separation_on_the_checked_proof() {
     let c_source = r#"
         struct owner {
@@ -12926,6 +12967,7 @@ fn outcome_simp_materializes_selected_composite_separation_on_the_checked_proof(
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_proof() {
     let c_source = r#"
         int32 shifted_copy(int32 dst[], int32 src[], int32 n) {
@@ -12994,6 +13036,7 @@ fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_pro
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn quantified_old_transport_expands_to_one_quantified_frame() {
     let c_source = r#"
         int32 shifted_copy(int32 dst[], int32 src[], int32 n) {
@@ -13481,6 +13524,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn source_expander_derives_separation_from_call_postconditions() {
     let init_c_source = r#"
             struct cursor {
@@ -13697,6 +13741,7 @@ fn source_expander_replaces_and_checks_grouped_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn qualified_static_ownership_verifies_and_expands() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/qualified_static_ownership.md");
@@ -13719,6 +13764,7 @@ fn qualified_static_ownership_verifies_and_expands() {
 }
 
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn qualified_function_statics_verify_and_expand() {
     for (fixture_name, functions) in [
         (
@@ -13770,6 +13816,7 @@ fn qualified_function_statics_reject_invalid_declarations() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn qualified_function_statics_do_not_grant_ownership() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/qualified_function_static_ownership.md");
@@ -13890,6 +13937,7 @@ void clear() {
 }
 
 #[test]
+#[ignore = "nightly: 1.2s in the parallel gate"]
 fn qualified_static_struct_startup_and_expansion() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/qualified_static_struct.md");
@@ -13955,30 +14003,37 @@ fn check_private_state_expansion(fixture_name: &str, name: &str) {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn private_state_bump_expands() {
     check_private_state_expansion("private_state_mutation_reset.md", "bump");
 }
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn private_state_reset_expands() {
     check_private_state_expansion("private_state_mutation_reset.md", "reset");
 }
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn private_state_left_expands() {
     check_private_state_expansion("private_state_mutation_reset.md", "left");
 }
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn private_state_right_expands() {
     check_private_state_expansion("private_state_mutation_reset.md", "right");
 }
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn private_state_reset_left_expands() {
     check_private_state_expansion("private_state_mutation_reset.md", "reset_left");
 }
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn private_state_main_expands() {
     check_private_state_expansion("private_state_mutation_reset.md", "main");
 }
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn private_state_wide_return_expands() {
     check_private_state_expansion("private_state_wide_return.md", "main");
 }
@@ -13996,6 +14051,7 @@ fn wide_unsigned_low_word_narrowing_expands() {
 }
 
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn private_state_wrappers_reject_invalid_ownership_and_effects() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/private_state_mutation_reset.md");
@@ -14066,6 +14122,7 @@ fn wide_values_narrow_to_their_low_word_without_bounds() {
 }
 
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn grouped_residual_normalization_expansion_checks_original_claims() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/qualified_static_struct.md");
@@ -14558,6 +14615,7 @@ fn loop_preservation_case_before_step_expands_in_place() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn loop_preservation_if_retains_its_enclosing_match_binding() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/loop_preserve_if_reads_match_binding.md");
@@ -14594,6 +14652,7 @@ fn loop_preservation_if_retains_its_enclosing_match_binding() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn loop_entry_logical_read_expands_without_hidden_introductions() {
     let c_source = r#"
         int32 fill3_entry_guard(int32 p[3]) {
@@ -14855,6 +14914,7 @@ void object_retain_many(struct object* obj, int32 amount) {
 "#;
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn grouped_closer_with_a_produced_resource_claim_expands_and_reverifies() {
     // Reduced from `pool_transfer` in `examples/bounded-pool` and
     // `object_retain_many` in `examples/refcount`. The closer's certificate
@@ -15079,6 +15139,7 @@ fn numeric_resource_witness_does_not_authorize_pointer_reconstruction() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn expansion_names_a_resource_witness_through_the_checked_return_pointer() {
     let source = r#"
 struct node { struct node* next; };
@@ -15432,6 +15493,7 @@ fn a_consumed_arm_instance_equation_is_cited_at_entry_after_its_unfold() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn local_job_views_expand_and_reverify_without_ownership_annotations() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/stable_view_local_job.md");
@@ -15454,6 +15516,7 @@ fn local_job_views_expand_and_reverify_without_ownership_annotations() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn an_unfold_bound_scalar_field_expands_and_reverifies() {
     // `let { prefix: p } = unfold(before)` names the folded field value that
     // the scan loop's invariant and measure, the post-loop facts, and the
@@ -15489,6 +15552,7 @@ fn an_unfold_bound_scalar_field_expands_and_reverifies() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn a_decided_branch_in_a_loop_body_expands_and_reverifies() {
     // The certificate records the decided C branch as a logical `if` with an
     // empty infeasible arm. The preservation driver must read that expanded
@@ -15559,6 +15623,7 @@ fn expand_iterated_ownership_claim(fixture: &str, claim: &str, kept: &[&str]) {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn the_iterated_ownership_allocation_protocol_expands_and_reverifies() {
     // `take` is a simple step: the expansion prints it unchanged, and the
     // closers around it become explicit steps that verify on their own.
@@ -15570,6 +15635,7 @@ fn the_iterated_ownership_allocation_protocol_expands_and_reverifies() {
 }
 
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn the_iterated_ownership_claim_loop_expands_and_reverifies() {
     // The loop takes one element per iteration from the iterated fact inside
     // its window; the expanded preservation proof still takes it explicitly.
@@ -15591,6 +15657,7 @@ fn the_iterated_ownership_release_loop_expands_and_reverifies() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn conditional_call_witness_expansion_keeps_empty_binder_map() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/conditional_call_existential_historical_read.md");
@@ -15911,6 +15978,7 @@ fn normalize_using_int32_addition_expands_and_rechecks_without_proving_definedne
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn normalize_using_int32_loads_expands_and_rechecks() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/normalize_using_int32_loads.md");
@@ -15973,6 +16041,7 @@ fn normalize_using_int32_loads_expands_and_rechecks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn normalize_using_transported_int32_loads_expands_and_rechecks() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/normalize_using_transported_int32_loads.md");
@@ -16349,6 +16418,7 @@ void put(int32* p, int32 i, int32 n) {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn published_aliased_symbolic_owner_store_expands_and_rechecks() {
     let c = "void put(int32* p, int32* q, int32 i, int32 n) { q[i] = 7; }";
     let source = r#"
@@ -16534,6 +16604,7 @@ fn throwing_call_forks_expand_and_reverify_in_every_position() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn selected_deferred_closer_freezes_computed_guards_before_parameter_mutation() {
     for (c_source, expected) in [
         (
@@ -16608,6 +16679,7 @@ fn uint32_arithmetic_bound_weakening_expands_and_rechecks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn uint32_mul_observations_and_true_disjunction_expand_and_recheck() {
     let (guarded, _) =
         mdtest_sources("mdtests/true_disjunction_skips_undefined_right_requirement.md");
@@ -16635,6 +16707,7 @@ fn uint32_mul_observations_and_true_disjunction_expand_and_recheck() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn integer_observed_product_identity_rewrites_expand_and_recheck() {
     let (source, _) = mdtest_sources("mdtests/integer_observed_product_identity_rewrite.md");
     verify_c0_sources(&source, &[]).expect("observed product identity rewrites should verify");
@@ -16883,11 +16956,13 @@ fn check_counted_pthread_whole_claim_expansion(fixture: &str, claim: &str) {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_join() {
     check_counted_pthread_whole_claim_expansion("modeled_pthread_counted_join", "run.contract");
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_reverse_join() {
     check_counted_pthread_whole_claim_expansion(
         "modeled_pthread_counted_reverse_join",
@@ -16896,6 +16971,7 @@ fn counted_pthread_whole_claim_expansion_reverse_join() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_shared_forward_join() {
     check_counted_pthread_whole_claim_expansion(
         "modeled_pthread_counted_shared_forward_join",
@@ -16904,6 +16980,7 @@ fn counted_pthread_whole_claim_expansion_shared_forward_join() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_shared_join() {
     check_counted_pthread_whole_claim_expansion(
         "modeled_pthread_counted_shared_join",
@@ -16912,6 +16989,7 @@ fn counted_pthread_whole_claim_expansion_shared_join() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_partial_then_create() {
     check_counted_pthread_whole_claim_expansion(
         "modeled_pthread_counted_shared_partial_then_create",
@@ -16920,6 +16998,7 @@ fn counted_pthread_whole_claim_expansion_partial_then_create() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_retained() {
     check_counted_pthread_whole_claim_expansion(
         "modeled_pthread_counted_shared_retained",
@@ -16928,6 +17007,7 @@ fn counted_pthread_whole_claim_expansion_retained() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_symbolic() {
     check_counted_pthread_whole_claim_expansion(
         "modeled_pthread_counted_shared_symbolic",
@@ -16944,6 +17024,7 @@ fn counted_pthread_whole_claim_expansion_retire() {
 }
 
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn counted_pthread_whole_claim_expansion_mutex() {
     check_counted_pthread_whole_claim_expansion(
         "mutex_population_separate_body",
@@ -17040,6 +17121,7 @@ int32 f(int32 n) {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn pruned_empty_c_arm_expansion_walks_the_tail_iteratively() {
     for count in [4, 16, 64] {
         let mut c = String::from("int32 f(int32 n) {\n");
@@ -17428,6 +17510,7 @@ fn line_containing(source: &str, text: &str) -> usize {
 /// certificate. The rest of the contract proof, including the other phase
 /// and the `simp()` after the loop, is untouched.
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn a_written_loop_phase_expands_alone_by_label_and_by_line() {
     let (click, sources) = mdtest_sources("mdtests/loop_entry_guard_before_written_implication.md");
     let sources = sources
@@ -17591,6 +17674,7 @@ fn a_loop_phase_expands_by_label_over_a_prepared_c_import() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn early_return_arms_transport_result_goals_from_function_exit() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/byte_representation_roundtrip.md");
@@ -17613,6 +17697,7 @@ fn early_return_arms_transport_result_goals_from_function_exit() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn guarded_resource_disjoint_store_and_unconditional_control_expand_and_recheck() {
     let c = r#"struct base { struct base* left; struct base* right; uint64 padding; };
 struct cell { struct base base; int32 value; };

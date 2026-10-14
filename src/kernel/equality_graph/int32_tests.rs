@@ -106,6 +106,7 @@ fn unsigned_congruence_keeps_load_snapshots_and_widths_distinct() {
 }
 
 #[test]
+#[ignore = "nightly: 1.3s in the parallel gate"]
 fn unsigned_congruence_registration_and_late_merges_scale_with_touched_uses() {
     for size in [16u64, 64, 256, 1024] {
         let _session = VerificationSession::enter();
@@ -1056,6 +1057,7 @@ fn offset_premises_support_scalar_graph_edges_and_withdrawal() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn offset_premise_shallow_decision_and_forks_scale() {
     let add = |v| Bitvector32Term::Add(Box::new(v), Box::new(Bitvector32Term::Constant(1)));
     for size in [16u64, 64, 256, 1024] {

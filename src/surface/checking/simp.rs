@@ -844,6 +844,7 @@ mod tests {
     /// goal it cannot close makes it visit all of them. Under an exhausted
     /// deadline it stops at its first node.
     #[test]
+    #[ignore = "nightly: 1.8s in the parallel gate"]
     fn equality_rewrite_search_observes_the_deadline() {
         let variable = |index: u64| Bitvector32Term::Variable(Variable(93_400 + index));
         let count = 6;

@@ -4250,6 +4250,7 @@ fn exact_signed_mirror_normalization_ignores_unrelated_facts() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn resource_object_provenance_does_not_scan_same_raw_block() {
     let pointer = |id| Pointer {
         block: PointerBlock::ExternalArgument,

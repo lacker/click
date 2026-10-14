@@ -51,6 +51,7 @@ fn charon_array_copy_after_checked_call_preserves_an_independent_snapshot() {
 }
 
 #[test]
+#[ignore = "nightly: 1.9s in the parallel gate"]
 fn charon_array_copy_after_checked_call_tools_recheck_expanded_certificates() {
     let p = copy_after_call_project();
     for command in ["verify", "profile", "audit"] {
@@ -172,6 +173,7 @@ fn project() -> Project {
 }
 
 #[test]
+#[ignore = "nightly: 2.3s in the parallel gate"]
 fn charon_array_reference_assignments_check_values_and_independent_snapshots() {
     let p = project();
     let prepared = load_import(&p.config()).unwrap();

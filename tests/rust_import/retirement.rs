@@ -52,6 +52,7 @@ fn rust_default_conditional_simp_expansion_reverifies() {
 }
 
 #[test]
+#[ignore = "nightly: 2.2s in the parallel gate"]
 fn rust_import_pure_theorem_claim_labels_expand_and_reverify() {
     use click::surface::{ClickModuleSource, ClickProject};
 

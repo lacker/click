@@ -295,12 +295,16 @@ the budget.
 
 The budget is kept by what the gate leaves out, not by a faster machine:
 
-- A test that takes more than about two seconds while the gate runs tests in
-  parallel is marked `#[ignore = "nightly: <measurement>"]`. The gate kills a
-  test still running after 30 seconds.
+- A test that takes half a second or more while the gate runs tests in
+  parallel is marked `#[ignore = "nightly: <measurement>"]`. When that would
+  leave a test file with no test in the gate, its fastest test stays. The gate
+  kills a test still running after 30 seconds.
 - A mutation test, which re-verifies a whole example with one C statement
   changed, is nightly. A family keeps at most one or two in the gate.
-- An example that does is listed in `NIGHTLY` in `tests/examples.rs`.
+- An example that does is listed in `NIGHTLY` in `tests/examples.rs`, and an
+  mdtest fixture that takes half a second or more is listed in `NIGHTLY` in
+  `tests/mdtests.rs`. Shared `.click` lemma libraries stay in the gate.
+  `MDTEST_FILTER` runs a nightly fixture by name.
 - `click audit` re-expands and re-verifies every site of a claim, tens of
   seconds where `verify` takes under one. The import tests run it only under
   `CLICK_NIGHTLY`.
@@ -311,6 +315,9 @@ The budget is kept by what the gate leaves out, not by a faster machine:
 second job, `scripts/check.sh --audit`, which runs `click audit` over the
 whole repository on a release build: every smart tactic in the examples and
 mdtests must expand to a proof that verifies. It takes about twenty minutes.
+Before inventory, this entry point refreshes the native C import lock and
+preprocessed sources for `examples/label-build-flags`, which are not checked
+in. Rust examples retain their checked-in offline imports.
 A proof container with a known audit failure is left out with `--exclude` in
 that script, each beside the issue that tracks it; remove the exclusion with
 the issue. `examples/basic-cpp` is also left out: its import lock and
@@ -324,7 +331,15 @@ in five days, almost all from tool rechecks in the Rust import tests. By
 seconds or more held about four fifths of its test time: Bitcoin Core money
 range checks, rbtree erase mutations of a nightly example, Rust and C++
 import checks, and `click audit` tests. They moved to nightly, leaving two
-rbtree erase mutations in the gate.
+rbtree erase mutations in the gate. On 2026-10-13 the gate took 19 minutes on
+four cores from a cold build, about 12 warm: the suites had grown sixfold
+since August, and tests between half a second and two seconds held most of
+the unit test time. The rule moved from two seconds to half a second, which
+sent 672 tests, about 860 CPU-seconds of the 1,265 in the unit run, and 208
+mdtests, about 340 of the corpus's 710, to nightly. A gate run without the
+nightly fixtures is partial, as a CI partition is: the hidden prerequisite
+ratchet checks only for a rise there, and the nightly run checks both
+ratchets over the whole corpus.
 
 CI uses these internal modes for code-affecting changes:
 
@@ -451,7 +466,7 @@ cargo nextest run
 `.config/nextest.toml` reports any test slower than 10 seconds as slow and
 kills a gate test still running after 30 seconds. No proof verdict depends on
 wall clock; the kill decides only that a test is too slow for the gate. It
-sits 15 times above the two-second rule because a 60-second per-test kill once
+sits 60 times above the half-second rule because a 60-second per-test kill once
 failed the 512-deep command-line boundary tests at random whenever other
 builds loaded the machine. The nightly profile kills only after two hours, as
 crash containment. Treat a slow report as a finding: split the test, move it

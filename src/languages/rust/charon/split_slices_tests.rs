@@ -6,6 +6,7 @@ const SOURCE: &[u8] = include_bytes!("../../../../design/charon-trial/split-slic
 const CLAIM: &str = include_str!("../../../../design/charon-trial/split-slices/split.click");
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn charon_split_at_preserves_both_shared_slices_and_original_proofs() {
     assert_eq!(
         SOURCE,
@@ -152,6 +153,7 @@ fn charon_split_at_rejects_forged_declarations_and_tuple_projections() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn charon_split_at_checked_byte_reads_do_not_enumerate_slice_extent() {
     let export = decode(ARTIFACT, "split.rs", SOURCE).unwrap();
     let prepared = super::super::import::prepared_for_test(export).unwrap();

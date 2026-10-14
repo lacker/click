@@ -5,11 +5,11 @@
 # therefore decides no proof verdict.
 #
 # The gate is budgeted per test: a test belongs in it only if it takes under
-# about two seconds while the gate runs tests in parallel. Anything slower is
+# half a second while the gate runs tests in parallel. Anything slower is
 # `#[ignore = "nightly: ..."]` and runs in the nightly profile below. A gate
 # test still running after 10 seconds is reported as slow, and after 30 it is
 # killed and fails, so a slow test is named on the change that adds it
-# instead of growing the gate unnoticed. The kill sits 15 times above the
+# instead of growing the gate unnoticed. The kill sits 60 times above the
 # rule: a 60-second kill once failed deep boundary tests at random on a
 # loaded machine.
 [profile.default]

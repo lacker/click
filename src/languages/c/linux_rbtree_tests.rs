@@ -240,6 +240,7 @@ fn toolchain_gate(
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn linux_rbtree_gate_reports_or_refuses_another_compiler() {
     // Another compiler is simulated by recording a different identity.
     let mut other_binary = provenance();
@@ -280,6 +281,7 @@ fn panic_message(result: std::thread::Result<Closure>) -> String {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn linux_rbtree_gate_refuses_a_tampered_closure() {
     let provenance = provenance();
     let archive = fs::read(fixture().join("input-closure.tar.gz")).unwrap();
@@ -487,6 +489,7 @@ fn linux_rbtree_pinned_translation_unit_locks_and_reproduces_its_frontier() {
 /// dependency-closure projection is applied, and the projected unit parses
 /// with the optimizer-promise attributes refused.
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn linux_rbtree_locked_import_loads_offline() {
     let provenance = provenance();
     let layout = import_layout(

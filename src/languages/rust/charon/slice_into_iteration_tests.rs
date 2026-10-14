@@ -7,6 +7,7 @@ const SOURCE: &[u8] = include_bytes!("../../../../design/charon-trial/into-slice
 const CLAIM: &str = include_str!("../../../../design/charon-trial/into-slices/iteration.click");
 
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn charon_slice_into_iter_preserves_actual_typed_state_and_checked_reads() {
     let export = decode(ARTIFACT, "iteration.rs", SOURCE).unwrap();
     for function in export
@@ -66,6 +67,7 @@ fn charon_slice_into_iter_preserves_actual_typed_state_and_checked_reads() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn charon_slice_into_iter_rejects_forged_identity_mutability_and_instantiation() {
     for mutation in 0..12 {
         let mut artifact: TrialArtifact = serde_json::from_slice(ARTIFACT).unwrap();
@@ -238,6 +240,7 @@ fn charon_slice_into_iter_reborrow_requires_matching_pointer_and_metadata() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn charon_slice_into_iter_work_does_not_depend_on_slice_extent() {
     let export = decode(ARTIFACT, "iteration.rs", SOURCE).unwrap();
     let prepared = super::super::import::prepared_for_test(export).unwrap();

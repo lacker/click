@@ -823,7 +823,7 @@ impl CFunctionContractInterface {
             composite_resource_definitions: Vec::new(),
             ordinary_abstract_families: Vec::new(),
             predicate_unfoldings: Vec::new(),
-            recursion_measure: None,
+            recursion_measure: Vec::new(),
         }
     }
 
@@ -900,8 +900,8 @@ impl CFunctionContractInterface {
     }
 
     /// The declared expression `decreases` measure, if the function has one.
-    pub fn recursion_measure(&self) -> Option<&CRankingComponent> {
-        self.recursion_measure.as_ref()
+    pub fn recursion_measure(&self) -> Option<&[CRankingComponent]> {
+        (!self.recursion_measure.is_empty()).then_some(self.recursion_measure.as_slice())
     }
 
     pub(crate) fn contract_requirement_sources(&self) -> &[Option<usize>] {
@@ -1538,8 +1538,8 @@ impl CFunction {
     /// function's semantic identity: a verified rule, and every claim bound
     /// to it, names the function that declared the measure, and a function
     /// that declares none is a different `CFunction`.
-    pub fn with_recursion_measure(mut self, measure: CRankingComponent) -> Self {
-        self.contract_interface.recursion_measure = Some(measure);
+    pub fn with_recursion_measure(mut self, measure: Vec<CRankingComponent>) -> Self {
+        self.contract_interface.recursion_measure = measure;
         self
     }
 

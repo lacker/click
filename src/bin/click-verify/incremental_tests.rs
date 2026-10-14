@@ -98,6 +98,7 @@ fn entered_verification(events: &[VerificationEvent]) -> bool {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn incremental_rejects_unattested_false_theorem_only_sidecars() {
     let project = Project::new();
     project.write("project.click", FALSE_THEOREM);
@@ -121,6 +122,7 @@ fn incremental_rejects_unattested_false_theorem_only_sidecars() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn incremental_verifies_reuses_and_rechecks_theorem_only_sidecars() {
     let project = Project::new();
     project.write("project.click", TRUE_THEOREM);
@@ -151,6 +153,7 @@ fn incremental_verifies_reuses_and_rechecks_theorem_only_sidecars() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn incremental_full_rebuild_attests_matching_requested_theorem_baseline() {
     let project = Project::new();
     project.write("project.click", TRUE_THEOREM);
@@ -215,16 +218,19 @@ fn uncommitted_direct_headers_cannot_attest_false_baselines() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn staged_direct_headers_cannot_attest_false_baselines() {
     check_dirty_header_attestation(false, true);
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn uncommitted_transitive_headers_cannot_attest_false_baselines() {
     check_dirty_header_attestation(true, false);
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn staged_transitive_headers_cannot_attest_false_baselines() {
     check_dirty_header_attestation(true, true);
 }
@@ -240,6 +246,7 @@ fn untracked_headers_cannot_attest_incomplete_baselines() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn attestation_uses_verified_header_snapshot_after_files_change() {
     let project = header_project(true);
     project.commit();
@@ -261,6 +268,7 @@ fn attestation_uses_verified_header_snapshot_after_files_change() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn clean_header_baselines_are_attested_and_reused() {
     let project = header_project(true);
     project.write("cap.h", "#define CAP 1\n");

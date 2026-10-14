@@ -330,6 +330,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn loop_abstraction_and_selected_join_scale_with_index_paths() {
         let mut samples = Vec::new();
         for size in [16usize, 64, 256, 1024] {

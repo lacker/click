@@ -104,6 +104,25 @@ build_directory="${CLICK_CPP_EXPORTER_BUILD_DIR:-target/cpp-exporter}"
 output="$build_directory/click-cpp-exporter"
 temporary="$output.tmp.$$"
 mkdir -p "$build_directory"
+
+# The build takes about 35 seconds and every gate run asks for it, so reuse
+# the last binary when nothing that goes into it has changed: the exporter
+# source, this script, and the toolchain and flags it resolved to.
+stamp="$output.stamp"
+fingerprint="$(
+    {
+        cat tools/cpp-exporter/* "${BASH_SOURCE[0]}"
+        "$clangxx" --version
+        printf '%s\n' "$clangxx" "$clang_cpp" "${CCC_OVERRIDE_OPTIONS:-}" \
+            "${llvm_cxxflags[@]}" "${llvm_ldflags[@]}" "${llvm_libs[@]}" "${llvm_system_libs[@]}"
+    } | cksum
+)"
+if [[ -x "$output" && -f "$stamp" && "$(cat "$stamp")" == "$fingerprint" ]]; then
+    absolute_build_directory="$(cd "$build_directory" && pwd -P)"
+    printf '%s\n' "$absolute_build_directory/click-cpp-exporter"
+    exit 0
+fi
+rm -f "$stamp"
 trap 'rm -f "$temporary"' EXIT
 
 "$clangxx" \
@@ -122,6 +141,7 @@ trap 'rm -f "$temporary"' EXIT
     -o "$temporary"
 mv "$temporary" "$output"
 trap - EXIT
+printf '%s\n' "$fingerprint" > "$stamp"
 
 absolute_build_directory="$(cd "$build_directory" && pwd -P)"
 printf '%s\n' "$absolute_build_directory/click-cpp-exporter"

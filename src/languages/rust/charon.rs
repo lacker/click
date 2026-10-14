@@ -2097,6 +2097,7 @@ mod tests {
         include_str!("../../../design/charon-trial/array-iteration/iteration.click");
 
     #[test]
+    #[ignore = "nightly: 1.7s in the parallel gate"]
     fn charon_shared_array_iteration_keeps_typed_state_and_both_next_edges() {
         let export = decode(ITERATION_ARTIFACT, "iteration.rs", ITERATION_SOURCE).unwrap();
         let mir = export
@@ -2140,6 +2141,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn charon_shared_iteration_rejects_forged_declarations_signatures_and_paths() {
         for mutation in 0..8 {
             let mut artifact: TrialArtifact = serde_json::from_slice(ITERATION_ARTIFACT).unwrap();
@@ -2308,6 +2310,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn charon_shared_iterator_lowering_and_first_read_work_are_independent_of_extent() {
         fn resize(ty: &mut Type, n: u64) {
             if let Type::Reference { pointee, .. } = ty {
@@ -2932,6 +2935,7 @@ mod tests {
     const CHUNK_SOURCE: &[u8] = include_bytes!("../../../design/charon-trial/chunks/chunks.rs");
 
     #[test]
+    #[ignore = "nightly: 0.5s in the parallel gate"]
     fn charon_chunk_models_check_resolved_identity_and_signature() {
         for mutation in 0..7 {
             let mut artifact: TrialArtifact = serde_json::from_slice(CHUNK_ARTIFACT).unwrap();
@@ -3132,6 +3136,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn charon_chunk_metadata_work_is_independent_of_input_length() {
         let export = decode(CHUNK_ARTIFACT, "chunks.rs", CHUNK_SOURCE).unwrap();
         let prepared = super::super::import::prepared_for_test(export).unwrap();
@@ -3450,6 +3455,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn charon_array_index_bounds_remain_checked_after_normalization() {
         let mut export = decode(ARRAY_ARTIFACT, "arrays.rs", ARRAY_SOURCE).unwrap();
         let mir = export
@@ -3593,6 +3599,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn charon_borrowed_loop_rejects_missing_guard_cleanup() {
         let mut export = decode(
             include_bytes!("../../../design/charon-trial/borrowed-loop/loop.ullbc"),
@@ -3644,6 +3651,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 2.1s in the parallel gate"]
     fn charon_trial_checked_authority_rejects_duplicate_move_drop_and_missing_cleanup() {
         let original = decode(ARTIFACT, "trial.rs", SOURCE).unwrap();
         for corruption in 0..4 {

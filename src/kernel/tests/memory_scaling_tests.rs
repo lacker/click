@@ -759,6 +759,7 @@ fn a_store_beside_fields_of_one_heap_object_is_linear_in_the_cached_cells() {
 /// work: an earlier call is never re-examined. The sizes use disjoint
 /// variables, so no snapshot or memo is shared between them.
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn consecutive_reallocating_calls_cost_the_same_each() {
     const CALLS: [usize; 4] = [16, 64, 256, 1024];
     let external = |variable: u64| Pointer {
@@ -1202,6 +1203,7 @@ fn a_call_records_kept_members_without_visiting_unrelated_residual_resources() {
 /// since the callee's footprint shares that block and only the caller's
 /// ownership separates the member from it.
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn a_call_records_kept_members_in_work_linear_in_the_aliasing_members() {
     let mut produced = Vec::new();
     let mut checked = Vec::new();
@@ -1430,6 +1432,7 @@ fn wide_range_membership_ignores_unrelated_index_bounds() {
 /// walk across the call asks the same question about the same kept range,
 /// and the repeats cost a keyed lookup, however many facts the proof holds.
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn a_kept_range_base_equality_is_proved_once_per_fact_set() {
     const KEPT: u64 = 6_000_000;
     const ACCESS: u64 = 6_100_000;
@@ -1642,6 +1645,7 @@ fn wide_order_walk_ignores_uint64_bounds_of_other_indices() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn unsigned_order_walk_ignores_unsigned_bounds_of_other_indices() {
     let variable = |id: u64| Bitvector32Term::Variable(Variable(97_100 + id));
     let (x, n) = (variable(0), variable(1));

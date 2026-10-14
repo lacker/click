@@ -131,6 +131,7 @@ fn direct_loop_guard_rejects_changed_mutex_address() {
     );
 }
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn direct_loop_guard_lookup_ignores_unrelated_mutexes() {
     let mut measurements = Vec::new();
     for size in [16, 64, 256, 1024] {

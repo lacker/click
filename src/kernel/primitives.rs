@@ -5028,7 +5028,10 @@ pub struct CFunctionContractInterface {
     /// is lowered exactly as a `requires` is, in the function-contract
     /// elaboration context, so it names no state of its own and the kernel
     /// picks the two states it is read at.
-    pub(crate) recursion_measure: Option<CRankingComponent>,
+    ///
+    /// A lexicographic measure has several components, ranked as a loop's
+    /// tuple is; an empty list declares no expression measure.
+    pub(crate) recursion_measure: Vec<CRankingComponent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -5845,8 +5848,8 @@ pub enum CFunctionTerminationMeasure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CRecursionAnchor {
     pub(super) function: String,
-    pub(super) component: CRankingComponent,
-    pub(super) measure: CRankingMeasureValue,
+    pub(super) components: Vec<CRankingComponent>,
+    pub(super) measure: Vec<CRankingMeasureValue>,
     pub(super) entry_obligations: Vec<ProofObligation>,
 }
 
@@ -5855,12 +5858,12 @@ impl CRecursionAnchor {
         &self.function
     }
 
-    pub(super) fn measure(&self) -> &CRankingMeasureValue {
+    pub(super) fn measure(&self) -> &[CRankingMeasureValue] {
         &self.measure
     }
 
-    pub(super) fn component(&self) -> &CRankingComponent {
-        &self.component
+    pub(super) fn components(&self) -> &[CRankingComponent] {
+        &self.components
     }
 
     pub(super) fn entry_obligations(&self) -> &[ProofObligation] {
@@ -5872,8 +5875,8 @@ impl CRecursionAnchor {
     /// The certified [`CFunction`] is what a judgment has in hand, and its
     /// interface is where the anchor's component was read from, so comparing
     /// both is what binds an anchor to one declared measure of one function.
-    pub(super) fn ranks(&self, function: &str, measure: Option<&CRankingComponent>) -> bool {
-        self.function == function && measure == Some(&self.component)
+    pub(super) fn ranks(&self, function: &str, measure: Option<&[CRankingComponent]>) -> bool {
+        self.function == function && measure == Some(self.components.as_slice())
     }
 }
 

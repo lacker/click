@@ -2246,7 +2246,11 @@ pub(super) fn finish_ordered_proof<'a>(
                         }
                         outcome_proof =
                             outcome_proof.map(|proof| proof.at_source_tactic(*source_index));
-                        let _timing = crate::instrumentation::enabled().then(|| {
+                        // Match TacticTiming's normal constructor: the implicit
+                        // contract closer has no selectable written source site.
+                        let _timing = (*source_index != usize::MAX
+                            && crate::instrumentation::enabled())
+                        .then(|| {
                             let (tactic_name, tactic_class) =
                                 post_execution_tactic_timing(post_tactic);
                             if crate::instrumentation::starts_enabled() {

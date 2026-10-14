@@ -7618,6 +7618,7 @@ mod borrow_partition_tests {
     }
 
     #[test]
+    #[ignore = "nightly: 3.1s in the parallel gate"]
     fn borrow_partition_query_does_not_scan_unrelated_resources_or_history() {
         let mut samples = Vec::new();
         let mut admission_samples = Vec::new();

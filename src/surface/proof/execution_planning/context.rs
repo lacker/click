@@ -1118,6 +1118,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 6.5s in the parallel gate"]
     fn path_certificate_merge_work_is_bounded_by_its_input_steps() {
         let mut samples = Vec::new();
         for leaves in [4usize, 64, 1024] {

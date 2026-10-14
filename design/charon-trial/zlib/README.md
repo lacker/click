@@ -142,13 +142,17 @@ ranking invariants. Bounds for each lane are stated explicitly in the original
 buffer's native coordinates; they supply read authority without a generated
 processed counter or verifier changes.
 
-**This draft does not verify and adds no C checksum result.** Its scalar tail
-stops at the first-byte `viewable(buf[0u64..1u64])` construction. The kernel's
-native view checker accepts that goal in the live proof context. `simp`
-selects a derivation containing 71 premises, then its source-spelling stage
-refuses the selection at the existing 64-premise limit, before generating a
-transport proof. Reduce the selected dependencies or use a checked explicit
-transport with the relevant premises; do not increase the presentation limit.
+**This draft does not verify and adds no C checksum result.** Bounded
+selected-premise reduction now gets past the scalar tail's first-byte
+`viewable(buf[0u64..1u64])` construction, which previously selected 71 premises
+and exceeded the unchanged 64-premise source-spelling limit. Each discarded
+chunk is tested by the existing kernel against just the retained selection;
+checking the resulting source certificate still validates every cited fact.
+The actual original `adler += *buf++` read then reports missing held byte-read
+authority. The pure viewability facts accepted before the read do not grant
+new resources. The [tracked regression](../../../bugs/zlib-repeated-tail-loses-native-read-authority.md)
+records this next frontier; complete it before claiming the scalar-tail or
+repeated-block checksum result.
 
 To reproduce in a throwaway copy retaining this directory's relative imports,
 copy the draft to `repeated.click`, copy `short-memory.click.import.json` and its

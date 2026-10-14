@@ -717,6 +717,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 2.6s in the parallel gate"]
     fn metadata_covers_every_recursive_variant_before_profile_selection() {
         let function = corpus();
         let sources = BTreeSet::from(["fixture.cpp".into()]);

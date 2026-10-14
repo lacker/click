@@ -104,6 +104,7 @@ fn assert_constant_plus_log_growth(what: &str, samples: &[(usize, usize)], slope
 }
 
 #[test]
+#[ignore = "nightly: 3.8s in the parallel gate"]
 fn private_local_copy_ignores_unrelated_resources() {
     for pointer_copy in [false, true] {
         for address_backed in [false, true] {
@@ -584,6 +585,7 @@ fn unmatched_instance_body_views_ignore_unrelated_instances() {
 /// The same publication grows with the instance's own body: one evaluation
 /// of each owned clause, and nothing more.
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn unmatched_instance_body_views_are_linear_in_the_body() {
     // Smaller than `SIZES`: the charged work is linear in the body, but the
     // wall time of publishing a body of 1024 owned cells is tens of seconds
@@ -733,6 +735,7 @@ fn nested_composite_body_views_ignore_unrelated_instances() {
 /// The same publication grows with the child's body: one expansion of the
 /// owned composite, and nothing more.
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn nested_composite_body_views_are_linear_in_the_child_body() {
     let mut samples = Vec::new();
     for size in SIZES {
@@ -1745,6 +1748,7 @@ fn a_store_forgets_a_folded_instance_cell_it_does_not_open() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn shared_view_offset_alias_lookup_is_indexed_and_preserves_occurrences() {
     let base = symbolic_base(TARGET_HEAP);
     let alias = symbolic_base(2 * TARGET_HEAP);

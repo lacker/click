@@ -4946,6 +4946,7 @@ fn offset_resolution_accepts_exact_index_equalities_at_each_width() {
 
 #[cfg(test)]
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn interior_base_alias_frames_only_distinct_objects_and_is_indexed() {
     let base = Pointer {
         block: PointerBlock::Heap(920_000),

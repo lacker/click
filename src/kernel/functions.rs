@@ -8728,7 +8728,7 @@ fn prepare_verified_function_call<'a>(
         // the two states being compared are readings of one declared object.
         // An interface applied under this name that declares a different
         // measure is refused rather than ranked by the wrong one.
-        if contract_interface.recursion_measure() != Some(anchor.component()) {
+        if contract_interface.recursion_measure() != Some(anchor.components()) {
             obligations.push(
                 ProofObligation::verification_condition(false_equals_true_proposition())
                     .with_context(format!(

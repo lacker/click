@@ -1359,6 +1359,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.5s in the parallel gate"]
     fn widened_unsigned_sum_bounds_are_sound_and_flat_in_unrelated_facts() {
         let a = Bitvector32Term::Variable(Variable(97001));
         let b = Bitvector32Term::Variable(Variable(97002));

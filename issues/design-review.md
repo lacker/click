@@ -276,16 +276,6 @@ Proposed fix: a specification `bool`.
 
 Decision: fix (maintainer, 2026-10-13): a specification `bool`.
 
-### L3. Two conversion families
-
-Today: `(uint32)x` keeps the low bits, `to_uint32(x)` needs a range proof,
-and implicit return conversion follows a third rule
-(`docs/reference/language/index.md`).
-
-Proposed fix: one checked conversion family plus an explicit wrapping one.
-
-Decision: fix (maintainer, 2026-10-13): a C cast `(uint32)x` wraps as in GCC and Clang, `to_uint32(x)` is the checked conversion, and implicit return conversion follows one of the two.
-
 ### L4. Rust and C++ specs still read like C
 
 Today: a Rust sidecar's pure function takes `bytes: const uint8*, end:

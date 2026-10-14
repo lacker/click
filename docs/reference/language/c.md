@@ -454,8 +454,9 @@ Signed overflow in arithmetic remains undefined behavior and is refused.
 A conversion is its operand when the operand is inside the destination range;
 see [Supported expressions and statements](#supported-expressions-and-statements)
 for how proofs use that.
-Casts written in a Click specification keep their checked meaning: a narrowing
-cast in a contract owes the destination range in the source's type.
+A cast written in a Click specification is the same conversion: `(uint8)x` is
+`x` modulo 256 there too. A specification states a checked conversion, which
+owes the destination range, with `to_uint8(...)` and its relatives.
 
 An uncast conversion between pointers to distinct one-byte character types,
 `char *`, `signed char *` (`int8 *`), and `unsigned char *` (`uint8 *`), with

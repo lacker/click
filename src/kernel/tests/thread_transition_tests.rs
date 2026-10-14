@@ -1560,6 +1560,7 @@ fn shared_reader_completion_right_is_consumed_once_on_its_own_path() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn joining_one_of_many_shared_readers_touches_only_its_share_branch() {
     let function = c_function(
         CType::Int32,

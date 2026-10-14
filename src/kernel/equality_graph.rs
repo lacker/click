@@ -3665,6 +3665,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.0s in the parallel gate"]
     fn late_typed_load_merges_scale_with_existing_storage_relative_bridges() {
         let memory = crate::kernel::intern_c_memory(CMemory::new());
         let mut costs = Vec::new();

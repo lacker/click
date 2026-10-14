@@ -1080,6 +1080,7 @@ fn authoritative_memory_projection_scales_with_used_members_not_unrelated_frames
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn checked_transition_projection_ignores_unrelated_caller_frame() {
     let pointer = Pointer {
         block: PointerBlock::Concrete("local:transition:data".to_string()),
@@ -2085,6 +2086,7 @@ fn selected_callback_does_not_visit_unrelated_functions() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn callback_fact_lookup_scales_with_calls_not_unrelated_supported_facts() {
     fn callback_fact(name: &str, pointer: Pointer, state: CState) -> Proposition {
         Proposition::Predicate {

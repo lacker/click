@@ -150,6 +150,7 @@ fn borrowed_sources(sources: &[(String, String)]) -> Vec<(&str, &str)> {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn natural_goto_exits_retain_checked_paths_and_expand() {
     for (filename, function) in [
         ("natural_goto_exit_label", "count_down"),
@@ -182,6 +183,7 @@ fn natural_goto_exits_retain_checked_paths_and_expand() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn natural_goto_mixed_return_retains_paths_and_expands() {
     let (click, sources) = loop_fixture("natural_goto_forward_exit_and_return");
     let sources = borrowed_sources(&sources);
@@ -547,6 +549,7 @@ fn loop_preservation_have_resolves_entry_label_and_expands() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn pointer_loop_increment_emits_checked_equality_proof() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/c_pointer_local_loop_invariant.md");
@@ -751,6 +754,7 @@ fn explicit_swap_loop_transports_both_entry_bounds_and_expands() {
 }
 
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn explicit_swap_loop_rejects_missing_entry_bound_transports() {
     let (c, missing_transports) = explicit_swap_loop_fixture(false);
     assert!(!missing_transports.contains("transport("));
@@ -816,6 +820,7 @@ fn explicit_invariant_body_checks_expands_and_rejects_incomplete_proofs() {
 /// only, and expansion prints exactly those steps: split the bundle, introduce
 /// the definedness guard, cite the body's fact, and close the ranking pair.
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn guarded_member_closure_expands_to_intro_inside_both() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/close_invariants_closes_a_guarded_member_by_intro.md");
@@ -874,6 +879,7 @@ fn explicit_invariant_body_quantified_bubble_census() {
 
 /// The old/current snapshot body verifies and expands on the ordinary stack.
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn explicit_invariant_body_copy3_checks_and_expands() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/copy3_array_demo.md");
     let source = std::fs::read_to_string(&path).unwrap();
@@ -1441,6 +1447,7 @@ fn frontier_loop_binding_replaces_scope_without_merging_declarations() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers() {
     let c_source = r#"
             int32 nested_count() {
@@ -2270,6 +2277,7 @@ fn whole_claim_expansion_reconstructs_nested_decided_branch_and_loop_match() {
 }
 
 #[test]
+#[ignore = "nightly: 1.3s in the parallel gate"]
 fn loop_exit_duplicate_invariants_verify_and_reject_false_claims() {
     let c = r#"int32 count(int32 n) {
         int32 i = 0;
@@ -2471,6 +2479,7 @@ fn loop_return_closers_expand_in_their_preservation_arms() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn nested_loop_return_keeps_the_inner_arms_closer() {
     let c = "int32 f(int32 n) { while (1) { while (1) { return 7; } } }";
     let click = r#"
@@ -2543,6 +2552,7 @@ fn loop_return_closers_do_not_require_distinct_result_values() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn loop_return_inside_branch_retains_its_fact_ancestry() {
     let c = "int32 f(int32 n) { if (n > 0) { int32 i = 0; while (i < n) { if (i == 2) return 7; i++; } return i; } else { return 7; } }";
     let click = r#"
@@ -2643,6 +2653,7 @@ fn byte_pointer_view_alias_rewrites_refuse_missing_authority_and_expand() {
 // Loop resource selection must use the same checked pointer-alias graph as
 // calls; an abstract outer cursor is not the input's syntactic block.
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn nested_loop_cursor_alias_retains_enclosing_input_view() {
     let (click, sources) = loop_fixture("nested_loop_cursor_view_authority");
     verify_c0_sources(&click, &borrowed_sources(&sources)).unwrap();

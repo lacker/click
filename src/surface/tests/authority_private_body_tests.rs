@@ -517,6 +517,7 @@ fn authority_control_wrapper_requires_its_counter_memory() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn authority_control_survives_balanced_helper_calls() {
     let c_source = r#"
         void retain(int32* p) { p[0] = p[0] + 1; }

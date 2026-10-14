@@ -560,9 +560,9 @@ returns preserve the `uint32` type tag. Scalar narrowing in C is GCC's
 modulo 2^N conversion at every boundary and adds no obligation; into a one- or
 two-byte type it yields a `MachineIntegerCast` node, filed with the
 destination's range, which is the operand's carrier once the operand's range
-is known (`narrowed_cast_identity`). A specification's narrowing cast adds
-proof obligations for the target range unless the current path already proves
-it. `int8` occupies one byte with
+is known (`narrowed_cast_identity`). A specification's cast is the same
+modular conversion; a checked conversion is written `to_T(...)` and owes the
+destination range. `int8` occupies one byte with
 signed range `-128..127`. `int16` occupies two bytes with
 signed range `-32768..32767`; `uint16` occupies two bytes with range `0..65535`.
 Scalar `int64` and `uint64` retain their signedness through arithmetic,

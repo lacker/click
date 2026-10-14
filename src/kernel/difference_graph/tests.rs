@@ -150,6 +150,7 @@ fn a_clone_is_a_branch() {
 /// complete for these facts). The general decision, where it also answers,
 /// agrees.
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn decisions_hold_in_every_model_and_are_complete() {
     let variables = (0..3).map(variable).collect::<Vec<_>>();
     let mut pool = variables.clone();

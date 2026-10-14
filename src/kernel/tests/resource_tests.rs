@@ -701,6 +701,7 @@ fn paired_memory_consumption_indexes_disjoint_spans_at_one_base() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn indexed_memory_lookup_ignores_unrelated_pointer_parameters() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
@@ -895,6 +896,7 @@ fn owned_fragment_reservation_checks_aliases_gaps_and_linear_consumption() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn owned_fragment_reservation_scales_with_fragments_not_ambient_memory() {
     let base = Pointer::symbolic(Variable(862_010));
     let fact = |start: u32, end: u32| {
@@ -3500,6 +3502,7 @@ fn resource_join_drops_projection_when_memory_footprints_diverge() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn resource_common_descendant_visits_only_branch_local_changes() {
     let left_path = CResourceFact::own_token("left_path".to_string(), Vec::new());
     let right_path = CResourceFact::own_token("right_path".to_string(), Vec::new());
@@ -3640,6 +3643,7 @@ fn resource_common_descendant_visits_only_branch_local_changes() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn resource_memory_block_and_interval_indexes_update_logarithmically() {
     for size in [16_usize, 64, 256, 1024, 4096] {
         let context = ResourceContext::new().unchecked_with_facts((0..size).map(|index| {
@@ -3959,6 +3963,7 @@ fn inserting_a_disjoint_concrete_range_uses_interval_neighbors() {
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn installing_a_certified_resource_group_does_not_recheck_internal_pairs() {
     let base = Pointer {
         block: "certified_group".into(),
@@ -6427,6 +6432,7 @@ fn observed_wide_footprint_and_unknown_loop_barrier_are_invalidated() {
 }
 
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn memory_invalidation_scales_with_affected_intervals_and_barrier_output() {
     let mut samples = Vec::new();
     for unrelated_count in [4_usize, 16, 64, 256, 1024] {
@@ -6566,6 +6572,7 @@ fn memory_invalidation_scales_with_affected_intervals_and_barrier_output() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn supported_projection_interval_updates_scale_with_index_height() {
     let mut samples = Vec::new();
     for unrelated_count in [4_usize, 16, 64, 256, 1024] {
@@ -7220,6 +7227,7 @@ fn owned_pieces_over_displaced_bases_rejoin_where_they_abut() {
 /// slot. The returned scalar and preserved bytewise padding must rejoin even
 /// when the object address is symbolic.
 #[test]
+#[ignore = "nightly: 2.8s in the parallel gate"]
 fn returned_scalar_and_bytewise_padding_rejoin_over_symbolic_objects() {
     let mut samples = Vec::new();
     for size in [8usize, 32, 128, 512] {

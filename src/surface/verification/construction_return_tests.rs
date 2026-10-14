@@ -161,6 +161,7 @@ fn changed_unselected_body_invalidates_direct_and_transitive_carrier_effects() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn native_construction_return_contracts_forward_hidden_storage() {
     let sources = context(true);
     let (verified, environment) =

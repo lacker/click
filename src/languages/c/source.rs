@@ -2697,6 +2697,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn object_macro_recursion_and_amplification_are_bounded() {
         let source = "#define A B\n#define B A\nA\n";
         let error = expand_includes("main.c", &BTreeMap::from([("main.c", source)])).unwrap_err();

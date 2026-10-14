@@ -225,11 +225,13 @@ move; the step census reaches zero.
 
 Progress: `simp` proves a constructor disequality over
 a call-produced field, and a count's definedness once a zero summand is
-removed, and a `defined(..)` that carries a read's definedness. The remaining
-cases are 3 `ContextualAtomic` mdtests (`shared_heap_*` after
-`parent_read_payload`, whose constructor argument is an entry-snapshot value
-synthesis cannot yet spell) and 1 example `And` (`owned-string`), whose
-add-overflow-and-read requirement has no spelling yet.
+removed, and a `defined(..)` that carries a read's definedness; premise
+spelling names a call's `old(..)` value at a recorded statement entry. The
+remaining cases are 2 `ContextualAtomic` mdtests
+(`shared_heap_population_lifecycles`, whose fact a hand-written
+`at(statement(N).entry, ..)` already spells but premise spelling does not yet
+find) and 1 example `And` (`owned-string`), whose add-overflow-and-read
+requirement has no spelling yet.
 
 ### 4. Check expansion cold
 

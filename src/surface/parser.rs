@@ -3016,15 +3016,45 @@ impl Parser {
                     // `decreases n;`, `decreases list(node);`, and
                     // `decreases sub;` are the same syntax here; declared
                     // resource expansion decides which measure each one is.
-                    let measure = self.parse_contract_expression()?;
-                    self.expect(Token::Semicolon)?;
-                    decreases = Some(CFunctionDecrease::Unresolved(
-                        substitute_contract_expression(
-                            &measure,
-                            &contract_let_substitutions(&contract_lets),
-                        )
-                        .map_err(|message| self.error(message))?,
-                    ));
+                    // A parenthesized list of two or more components is a
+                    // lexicographic tuple, the loop slot's syntax; a single
+                    // parenthesized expression stays one expression.
+                    let substitutions = contract_let_substitutions(&contract_lets);
+                    let mut components = Vec::new();
+                    if self.peek() == Some(&Token::LParen) {
+                        let start = self.position;
+                        self.position += 1;
+                        let first = self.parse_contract_expression()?;
+                        if self.peek() == Some(&Token::Comma) {
+                            components.push(first);
+                            while self.peek() == Some(&Token::Comma) {
+                                self.position += 1;
+                                components.push(self.parse_contract_expression()?);
+                            }
+                            self.expect(Token::RParen)?;
+                        } else {
+                            self.position = start;
+                        }
+                    }
+                    if components.is_empty() {
+                        let measure = self.parse_contract_expression()?;
+                        self.expect(Token::Semicolon)?;
+                        decreases = Some(CFunctionDecrease::Unresolved(
+                            substitute_contract_expression(&measure, &substitutions)
+                                .map_err(|message| self.error(message))?,
+                        ));
+                    } else {
+                        self.expect(Token::Semicolon)?;
+                        decreases = Some(CFunctionDecrease::Lexicographic(
+                            components
+                                .iter()
+                                .map(|component| {
+                                    substitute_contract_expression(component, &substitutions)
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                                .map_err(|message| self.error(message))?,
+                        ));
+                    }
                 }
                 Some("owns") => {
                     self.position += 1;
@@ -8846,7 +8876,7 @@ impl Parser {
                 }),
             _ => None,
         };
-        let mut indexed_scalar_field: Option<(String, u32, CType)> = None;
+        let mut indexed_scalar_field: Option<CType> = None;
         let mut scalar_range_offset = None;
         let mut postfixes = 0;
         while matches!(self.peek(), Some(Token::Arrow | Token::Dot))
@@ -8863,12 +8893,15 @@ impl Parser {
                 })?;
                 let surface_base_before_index = surface_base;
                 dereferences_pointer = false;
-                if let Some(element_width) = struct_array_element_width.or_else(|| {
-                    struct_name
-                        .as_ref()
-                        .and_then(|name| self.struct_layouts.get(name))
-                        .map(|layout| layout.size_bytes())
-                }) {
+                if let Some(element_width) = struct_array_element_width
+                    .filter(|_| struct_name.is_some())
+                    .or_else(|| {
+                        struct_name
+                            .as_ref()
+                            .and_then(|name| self.struct_layouts.get(name))
+                            .map(|layout| layout.size_bytes())
+                    })
+                {
                     let mut indexes = vec![index.clone()];
                     let mut surface_indexes = vec![ContractExpression::CFragment(index.clone())];
                     while struct_array_shape.is_some() && self.peek() == Some(&Token::LBracket) {
@@ -9120,8 +9153,7 @@ impl Parser {
                             | C0Type::Int64(_)
                             | C0Type::UInt64(_)
                     );
-                indexed_scalar_field = scalar_array_field_element(&field)
-                    .map(|(width, ty)| (field_name.clone(), width, ty));
+                indexed_scalar_field = scalar_array_field_element(&field).map(|(_, ty)| ty);
                 (
                     lowered_field_expression(pointer, &field),
                     field.struct_name,
@@ -9192,7 +9224,8 @@ impl Parser {
             struct_array_element_width = next_array_element_width;
             struct_array_shape = next_array_shape;
         }
-        if let Some((_name, element_width, element_type)) = indexed_scalar_field {
+        if let Some(element_type) = indexed_scalar_field {
+            let element_width = element_type.byte_width();
             return Ok(vec![ContractSegment {
                 state: ContractSegmentState::Current,
                 base,
@@ -10226,7 +10259,7 @@ impl Parser {
                 lowered: CExpression::Cast {
                     expression: Box::new(expression),
                     target_type,
-                    integer_mode: crate::kernel::CIntegerCastMode::Standard,
+                    integer_mode: crate::kernel::CIntegerCastMode::CConversion,
                     pointee_struct: None,
                     pointee_volatile: false,
                     pointee_constant: false,

@@ -181,7 +181,7 @@ summarizes, or a recursive call. A `decreases` clause is always one expression, 
 decides which measure it is: an `int32` parameter, a resource application such
 as `list(node)`, a contract or loop resource binder such as `t`, or, on a
 self-recursive function, any pure `int32`, unsigned, or mathematical
-`Integer` expression. Functions
+`Integer` expression, or a parenthesized lexicographic tuple of them. Functions
 and resources share one namespace, so that classification happens after name
 resolution rather than from a keyword; there is no `decreases resource`
 spelling. A function-level measure ranks recursive calls:
@@ -268,9 +268,38 @@ changes — only the carrier the two obligations are stated in. The prelude's
 the C counts into the Integer the measure names. See
 `mdtests/c_decreases_integer_measure_recursion.md`.
 
+A bare parameter of another numeric type is an expression measure as well:
+only an `int32` parameter has the body analysis `decreases n` names, so
+`decreases b` on a `uint32` parameter is ranked by the descent obligations
+above. Euclid's `gcd(b, a % b)` discharges `a % b < b` with the prelude's
+`uint32_remainder_less_than_divisor`
+(`mdtests/c_decreases_unsigned_parameter_recursion.md`, and the negative
+`mdtests/c_decreases_unsigned_parameter_recursion_must_descend.md`).
+
+A self-recursive function may also declare a lexicographic tuple, with the
+loop slot's syntax and rule. Each call owes every component nonnegative, and
+some component strictly below its entry reading with every earlier component
+unchanged. Ackermann's function is ranked by `(m, n)`:
+
+<!-- verified-example: mdtests/c_decreases_lexicographic_recursion.md -->
+```click
+int32 ack(int32 m, int32 n) {
+    decreases (m, n);
+    requires m >= 0;
+    requires n >= 0;
+    ensures result >= 0;
+}
+```
+
+The order of the components is part of the measure
+(`mdtests/c_decreases_lexicographic_recursion_rejects_swapped_order.md`), and
+a later component must stay nonnegative even when an earlier one decreases
+(`mdtests/c_decreases_lexicographic_recursion_rejects_negative_component.md`).
+A tuple, like any expression measure, ranks direct self-recursion only.
+
 The same rule about fixed states applies: a function-level component may not
-mention `old(...)` or `at(...)`, because Click reads the one declared
-component at two states itself.
+mention `old(...)` or `at(...)`, because Click reads each declared component
+at two states itself.
 
 A self-call inside a summarized loop owes the same two obligations. A loop is
 verified as its own judgment, so the descent there is owed by the loop's proof
@@ -503,10 +532,11 @@ loop {
     invariant i >= 0;
 }
 ```
-Function-level numeric measures remain one unchanged `int32` parameter, and a
-recursive edge still passes `measure - K` for a positive constant `K`.
-Mutually recursive functions all declare their corresponding numeric
-parameter. Every variable mentioned by a numeric measure must also remain
+The function-level `decreases <int32 parameter>` analysis still requires the
+parameter to be unchanged, and each recursive edge to pass `measure - K` for
+a positive constant `K`. Mutually recursive functions all declare their
+corresponding numeric parameter. Any other descent, such as `gcd(b, a % b)`,
+is written as an expression or tuple measure on a self-recursive function. Every variable mentioned by a numeric measure must also remain
 unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
 ranked update, so the plan is rejected. Structural measures do not support
@@ -2604,12 +2634,19 @@ Proof observations of a fixed byte range use the selected current snapshot;
 an output guarantee is specific to its function's input buffer. See
 [`modular_byte_output_initialization.md`](https://github.com/clicklang/click/blob/master/mdtests/modular_byte_output_initialization.md).
 
-Contract expressions accept the unsigned narrowing cast `(uint32)x`, including
-`old((uint32)p->value)`. The operand must be
-a current scalar expression, including a pure-function call; put `old(...)`
-or `at(...)` around the whole cast to
-select another snapshot. A 64-to-`uint32` cast retains the low 32 bits, rather
-than requiring the source value to fit. Casts retain their selected memory
+Contract expressions accept integer casts such as `(uint32)x` and `(int8)x`,
+including `old((uint32)p->value)`. A cast is C's conversion, as GCC and Clang
+compute it: the value modulo 2^N of the destination type, defined for every
+operand, so a 64-to-`uint32` cast keeps the low 32 bits
+(`mdtests/a_narrow_specification_cast_is_always_defined.md`). The checked
+conversion, which owes the destination range, is written `to_T(...)` over an
+`Integer` (see [Mathematical integers](#mathematical-integers)). An argument
+to a pure function's machine-integer parameter converts the same way C
+converts a call argument
+(`mdtests/a_pure_function_argument_converts_modulo_its_parameter_type.md`).
+The operand must be a current scalar expression, including a pure-function
+call; put `old(...)` or `at(...)` around the whole cast to select another
+snapshot. Casts retain their selected memory
 snapshot even when the underlying field is subsequently updated.
 
 A contract may also cast an opaque `void *` parameter of the function under
@@ -2698,9 +2735,8 @@ unsigned long left() {
 Here `left_file` aliases the C file containing `state`; its unchanged C wrapper
 calls `bump(&state)`. Ownership is transferred, not recreated on each call.
 The fixture covers repeated calls, reset, and another file's independent
-`state`. An implicit 64-bit integer return conversion to `int` requires proof
-that the value is representable: signed sources need both bounds, unsigned
-sources need the upper bound. This differs from the low-bit `uint32` cast.
+`state`. An implicit 64-bit integer return conversion to `int` converts modulo
+2^32, as GCC and Clang compile it, like the explicit `(int32)` cast.
 
 For a function-local static, include the function name:
 

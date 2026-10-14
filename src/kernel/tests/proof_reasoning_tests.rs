@@ -1101,6 +1101,7 @@ fn equality_graph_queries_do_not_build_the_condition_fact_index() {
 /// one that pins the term. It used to scan every condition fact, uncharged,
 /// on each range-membership and offset-equality query that asked it.
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn exact_signed_constant_is_a_keyed_lookup_among_unrelated_facts() {
     use crate::kernel::assumptions::exact_signed_constant;
 
@@ -8095,6 +8096,7 @@ fn lower_bound_search_ignores_unrelated_facts() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn direct_constant_lookup_ignores_unrelated_condition_facts() {
     let var = |id| Bitvector32Term::Variable(Variable(id));
     for size in [16u64, 64, 256, 1024] {
@@ -8895,6 +8897,7 @@ fn memory_resolution_order_walk_memo_agrees_with_the_full_scan() {
 /// filled by different earlier questions, and each is compared with the
 /// full scan, which reads no index or memo.
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn transport_order_walk_agrees_with_the_full_scan() {
     let mut pool = (0..6)
         .map(|id| Bitvector32Term::Variable(Variable(89_700 + id)))

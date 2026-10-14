@@ -1521,6 +1521,7 @@ fn struct_name_signature_mismatch_reports_direct_error() {
 }
 
 #[test]
+#[ignore = "nightly: 2.2s in the parallel gate"]
 fn observed_cursor_facts_produce_checkable_surface_certificates() {
     let c_source = r#"
         struct input_cursor {
@@ -1716,6 +1717,7 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
 }
 
 #[test]
+#[ignore = "nightly: 3.0s in the parallel gate"]
 fn expanded_read_step_uses_contextual_range_separation() {
     let c_source = r#"
         struct owned_string {
@@ -1925,6 +1927,33 @@ fn branch_continuation_tactics_are_timed_as_source_operations() {
     assert!(
         timed.contains(&("step", 4)) && timed.contains(&("have", 5)),
         "the continuation's `step` and `have` must be timed at their source sites: {timed:?}"
+    );
+}
+
+#[test]
+fn implicit_contract_closer_is_not_a_profile_source_site() {
+    let c_source = "int32 value(void) { return 7; }";
+    let click_source = r#"
+        verifying "value.c";
+        int32 value() { ensures result == 7; } by { execute(); }
+    "#;
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("value.c", c_source)])
+    });
+    verified.expect("the implicit contract closer must still verify");
+    let timed = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::instrumentation::VerificationEvent::TacticFinished { tactic, .. } => {
+                Some(tactic)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(timed.iter().any(|tactic| tactic.tactic_name == "execute"));
+    assert!(
+        timed.iter().all(|tactic| tactic.source_index != usize::MAX),
+        "generated closers cannot be selected in the written source: {timed:?}"
     );
 }
 

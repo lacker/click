@@ -13221,6 +13221,7 @@ fn struct_wide_array_layout_and_size_overflow() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn struct_wide_array_proof_expands_and_reverifies() {
     let c = "struct words { char tag; unsigned long data[3]; }; unsigned long set(struct words *p, unsigned long value) { p->data[1] = value; return p->data[2]; }";
     let proof = "verifying \"wide.c\"; unsigned long set(struct words *p, unsigned long value) { owns p->data[1..2]; views p->data[2..3]; ensures p->data[1] == value by auto; ensures result == old(p->data[2]) by auto; }";
@@ -13517,6 +13518,7 @@ fn c0_const_pointer_field_address_equality_does_not_authenticate_loaded_domain()
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn c0_const_pointer_fields_store_proof_expands_and_reverifies() {
     let c = "struct holder { const int *value; }; const int *set(struct holder *h, const int *p) { h->value = p; return h->value; }";
     let proof = "verifying \"fields.c\"; const int *set(struct holder *h, const int *p) { owns h->value; ensures result == p by auto; ensures h->value == p by auto; }";

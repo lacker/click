@@ -3071,6 +3071,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn guard_transitions_touch_only_logarithmic_index_paths() {
         let assumptions = PureFactContext::new();
         let mut samples = Vec::new();
@@ -3246,6 +3247,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn lifetime_transitions_do_not_scan_unrelated_owners() {
         let assumptions = PureFactContext::new();
         let mut samples = Vec::new();
@@ -3481,6 +3483,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn automatic_storage_query_does_not_scan_unrelated_initializations() {
         let mut samples = Vec::new();
         for size in [16usize, 64, 256, 1024] {
@@ -3811,6 +3814,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn abstract_reservation_queries_do_not_scan_other_mutexes_in_one_object() {
         use super::super::*;
         let base = mutex(91_202);
@@ -3852,6 +3856,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn reservation_index_queries_same_object_in_logarithmic_work() {
         use super::super::*;
         let assumptions = PureFactContext::new();
@@ -4116,6 +4121,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn initialization_storage_lookup_is_indexed_within_one_object() {
         use super::super::*;
         let base = Pointer {
@@ -4375,6 +4381,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.2s in the parallel gate"]
     fn retirement_alias_index_skips_unrelated_objects_at_multiple_sizes() {
         use super::super::*;
         let mut samples = vec![];
@@ -4476,6 +4483,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn storage_retirement_lookup_ignores_unrelated_mutex_blocks() {
         let mut samples = Vec::new();
         let assumptions = PureFactContext::new();

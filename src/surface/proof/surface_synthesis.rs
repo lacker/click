@@ -2562,7 +2562,7 @@ fn synthesize_uint32_operand(expression: ContractExpression) -> Option<ContractE
         expression => Some(ContractExpression::CFragment(CExpression::Cast {
             expression: Box::new(contract_expression_to_c_fragment(&expression)?),
             target_type: CType::UInt32,
-            integer_mode: crate::kernel::CIntegerCastMode::Standard,
+            integer_mode: crate::kernel::CIntegerCastMode::CConversion,
             pointee_struct: None,
             pointee_volatile: false,
             pointee_constant: false,
@@ -3007,7 +3007,7 @@ fn synthesize_surface_bitvector(
                     )?,
                 )?),
                 target_type: CType::Int64,
-                integer_mode: crate::kernel::CIntegerCastMode::Standard,
+                integer_mode: crate::kernel::CIntegerCastMode::CConversion,
                 pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
@@ -3027,7 +3027,7 @@ fn synthesize_surface_bitvector(
                     )?,
                 )?),
                 target_type: CType::UInt64,
-                integer_mode: crate::kernel::CIntegerCastMode::Standard,
+                integer_mode: crate::kernel::CIntegerCastMode::CConversion,
                 pointee_struct: None,
                 pointee_volatile: false,
                 pointee_constant: false,
@@ -3921,15 +3921,43 @@ fn synthesize_surface_pointer_expression(
     {
         return Some(ContractExpression::CFragment(pointer));
     }
-    if !parameter_binding.arguments.iter().any(|argument| {
+    if parameter_binding.arguments.iter().any(|argument| {
         matches!(
             argument,
             CExpression::Value(CValue::Pointer(base)) if base.block == pointer.block
         )
-    }) {
-        return None;
+    }) && let Some(offset) = synthesize_surface_pointer_offset(
+        &pointer.offset,
+        parameter_binding,
+        state,
+        bound_variables,
+    ) {
+        return Some(offset);
     }
-    synthesize_surface_pointer_offset(&pointer.offset, parameter_binding, state, bound_variables)
+    synthesize_snapshot_pointer_expression(pointer, parameter_binding, bound_variables)
+}
+
+/// The `at(<selector>, e)` spelling of a pointer the current state cannot
+/// name but the snapshot state can, such as a call's `old(p->kid)` read at
+/// that call's entry. The snapshot scope is cleared for the inner synthesis,
+/// so the snapshot spelling never nests.
+fn synthesize_snapshot_pointer_expression(
+    pointer: &Pointer,
+    parameter_binding: ParameterBinding<'_>,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ContractExpression> {
+    let (snapshot, selector) = SYNTHESIS_SNAPSHOT_STATE.with(|slot| slot.borrow().clone())?;
+    let _cleared = SynthesisSnapshotScope(SYNTHESIS_SNAPSHOT_STATE.with(|slot| slot.replace(None)));
+    let expression = synthesize_surface_pointer_expression(
+        pointer,
+        parameter_binding,
+        &snapshot,
+        bound_variables,
+    )?;
+    Some(ContractExpression::At {
+        selector,
+        expression: Box::new(expression),
+    })
 }
 
 /// The source spelling of an algebraic value: a held instance's model field

@@ -423,8 +423,8 @@ uses variable-length contracts with existing memory ranges, as `read` and
 `write` in "Signatures in Rust syntax" do. A range bounded by a `usize` has 64-bit bounds, so the contract states no
 limit on the length. `.len()` alone needs no byte resource. General slice returns, range subscripts, indexed compound assignment, and
 other slice element types remain unsupported. Supported shared slice splitting
-is described below. Normal numeric contract casts now include
-`(int32)`, `(uint32)`, `(int64)`, and `(uint64)`.
+is described below. Numeric contract casts include `(int32)`, `(uint32)`,
+`(int64)`, and `(uint64)`, and like Rust `as` they convert modulo 2^N.
 Use signed 64-bit widening to state full-width u32 addition guards, for
 example `((int64)x + (int64)y) <= 4294967295i64`.
 

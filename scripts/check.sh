@@ -33,20 +33,24 @@ if [[ "${1:-}" == "--ci-quality" ]]; then
 fi
 
 # The gate has a ten-minute budget, locally and in CI
-# (`docs/internals/testing.md`). A test that takes more than a few seconds is
+# (`docs/internals/testing.md`). A test that takes half a second or more is
 # `#[ignore = "nightly: ..."]`, an example that does is in `NIGHTLY` in
 # `tests/examples.rs`, and `click audit` runs in the import tests only under
 # `CLICK_NIGHTLY`. `--nightly` runs all of it with no budget.
 #
 # The two fixture harnesses are single tests that each verify a whole corpus
-# on every core, so they run one at a time. Every other test binary holds
-# ordinary tests and runs with the unit tests, in parallel.
+# on every core, so they run one at a time. Every other test, including the
+# ordinary tests beside `example_projects` in the examples binary, runs with
+# the unit tests, in parallel: the fixture run's `--no-capture` would run
+# them one at a time.
 fixture_targets=(--test mdtests --test examples)
+fixture_filter='binary(mdtests) | (binary(examples) & test(=example_projects))'
 unit_targets=(
     --lib --bin click --test documentation --test condition_transport_api
     --test compiler_import --test cpp_import --test rust_import
-    --test bitcoin_core_money_range --test libcxx_span
+    --test bitcoin_core_money_range --test libcxx_span --test examples
 )
+unit_filter='not (binary(examples) & test(=example_projects))'
 
 if [[ "${1:-}" == "--ci-shard" ]]; then
     artifacts="${2:?usage: scripts/check.sh --ci-shard ARTIFACTS SUITE [SHARD/TOTAL]}"
@@ -56,7 +60,7 @@ if [[ "${1:-}" == "--ci-shard" ]]; then
     needs_charon=""
     case "$suite" in
         unit)
-            filter='not (binary(mdtests) | binary(examples) | binary(rust_import))'
+            filter='not (binary(mdtests) | binary(rust_import) | (binary(examples) & test(=example_projects)))'
             nextest_args=(--partition "hash:$partition")
             ;;
         rust)
@@ -73,12 +77,9 @@ if [[ "${1:-}" == "--ci-shard" ]]; then
             ;;
         examples)
             # The example-project harness takes every n-th example by
-            # `EXAMPLE_PARTITION`; the binary's other tests run on the first
-            # shard only.
-            filter='binary(examples)'
-            if [[ "$partition" != 1/* ]]; then
-                filter='binary(examples) & test(=example_projects)'
-            fi
+            # `EXAMPLE_PARTITION`; the binary's other tests run in the unit
+            # shards.
+            filter='binary(examples) & test(=example_projects)'
             nextest_args=(--no-capture)
             export EXAMPLE_PARTITION="$partition"
             ;;
@@ -157,6 +158,9 @@ if [[ "${1:-}" == "--audit" ]]; then
     export CLICK_CPP_EXPORTER
     CLICK_CPP_EXPORTER="$(scripts/build-cpp-exporter.sh)"
     cargo build --release --bin click
+    # Unlike the examples gate, this job starts with no generated native C
+    # lock or preprocessed sources. Rust examples use checked-in offline locks.
+    target/release/click import lock examples/label-build-flags/label.click
     exec target/release/click audit --keep-going --time-limit 180m \
         --exclude examples/basic-cpp \
         .
@@ -199,7 +203,6 @@ if [[ -n "$ci_artifacts" ]]; then
     CLICK_REQUIRE_FRONTENDS=1
 fi
 skipped_frontends=()
-unit_filter=()
 frontend_missing() {
     local name="$1" reason="$2" suites="$3"
     if [[ -n "${CLICK_REQUIRE_FRONTENDS:-}" ]]; then
@@ -245,11 +248,11 @@ else
         "tests/cpp_import.rs, tests/bitcoin_core_money_range.rs, tests/libcxx_span.rs, C++ mdtests and examples"
     drop_test_targets cpp_import bitcoin_core_money_range libcxx_span
     # The `click` command tests that run a C++ mdtest through the exporter.
-    unit_filter=(--filterset 'not (binary_id(clicklang::bin/click) & (
+    unit_filter+=' & not (binary_id(clicklang::bin/click) & (
         test(=audit::tests::cpp_mdtest_audit_inventories_imported_semantics)
         | test(=expand::tests::cpp_mdtest_expansion_rechecks_the_imported_source)
         | test(=expand::tests::a_line_in_a_call_outcome_arm_selects_its_smart_tactic)
-        | test(=profile::tests::cpp_mdtests_profile_the_compiler_imported_source)))')
+        | test(=profile::tests::cpp_mdtests_profile_the_compiler_imported_source)))'
     export CLICK_SKIP_CPP_FRONTEND=1
 fi
 
@@ -278,7 +281,7 @@ fi
 # standalone binary), so `--bin click` runs every command's tests once.
 if [[ -n "$ci_artifacts" ]]; then
     mkdir -p "$ci_artifacts"
-    cargo nextest archive "${unit_targets[@]}" "${fixture_targets[@]}" \
+    cargo nextest archive "${unit_targets[@]}" --test mdtests \
         --archive-file "$ci_artifacts/tests.tar.zst"
     tar -cf "$ci_artifacts/exporter.tar" \
         -C "$(dirname "$CLICK_CPP_EXPORTER")" "$(basename "$CLICK_CPP_EXPORTER")"
@@ -289,14 +292,15 @@ if [[ -n "$ci_artifacts" ]]; then
     exit 0
 fi
 
-cargo nextest run "${unit_targets[@]}" "${unit_filter[@]}" "${nextest_args[@]}"
+cargo nextest run "${unit_targets[@]}" --filterset "$unit_filter" "${nextest_args[@]}"
 # The fixture harnesses run one at a time, and each verifies its fixtures on
 # every core. Their proof verdicts come from deterministic tactic-work
 # budgets; nextest's outer timeout is process-level hang containment, not a
 # proof budget. Their output is not captured: each fixture prints a line when
 # it starts and when it finishes, so a stall is visible as it happens and
 # named.
-cargo nextest run "${fixture_targets[@]}" --test-threads 1 --no-capture "${nextest_args[@]}"
+cargo nextest run "${fixture_targets[@]}" --filterset "$fixture_filter" \
+    --test-threads 1 --no-capture "${nextest_args[@]}"
 
 # Report the budget every run, so a gate that has crept past it is seen the
 # day it does and not a week later.

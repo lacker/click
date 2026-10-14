@@ -5196,6 +5196,7 @@ mod tests {
 
     /// Completed null-check cases retain join records, not recursive frames.
     #[test]
+    #[ignore = "nightly: 1.1s in the parallel gate"]
     fn terminal_proof_if_cases_do_not_charge_recursive_depth() {
         for count in [1, 4, 12] {
             let c_source = null_checked_allocation_chain(count);

@@ -1846,6 +1846,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.5s in the parallel gate"]
     fn refused_transport_names_the_cell_and_prints_checked_effects() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("mdtests/loop_binder_instance_footprint_includes_its_memory.md");
@@ -2440,6 +2441,7 @@ mod tests {
     /// sources it spends the same work whatever a static array's
     /// initializer holds, while verification still builds that storage.
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn the_project_summary_builds_no_program_entry_storage() {
         use click::instrumentation::{VerificationEvent, collect, measure_deterministic_work};
         let costs = [100usize, 2000].map(|elements| {

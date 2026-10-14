@@ -110,6 +110,7 @@ fn charon_owned_array_project() -> Project {
     p
 }
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn charon_owned_array_fields_check_moves_snapshots_boundaries_and_frames() {
     let p = charon_owned_array_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -346,6 +347,7 @@ fn charon_multiply_project() -> Project {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn charon_symbolic_multiply_checks_general_safety_and_full_width_boundaries() {
     let p = charon_multiply_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -377,6 +379,7 @@ fn charon_symbolic_multiply_checks_general_safety_and_full_width_boundaries() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn charon_symbolic_multiply_tools_recheck_the_unreachable_path_certificate() {
     let p = charon_multiply_project();
     for command in ["verify", "profile", "audit"] {
@@ -616,6 +619,7 @@ fn charon_shared_reference_signature_mismatch_displays_constness() {
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn charon_array_fields_check_bounds_authority_and_frames() {
     let p = charon_fields_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -1138,6 +1142,7 @@ fn charon_slices_preserve_metadata_permissions_and_cleanup() {
     }
 }
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn charon_slice_failure_has_a_focused_trace() {
     // Frozen Rust inputs must use the same checked trace and proof selection
     // as C. Tracing one proof must not execute a failing sibling contract.
@@ -1364,6 +1369,7 @@ fn plain_record_loop_project() -> Project {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn charon_plain_record_loop_proves_symbolic_iterations_and_rejects_false_claims() {
     let p = plain_record_loop_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -1614,6 +1620,7 @@ fn charon_loop_array_copy_survives_symbolic_heads() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn charon_loop_array_copy_empty_input_never_reads_uninitialized_storage() {
     let p = loop_array_copy_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -2500,6 +2507,7 @@ const SLICES_SOURCE: &str = include_str!("../examples/rust-slices/bytes.rs");
 const SLICES_SIDECAR: &str = include_str!("../examples/rust-slices/bytes.click");
 
 #[test]
+#[ignore = "nightly: 2.2s in the parallel gate"]
 fn rust_split_at_metadata_and_reads_verify() {
     let p = gate_fixtures::project("split", include_str!("../examples/rust-split-at/split.rs"));
     let sidecar =
@@ -2884,6 +2892,7 @@ fn rust_byte_slice_unsupported_shapes_and_borrow_errors_are_refused() {
 }
 
 #[test]
+#[ignore = "nightly: 1.2s in the parallel gate"]
 fn rust_fixed_array_references_indexing_and_reborrows_verify() {
     let p = gate_fixtures::project("arrays", include_str!("../examples/rust-arrays/arrays.rs"));
     let sidecar =
@@ -3147,6 +3156,7 @@ fn rust_array_to_slice_coercions_preserve_bounds_and_borrow_checks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn rust_local_array_authority_and_copies_scale_with_array_length() {
     let mut samples = Vec::new();
     for length in [4, 16, 64] {

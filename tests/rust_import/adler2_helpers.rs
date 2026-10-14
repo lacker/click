@@ -262,6 +262,7 @@ fn charon_adler2_helpers_prove_all_lanes_and_lock_original_modules() {
 }
 
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn charon_adler2_helpers_from_rejects_false_lanes_and_short_reads() {
     reject_helper_contracts(
         0,
@@ -279,6 +280,7 @@ fn charon_adler2_helpers_from_rejects_false_lanes_and_short_reads() {
 // The audit's retained formatter must also recognize lowered Rust method names,
 // so native claims do not fall back to repeating their original verification.
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn charon_adler2_helper_expansion_uses_retained_native_certificate() {
     let p = adler2_helpers_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -335,6 +337,7 @@ fn charon_adler2_helpers_from_rejects_false_byte_bounds_lane_3() {
 }
 
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn charon_adler2_helpers_add_rejects_false_lanes_and_overflow() {
     reject_helper_contracts(
         1,
@@ -380,6 +383,7 @@ fn charon_adler2_helpers_add_rejects_false_observations_lane_1() {
 }
 
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn charon_adler2_helpers_add_rejects_false_observations_lane_2() {
     reject_helper_add_observations(2);
 }
@@ -687,6 +691,7 @@ fn charon_adler2_recombination_bounds_verify_with_original_helpers() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn charon_adler2_recombination_bounds_reject_underflow_overflow_and_false_weights() {
     use click::surface::verify_click_theorems;
     verify_click_theorems(RECOMBINATION).unwrap();
@@ -745,6 +750,7 @@ fn charon_adler2_recombination_bounds_tools_recheck_certificates() {
 }
 
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn charon_adler2_lane_bounds_prove_batch_limits_and_step_safety() {
     use click::surface::verify_click_theorems;
     assert_eq!(verify_click_theorems(BOUNDS).unwrap().len(), 30);
@@ -1817,6 +1823,7 @@ fn charon_adler2_scalar_tail_bounds_verify() {
 
 // Full-width lengths must agree with four-byte prefixes and short-tail indices.
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn charon_adler2_small_partition_verifies() {
     click::surface::verify_c0_sources(SMALL_PARTITION, &[]).unwrap();
 }
@@ -1826,11 +1833,13 @@ const COMMON_ADLER_SPEC: &str = include_str!("../../design/adler32-spec.click");
 // Checks the common mathematical target independently of an imported body:
 // one/four-byte weighted order, canonical residues, empty seeds and packed bounds.
 #[test]
+#[ignore = "nightly: 2.6s in the parallel gate"]
 fn adler_common_spec_recurrences_and_bounds_verify() {
     click::surface::verify_c0_sources(COMMON_ADLER_SPEC, &[]).unwrap();
 }
 
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn adler_four_byte_recombination_matches_the_common_spec() {
     let source = format!("{COMMON_ADLER_SPEC}\n{FOUR_BYTE_SPEC}");
     for theorem in [
@@ -1845,6 +1854,7 @@ fn adler_four_byte_recombination_matches_the_common_spec() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn adler_four_byte_recombination_rejects_reversed_byte_weights() {
     let source = format!("{COMMON_ADLER_SPEC}\n{FOUR_BYTE_SPEC}");
     let statement = FOUR_BYTE_SPEC
@@ -1871,6 +1881,7 @@ fn adler_four_byte_recombination_rejects_reversed_byte_weights() {
 }
 
 #[test]
+#[ignore = "nightly: 2.1s in the parallel gate"]
 fn adler_four_byte_recombination_rejects_off_by_one_residues() {
     for prefix in [" ensures to_integer(", "     and to_integer("] {
         let statement = FOUR_BYTE_SPEC
@@ -2078,6 +2089,7 @@ const STORED_GUARD_PROOF: &str = r#"int adler_stored_guard(int remaining, uint64
 // aligned short remainders and actual full-batch progress. The native guard
 // catches confusing its captured size comparison with a literal endpoint.
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn charon_adler2_general_partition_and_outer_progress_verify() {
     let proof = format!("verifying \"stored-guard.c\";\n{GENERAL_PARTITION}\n{STORED_GUARD_PROOF}");
     click::surface::verify_c0_sources(&proof, &[("stored-guard.c", STORED_GUARD_C)]).unwrap();
@@ -2252,6 +2264,7 @@ const LANE_STATE: &str = include_str!("../../design/charon-trial/adler2/lane-sta
 // Proves the lane recurrence and modular reductions without an imported
 // computation summary, including signed reduction quotient witnesses.
 #[test]
+#[ignore = "nightly: 3.2s in the parallel gate"]
 fn adler_lane_state_recurrences_and_reductions_verify() {
     let source = format!("{COMMON_ADLER_SPEC}\n{LANE_STATE}");
     click::surface::verify_c0_sources(&source, &[]).unwrap();
@@ -2440,6 +2453,7 @@ fn charon_adler2_restoration_live_refresh_checks_original_body() {
 }
 
 #[test]
+#[ignore = "nightly: 2.8s in the parallel gate"]
 fn charon_adler2_checksum_packs_original_shared_fields() {
     let p = adler2_helpers_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -2568,6 +2582,7 @@ fn verify_public_checksum_unit(
 }
 
 #[test]
+#[ignore = "nightly: 2.3s in the parallel gate"]
 fn charon_adler2_public_checksum_matches_one_byte_spec() {
     let p = adler2_helpers_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -3132,6 +3147,7 @@ fn charon_adler2_public_boundaries_match_empty_and_four_byte_spec() {
 }
 
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn charon_adler2_public_empty_needs_no_input_byte_authority() {
     let p = adler2_helpers_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -3241,12 +3257,14 @@ const SERIAL_TAIL_SPEC: &str =
     include_str!("../../design/charon-trial/adler2/serial-tail-spec.click");
 
 #[test]
+#[ignore = "nightly: 2.7s in the parallel gate"]
 fn adler_serial_tail_native_results_match_the_common_spec() {
     let source = format!("{COMMON_ADLER_SPEC}\n{SERIAL_TAIL_SPEC}");
     click::surface::verify_c0_sources(&source, &[]).unwrap();
 }
 
 #[test]
+#[ignore = "nightly: 3.8s in the parallel gate"]
 fn charon_adler2_public_serial_tails_match_two_and_three_byte_spec() {
     let p = adler2_helpers_project();
     let prepared = load_import(&p.config()).unwrap();
@@ -3614,11 +3632,13 @@ fn adler_native_vector_prefix_rejects_false_transitions() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn adler_small_native_count_byte_addresses_and_observations_verify() {
     click::surface::verify_c0_sources(COUNT_BRIDGE, &[]).unwrap();
 }
 
 #[test]
+#[ignore = "nightly: 1.7s in the parallel gate"]
 fn adler_count_byte_observations_reject_wrong_positions_and_missing_guards() {
     for (before, after) in [
         (
@@ -3649,6 +3669,7 @@ fn adler_count_byte_observations_reject_wrong_positions_and_missing_guards() {
 }
 
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn adler_remaining_count_byte_observations_reject_wrong_positions_and_missing_guards() {
     for (before, after) in [
         (

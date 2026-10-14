@@ -882,6 +882,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn helper_transfers_ignore_unrelated_resources_protocols_and_history() {
         let assumptions = PureFactContext::new();
         let mut samples = Vec::new();

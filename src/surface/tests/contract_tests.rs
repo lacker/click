@@ -692,6 +692,7 @@ fn individual_linear_open_proof_stays_on_proof_through_claim_acceptance() {
 }
 
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
     let replace_source = r#"
             struct cell_owner {
@@ -867,6 +868,7 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
 }
 
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn explicit_proof_if_does_not_capture_shared_following_c_if() {
     let (replace_source, caller_source, click_source) = result_case_split_sources();
     let click_source = click_source.replace(
@@ -1347,6 +1349,7 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn outcome_simp_spells_a_call_postcondition_across_two_snapshots() {
     // `touch` may write both fields and certifies `p->x == old(p->x)`: after
     // each call the caller's `p->x` is a fresh cell related to its previous
@@ -1508,6 +1511,7 @@ fn grouped_opaque_calls_keep_declared_composite_resources_on_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
     let set_source = r#"
             int32 set_seven(int32* cell) {
@@ -1597,6 +1601,7 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
     let set_source = r#"
             int32 set_seven(int32* cell, int32 choose) {
@@ -1966,6 +1971,7 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn grouped_unfolded_resource_relations_stay_on_one_proof() {
     let c_source = r#"
             int32 inspect_pair(int32 left[], int32 right[]) {
@@ -2304,6 +2310,7 @@ fn verifies_quantified_old_memory_postcondition() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn separate_requirement_proves_symbolic_unwritten_read() {
     let c_source = r#"
             int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
@@ -2351,6 +2358,7 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn quantified_old_memory_rejects_overwritten_cell() {
     let c_source = r#"
             int32 write_second(int32* p) {
@@ -2498,6 +2506,7 @@ fn source_have_failures_keep_the_written_operation_in_each_execution_phase() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn grouped_outcome_fold_is_local_to_the_returning_branch() {
     let c_source = r#"
         int32 select(int32* cell, int32 flag) {

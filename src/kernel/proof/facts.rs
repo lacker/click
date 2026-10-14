@@ -2461,6 +2461,7 @@ mod integer_equality_fact_index_tests {
     };
 
     #[test]
+    #[ignore = "nightly: 1.4s in the parallel gate"]
     fn opaque_pointer_alias_selection_ignores_unrelated_facts() {
         let read = Pointer::symbolic(Variable(949_001));
         let target = Pointer::symbolic(Variable(949_002));

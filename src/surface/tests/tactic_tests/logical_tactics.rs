@@ -3048,6 +3048,7 @@ fn pure_machine_witness_rejects_different_widths_and_signedness() {
 }
 
 #[test]
+#[ignore = "nightly: 1.0s in the parallel gate"]
 fn pure_witness_captures_declaration_aliases_and_reverifies_expansion() {
     for (ty, annotation) in [
         ("int32*", ""),

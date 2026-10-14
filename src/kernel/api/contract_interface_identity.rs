@@ -233,7 +233,7 @@ fn normalize(interface: &CFunctionContractInterface) -> CFunctionContractInterfa
     // The declared `decreases` measure reads the same parameters the clauses
     // read, so it is renamed with them; two declarations that differ only in
     // what they call a parameter stay one interface.
-    if let Some(measure) = &mut interface.recursion_measure {
+    for measure in &mut interface.recursion_measure {
         match measure {
             CRankingComponent::CExpression(expression) => names.c(expression),
             // The declared spelling is what a diagnostic prints, not part of

@@ -1447,6 +1447,7 @@ int32 increment_and_return_old(int32 p[1]) {
 }
 
 #[test]
+#[ignore = "nightly: 1.3s in the parallel gate"]
 fn expansion_preserves_unfolded_resource_and_predicate_fact_forms() {
     let c_source = r#"
 struct box {
@@ -1827,6 +1828,7 @@ fn uint64_arithmetic_expands_to_its_integer_bridge_steps() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn wide_arithmetic_promotes_unsuffixed_literals_in_checked_bridge_arguments() {
     for (carrier, suffix) in [("uint64", "u64"), ("int64", "i64")] {
         let source = format!(
@@ -1851,6 +1853,7 @@ fn wide_arithmetic_promotes_unsuffixed_literals_in_checked_bridge_arguments() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn wide_arithmetic_reads_listed_bounds_at_their_named_snapshot() {
     for carrier in ["uint64", "int64"] {
         let c_source = format!("{carrier} advance({carrier} n) {{ n = n - 4; return n; }}");
@@ -2904,6 +2907,7 @@ fn specification_pointer_load_equality_expands_to_checked_normalization() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn recursive_child_same_carrier_model_identity_fold_expands_and_rechecks_without_load_claims() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/egraph_recursive_child_alias.md");
@@ -2942,6 +2946,7 @@ fn pointer_read_single_store_normalization_expands_and_rechecks() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn recursive_child_same_carrier_sibling_write_fold_expands_and_rechecks() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/egraph_recursive_child_sibling_write.md");

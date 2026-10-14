@@ -430,8 +430,9 @@ fn walk_c_function<S: VariableSubstitution + ?Sized>(function: &CFunction, s: &S
     // interface rank the recursion by the pre-substitution names.
     interface.recursion_measure = interface
         .recursion_measure
-        .as_ref()
-        .map(|measure| walk_c_ranking_component(measure, s));
+        .iter()
+        .map(|measure| walk_c_ranking_component(measure, s))
+        .collect();
     interface.composite_resource_definitions = function
         .composite_resource_definitions()
         .iter()

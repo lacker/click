@@ -13636,9 +13636,9 @@ mod tests {
         );
         for changed in [
             annotated.clone().with_source_body(returned),
-            annotated
-                .clone()
-                .with_recursion_measure(crate::kernel::CRankingComponent::CExpression(condition)),
+            annotated.clone().with_recursion_measure(vec![
+                crate::kernel::CRankingComponent::CExpression(condition),
+            ]),
             annotated.with_global_variables(vec![crate::kernel::CGlobal::new(
                 "g",
                 CType::Int32,
@@ -15032,6 +15032,7 @@ mod tests {
     // Interface re-lowering must use the checked arm's address aliases without
     // acquiring read authority, leaking an arm fact, or scanning its history.
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn interface_aliased_wide_read_preserves_scope_history_and_scales() {
         use crate::kernel::{CPointerValue, ConditionTerm, SpecMemory};
         let _session = crate::kernel::VerificationSession::enter();

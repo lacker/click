@@ -564,7 +564,7 @@ impl Parser {
                 lowered: CExpression::Cast {
                     expression: Box::new(expression),
                     target_type,
-                    integer_mode: crate::kernel::CIntegerCastMode::Standard,
+                    integer_mode: crate::kernel::CIntegerCastMode::CConversion,
                     pointee_struct: None,
                     pointee_volatile: false,
                     pointee_constant: false,

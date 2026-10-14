@@ -6513,35 +6513,11 @@ pub(super) fn collect_loop_ranking_obligations(
             )),
         );
     }
-    // A pivot arm compares one component's two readings, never two different
-    // components, so a tuple whose components chose different carriers needs
-    // no coercion: each arm is built in its own component's carrier.
-    let arm = |pivot: usize| -> Result<Proposition, String> {
-        let strict = crate::kernel::termination::ranking_decrease_proposition(
-            &post[pivot],
-            &pre[pivot],
-            &ranking_measures[pivot],
-        )?;
-        (0..pivot).rev().try_fold(strict, |rest, index| {
-            Ok(Proposition::And(
-                Box::new(crate::kernel::termination::ranking_tie_proposition(
-                    &post[index],
-                    &pre[index],
-                    &ranking_measures[index],
-                )?),
-                Box::new(rest),
-            ))
-        })
-    };
-    let decrease = (0..ranking_measures.len())
-        .rev()
-        .try_fold(None, |rest: Option<Proposition>, pivot| {
-            Ok::<_, String>(match rest {
-                None => Some(arm(pivot)?),
-                Some(rest) => Some(Proposition::Or(Box::new(arm(pivot)?), Box::new(rest))),
-            })
-        })?
-        .expect("a ranked loop declares at least one component");
+    let decrease = crate::kernel::termination::ranking_lexicographic_decrease_proposition(
+        &post,
+        &pre,
+        ranking_measures,
+    )?;
     obligations.push(
         ProofObligation::verification_condition(decrease)
             .with_introductions(LoweringIntroductions::new())
@@ -10085,6 +10061,7 @@ mod v10_tests {
     use super::*;
 
     #[test]
+    #[ignore = "nightly: 1.3s in the parallel gate"]
     fn loop_view_partition_uses_alias_graph_without_scanning_ambient_ranges() {
         let _session = crate::kernel::VerificationSession::enter();
         let source = Pointer::symbolic(Variable(916_100));

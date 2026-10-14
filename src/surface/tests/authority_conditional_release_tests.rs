@@ -236,6 +236,7 @@ fn authority_borrowed_member_handoff_expands_every_smart_site() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn authority_owned_member_supplies_nested_release_count_bound() {
     let child_release = SOURCE
         .split("void release_one(struct child* obj)")

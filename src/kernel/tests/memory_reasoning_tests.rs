@@ -7409,6 +7409,7 @@ fn a_byte_range_narrows_by_its_endpoints() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn shifted_constant_view_extents_match_without_ambient_search() {
     let _session = crate::kernel::VerificationSession::enter();
     let memory = CMemory::new();

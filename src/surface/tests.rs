@@ -62,6 +62,7 @@ fn recursive_child_resources_round_trip_and_expand() {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn recursive_child_resources_independent_layers_own_memory_and_recheck() {
     let source = r#"verifying "middle.c";
         spec enum Nonempty { Last(int32), More(int32, int32*, Nonempty) }
@@ -135,6 +136,7 @@ fn recursive_child_resources_do_not_capture_earlier_function_names() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn recursive_child_resources_reject_bad_lifetimes_and_folds() {
     let c = [(
         "read.c",
@@ -276,6 +278,7 @@ fn tree_node_init_and_stored_child_links_expand() {
 }
 
 #[test]
+#[ignore = "nightly: 2.0s in the parallel gate"]
 fn tree_node_init_rejects_invalid_models_and_ownership() {
     let (source, c) = tree_node_init_fixture();
     for (from, to) in [
@@ -339,6 +342,7 @@ const INDEPENDENT_CHILDREN_C: &[(&str, &str)] = &[(
 )];
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn independent_children_construct_and_expand() {
     let source = independent_children_source();
     verify_c0_sources(source, INDEPENDENT_CHILDREN_C).unwrap();
@@ -377,6 +381,7 @@ fn independent_children_may_change_roles_in_a_new_model() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn independent_children_reject_bad_selection_and_consumed_names() {
     let source = independent_children_source();
     for (from, to) in [
@@ -431,6 +436,7 @@ fn independent_children_reject_bad_selection_and_consumed_names() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn conditional_explicit_folds_update_models_and_expand() {
     let source = r#"verifying "cell.c";
         spec enum Model { Zero, Value(int32) }
@@ -678,6 +684,7 @@ fn resource_match_binds_pointer_and_nested_algebraic_payloads() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn instance_return_folds_follow_distinct_c_results_without_proof_branching() {
     let source = r#"verifying "read.c";
         resource cell(p: int32*) {
@@ -789,6 +796,7 @@ fn named_instance_memory_body_round_trip_preserves_fields() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn single_cell_adt_initializers_verify_and_expand() {
     let source = r#"verifying "cell.c";
         spec enum Mark { Set(int32) }
@@ -887,6 +895,7 @@ fn single_cell_adt_initializers_reject_invalid_models() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn single_cell_adt_initializers_preserve_arbitrary_entry_models() {
     let source = r#"verifying "cell.c";
         spec enum Maybe<T> { None, Some(T) }
@@ -2489,6 +2498,7 @@ fn automatic_scope_exit_preserves_expanded_execution() {
 }
 
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn bounded_population_increment_expands_and_checks() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/population_symbolic_increment_bounded.md");

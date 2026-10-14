@@ -2121,6 +2121,7 @@ fn signed_arithmetic_smart_planner_preserves_explicit_definedness() {
 }
 
 #[test]
+#[ignore = "nightly: 1.4s in the parallel gate"]
 fn signed_arithmetic_smart_planner_handles_deep_supported_terms_iteratively() {
     let depth = 40;
     let mut bindings = String::from("let a0: int32 = n;\n");

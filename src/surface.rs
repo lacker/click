@@ -1243,6 +1243,9 @@ pub enum CFunctionDecrease {
     /// The parsed expression, before resolution decides what it names.
     Unresolved(ContractExpression),
     Numeric(ContractExpression),
+    /// A tuple of numeric components, `decreases (m, n);`, ranked
+    /// lexicographically as a loop's tuple is.
+    Lexicographic(Vec<ContractExpression>),
     Resource(ResourceClause),
     /// A contract resource binder named without arguments, as in
     /// `owns t: tree_at(root); decreases t;`.

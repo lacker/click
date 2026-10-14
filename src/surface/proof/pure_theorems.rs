@@ -3599,6 +3599,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.0s in the parallel gate"]
     fn ordinary_pure_numeric_induction_expands_and_reverifies() {
         for fixture in [
             include_str!("../../../mdtests/pure_induction_countdown.md"),

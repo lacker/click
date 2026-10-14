@@ -351,6 +351,7 @@ fn compiler_import_results_bind_helpers_in_other_translation_units() {
 }
 
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn compiler_import_rejects_output_input_collisions_before_writing() {
     let project = Project::new();
     let original = fs::read(project.0.join("main.c")).unwrap();
@@ -491,6 +492,7 @@ fn userspace_and_kernel_imports_have_distinct_identity_for_identical_c() {
 }
 
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn userspace_compiler_import_refuses_profile_overrides_and_ambient_headers() {
     let project = Project::new();
     for args in [

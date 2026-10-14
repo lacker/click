@@ -2096,6 +2096,7 @@ fn direct_strict_order_is_an_indexed_lookup() {
 }
 
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn checked_order_store_crossing_ignores_unrelated_order_facts() {
     let samples = [16_u64, 64, 256, 1024, 4096]
         .into_iter()
@@ -4395,6 +4396,7 @@ fn seeded_scalar_slots_preserve_overlapping_wide_reads() {
 /// predicate must use that indexed equality without scanning unrelated facts
 /// or accepting a different field, partial store, or an unproved alias.
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn stored_field_value_uses_indexed_base_aliases() {
     use crate::kernel::resource_tracker::cell_source::write_supplies_read;
     use crate::kernel::resource_tracker::step_effect::write_is_at_read_address;
@@ -4551,6 +4553,7 @@ fn aliased_store_byte_frame_checks_width_context_and_scales() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn graph_aliased_range_membership_checks_complete_access_and_scales() {
     // A named call can leave a store's pointer connected to the selected
     // range by two equalities. Check that local graph evidence frames the

@@ -1079,3 +1079,20 @@ assignment work and total verification work, and an unbounded increment is
 still rejected. `increment_chain_keeps_intermediate_overflow_guard.md` rejects
 a program whose final arithmetic value would match its input but whose
 intermediate addition overflows.
+
+### Bounded reduction of selected simp premises
+
+A compatibility atomic simplification can retain an entire connected component
+although its kernel decision needs only a few facts. Before presenting source
+forms, the smart planner can reduce a selection of 8–128 facts by testing
+removal of progressively smaller chunks. Every trial rebuilds a context from
+only the remaining selection and asks the same kernel query; the successful
+context identity and evidence replace the previous selection together. Typed
+evidence with recorded dependencies is left alone. There are at most 255
+restricted queries, all charged to the existing smart budget. This adds no
+ambient search or certificate-checking heuristic and does not increase the
+64-premise source-spelling limit. Selections outside the bounded reduction
+retain the existing behavior. Connected pointer-alias regressions at 8, 16,
+32, 64 and 128 facts check work growth and refuse either missing required link.
+The native-prefix fixture also checks that redundant bounds cannot crowd out
+the source view and its necessary coverage bound.

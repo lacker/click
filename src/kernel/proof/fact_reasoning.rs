@@ -2914,6 +2914,7 @@ mod uint64_loop_tests {
     use crate::kernel::{Bitvector32Term, ConditionTerm, Proposition, Variable};
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn uint64_successor_certificates_require_the_strict_guard_and_ignore_unrelated_facts() {
         let i = Bitvector32Term::Variable(Variable(980001));
         let n = Bitvector32Term::Variable(Variable(980002));
@@ -2974,6 +2975,7 @@ mod uint64_loop_tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn uint64_truncation_certificates_require_full_width_bounds() {
         let i = Bitvector32Term::Variable(Variable(981011));
         let n = Bitvector32Term::Variable(Variable(981012));

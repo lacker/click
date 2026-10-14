@@ -7431,10 +7431,13 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
             assumptions,
             budget,
             |value, facts, mut obligations| {
+                // A specification's cast is C's conversion, modulo 2^N,
+                // as the same cast in C source is; `to_T(...)` is the
+                // checked conversion.
                 let outcome = cast_c_value_to_type(
                     value,
                     *target_type,
-                    crate::kernel::eval::IntegerConversion::Checked,
+                    crate::kernel::eval::IntegerConversion::Modular,
                     &mut obligations,
                     assumptions,
                 )

@@ -226,6 +226,7 @@ fn taking_one_element_is_constant_in_the_range_size() {
 }
 
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn a_loop_taking_m_elements_is_linear_in_m() {
     let capacity = 8192;
     let mut samples = Vec::new();

@@ -9440,6 +9440,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.5s in the parallel gate"]
     fn checked_evidence_sequence_scales_with_shared_immutable_history() {
         let assumptions = PureFactContext::new();
         let owner = memory(0, 4, true);
@@ -9836,6 +9837,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.2s in the parallel gate"]
     fn disjoint_memory_view_clustering_has_linear_overlap_work() {
         let assumptions = PureFactContext::new();
         let mut samples = Vec::new();
@@ -10917,6 +10919,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.2s in the parallel gate"]
     fn joint_fragment_reservation_does_not_scan_ambient_memory_with_scalar_equalities() {
         let facts = PureFactContext::new().assume_condition(
             ConditionTerm::equal(

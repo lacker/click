@@ -496,7 +496,7 @@ type FunctionContractSummary = (
     Vec<CFunctionContractClaim>,
     bool,
     Vec<CPredicateUnfolding>,
-    Option<crate::kernel::CRankingComponent>,
+    Vec<crate::kernel::CRankingComponent>,
 );
 
 /// Records each declared memory-independent pure function's body with the
@@ -1217,9 +1217,7 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
-    if let Some(measure) = recursion_measure {
-        function = function.with_recursion_measure(measure);
-    }
+    function = function.with_recursion_measure(recursion_measure);
     if function_block.signature().exceptional_type().is_some() {
         function = function
             .with_int32_exceptional_outcome()
@@ -2972,24 +2970,51 @@ impl AnnotationLowerer<'_> {
         &mut self,
         function_block: &FunctionBlock,
         context: &SpecElaborationContext,
-    ) -> Result<Option<crate::kernel::CRankingComponent>, ClickError> {
-        let name = function_block.signature().name();
-        let Some(CFunctionDecrease::Numeric(expression)) = function_block.decreases() else {
-            return Ok(None);
+    ) -> Result<Vec<crate::kernel::CRankingComponent>, ClickError> {
+        let components = match function_block.decreases() {
+            Some(CFunctionDecrease::Numeric(expression)) => {
+                // A bare name of an int32 parameter is today's numeric
+                // measure, resolved against the parameter list by the
+                // termination plan, which is also what refuses a name that
+                // is no parameter of this function. Leave it there: a bare
+                // `decreases` name has always meant a parameter, and lowering
+                // it here would answer a misspelling with an evaluation
+                // failure. A parameter of another type has no body analysis,
+                // so it is lowered as the expression it is.
+                if let ContractExpression::Binding(name)
+                | ContractExpression::CBinding(name)
+                | ContractExpression::CFragment(CExpression::Variable(name)) = expression
+                    && function_block
+                        .signature()
+                        .parameters()
+                        .iter()
+                        .find(|parameter| parameter.name() == name)
+                        .is_none_or(|parameter| parameter.c_type() == C0Type::Int32)
+                {
+                    return Ok(Vec::new());
+                }
+                std::slice::from_ref(expression)
+            }
+            Some(CFunctionDecrease::Lexicographic(components)) => components.as_slice(),
+            _ => return Ok(Vec::new()),
         };
-        // A bare name is today's numeric measure, resolved against the
-        // parameter list by the termination plan, which is also what refuses
-        // a name that is no parameter of this function. Leave it there: a
-        // bare `decreases` name has always meant a parameter, and lowering it
-        // here would answer a misspelling with an evaluation failure.
-        if matches!(
-            expression,
-            ContractExpression::Binding(_)
-                | ContractExpression::CBinding(_)
-                | ContractExpression::CFragment(CExpression::Variable(_))
-        ) {
-            return Ok(None);
-        }
+        components
+            .iter()
+            .map(|expression| {
+                self.function_recursion_component(function_block, expression, context)
+            })
+            .collect()
+    }
+
+    /// One component of a function-level expression measure, lowered as a
+    /// loop component is.
+    fn function_recursion_component(
+        &mut self,
+        function_block: &FunctionBlock,
+        expression: &ContractExpression,
+        context: &SpecElaborationContext,
+    ) -> Result<crate::kernel::CRankingComponent, ClickError> {
+        let name = function_block.signature().name();
         // The kernel reads the one declared measure at the function's entry
         // and again at each recursive call, and requires the second value to
         // be smaller. A component that names a state of its own reads one
@@ -3019,10 +3044,10 @@ impl AnnotationLowerer<'_> {
                         crate::surface::verification::termination_measure_source(expression)
                     ))
                 })?;
-            return Ok(Some(crate::kernel::CRankingComponent::PureInteger {
+            return Ok(crate::kernel::CRankingComponent::PureInteger {
                 source: crate::surface::verification::termination_measure_source(expression),
                 expression: lowered,
-            }));
+            });
         }
         let lowered = self
             .lower_contract_expression_to_spec(expression, context)
@@ -3032,10 +3057,10 @@ impl AnnotationLowerer<'_> {
                     crate::surface::verification::termination_measure_source(expression)
                 ))
             })?;
-        Ok(Some(crate::kernel::CRankingComponent::Pure {
+        Ok(crate::kernel::CRankingComponent::Pure {
             source: crate::surface::verification::termination_measure_source(expression),
             expression: lowered,
-        }))
+        })
     }
 
     /// The loop head's declared measure, split into the two clauses the

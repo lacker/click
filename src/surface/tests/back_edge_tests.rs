@@ -17,6 +17,7 @@ fn source(body: &str) -> String {
     format!("int32 count(int32 n) {{ int32 i; i=0; while(i<n) {{ {body} }} return i; }}")
 }
 #[test]
+#[ignore = "nightly: 0.7s in the parallel gate"]
 fn back_edge_checks_body_end_and_continue_and_expands() {
     for body in ["i=i+1;", "i=i+1; continue;"] {
         let c = source(body);
@@ -61,6 +62,7 @@ fn back_edge_parses_and_preserves_bare_labels() {
     assert!(parse(&labeled).is_ok());
 }
 #[test]
+#[ignore = "nightly: 1.8s in the parallel gate"]
 fn back_edge_work_scales_with_body_size() {
     let samples = [8, 128, 1024].map(|size| {
         let body = "i=i;".repeat(size) + "i=i+1;";

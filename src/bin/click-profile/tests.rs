@@ -615,6 +615,7 @@ fn assert_report_names_claims(report: &str, project: &str, files: &str, claims: 
 /// project directory profiles all of its sidecars instead of trying to read
 /// the directory as one sidecar.
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn project_and_examples_directories_profile_every_sidecar() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let numeric_claims = ["json_object_get_double", "json_object_scale_double"];

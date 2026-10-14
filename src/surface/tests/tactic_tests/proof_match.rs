@@ -29,6 +29,7 @@ int read(int* p) {
 "#;
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn proof_match_fields_survive_function_unfold_in_have() {
     let source = SOURCE
         .replace("resource cell", "function identity(m: Maybe) -> Maybe { m }\nresource cell")
@@ -203,6 +204,7 @@ int id(int x) {
 }
 
 #[test]
+#[ignore = "nightly: 0.5s in the parallel gate"]
 fn proof_match_checks_arbitrary_payload_and_rejects_invalid_arms() {
     verify_c0_sources(SOURCE, &[("read.c", C)])
         .expect("arbitrary scoped field and return-state fold");
@@ -261,6 +263,7 @@ fn proof_match_checks_arbitrary_payload_and_rejects_invalid_arms() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn proof_match_expands_and_rechecks() {
     let sources = [("read.c", C)];
     verify_c0_sources(SOURCE, &sources).unwrap();

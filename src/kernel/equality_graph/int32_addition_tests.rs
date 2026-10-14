@@ -112,6 +112,7 @@ fn int32_addition_context_rebuilds_preserve_only_supported_equalities() {
 }
 
 #[test]
+#[ignore = "nightly: 0.9s in the parallel gate"]
 fn int32_addition_late_merge_and_fork_work_is_indexed() {
     for size in [16u64, 64, 256, 1024] {
         let mut graph = EqualityGraph::default();

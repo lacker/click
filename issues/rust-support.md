@@ -134,10 +134,13 @@ Checked symbolic count-advance, lane-identity, and native read-bound lemmas
 support repeated DO16 blocks below 5552 bytes. The saved 16–5551-byte draft
 checks all sixteen original addition pairs and closes the repeated-block
 invariants. Its full contract remains unproved: the scalar tail stops at
-first-byte view certificate construction: the kernel accepts the view, but
-`simp` selects 71 premises and stops at its 64-premise source-spelling limit.
-Reduce the retained dependencies or give the checked transport its relevant
-premises before completing the scalar tail.
+the original scalar-tail byte read after `*buf++`. Bounded selected-premise
+reduction now gets past the first-byte view construction that previously
+selected 71 premises and exceeded the unchanged 64-premise spelling limit.
+The actual C read still reports missing held read authority; a pure
+`viewable` fact does not grant that authority. See the
+[tracked read regression](../bugs/zlib-repeated-tail-loses-native-read-authority.md)
+before extending the scalar-tail proof.
 
 Complete that scalar tail, then the original 5552-byte batches. Maintain exact
 component equations and native bounds across reductions; the arbitrary-length

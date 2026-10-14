@@ -398,6 +398,7 @@ int32 caller(int32 x) { ensures result == x + x; } by {
 }
 
 #[test]
+#[ignore = "nightly: 2.3s in the parallel gate"]
 fn modular_call_snapshot_anchor_checks_with_owned_resource() {
     let init_c = r#"
 struct box {
@@ -537,6 +538,7 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
 /// are the same load variable and the premise is reflexive. The expansion
 /// needs no snapshot transport and rewrites from the remaining premise.
 #[test]
+#[ignore = "nightly: 1.6s in the parallel gate"]
 fn snapshot_bridged_simp_premises_expand_to_checked_offset_equality() {
     let init_c = r#"
 struct box {
@@ -659,6 +661,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
 }
 
 #[test]
+#[ignore = "nightly: 1.5s in the parallel gate"]
 fn execute_until_expands_mixed_snapshot_call_postconditions() {
     let zero_c = r#"
 struct counter {
@@ -1927,6 +1930,7 @@ fn input_cursor_creates_only_canonical_terms() {
 }
 
 #[test]
+#[ignore = "nightly: 1.1s in the parallel gate"]
 fn linked_list_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms("linked-list", "linked_list.click");
 }
@@ -1947,6 +1951,7 @@ fn owned_string_creates_only_canonical_terms() {
 }
 
 #[test]
+#[ignore = "nightly: 1.9s in the parallel gate"]
 fn recursive_zero_list_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms(
         "recursive-zero-list",
@@ -1955,6 +1960,7 @@ fn recursive_zero_list_creates_only_canonical_terms() {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn vector_push_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms("vector-push", "vector_push.click");
 }

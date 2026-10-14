@@ -134,6 +134,7 @@ fn check_isolated_program(value: i32, expected: i32) {
 }
 
 #[test]
+#[ignore = "nightly: 0.6s in the parallel gate"]
 fn standard_library_initialization_is_constant_across_verification_sizes() {
     // Count initialization, not elapsed time: repeated fixture threads must
     // not parse the prelude again as the number of verifications increases.
@@ -216,6 +217,7 @@ fn standard_library_cache_preserves_all_declarations() {
 /// verification that uses it. This is the gate's proof of every library
 /// theorem.
 #[test]
+#[ignore = "nightly: 0.8s in the parallel gate"]
 fn standard_library_theorems_are_proved_by_their_own_entry_point() {
     let theorems = standard_library_theorem_definitions().unwrap();
     let verified = crate::surface::verify_standard_library()

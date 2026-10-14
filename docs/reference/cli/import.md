@@ -1680,11 +1680,13 @@ dynamic-extent spans.
 record profile admits for native element types. Its `size()` is `N`; `data()`
 is `&std_array_data(a)[0]`; and `front`, `back` and `operator[]`, in their
 const and mutable overloads, require an index below `N` and return
-`&std_array_data(a)[i]`. A read needs a resource for the array and a write
-needs to own it. A resource clause naming one element through a reference
-parameter is refused by a defect
-(`bugs/a-reference-records-array-element-resource-does-not-lower.md`); naming
-the whole array works.
+`&std_array_data(a)[i]`. A read can name just the selected element with
+`views std_array_data(a)[1];`, and a write requires
+`owns std_array_data(a)[1];`. Owning a neighboring element or viewing the
+written element does not authorize the write. Resource clauses also accept
+the imported field spelling, such as `views a._M_elems[1];`, on a record
+reference. Expansion retains the field and its subscripts, and a failed
+resource-clause evaluation names that place.
 
 The catalog also covers dynamic-extent
 `std::as_writable_bytes(std::span<int>)`. It returns a byte view of the

@@ -656,6 +656,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    #[ignore = "nightly: 1.2s in the parallel gate"]
     fn symbolic_borrowed_range_expansion_rechecks_without_serializing_graph_ids() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("mdtests/views_a_byte_range_makes_an_index_readable.md");
@@ -690,6 +691,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn c_mdtest_expansion_sees_an_imported_local_module() {
         // `unmarked` is declared only in the imported `unmarked_count_lemmas.click`.
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -936,6 +938,7 @@ int32 bad(int32 x) {
     /// its `have` keyword or by the `simp` written in its body; both select
     /// the same checked expansion.
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn a_smart_tactic_inside_a_nested_have_body_selects_the_have() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("mdtests/guarded_postcondition_closes_after_call.md");
@@ -1020,6 +1023,7 @@ int32 bad(int32 x) {
     /// `have` body selects that `have`, as its keyword and any column
     /// inside it do; a line that starts no smart tactic selects nothing.
     #[test]
+    #[ignore = "nightly: 0.9s in the parallel gate"]
     fn a_line_inside_a_branch_arm_selects_its_one_smart_tactic() {
         let path = mdtest_path("guarded_postcondition_closes_after_call.md");
         let markdown = fs::read_to_string(&path).unwrap();
@@ -1054,6 +1058,7 @@ int32 bad(int32 x) {
     /// `cases` written inside a `have` body are addressed by line: the
     /// expansion rewrites exactly the selected tactic's lines.
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn lines_in_proof_if_arms_and_in_cases_arms_inside_a_have_body_select() {
         let path = mdtest_path("proof_cases_after_c_branch_expands.md");
         let original = fs::read_to_string(&path).unwrap();
@@ -1083,6 +1088,7 @@ int32 bad(int32 x) {
     /// Loop phases: the smart `initialize by simp` and the smart
     /// `close_invariants()` of a frontier-local loop are selected by line.
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn lines_in_loop_phases_select_their_smart_tactics() {
         let path = mdtest_path("c_decreases_count_up.md");
         for (line, text) in [(27, "initialize by simp;"), (30, "close_invariants();")] {
@@ -1096,6 +1102,7 @@ int32 bad(int32 x) {
     /// A close bundle is one smart site: a column on the `simp` written in
     /// one of its `both` arms selects the whole bundle.
     #[test]
+    #[ignore = "nightly: 0.6s in the parallel gate"]
     fn a_column_inside_a_close_bundle_selects_the_bundle() {
         let path = mdtest_path("loop_invariant_body.md");
         assert_eq!(markdown_line(&path, 35).trim(), "both { simp(); }");
@@ -1108,6 +1115,7 @@ int32 bad(int32 x) {
     /// Call outcomes: the `simp` closing the `returned` arm is selected by
     /// its line, and only that arm is rewritten.
     #[test]
+    #[ignore = "nightly: 1.1s in the parallel gate"]
     fn a_line_in_a_call_outcome_arm_selects_its_smart_tactic() {
         let path = mdtest_path("cpp_single_guard_throw_step.md");
         assert_eq!(markdown_line(&path, 81).trim(), "simp();");

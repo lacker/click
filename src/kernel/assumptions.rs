@@ -6856,6 +6856,7 @@ mod contained_range_endpoint_graph_tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn recorded_order_fact_graph_matches_scale_without_fact_index() {
         for size in [16u64, 64, 256, 1024] {
             let lower = variable(9_330_010);

@@ -812,6 +812,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.5s in the parallel gate"]
     fn legacy_integer_cast_identity_verifies_c_callers_and_rechecks_bounds_and_expansion() {
         for (source_ty, destination, lower, upper, native_guard) in [
             ("int64", "uint64", "0", "9223372036854775807", ""),
@@ -952,6 +953,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.9s in the parallel gate"]
     fn uint64_integer_bridges_recheck_guards_full_width_and_expansion() {
         for (name, guard, goal) in [
             (
@@ -1081,6 +1083,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn uint64_integer_bridges_verify_actual_c_operations_and_modular_calls() {
         for (name, guard, goal, op) in [
             (
@@ -1196,6 +1199,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.9s in the parallel gate"]
     fn machine_integer_order_bridge_applications_scale_with_steps_and_unused_bounds() {
         for ty in ["int32", "int64", "uint64"] {
             let mut samples = Vec::new();
@@ -1266,6 +1270,7 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "nightly: 1.7s in the parallel gate"]
     fn int64_integer_operation_applications_scale_with_steps_and_unused_bounds() {
         for (name, op) in [
             ("int64_add_to_integer", "+"),
@@ -1299,6 +1304,7 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn rounded_integer_library_derivations_expand_and_reverify() {
         let fixture = include_str!("../../mdtests/integer_rounded_product_bounds.md");
         let source = fixture
@@ -1321,6 +1327,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn opaque_product_arithmetic_scales_with_steps_and_unused_bounds() {
         let goal = "q * d <= n";
         let mut samples = Vec::new();
@@ -1367,6 +1374,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.5s in the parallel gate"]
     fn integer_multiply_add_applications_scale_with_steps_and_unused_bounds() {
         let goal = "(a + b) * c == a * c + b * c";
         let mut samples = Vec::new();
@@ -1444,6 +1452,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn integer_truncation_applications_scale_with_steps_and_unused_bounds() {
         let goal = "n == truncating_quotient(n, d) * d + truncating_remainder(n, d)";
         let mut samples = Vec::new();
@@ -1470,6 +1479,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.0s in the parallel gate"]
     fn multiply_order_and_fee_bounds_expand_and_reject_missing_evidence() {
         let fixture = include_str!("../../mdtests/integer_multiply_order.md");
         let source = fixture
@@ -1517,6 +1527,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn multiply_order_applications_scale_with_explicit_inputs() {
         let mut samples = Vec::new();
         for size in [4usize, 16, 64, 256] {
@@ -1596,6 +1607,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.7s in the parallel gate"]
     fn strict_scaled_quotient_bounds_expand_and_reject_missing_guards() {
         let fixture = include_str!("../../mdtests/integer_quotient_strict_bound.md");
         let source = fixture
@@ -1644,6 +1656,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.8s in the parallel gate"]
     fn scaled_quotient_applications_scale_with_steps_and_unused_bounds() {
         let mut samples = Vec::new();
         for size in [4usize, 16, 64, 256] {
@@ -1728,6 +1741,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 1.0s in the parallel gate"]
     fn correction_endpoint_applications_scale_with_steps_and_unused_bounds() {
         let mut samples = Vec::new();
         for size in [4usize, 16, 64, 256] {
@@ -1847,6 +1861,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "nightly: 0.7s in the parallel gate"]
     fn normalized_opposite_bound_certificates_scale_with_steps_and_unused_facts() {
         let mut samples = Vec::new();
         for size in [4usize, 16, 64, 256] {
