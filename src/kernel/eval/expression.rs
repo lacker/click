@@ -1179,18 +1179,10 @@ pub(in crate::kernel) fn freed_pointer_use(
     if pointer.is_null() || pointer.block.is_function() {
         return None;
     }
-    let base = state
+    state
         .memory()
         .deallocated_heap_allocation_holding(pointer.pointer(), assumptions)?;
-    let allocation = match &base.offset {
-        PointerOffsetTerm::Constant(0) if base.block != PointerBlock::ExternalArgument => {
-            base.block.to_string()
-        }
-        PointerOffsetTerm::Constant(offset) => format!("{}@{offset}", base.block),
-        PointerOffsetTerm::Variable(variable) => format!("{}@v{}", base.block, variable.0),
-        _ => format!("{}@<symbolic offset>", base.block),
-    };
-    Some(CUndefinedBehavior::FreedPointerUse { allocation })
+    Some(CUndefinedBehavior::FreedPointerUse)
 }
 
 /// Refuses each value path whose value is a pointer into a freed allocation;

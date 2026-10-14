@@ -1137,7 +1137,32 @@ fn prepare_function_claim_path(
         {
             (value, state, true)
         }
-        _ => return Err(format!("the certified path is not safe: {outcome:?}").into()),
+        CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
+            return Err(format!(
+                "the certified path is not safe: undefined behavior: {}",
+                undefined_behavior.description()
+            )
+            .into());
+        }
+        CFunctionOutcome::RuntimeError(error) => {
+            return Err(format!(
+                "the certified path is not safe: {}",
+                super::describe_certification_runtime_error(error)
+            )
+            .into());
+        }
+        CFunctionOutcome::Throw { .. } => {
+            return Err(
+                "the certified path is not safe: it throws an exception the function's signature does not permit"
+                    .to_string()
+                    .into(),
+            );
+        }
+        CFunctionOutcome::VerificationDiverges => {
+            return Err("the certified path is not safe: it does not return"
+                .to_string()
+                .into());
+        }
     };
     if !exceptional {
         {

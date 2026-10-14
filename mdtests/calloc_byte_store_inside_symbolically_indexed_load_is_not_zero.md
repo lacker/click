@@ -31,5 +31,5 @@ int32 f(int32 k) {
 ```
 
 ```expect
-fail: result == 0; left side evaluated to at(<state A>, *<pointer A>), right side evaluated to 0
+fail: result == 0; left side evaluated to at(statement(9).exit, r), right side evaluated to 0
 ```

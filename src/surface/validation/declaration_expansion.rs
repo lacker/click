@@ -131,6 +131,7 @@ fn load_standard_library(source: &str) -> Result<ClickFile, ClickError> {
         0,
         &[],
         &BTreeSet::new(),
+        &BTreeSet::new(),
         &[],
         Default::default(),
     )?)?;

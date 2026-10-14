@@ -1457,7 +1457,6 @@ impl<'a> Proof<'a> {
                 .join(", "))
         };
         let mut current = self.clone();
-        let mut all_open_proved = true;
         let proof = match entries {
             None => {
                 let [requirement] = open.as_slice() else {
@@ -1538,38 +1537,31 @@ impl<'a> Proof<'a> {
                     .filter(|(_, claimed)| claimed.is_none())
                     .map(|(requirement, _)| requirement)
                     .collect::<Vec<_>>();
-                match (!implicit_auto_disabled())
+                if let Some((proved_by_auto, entries)) = (!implicit_auto_disabled())
                     .then(|| current.prove_obligations_by_auto(&step, &unwritten))
                     .transpose()?
                     .flatten()
                 {
-                    Some((proved_by_auto, entries)) => {
-                        current = proved_by_auto;
-                        proved.extend(entries);
-                    }
-                    None => all_open_proved = false,
+                    current = proved_by_auto;
+                    proved.extend(entries);
                 }
                 StepProofCertificate::Requires(proved)
             }
         };
         // Every open obligation is now proved, so the fast path closes the
-        // step. An obligation the implicit `auto` could not prove keeps the
-        // bare step's former checking until the cut-over removes it.
-        let policy = if all_open_proved || implicit_auto_disabled() {
-            StatementPrerequisitePolicy::Fast
-        } else {
-            StatementPrerequisitePolicy::Retained
-        };
-        let stepped = current.apply_execution_statement_step_with_policy(step.clone(), policy)?;
+        // step; one the implicit `auto` could not prove refuses it there.
+        let stepped = current.apply_execution_statement_step_with_policy(
+            step.clone(),
+            StatementPrerequisitePolicy::Fast,
+        )?;
         Ok(self.step_proved_successor(stepped, step, proof))
     }
 
     /// A bare step (`issues/simplify-step.md`): the fast path, then the
     /// implicit `auto` for each obligation it leaves open, recorded so that
-    /// expansion prints the step with a `by` or `requires` entries. When the
-    /// probe meets a refusal it cannot record, or the implicit `auto` cannot
-    /// spell or prove an obligation, the step is checked as it was before the
-    /// implicit `auto`, so its diagnostics are unchanged.
+    /// expansion prints the step with a `by` or `requires` entries. A step
+    /// never searches the proof context: when the implicit `auto` cannot spell
+    /// or prove an obligation, the fast path refuses the step at it.
     fn apply_bare_statement_step(&self, step: ProofStep) -> Result<Self, ClickError> {
         if implicit_auto_disabled() {
             return self.apply_execution_statement_step_with_policy(
@@ -1577,39 +1569,28 @@ impl<'a> Proof<'a> {
                 StatementPrerequisitePolicy::Fast,
             );
         }
-        let former = || {
-            self.apply_execution_statement_step_with_policy(
-                step.clone(),
-                StatementPrerequisitePolicy::Retained,
-            )
-        };
-        let (probe, recorded) = probe_open_obligations(|| {
+        // An obligation the implicit `auto` cannot spell or prove refuses the
+        // step with the fast path's own diagnostic, naming that obligation.
+        let refused = || {
             self.apply_execution_statement_step_with_policy(
                 step.clone(),
                 StatementPrerequisitePolicy::Fast,
             )
-        });
+        };
+        let (probe, recorded) = probe_open_obligations(refused);
         if recorded.recorded.is_empty() {
             // With nothing recorded, the probe ran the ordinary checked step.
-            // Its refusal is the former checking's too, unless it came from a
-            // site where that checking would have searched.
-            return match probe {
-                Ok(stepped) => Ok(stepped),
-                Err(_) if recorded.refused_where_search_ran => former(),
-                Err(error) => Err(error),
-            };
+            return probe;
         }
         let open = distinct_requirements(recorded.recorded);
         let open = open.iter().collect::<Vec<_>>();
         let Some((proved, mut entries)) = self.prove_obligations_by_auto(&step, &open)? else {
-            return former();
+            return refused();
         };
-        let Ok(stepped) = proved.apply_execution_statement_step_with_policy(
+        let stepped = proved.apply_execution_statement_step_with_policy(
             step.clone(),
             StatementPrerequisitePolicy::Fast,
-        ) else {
-            return former();
-        };
+        )?;
         let proof = if entries.len() == 1 {
             StepProofCertificate::By(Box::new(entries.pop().expect("one entry").proof))
         } else {

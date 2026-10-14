@@ -1048,6 +1048,9 @@ struct ProofDiagnosticProofState(
     Option<(&'static str, Box<Proposition>, Option<String>)>,
     Option<crate::surface::proof_diagnostics::MemoryHistoryDiagnostic>,
     Vec<(Variable, CType)>,
+    // The value the goal's `result` denotes, when the goal is about a
+    // function outcome.
+    Option<CValue>,
 );
 
 fn diagnostic_value_variable(value: &CValue) -> Option<Variable> {
@@ -1082,7 +1085,10 @@ const NAMED_SNAPSHOT_LIMIT: usize = 32;
 /// at the loop's own entry, so a body goal names it as the iteration's entry
 /// value. Names the current state gives were registered first and win. Among
 /// snapshots, the oldest of the most recent [`NAMED_SNAPSHOT_LIMIT`] wins,
-/// which for a loop-carried value is the head that minted it. Diagnostics
+/// which for a loop-carried value is the head that minted it. A read of a
+/// snapshot's memory is qualified by its point, and an address no structural
+/// spelling names (a heap allocation after its local's frame ended) is the
+/// pointer local that held it there, `at(statement(2).exit, p)`. Diagnostics
 /// only: this runs when a failure is printed, never while checking.
 pub(in crate::surface::proof) fn register_recorded_snapshot_names(
     labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
@@ -1090,34 +1096,62 @@ pub(in crate::surface::proof) fn register_recorded_snapshot_names(
 ) {
     use crate::surface::{CodeRegionRef, ProgramPointRef, SnapshotSelector};
     let recent = snapshots.recent(NAMED_SNAPSHOT_LIMIT);
-    for (selector, state) in recent.into_iter().rev() {
-        // Only points `at(...)` resolves from recorded snapshots.
-        let citable = match selector {
+    // Only points `at(...)` resolves from recorded snapshots.
+    let citable = recent
+        .into_iter()
+        .rev()
+        .filter(|(selector, _)| match selector {
             SnapshotSelector::Mark(_) => true,
             SnapshotSelector::ProgramPoint(ProgramPointRef { region, .. }) => matches!(
                 region,
                 CodeRegionRef::Statement(_) | CodeRegionRef::Loop(_) | CodeRegionRef::Label(_)
             ),
-        };
-        if !citable {
-            continue;
-        }
-        let point = crate::surface::diagnostics::describe_snapshot_selector(selector);
+        })
+        .map(|(selector, state)| {
+            (
+                crate::surface::diagnostics::describe_snapshot_selector(selector),
+                state,
+            )
+        })
+        .collect::<Vec<_>>();
+    // A read of a snapshot's memory is spelled against the locals it held,
+    // as `at(point, p[1])`.
+    for (point, state) in &citable {
+        labels.source_state(state, point.clone());
+    }
+    for (point, state) in &citable {
         for (name, value) in state.locals().object_values() {
-            // A pointer's offset variable is not the pointer; only a scalar
-            // local's value is exactly the local.
+            // A pointer's offset variable is not the pointer; a scalar
+            // local's value, or a pointer local's whole address, is exactly
+            // the local.
             // A temporary the translation introduced has no source spelling.
             if name.starts_with("__click")
                 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             {
                 continue;
             }
-            if let crate::kernel::arithmetic_c_value!(Bitvector32Term::Variable(variable)) = value {
-                labels.fallback_source_name(
-                    *variable,
-                    format!("at({point}, {name})"),
-                    value.c_type(),
-                );
+            match value {
+                crate::kernel::arithmetic_c_value!(Bitvector32Term::Variable(variable)) => {
+                    // A read of a memory a recorded point names is spelled as
+                    // that read, `old(g[0])`, which says where the value came
+                    // from.
+                    if crate::kernel::registered_load_for_variable(variable)
+                        .is_some_and(|(memory, _)| labels.names_memory(memory.memory()))
+                    {
+                        continue;
+                    }
+                    labels.fallback_source_name(
+                        *variable,
+                        format!("at({point}, {name})"),
+                        value.c_type(),
+                    );
+                }
+                // An address no structural spelling names, a heap
+                // allocation, is the pointer local that held it.
+                CValue::Pointer(pointer) => {
+                    labels.fallback_pointer_name(pointer.pointer(), format!("at({point}, {name})"));
+                }
+                _ => {}
             }
         }
     }
@@ -1153,6 +1187,9 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         }
         if let Some(state) = &self.3 {
             labels.register_current_state(state);
+        }
+        if let Some(result) = &self.8 {
+            labels.source_result(result);
         }
         for (variable, c_type) in &self.7 {
             labels.source_type(*variable, *c_type);
@@ -1603,6 +1640,7 @@ impl Proof<'_> {
             None,
             history,
             source_types,
+            result.cloned(),
         )
     }
 }

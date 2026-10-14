@@ -1458,9 +1458,9 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                     CValue::UInt128(Bitvector32Term::Variable(Variable(index as u64)))
                 }
                 C0Type::Void => unreachable!("pure theorem parameters cannot be void"),
-                C0Type::Bool => {
-                    crate::kernel::bool_value(Bitvector32Term::Variable(Variable(index as u64)))
-                }
+                C0Type::Bool => crate::kernel::spec_bool_value(Bitvector32Term::Variable(
+                    Variable(index as u64),
+                )),
                 C0Type::VoidPointer | C0Type::VoidPointerPointer => CValue::typed_pointer(
                     Pointer {
                         block: PointerBlock::ExternalArgument,

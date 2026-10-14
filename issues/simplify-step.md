@@ -214,24 +214,30 @@ Implement `Tactic() by { ... }` and `Tactic() { requires P by ...; }` for
 `Contextual` re-run move onto this driver. A debug assertion checks that each
 spelling re-lowers exactly.
 
-### 3. Remove the step fallback search
+### 3. Remove the step fallback search (landed)
 
-Decided 2026-10-13. Make every remaining census case go through the fast path
-and implicit `auto`, either by teaching `auto` the proof or by building the
-missing Surface spelling (a missing spelling is a bug), then delete the
-fallback: the former `Retained` search, the compatibility escape hatch in
-smart execution's retry, and the in-step re-run. Lower each pin as its cases
-move; the step census reaches zero.
+Every census case now goes through the fast path and implicit `auto`: `simp`
+proves a constructor disequality over a call-produced field, a count's
+definedness once a zero summand is removed, and a `defined(..)` that carries
+a read's definedness; premise spelling names a call's `old(..)` value,
+including a loaded pointer to a heap object, at a recorded statement entry;
+a requirement synthesis spells conjunct by conjunct is admitted through
+the one conjunct that already states it; and an `assert`'s false-path
+obligation (`0 == 1`, as Rust overflow checks lower to) is spelled as the
+asserted condition at the pre-state, less the disjuncts an exact fact
+refutes, which `simp` proves by disjunctive syllogism. The census covered
+only the mdtest and example harnesses; the Rust-import suite's
+`charon_symbolic_multiply_*` tests were the cases it missed. The fallback is deleted: `Retained`
+no longer derives obligations or decides condition prerequisites by search,
+a bare step refuses an obligation the implicit `auto` cannot prove, smart
+execution's retry has no compatibility escape hatch, and the in-step re-run
+over retained `have`s is gone. Both census pins are empty.
 
-Progress: `simp` proves a constructor disequality over
-a call-produced field, and a count's definedness once a zero summand is
-removed, and a `defined(..)` that carries a read's definedness; premise
-spelling names a call's `old(..)` value at a recorded statement entry. The
-remaining cases are 2 `ContextualAtomic` mdtests
-(`shared_heap_population_lifecycles`, whose fact a hand-written
-`at(statement(N).entry, ..)` already spells but premise spelling does not yet
-find) and 1 example `And` (`owned-string`), whose add-overflow-and-read
-requirement has no spelling yet.
+Still uncounted, and so not yet shown search-free: the kernel's own
+condition evaluation, which `certified_condition_transitions` runs over the
+whole context under every policy but `Exact`. Count it before claiming a
+step decides conditions without search; its fast path is
+[difference-logic.md](difference-logic.md).
 
 ### 4. Check expansion cold
 

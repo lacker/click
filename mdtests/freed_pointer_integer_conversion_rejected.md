@@ -1,6 +1,6 @@
 # Converting a freed pointer to an integer is refused
 
-`(unsigned long)p` after `free(p)` converts an indeterminate pointer value. A pointer-to-pointer cast only retags the value, like a store, and is not refused; a conversion to an integer is. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names the freed allocation; see `docs/concepts/undefined-behavior.md`.
+`(unsigned long)p` after `free(p)` converts an indeterminate pointer value. A pointer-to-pointer cast only retags the value, like a store, and is not refused; a conversion to an integer is. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names it; see `docs/concepts/undefined-behavior.md`.
 
 ```c filename=freed_cast.c
 void *malloc(unsigned long size);
@@ -29,5 +29,6 @@ int f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation: its value is indeterminate after the free
+  operation: `(uint64)p`
 ```

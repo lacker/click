@@ -8464,6 +8464,35 @@ pub(crate) fn loop_structural_descent_failure(
             "loop `decreases {measure}` has no owned instance at the back edge"
         ));
     };
+    structural_instance_descent_failure(
+        head,
+        next,
+        &format!("loop `decreases {measure}`"),
+        "the binder holds at the back edge",
+        "it held at the loop head",
+        definitions,
+        assumptions,
+    )
+}
+
+/// Whether `next` holds a model strictly contained in `head`'s, through the
+/// arms the premises in `assumptions` decide, and why not when it does not.
+///
+/// This is the one structural descent decision: a loop back edge asks it of
+/// the instance its binder ends holding, and a call ranked by a structural
+/// `decreases t` asks it of the instance the call passes for the callee's
+/// measured binder. `label` names the measure, and the two phrases name the
+/// two instances, in a refusal.
+pub(crate) fn structural_instance_descent_failure(
+    head: &ResourceInstance,
+    next: &ResourceInstance,
+    label: &str,
+    next_role: &str,
+    head_role: &str,
+    definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> Option<String> {
+    let measure = label;
     let Some(definition) = definitions
         .iter()
         .find(|definition| definition.name() == head.name)
@@ -8475,31 +8504,29 @@ pub(crate) fn loop_structural_descent_failure(
     };
     let Some(body) = definition.matched.as_ref() else {
         return Some(format!(
-            "loop `decreases {measure}` needs a resource with a `match` body; `{}` has none",
+            "{measure} needs a resource with a `match` body; `{}` has none",
             head.name
         ));
     };
     let Some(AlgebraicValue::Algebraic(model)) = head.fields.get(body.field_index) else {
         return Some(format!(
-            "loop `decreases {measure}` names an instance whose matched field is not algebraic"
+            "{measure} names an instance whose matched field is not algebraic"
         ));
     };
     let Some(ResourceModelArmSelection::Constructor(constructor)) =
         crate::kernel::select_resource_model_arm(model, assumptions)
     else {
         return Some(format!(
-            "loop `decreases {measure}` cannot name a child: the invariants do not say which `{}` constructor the instance at the loop head carries",
+            "{measure} cannot name a child: the facts do not say which `{}` constructor the instance {head_role} carries",
             head.name
         ));
     };
     let AlgebraicTermNode::Constructor { variant, .. } = &constructor.node else {
-        return Some(format!(
-            "loop `decreases {measure}` selected a non-constructor model"
-        ));
+        return Some(format!("{measure} selected a non-constructor model"));
     };
     if body.arms.iter().all(|arm| &arm.variant != variant) {
         return Some(format!(
-            "loop `decreases {measure}` selected the unknown constructor `{variant}`"
+            "{measure} selected the unknown constructor `{variant}`"
         ));
     }
     let mut seen = BTreeSet::new();
@@ -8517,7 +8544,7 @@ pub(crate) fn loop_structural_descent_failure(
         return None;
     }
     Some(format!(
-        "loop `decreases {measure}` does not descend: the `{}` the binder holds at the back edge is not a contained child of the `{}` it held at the loop head, through the arms this path decided, starting at the `{variant}` arm of `{}`",
+        "{measure} does not descend: the `{}` {next_role} is not a contained child of the `{}` {head_role}, through the arms this path decided, starting at the `{variant}` arm of `{}`",
         next.name, head.name, head.name
     ))
 }

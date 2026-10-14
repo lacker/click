@@ -69,6 +69,8 @@ proof error:
   `increment.ensures_0` tactic 0
   `execute()` produced undefined behavior
   signed overflow
+  operation
+  `x + 1`
   C statement at increment.c:2:5
   `return x + 1;`
 

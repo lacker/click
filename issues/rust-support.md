@@ -131,20 +131,18 @@ zero-length scalar tail. The offline nightly regression checks helper bodies,
 expansion, and rejection of false results/invariants and missing authority.
 
 Checked symbolic count-advance, lane-identity, and native read-bound lemmas
-support repeated DO16 blocks below 5552 bytes. The saved 16–5551-byte draft
-checks all sixteen original addition pairs and closes the repeated-block
-invariants. Its full contract remains unproved: the scalar tail stops at
-the original scalar-tail byte read after `*buf++`. Bounded selected-premise
-reduction now gets past the first-byte view construction that previously
-selected 71 premises and exceeded the unchanged 64-premise spelling limit.
-The actual C read still reports missing held read authority; a pure
-`viewable` fact does not grant that authority. See the
-[tracked read regression](../bugs/zlib-repeated-tail-loses-native-read-authority.md)
-before extending the scalar-tail proof.
+now support the locked repeated-block sidecar for lengths 16–5551, canonical
+seed 1, and nonnull input. It proves the shared packed checksum, termination,
+and preservation of every input byte through repeated DO16 blocks and the
+nonempty scalar tail. The tail retains the caller's complete input view;
+native read matching keeps the bounded native index beside a narrow pointer
+alias. Its component bounds agree with the loop invariants. The offline
+nightly regression checks all helper bodies, complete certificate expansion,
+false results/invariants, and missing or shortened authority.
 
-Complete that scalar tail, then the original 5552-byte batches. Maintain exact
-component equations and native bounds across reductions; the arbitrary-length
-C result remains unproved.
+Next prove the original 5552-byte batches. Maintain exact component equations
+and native bounds across reductions; the arbitrary-length C result remains
+unproved.
 
 Connect the original nonempty computation to the common specification, then
 prove compatible seed/reset/null-buffer behavior and incremental processing.

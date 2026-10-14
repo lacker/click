@@ -352,7 +352,8 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_fact
                     StatedForm::Proposition(proposition),
                     fixed_state.state,
                     contract_environment.values,
-                ),
+                )
+                .with_integer_values(integer_values),
             ),
             None => refusal.message,
         })?;
@@ -370,7 +371,8 @@ pub(in crate::surface) fn lower_fixed_state_proposition_through_kernel_with_fact
             StatedForm::Proposition(proposition),
             fixed_state.state,
             contract_environment.values,
-        ),
+        )
+        .with_integer_values(integer_values),
     )?;
     Ok((lowered, introductions, facts))
 }

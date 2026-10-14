@@ -998,6 +998,20 @@ impl EqualityGraph {
                 offset,
             })
             .or_else(|| state.terms.wide_additive_address(id))
+            .or_else(|| {
+                // A symbolic cursor can be equal to a narrow external address
+                // whose offset class retains the wide producer. Same-block
+                // pointer equations enter as offset equations, so that wide
+                // spelling need not have its own registered address node.
+                // Follow the one retained address and its one retained offset;
+                // never enumerate aliases in either equality class.
+                let spelling = state.terms.additive_address(id)?;
+                let offset = state.terms.additive_offset(&spelling.offset, true)?;
+                Some(Pointer {
+                    block: spelling.block,
+                    offset,
+                })
+            })
     }
 
     /// A typed pair of byte endpoints used only to select retained resource
@@ -1167,6 +1181,27 @@ impl EqualityGraph {
             && let Some(aligned) = self.pointer_at_base_with_spelling(&spelling, base, false)
         {
             return Some(aligned);
+        }
+        // A byte lane of a symbolic cursor has a constant offset but no
+        // additive producer of its own. Align the cursor's retained producer,
+        // then restore the exact byte displacement. Containment still checks
+        // the resulting native index and its non-wrapping addition.
+        if let Some(bytes) = pointer.offset.as_const().filter(|bytes| *bytes != 0) {
+            let cursor = Pointer {
+                block: pointer.block.clone(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            if let Some(spelling) = self.wide_additive_address(&cursor)
+                && let Some(aligned) = self.pointer_at_base_with_spelling(&spelling, base, false)
+            {
+                return Some(Pointer {
+                    block: aligned.block,
+                    offset: PointerOffsetTerm::add(
+                        aligned.offset,
+                        PointerOffsetTerm::Constant(bytes),
+                    ),
+                });
+            }
         }
         self.pointer_at_base(pointer, base)
     }
@@ -2254,11 +2289,20 @@ mod tests {
                 let alias = Pointer::symbolic(Variable(1_100_000 + item));
                 assert!(graph.add_equality(&alias, &computed));
             }
-            let ((aligned, work), map_work) = crate::persistent::measure_persistent_work(|| {
-                crate::instrumentation::measure_deterministic_work(|| {
-                    graph.pointer_at_base_with_wide_index(&computed, &bytes)
-                })
-            });
+            let cursor = Pointer::symbolic(Variable(1_100_000 + size - 1));
+            let (((aligned, lane), work), map_work) =
+                crate::persistent::measure_persistent_work(|| {
+                    crate::instrumentation::measure_deterministic_work(|| {
+                        (
+                            graph.pointer_at_base_with_wide_index(&cursor, &bytes),
+                            graph.pointer_at_base_with_wide_index(
+                                &cursor.offset_by_bytes(1),
+                                &bytes,
+                            ),
+                        )
+                    })
+                });
+            assert_eq!(lane, Some(wide.offset_by_bytes(1)));
             assert_eq!(aligned, Some(wide));
             samples.push((size, work, map_work));
         }

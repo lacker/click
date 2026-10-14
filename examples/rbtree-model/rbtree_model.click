@@ -25,17 +25,17 @@ function rb_inorder(tree: RbTree) -> List<struct rb_node*>
     }
 }
 
-function rb_member(tree: RbTree, target: struct rb_node*) -> int32
+function rb_member(tree: RbTree, target: struct rb_node*) -> bool
     decreases tree
 {
     match tree {
-        RbTree::Empty => 0,
+        RbTree::Empty => false,
         RbTree::Node(node, parent, color, left, right) =>
             if node == target {
-                1
+                true
             } else {
-                if rb_member(left, target) == 1 {
-                    1
+                if rb_member(left, target) {
+                    true
                 } else {
                     rb_member(right, target)
                 }
@@ -61,15 +61,15 @@ theorem rb_member_is_inorder_membership(tree: RbTree, target: struct rb_node*) {
                     List<struct rb_node*>::Cons(node, rb_inorder(right)), target));
                 rewrite(list_contains(list_append(rb_inorder(left),
                     List<struct rb_node*>::Cons(node, rb_inorder(right))), target)
-                    == if list_contains(rb_inorder(left), target) == 1 {
-                        1
+                    == if list_contains(rb_inorder(left), target) {
+                        true
                     } else {
                         list_contains(List<struct rb_node*>::Cons(node, rb_inorder(right)), target)
                     });
                 apply(list_contains_cons(node, rb_inorder(right), target));
                 rewrite(list_contains(List<struct rb_node*>::Cons(node, rb_inorder(right)), target)
                     == if node == target {
-                        1
+                        true
                     } else {
                         list_contains(rb_inorder(right), target)
                     });
@@ -1072,10 +1072,7 @@ theorem rb_insert_fix_outer_left_restores(grandparent: struct rb_node*,
         apply(rb_reparent_preserves_is_rb(c, grandparent));
         apply(rb_reparent_preserves_black_height(c, grandparent));
         apply(rb_reparent_preserves_rb_root_black(c, grandparent));
-        have is_rb(rb_reparent(c, grandparent)) == 1 by {
-            rewrite(is_rb(rb_reparent(c, grandparent)) == is_rb(c));
-            assumption();
-        }
+        have is_rb(rb_reparent(c, grandparent)) == 1 by auto;
         have rb_root_black(rb_reparent(c, grandparent)) == 1 by auto;
         have black_height(rb_reparent(c, grandparent)) == black_height(d) by auto;
         apply(is_rb_red_node(cursor, parent, a, b));
@@ -1318,10 +1315,7 @@ theorem rb_insert_fix_inner_right_restores(grandparent: struct rb_node*,
             rewrite(black_height(rb_reparent(c, parent)) == black_height(c));
             assumption();
         }
-        have black_height(rb_reparent(c, parent)) == black_height(d) by {
-            rewrite(black_height(rb_reparent(c, parent)) == black_height(c));
-            assumption();
-        }
+        have black_height(rb_reparent(c, parent)) == black_height(d) by auto;
         apply(rb_insert_fix_outer_right_restores(grandparent, above, cursor, parent,
             a, b, rb_reparent(c, parent), d));
         assumption();
@@ -5156,11 +5150,7 @@ theorem ctx_insert_case2_left_step(above: struct rb_node*, grandparent: struct r
         apply(color_black_black());
         apply(node_color_ok_red(Color::Black, rb_color(c)));
         have black_height(RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent))) == black_height(RbTree::Node(cursor, parent, Color::Red, b, c)) by auto;
-        have black_height(RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent))) == black_height(c) by {
-            rewrite(black_height(RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent))) == black_height(RbTree::Node(cursor, parent, Color::Red, b, c)));
-            rewrite(black_height(RbTree::Node(cursor, parent, Color::Red, b, c)) == black_height(b));
-            assumption();
-        }
+        have black_height(RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent))) == black_height(c) by auto;
         apply(ctx_rb_right_red_up(parent, grandparent, a, Context::Left(grandparent, above, Color::Black, d, up2), black_height(RbTree::Node(cursor, parent, Color::Red, b, c)), Color::Black));
         apply(frame_black_height_red(black_height(RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)))));
         have ctx_rb(Context::Left(grandparent, above, Color::Black, d, up2), frame_black_height(Color::Red, black_height(RbTree::Node(parent, cursor, Color::Red, a, rb_reparent(b, parent)))), Color::Red) == 1 by {
@@ -7088,10 +7078,7 @@ theorem ctx_erase_case3_left_exit(above: struct rb_node*, parent: struct rb_node
         apply(rb_reparent_preserves_black_height(rl, parent));
         apply(rb_reparent_preserves_is_rb(rr, sibling));
         apply(rb_reparent_preserves_black_height(rr, sibling));
-        have is_rb(rb_reparent(rl, parent)) == 1 by {
-            rewrite(is_rb(rb_reparent(rl, parent)) == is_rb(rl));
-            assumption();
-        }
+        have is_rb(rb_reparent(rl, parent)) == 1 by auto;
         have is_rb(rb_reparent(rr, sibling)) == 1 by auto;
         have black_height(t) == black_height(rb_reparent(rl, parent)) by {
             rewrite(black_height(rb_reparent(rl, parent)) == black_height(rl));
@@ -7311,10 +7298,7 @@ theorem ctx_erase_right_sibling_is_node(above: struct rb_node*, parent: struct r
             RbTree::Empty => {
                 apply(ctx_rb_right_height(parent, above, pcolor, RbTree::Empty, up, Nat::Succ(bh), focus_color));
                 have black_height(RbTree::Empty) == Nat::Zero by auto;
-                have Nat::Zero == Nat::Succ(bh) by {
-                    rewrite(Nat::Zero == black_height(RbTree::Empty));
-                    assumption();
-                }
+                have Nat::Zero == Nat::Succ(bh) by auto;
                 contradiction(Nat::Zero == Nat::Succ(bh));
             }
             RbTree::Node(node, node_parent, color, left, right) => {

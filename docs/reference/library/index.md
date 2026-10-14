@@ -496,18 +496,20 @@ function list_append<T>(xs: List<T>, ys: List<T>) -> List<T>
 ### `list_contains`
 
 ```click
-function list_contains<T>(xs: List<T>, value: T) -> int32
+function list_contains<T>(xs: List<T>, value: T) -> bool
     decreases xs
 {
     match xs {
-        List::Nil => 0,
+        List::Nil => false,
         List::Cons(head, tail) =>
-            if head == value { 1 } else { list_contains(tail, value) },
+            if head == value { true } else { list_contains(tail, value) },
     }
 }
 ```
 
-Returns `1` for membership and `0` otherwise, using element equality.
+Returns `true` for membership and `false` otherwise, using element
+equality. A call written alone is a claim: `ensures list_contains(xs, v);`
+means `list_contains(xs, v) == true`.
 Its checked laws support C scalar, pointer, and algebraic-valued elements,
 including nested lists. Comparisons of unknown algebraic values stay symbolic.
 
@@ -601,7 +603,7 @@ theorem list_append_associative<T>(xs: List<T>, ys: List<T>, zs: List<T>) {
 
 ```click
 theorem list_contains_nil<T>(value: T) {
-    ensures list_contains(List<T>::Nil, value) == 0 by {
+    ensures list_contains(List<T>::Nil, value) == false by {
         unfold(list_contains(List<T>::Nil, value));
         normalize();
     }
@@ -615,7 +617,7 @@ theorem list_contains_nil<T>(value: T) {
 ```click
 theorem list_contains_cons<T>(head: T, tail: List<T>, value: T) {
     ensures list_contains(List<T>::Cons(head, tail), value)
-        == if head == value { 1 } else { list_contains(tail, value) } by {
+        == if head == value { true } else { list_contains(tail, value) } by {
         unfold(list_contains(List<T>::Cons(head, tail), value));
         normalize();
     }
@@ -629,7 +631,7 @@ theorem list_contains_cons<T>(head: T, tail: List<T>, value: T) {
 ```click
 theorem list_contains_append<T>(xs: List<T>, ys: List<T>, value: T) {
     ensures list_contains(list_append(xs, ys), value)
-        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        == if list_contains(xs, value) { true } else { list_contains(ys, value) } by {
         induct(xs) as ih {
             List::Nil => {
                 unfold(list_append(List<T>::Nil, ys));
@@ -644,20 +646,20 @@ theorem list_contains_append<T>(xs: List<T>, ys: List<T>, value: T) {
                 if head == value {
                     apply(list_contains_cons(head, list_append(tail, ys), value));
                     rewrite(list_contains(List<T>::Cons(head, list_append(tail, ys)), value)
-                        == if head == value { 1 } else { list_contains(list_append(tail, ys), value) });
+                        == if head == value { true } else { list_contains(list_append(tail, ys), value) });
                     apply(list_contains_cons(head, tail, value));
                     rewrite(list_contains(List<T>::Cons(head, tail), value)
-                        == if head == value { 1 } else { list_contains(tail, value) });
+                        == if head == value { true } else { list_contains(tail, value) });
                     normalize() using { head == value; }
                 } else {
                     apply(list_contains_cons(head, list_append(tail, ys), value));
                     rewrite(list_contains(List<T>::Cons(head, list_append(tail, ys)), value)
-                        == if head == value { 1 } else { list_contains(list_append(tail, ys), value) });
+                        == if head == value { true } else { list_contains(list_append(tail, ys), value) });
                     apply(list_contains_cons(head, tail, value));
                     rewrite(list_contains(List<T>::Cons(head, tail), value)
-                        == if head == value { 1 } else { list_contains(tail, value) });
+                        == if head == value { true } else { list_contains(tail, value) });
                     rewrite(list_contains(list_append(tail, ys), value)
-                        == if list_contains(tail, value) == 1 { 1 } else { list_contains(ys, value) });
+                        == if list_contains(tail, value) { true } else { list_contains(ys, value) });
                     normalize() using { not(head == value); }
                 }
             }

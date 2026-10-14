@@ -101,12 +101,7 @@ int32 refcount_pipeline(int32 amount) {
     requires amount <= 2147483646;
     ensures result == -1 or result == 0;
 } by {
-    have amount < 2147483647;
-    have defined(1 + amount) by {
-        apply(int32_increment_left_below_max_is_defined(amount)) using {
-            amount < 2147483647;
-        }
-    }
+    have defined(1 + amount) by auto;
     step();
     step();
     branch then {
@@ -114,29 +109,16 @@ int32 refcount_pipeline(int32 amount) {
         simp();
     } else {}
     step();
-    have defined(obj->refs + amount) by {
-        rewrite(obj->refs == 1);
-        assumption();
-    }
+    have defined(obj->refs + amount) by auto;
     fold(authority(reference(obj)));
     fold(reference(obj));
     fold(control(obj));
     step();
     open(control(obj)) {
-        have obj->refs == 1 + amount;
     }
-    have amount < 1 + amount by {
-        apply(int32_increment_left_strictly_increases(amount)) using {
-            amount < 2147483647;
-        }
-    }
-    have amount < obj->refs by {
-        rewrite(obj->refs == 1 + amount);
-        assumption();
-    }
+    have amount < obj->refs by auto;
     step();
     open(control(obj)) {
-        have obj->refs == 1;
     }
     step();
     step();

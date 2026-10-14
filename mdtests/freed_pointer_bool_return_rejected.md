@@ -5,7 +5,7 @@ testing it against null. After `free(p)` that tests an indeterminate pointer
 value: under C11 6.2.4p2 a pointer's value becomes indeterminate when its
 pointee's lifetime ends, and Annex J.2 makes using that value undefined. The
 conversion at the return boundary is refused like an explicit `(_Bool)p` cast,
-naming the freed allocation; see `docs/concepts/undefined-behavior.md`.
+naming the operation; see `docs/concepts/undefined-behavior.md`.
 
 ```c filename=freed_bool_return.c
 void *malloc(unsigned long size);
@@ -33,5 +33,5 @@ bool f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation
 ```

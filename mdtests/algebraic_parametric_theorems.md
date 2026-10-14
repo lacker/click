@@ -16,7 +16,7 @@ theorem independent<T, U>(x: T, y: U) {
 
 theorem list_law<T>(xs: List<T>, ys: List<T>, value: T) {
     ensures list_contains(list_append(xs, ys), value)
-        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        == if list_contains(xs, value) { true } else { list_contains(ys, value) } by {
         apply(list_contains_append(xs, ys, value));
     }
 }

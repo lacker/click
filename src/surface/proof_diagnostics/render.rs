@@ -56,6 +56,13 @@ pub(crate) struct SnapshotLabels {
     /// Addresses a source spelling names only by a report-local
     /// `<pointer A>`.
     unnamed_pointers: HashMap<Pointer, String>,
+    /// Addresses no structural spelling names, spelled as the pointer local
+    /// that held them at a recorded snapshot: `at(statement(2).exit, p)`.
+    snapshot_pointers: HashMap<Pointer, String>,
+    /// Source names of mathematical `Integer` variables. Kept apart from
+    /// `source_names` because the kernel numbers `Integer` variables
+    /// separately from machine ones.
+    integer_names: HashMap<Variable, String>,
     /// The parameters or locals a diagnostic spells addresses through, with
     /// their values, when the caller has them.
     naming: Option<std::rc::Rc<NamingTables>>,
@@ -70,6 +77,34 @@ impl SnapshotLabels {
             self.source_type(*variable, value.c_type());
         }
     }
+
+    /// Names the value a function outcome returns `result`, the one spelling
+    /// an `ensures` clause has for it, where nothing else spells it: a name
+    /// already registered, a read (`old(g[0])`), a model field, or an
+    /// address's structural spelling (`&q[1]`) says more. Only the returned
+    /// value itself is named; a part of it keeps its own spelling.
+    pub(crate) fn source_result(&mut self, value: &crate::kernel::CValue) {
+        self.source_value_type(value);
+        match value {
+            crate::kernel::arithmetic_c_value!(Bitvector32Term::Variable(variable))
+                if crate::kernel::registered_load_for_variable(variable).is_none()
+                    && crate::kernel::model_fields::model_field_spelling(*variable).is_none() =>
+            {
+                self.source_name(*variable, "result".into());
+            }
+            crate::kernel::CValue::Pointer(pointer) => {
+                // A reference result's carrier is the address of `result`.
+                let name = if crate::surface::diagnostics::reference_result_source() {
+                    "&result"
+                } else {
+                    "result"
+                };
+                self.fallback_pointer_name(pointer.pointer(), name.into());
+            }
+            _ => {}
+        }
+    }
+
     /// Stable report-local identities, distinct from source spellings.
     pub(crate) fn pointer_value_name(&mut self, pointer: &Pointer) -> String {
         if let Some(index) = self.pointer_values.get(pointer) {
@@ -178,8 +213,24 @@ impl SnapshotLabels {
         )
     }
 
-    /// The report-local name of an address no source spelling names.
+    /// An address no structural spelling names: the pointer local that held
+    /// it at a recorded snapshot when one did, otherwise a report-local
+    /// `<pointer A>`.
     pub(crate) fn unnamed_pointer(&mut self, pointer: &Pointer) -> String {
+        if let Some(name) = self.snapshot_pointers.get(pointer) {
+            return name.clone();
+        }
+        self.placeholder_pointer(pointer)
+    }
+
+    /// The name [`Self::unnamed_pointer`] falls back to before its
+    /// placeholder, when one was registered.
+    pub(crate) fn snapshot_pointer_name(&self, pointer: &Pointer) -> Option<&str> {
+        self.snapshot_pointers.get(pointer).map(String::as_str)
+    }
+
+    /// A report-local `<pointer A>`, whatever else names the address.
+    pub(crate) fn placeholder_pointer(&mut self, pointer: &Pointer) -> String {
         let next = self.unnamed_pointers.len();
         if next >= 128 && !self.unnamed_pointers.contains_key(pointer) {
             return "<another pointer>".into();
@@ -370,6 +421,35 @@ impl SnapshotLabels {
 
     pub(crate) fn source_name(&mut self, variable: Variable, name: String) {
         self.source_names.entry(variable).or_insert(name);
+    }
+
+    /// Names the `Integer` variable `variable` with `name`, when nothing named
+    /// it yet.
+    pub(crate) fn integer_source_name(&mut self, variable: Variable, name: String) {
+        self.integer_names.entry(variable).or_insert(name);
+    }
+
+    fn integer_name_for(&self, variable: Variable) -> Option<&str> {
+        self.integer_names
+            .get(&variable)
+            .map(String::as_str)
+            .filter(|name| name.len() <= 256)
+    }
+
+    /// Spells `pointer` as `name` where no structural spelling names it, when
+    /// nothing named it that way yet.
+    pub(crate) fn fallback_pointer_name(&mut self, pointer: &Pointer, name: String) {
+        if self.snapshot_pointers.len() < 128 {
+            self.snapshot_pointers
+                .entry(pointer.clone())
+                .or_insert(name);
+        }
+    }
+
+    /// Whether a read of `memory` is qualified by a recorded point rather
+    /// than a report-local `<state A>`.
+    pub(crate) fn names_memory(&self, memory: &CMemory) -> bool {
+        self.source_memory_context(memory).is_some()
     }
 
     /// Names `variable` with `name` and its C type when nothing named it yet.
@@ -590,6 +670,7 @@ pub(crate) fn enter_ambient_naming(parameter_binding: ParameterBinding<'_>, entr
 pub(crate) fn clear_ambient_naming() {
     AMBIENT_NAMING.with(|naming| *naming.borrow_mut() = None);
     AMBIENT_ENTRY.with(|slot| *slot.borrow_mut() = None);
+    crate::surface::diagnostics::clear_ambient_object_fields();
 }
 
 /// The source declaration supplies nominal layout metadata even when a
@@ -736,7 +817,15 @@ fn render_kernel_fact(
 /// elimination, so its `Debug` reaches the same datatype schemas a
 /// proposition's does.
 pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
-    surface::integer(term, &mut SnapshotLabels::ambient())
+    render_integer_term_labeled(term, &mut SnapshotLabels::ambient())
+}
+
+/// One exact-arithmetic term under the report's labels.
+pub(crate) fn render_integer_term_labeled(
+    term: &IntegerTerm,
+    labels: &mut SnapshotLabels,
+) -> String {
+    surface::integer(term, labels)
 }
 
 /// One C value in source syntax, under the report's labels.
@@ -1590,6 +1679,12 @@ impl Renderer<'_> {
             return;
         }
         self.depth += 1;
+        // A specification `bool` is read as the term it names.
+        if let Some(application) = crate::kernel::spec_bool_term(v) {
+            self.bitvector(application);
+            self.depth -= 1;
+            return;
+        }
         if let Bitvector32Term::MemoryLoad(snapshot, pointer, kind) = v {
             // `memory` prints its own `snapshot=` prefix.
             if self.trace_facts {

@@ -21,9 +21,11 @@ use crate::kernel::{CComparisonOperator, CFloatCondition, CUpdateOperator};
 use crate::surface::validation::describe_click_type;
 
 mod cpp_model;
+mod object_fields;
 mod rust_spelling;
 pub(in crate::surface) use cpp_model::ModelAccessorScope;
 use cpp_model::describe_model_accessor;
+pub(crate) use object_fields::{clear_ambient_object_fields, enter_ambient_object_fields};
 use rust_spelling::rust_scalar_spelling;
 pub(crate) use rust_spelling::{enter_rust_spelling, rust_spelling, rust_variable_spelling};
 
@@ -1041,7 +1043,7 @@ pub(super) fn describe_goal_proof_context(
     // The returned value's checked type decides how a constant beside it
     // prints, even when the value has no source name.
     if let Some(result) = result {
-        labels.source_value_type(result);
+        labels.source_result(result);
     }
     let mut relevant = match goal {
         Some(goal) => pure_facts_relevant_to(goal, pure_facts),
@@ -1326,6 +1328,82 @@ pub(super) fn describe_refuted_proof_obligation(
         Some(context) => format!("{context}: {refutation}"),
         None => refutation,
     }
+}
+
+/// Where in `statement` its undefined behavior `kind` arises, as the line
+/// "\n  operation: `a + b`" that precedes the C statement line, or nothing
+/// when no single operation can be named.
+pub(in crate::surface) fn describe_undefined_behavior_site(
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &crate::kernel::PureFactContext,
+    kind: &crate::kernel::CUndefinedBehavior,
+) -> String {
+    describe_located_undefined_behavior(crate::kernel::locate_undefined_behavior(
+        state,
+        statement,
+        assumptions,
+        kind,
+    ))
+}
+
+/// [`describe_undefined_behavior_site`] for a branch or loop condition.
+pub(in crate::surface) fn describe_undefined_behavior_condition_site(
+    state: &CState,
+    condition: &CExpression,
+    assumptions: &crate::kernel::PureFactContext,
+    kind: &crate::kernel::CUndefinedBehavior,
+) -> String {
+    describe_located_undefined_behavior(crate::kernel::locate_undefined_behavior_in_condition(
+        state,
+        condition,
+        assumptions,
+        kind,
+    ))
+}
+
+fn describe_located_undefined_behavior(
+    site: Option<crate::kernel::CUndefinedBehaviorSite>,
+) -> String {
+    let (prefix, expression) = match site {
+        Some(crate::kernel::CUndefinedBehaviorSite::Expression(expression)) => ("", expression),
+        Some(crate::kernel::CUndefinedBehaviorSite::Store(pointer)) => {
+            ("the store through ", pointer)
+        }
+        None => return String::new(),
+    };
+    let spelling = describe_c_expression(&expression);
+    // A read the printer can only spell as a kernel load (an aggregate field
+    // at a byte offset) is not something the reader wrote; the C statement
+    // line already names the source.
+    if spelling.contains("load_") || spelling.contains("byte_offset(") {
+        return String::new();
+    }
+    format!(
+        "\n  operation: {prefix}`{}`",
+        without_enclosing_parentheses(&spelling)
+    )
+}
+
+/// `spelling` without one pair of parentheses around the whole of it:
+/// `(a + b)` is `a + b`, while `(a) + (b)` is unchanged.
+fn without_enclosing_parentheses(spelling: &str) -> &str {
+    let Some(inner) = spelling
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return spelling;
+    };
+    let mut depth = 0usize;
+    for character in inner.chars() {
+        match character {
+            '(' => depth += 1,
+            ')' if depth == 0 => return spelling,
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    inner
 }
 
 pub(super) fn describe_function_outcome(
@@ -3328,7 +3406,7 @@ fn describe_cell_version_stop(
     stated: &[&Proposition],
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    let cell = describe_source_cell(pointer, parameter_binding);
+    let cell = describe_source_cell_of_width(pointer, Some(widths.read), parameter_binding);
     // Without the C names — a pure theorem has none — the address has no
     // source spelling, so the sentence says "this read" rather than repeating
     // a verifier-owned one.
@@ -3469,7 +3547,7 @@ fn describe_store_cause(
     stated: &[&Proposition],
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
-    let store = describe_source_cell(written, parameter_binding);
+    let store = describe_source_cell_of_width(written, widths.store, parameter_binding);
     if certain {
         return match &store {
             Some(store) => format!("the store to `{}` wrote it.", store.text()),
@@ -4005,6 +4083,17 @@ fn describe_source_cell(
     pointer: &Pointer,
     parameter_binding: ParameterBinding<'_>,
 ) -> Option<SourceCell> {
+    describe_source_cell_of_width(pointer, None, parameter_binding)
+}
+
+/// [`describe_source_cell`] for an access of `width` bytes, when the width is
+/// known: a constant offset into a struct-typed global is then the field
+/// that occupies exactly those bytes, where exactly one does.
+fn describe_source_cell_of_width(
+    pointer: &Pointer,
+    width: Option<u32>,
+    parameter_binding: ParameterBinding<'_>,
+) -> Option<SourceCell> {
     // Two parameters can point into one block, and then every one of them
     // can express the address -- `b[j]` is also `a[(b - a) + j]`. The
     // shortest spelling is the one written through the parameter the address
@@ -4073,6 +4162,18 @@ fn describe_source_cell(
         return Some(best);
     }
     let declared = describe_memory_block(&pointer.block, parameter_binding)?;
+    if let (Some(width), PointerOffsetTerm::Constant(offset), PointerBlock::Concrete(block)) =
+        (width, &pointer.offset, &pointer.block)
+        && let Ok(offset) = u32::try_from(*offset)
+        && let Some(field) = object_fields::object_field_spelling(block, offset, width)
+    {
+        return Some(SourceCell {
+            object: field,
+            index: CellIndex::StructMember,
+            element_bytes: None,
+            index_term: None,
+        });
+    }
     match &pointer.offset {
         // A local's block holds one declared object, and the name the reader
         // wrote for it *is* the address: `q`, not `q[0]`, which would read as a
@@ -4760,6 +4861,8 @@ fn typed_literal_spelling(spelled: String, suffix: &str) -> String {
 pub(super) fn describe_c_value(value: &CValue, parameter_binding: ParameterBinding<'_>) -> String {
     match value {
         CValue::Void => "void".to_string(),
+        CValue::Bool(Bitvector32Term::Constant(0)) => "false".to_string(),
+        CValue::Bool(Bitvector32Term::Constant(1)) => "true".to_string(),
         CValue::Int128(value) => typed_literal_spelling(
             describe_bitvector_with_context(value, parameter_binding),
             "i128",
@@ -4953,6 +5056,11 @@ thread_local! {
 /// Kernel reference results carry addresses. Function-directed proof printing
 /// must spell that carrier as `&result`, and a load through it as `result`.
 pub(super) struct ReferenceResultSourceScope(bool);
+
+/// Whether `result` is spelled as a reference result's carrier here.
+pub(crate) fn reference_result_source() -> bool {
+    REFERENCE_RESULT_SOURCE.with(std::cell::Cell::get)
+}
 
 impl ReferenceResultSourceScope {
     pub(super) fn enter(reference: bool) -> Self {

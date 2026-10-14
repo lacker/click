@@ -3,7 +3,7 @@
 ```click
 theorem false_member() {
     ensures list_contains(List<List<int32>>::Cons(List<int32>::Nil, List<List<int32>>::Nil),
-                          List<int32>::Cons(1, List<int32>::Nil)) == 1 by {
+                          List<int32>::Cons(1, List<int32>::Nil)) == true by {
         unfold(list_contains(List<List<int32>>::Cons(List<int32>::Nil, List<List<int32>>::Nil),
                              List<int32>::Cons(1, List<int32>::Nil)));
         unfold(list_contains(List<List<int32>>::Nil, List<int32>::Cons(1, List<int32>::Nil)));

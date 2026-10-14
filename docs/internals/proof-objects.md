@@ -535,7 +535,8 @@ Three standing rules keep the boundary where the 2026-09 cleanup left it.
   operation that asks whether a proposition holds uses an exact route or
   emits the proposition as an obligation. One that must choose among
   candidates the kernel itself enumerates lowers the choice as a finite
-  disjunction so `left`/`right` pick it and expansion prints it; open
+  disjunction so the proof proves one disjunct, closes it with
+  `assumption()`, and expansion prints it; open
   choices use the existing `instantiate`, `witness`, `obtain`, `rewrite`,
   and `transport` spellings.
 - **Retained evidence names premises, never a context.** A derivation leaf

@@ -81,6 +81,15 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
                     .map(|tactic| tactic.name().to_string())
             })
             .collect();
+        let imported_function_names = imported_ids
+            .iter()
+            .filter_map(|imported| locals.get(imported))
+            .flat_map(|file| {
+                file.click_function_definitions()
+                    .iter()
+                    .map(|function| function.name().to_string())
+            })
+            .collect();
         let imported_callees = imported_ids
             .iter()
             .filter_map(|imported| locals.get(imported))
@@ -107,6 +116,7 @@ pub(in crate::surface) fn resolve_click_project_with_layouts(
             module.line_offset(),
             &imported_algebraic_types,
             &imported_tactic_names,
+            &imported_function_names,
             &imported_callees,
             layouts.clone(),
         )?;

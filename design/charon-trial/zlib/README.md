@@ -1,7 +1,7 @@
 # Unchanged zlib Adler-32 adapter trial
 
 The unchanged zlib 1.3.1 computation imports and proves its empty-input result
-and its checksums for every length 1 through 16 against the shared mathematical
+and its checksums for every length 1 through 5551 against the shared mathematical
 specification for the canonical seed 1 and a nonnull buffer. The nonempty proofs
 also preserve every input byte. **The arbitrary-length checksum postcondition
 and C/Rust result equality remain unproved.** This is the C
@@ -94,8 +94,7 @@ The bounds A <= 3826 and B <= 57390 establish that the native additions do not
 wrap. The final reduction and shift/OR packing satisfy the shared specification.
 `byte.click` supplies the same checked promotion theorem to both C proofs.
 
-**The original 5552-byte batches, repeated 16-byte blocks, and nonempty
-scalar tail on the larger path remain unproved.** The offline short-loop
+**The original 5552-byte batches remain unproved.** The offline short-loop
 regression checks all helper bodies together,
 rechecks an expansion, and rejects missing byte authority, false component
 invariants, and false checksum results. These larger checks run in nightly.
@@ -124,7 +123,7 @@ The manifest and lock reuse the unchanged prepared C input and source closure.
 The nightly offline regression relocates the fixture, checks all imported
 helper bodies and an expansion, and rejects missing or insufficient read
 authority, false A/B invariants, and a false checksum. This establishes one
-DO16 iteration; repeated blocks and nonempty tails require further proofs.
+DO16 iteration; the repeated-block sidecar below extends it through nonempty tails.
 The count-presentation rendering regression is retained in
 [the native-count rewrite fixture](../../../mdtests/integer_rewrite_preserves_folded_count_presentation.md).
 
@@ -135,30 +134,33 @@ bridges in `short-prefix.click` now accept the existing checked count ceiling
 of 22208 instead of restricting those reusable observations to fifteen.
 The nightly window regression checks every dependency body as well.
 
-The [repeated-block draft](repeated-proof.click.draft) targets canonical seed 1,
-nonnull input, and lengths 16–5551. All sixteen addition pairs check at a
-symbolic prefix, and the DO16 loop closes its component, cursor, view, and
-ranking invariants. Bounds for each lane are stated explicitly in the original
-buffer's native coordinates; they supply read authority without a generated
-processed counter or verifier changes.
+The locked [repeated-block sidecar](repeated.click) proves the shared checksum,
+termination, and preservation of every input byte for canonical seed 1,
+nonnull input, and lengths 16–5551. All sixteen original addition pairs check
+at a symbolic prefix. The DO16 loop closes its component, cursor, view, and
+ranking invariants; the scalar tail extends both component equations through
+the final native reductions and packing.
 
-**This draft does not verify and adds no C checksum result.** Bounded
-selected-premise reduction now gets past the scalar tail's first-byte
-`viewable(buf[0u64..1u64])` construction, which previously selected 71 premises
-and exceeded the unchanged 64-premise source-spelling limit. Each discarded
-chunk is tested by the existing kernel against just the retained selection;
-checking the resulting source certificate still validates every cited fact.
-The actual original `adler += *buf++` read then reports missing held byte-read
-authority. The pure viewability facts accepted before the read do not grant
-new resources. The [tracked regression](../../../bugs/zlib-repeated-tail-loses-native-read-authority.md)
-records this next frontier; complete it before claiming the scalar-tail or
-repeated-block checksum result.
+The tail inherits the caller's complete input view rather than acquiring a
+new moving suffix at its loop entry. Its prefix equations and native bounds
+place each original `adler += *buf++` read inside that held range. Read
+matching retains the native index when an equivalent int32 spelling is also
+known; pointer equalities and pure viewability facts grant no new resources.
+Native-index retention also follows a symbolic loop cursor through checked
+same-block offset equalities, including constant byte lanes. The
+[focused do-while regression](../../../mdtests/symbolic_loop_cursor_wide_offset.md)
+checks the caller-view read; kernel regressions check rejected accesses and
+bounded lookup across increasing alias counts.
+The scalar component bound is 1415761, including the coefficient in the
+weighted-sum invariant. Selected-premise reduction still uses the unchanged
+64-premise source-spelling limit and kernel checks.
 
-To reproduce in a throwaway copy retaining this directory's relative imports,
-copy the draft to `repeated.click`, copy `short-memory.click.import.json` and its
-`.import.lock.json` to the corresponding `repeated.click` names, and run
-`click verify --trace-proof adler32_z repeated.click`. The C, headers, prepared
-input, and existing locks stay unchanged.
+The offline repeated-block regression checks all dependency bodies, the
+complete expanded certificate, false checksum and A/B invariants, missing
+read authority, and a view one byte too short. It runs in nightly to preserve
+the gate budget. `repeated.click.import.json` and its lock reuse the unchanged
+prepared source and headers; compiler extraction is unnecessary. The
+arbitrary-length C claim and C/Rust result equality remain unproved.
 
 | Original file | SHA-256 |
 | --- | --- |

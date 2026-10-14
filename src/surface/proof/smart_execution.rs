@@ -762,6 +762,23 @@ impl<'a> Proof<'a> {
                 )));
             }
 
+            // Prefer the latest recorded spelling of this exact fact. Formal
+            // substitution can put a historical array read inside a scalar
+            // cast, which lowers internally but cannot be written as Click.
+            // This indexed lookup never searches unrelated facts or history;
+            // re-lowering checks that the spelling still names this premise.
+            if let Ok(surface) = surface_propositions.surface(&matched)
+                && let Ok(lowered) =
+                    self.lower_surface_proposition(surface, "recorded theorem premise")
+                && (lowered == requirement || condition_polarity_equivalent(&lowered, &requirement))
+                && self.facts().available_across_effects(&lowered, &[])
+            {
+                if !premises.contains(surface) {
+                    premises.push(surface.clone());
+                }
+                continue;
+            }
+
             // The theorem's own clause supplies a source form even when its
             // match-bound arguments have no independently synthesizable names.
             if let Some(source_requirement) = source_requirements.get(requirement_index)

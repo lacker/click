@@ -150,7 +150,7 @@ Proposed fix: [design/proof-reuse.md](../design/proof-reuse.md):
 - R4: automatic opening and closing of resources.
 - R5: one script for several arms.
 
-Decision: open.
+Decision: fix (maintainer, 2026-10-14), starting with R2.
 
 ### P6. Loop proofs restate facts
 
@@ -162,7 +162,7 @@ re-`have`d after steps (`examples/rbtree-erase/rbtree_erase_black_spine.click`).
 Proposed fix: facts about values a step cannot change carry across steps
 automatically; the back edge closes implicitly.
 
-Decision: open.
+Decision: fix (maintainer, 2026-10-14), after smt-auto stage 1.
 
 ## W. Proof workflow and tooling
 
@@ -226,55 +226,37 @@ keeps its typed notation by design.
 
 Today: a loop-carried value inside the body prints as the iteration's entry
 value, `at(statement(N).entry, i)`, and a refused C operation names an address
-a local holds through that local (`alias->mu`, `*shared`, `p[i].y`). What
-remains:
+a local holds through that local (`alias->mu`, `*shared`, `p[i].y`). An
+`ensures` refusal names the returned value `result`, a value or allocation a
+local held at a recorded statement boundary as that local there
+(`at(statement(1).exit, r)`, `at(statement(2).exit, buf)`), and a read of a
+recorded snapshot's memory through that snapshot's locals. A pure theorem's
+`Integer` binder prints as its name in a conversion-condition refusal, and a
+memory-history sentence names a struct-typed global's field (`g.b`) where
+exactly one scalar field occupies exactly the bytes accessed. What remains:
 
-- A callee's result no local holds prints as `<unnamed A>` (`pure facts:
-  [<unnamed A> == -56]`); its only spelling is a translation temporary.
-- A pure theorem's `Integer` binder prints as `<unnamed A>` in a
-  conversion-condition refusal (`<unnamed A> + 1`): that refusal's names come
-  from the machine-typed values only.
-- A heap allocation no live local holds prints as `<pointer A>`, mostly in an
-  `ensures` check after the function returned: the outcome state has no
-  locals, and the execution's recorded snapshots that held the pointer are not
-  part of that check's names.
-- A store at a constant offset into a struct-typed global or local prints as
-  `g+8` in memory-history text: a field name needs the store's width checked
-  against the field, which `SourceCell` does not carry.
+- A callee's result that no local ever held, as in `return value() + 1;`,
+  prints as `<unnamed A>`. Its only spelling is a translation temporary: the
+  C call `value()` is not a Click expression, and re-evaluating it would be
+  another call.
+- An address no local held exactly at a recorded snapshot, such as an
+  element `buf + u` of an allocation, prints as `<pointer A>`; so do the
+  `recent premises` lines, which are rendered without the execution's
+  snapshot names.
+- A store at a constant offset into a struct-typed local prints as `s+8`:
+  the function's table of local struct types is keyed by source spelling,
+  while a local's block carries its kernel name, so a shadowing declaration
+  of another type could hold the block that spelling would find. Union
+  members sharing an offset and width keep the offset by design
+  (`mdtests/global_union_members_sharing_bytes_keep_the_offset.md`).
 
-Proposed fix: name a callee's result through the snapshot after its call and
-an allocation through the snapshot that last held it, where the outcome check
-can cite that snapshot; spell constant offsets as fields where the width
-matches.
+Proposed fix: carry each struct-typed local's layout with its kernel block
+name; spell an address inside an allocation as an offset from the local that
+held its base; give the `recent premises` lines the report's snapshot names.
 
 Decision: in progress.
 
 ## L. Surface language
-
-### L1. Too many words, several with more than one meaning
-
-Today: the word index has about 200 words
-(`docs/reference/language/grammar.md`). `fold` is a tactic, a range method
-and resource construction; `unfold` opens a function call, switches a
-predicate's transparency branch-wide, consumes a resource layer, and mints or
-burns a counted member; `count` is a keyword and a prelude function;
-`function` starts both a pure function and a C contract; `as` has four uses.
-
-Proposed fix: one meaning per word, e.g. `reveal` for predicates and
-`mint`/`burn` for counted members; move certificate step names out of the
-general word index.
-
-Decision: open; the maintainer will revisit it after L2–L7.
-
-### L2. No spec `bool`
-
-Today: truth values in specs are `int32` (`list_contains<T>(...) -> int32`
-in `stdlib/prelude.click`); a theorem exists only to show a `0`/`1` result
-is `1` when not `0` (`examples/modeled-binary-tree`).
-
-Proposed fix: a specification `bool`.
-
-Decision: fix (maintainer, 2026-10-13): a specification `bool`.
 
 ### L4. Rust and C++ specs still read like C
 
@@ -296,7 +278,7 @@ frames restated after `produces`.
 
 Proposed fix: `owns *s` for whole structs; infer frames for produced cells.
 
-Decision: open.
+Decision: fix (maintainer, 2026-10-14).
 
 ### L6. Fold syntax is heavy and generics are fully applied
 

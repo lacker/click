@@ -7,6 +7,14 @@ use rust_syntax::rust_signature_hint;
 use crate::languages::SourceLanguage;
 use tokenizer::tokenize;
 
+/// Smart search may synthesize kernel values that diagnostics can print but
+/// source cannot name. Check the rendered candidate without resolving names
+/// or scanning any ambient declarations. Quoted text remains ordinary syntax.
+pub(super) fn has_valid_source_tokens(source: &str) -> bool {
+    crate::instrumentation::record_deterministic_work(source.len());
+    !crate::instrumentation::deadline_exceeded() && tokenize(source, None).is_ok()
+}
+
 use super::*;
 use claim_labels::{ClaimClauseKind, flattened_claim_ids};
 
@@ -120,6 +128,10 @@ pub(in crate::surface) struct FunctionLocals {
 #[derive(Clone, Default)]
 pub(in crate::surface) struct ProgramLayouts {
     pub(in crate::surface) c_object_names: BTreeMap<String, std::sync::Arc<BTreeSet<String>>>,
+    /// The other members of each function's recursive C component, for the
+    /// functions in a component of two or more. An expression `decreases`
+    /// measure ranks calls to these functions too.
+    pub(in crate::surface) recursion_peers: BTreeMap<String, Vec<String>>,
     pub(in crate::surface) struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     pub(in crate::surface) union_layouts: BTreeMap<String, syntax::C0UnionLayout>,
     /// Each function's address-backed aggregate objects, with their structs.
@@ -213,6 +225,7 @@ pub(super) fn parse_file_items_for_module(
     line_offset: usize,
     imported_algebraic_types: &[AlgebraicTypeDefinition],
     imported_tactic_names: &BTreeSet<String>,
+    imported_function_names: &BTreeSet<String>,
     imported_callees: &[&FunctionBlock],
     layouts: ProgramLayouts,
 ) -> Result<ClickFile, ClickError> {
@@ -221,6 +234,9 @@ pub(super) fn parse_file_items_for_module(
         layouts,
         Some(&crate::source::SourceContainer::new(identity, line_offset)),
     )?;
+    parser
+        .pure_function_names
+        .extend(imported_function_names.iter().cloned());
     parser
         .tactic_names
         .extend(imported_tactic_names.iter().cloned());
@@ -263,6 +279,34 @@ pub(super) fn parse_file_items_for_module(
         }
     }
     parser.parse_file_items()
+}
+
+/// The names of the standard library's pure functions, read from its tokens
+/// once per process. The library's parsed declarations are not used: this
+/// index is consulted while the library itself is being parsed.
+fn standard_library_pure_function_names() -> &'static BTreeSet<String> {
+    static NAMES: std::sync::OnceLock<BTreeSet<String>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let Ok(parser) = Parser::new(super::CLICK_STANDARD_LIBRARY) else {
+            return BTreeSet::new();
+        };
+        let tokens = parser.tokens;
+        let mut names = BTreeSet::new();
+        let mut depth = 0usize;
+        for (index, token) in tokens.iter().enumerate() {
+            match token {
+                Token::LBrace => depth += 1,
+                Token::RBrace => depth = depth.saturating_sub(1),
+                Token::Ident(word) if depth == 0 && word == "function" => {
+                    if let Some(Token::Ident(name)) = tokens.get(index + 1) {
+                        names.insert(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
+    })
 }
 
 /// Whether `name` is the leading word of a built-in tactic or proof form, which
@@ -492,6 +536,7 @@ struct ProofLetParserRestore {
 
 struct Parser {
     c_object_names_by_function: BTreeMap<String, std::sync::Arc<BTreeSet<String>>>,
+    recursion_peers_by_function: BTreeMap<String, Vec<String>>,
     source_aliases: BTreeMap<String, String>,
     qualified_objects: Option<BTreeMap<String, BTreeMap<String, parser::QualifiedCObject>>>,
     pending_contract_name: Option<String>,
@@ -575,6 +620,20 @@ struct Parser {
     current_algebraic_params: BTreeMap<String, (AlgebraicTypeApplication, usize)>,
     current_click_type_parameters: BTreeSet<String>,
     current_contract_bindings: BTreeSet<String>,
+    /// Names of the pure functions this module can call: its own
+    /// declarations, indexed before any item is parsed, its imports' and the
+    /// standard library's. A bare call written where a proposition is
+    /// expected reads as `f(args) == true` when it names one of these, and
+    /// as a predicate call otherwise.
+    pure_function_names: BTreeSet<String>,
+    /// The C names (parameters, locals and file-scope objects) visible to the
+    /// C function block being parsed. `true` and `false` are specification
+    /// literals unless one of these names spells them.
+    current_c_object_names: Option<std::sync::Arc<BTreeSet<String>>>,
+    /// Set immediately before an `if`, `match` or `let` expression that is
+    /// the value of a `bool` context, and taken by that expression's parser:
+    /// its branches are then `bool` values too.
+    bool_value_context: bool,
     /// Declared field types of every `spec enum` variant in the file, keyed by
     /// datatype and variant name and indexed before any item is parsed. A
     /// resource's match arm types its constructor bindings from this index, so
@@ -855,6 +914,7 @@ impl Parser {
         )
         .map_err(|error| error.with_kind(ClickErrorKind::Syntax))?;
         parser.c_object_names_by_function = layouts.c_object_names;
+        parser.recursion_peers_by_function = layouts.recursion_peers;
         parser.qualified_objects = Some(layouts.qualified_objects);
         parser.local_struct_pointers_by_function = layouts.local_struct_pointers;
         parser.plain_char = layouts.plain_char;
@@ -920,6 +980,7 @@ impl Parser {
             current_struct_params: BTreeMap::new(),
             current_void_pointer_params: BTreeSet::new(),
             c_object_names_by_function: BTreeMap::new(),
+            recursion_peers_by_function: BTreeMap::new(),
             current_c_parameter_types: BTreeMap::new(),
             current_parameter_struct_casts: BTreeMap::new(),
             aggregate_objects_by_function,
@@ -934,6 +995,9 @@ impl Parser {
             current_algebraic_params: BTreeMap::new(),
             current_click_type_parameters: BTreeSet::new(),
             current_contract_bindings: BTreeSet::new(),
+            pure_function_names: BTreeSet::new(),
+            current_c_object_names: None,
+            bool_value_context: false,
             algebraic_variant_fields: BTreeMap::new(),
             current_arm_binding_types: BTreeMap::new(),
             current_integer_params: BTreeSet::new(),
@@ -1014,6 +1078,12 @@ impl Parser {
                 }
                 continue;
             }
+            if depth == 0
+                && self.peek_ident() == Some("function")
+                && let Some(Token::Ident(name)) = self.peek_next()
+            {
+                self.pure_function_names.insert(name.clone());
+            }
             match self.peek() {
                 Some(Token::LBrace) => depth += 1,
                 Some(Token::RBrace) => depth = depth.saturating_sub(1),
@@ -1021,6 +1091,8 @@ impl Parser {
             }
             self.position += 1;
         }
+        self.pure_function_names
+            .extend(standard_library_pure_function_names().iter().cloned());
         for index in shift_rights {
             self.tokens[index] = Token::ShiftRight;
         }
@@ -1733,7 +1805,7 @@ impl Parser {
             &mut self.current_algebraic_params,
             algebraic_parameter_types(&parsed_parameters.parameters),
         );
-        let body = self.parse_contract_expression()?;
+        let body = self.parse_branch_value(return_type == ClickType::C(C0Type::Bool))?;
         self.current_struct_params = previous_struct_params;
         self.current_struct_array_params = previous_struct_array_params;
         self.current_reference_params = previous_reference_params;
@@ -2390,6 +2462,7 @@ impl Parser {
                     return Err(self.error("ordinary parameters must precede resource parameters"));
                 }
                 let name = self.expect_ident("Click parameter name")?;
+                self.refuse_bool_literal_binder(&name)?;
                 if is_c_type_keyword(&name) {
                     return Err(self.error(
                         "Click-native binders use `name: type`, for example `value: int32`",
@@ -2864,6 +2937,12 @@ impl Parser {
                 .map(|parameter| parameter.name().to_string())
                 .collect(),
         );
+        let previous_c_object_names = std::mem::replace(
+            &mut self.current_c_object_names,
+            self.c_object_names_by_function
+                .get(signature.name())
+                .cloned(),
+        );
         let previous_c_parameter_types = std::mem::replace(
             &mut self.current_c_parameter_types,
             signature
@@ -3312,6 +3391,7 @@ impl Parser {
         self.current_struct_params = previous_struct_params;
         self.current_void_pointer_params = previous_void_pointer_params;
         self.current_c_parameter_types = previous_c_parameter_types;
+        self.current_c_object_names = previous_c_object_names;
         let parameter_struct_casts = std::mem::replace(
             &mut self.current_parameter_struct_casts,
             previous_parameter_struct_casts,
@@ -3404,8 +3484,14 @@ impl Parser {
         }
         let pointee_field_places =
             super::pointee_field_places(parameter_field_places.values(), &self.struct_layouts);
+        let recursion_peers = self
+            .recursion_peers_by_function
+            .get(signature.name())
+            .cloned()
+            .unwrap_or_default();
         Ok(FunctionBlock {
             c_object_names,
+            recursion_peers,
             signature,
             external,
             one_call_proof: false,
@@ -3429,6 +3515,7 @@ impl Parser {
     fn parse_contract_let_binding(&mut self) -> Result<ContractLetBinding, ClickError> {
         self.expect_ident_spelling("let")?;
         let name = self.expect_ident("let binding name")?;
+        self.refuse_bool_literal_binder(&name)?;
         let click_type = if self.peek() == Some(&Token::Colon) {
             self.position += 1;
             let (click_type, parsed_type) = self.parse_click_type()?;
@@ -3617,6 +3704,36 @@ impl Parser {
     fn parse_binary_operand(&mut self) -> Result<ContractExpression, ClickError> {
         let operand = self.parse_contract_unary()?;
         self.parse_rust_casts(operand)
+    }
+
+    /// `true` and `false` are `bool` literals unless a C name in scope, or a
+    /// proof binder, spells them; such a name keeps its meaning, as C's own
+    /// `true` and `false` are conveniences rather than reserved words.
+    fn bool_literal_spelling(&self, name: &str) -> Option<bool> {
+        let value = match name {
+            "true" => true,
+            "false" => false,
+            _ => return None,
+        };
+        let shadowed = self.current_c_parameter_types.contains_key(name)
+            || self
+                .current_c_object_names
+                .as_ref()
+                .is_some_and(|names| names.contains(name))
+            || self.current_proof_let_names.contains(name)
+            || self.current_arm_binding_types.contains_key(name);
+        (!shadowed).then_some(value)
+    }
+
+    /// Refuse a Click binder spelled `true` or `false`: inside Click those
+    /// spellings are the `bool` literals, so the binder could never be read.
+    fn refuse_bool_literal_binder(&self, name: &str) -> Result<(), ClickError> {
+        if matches!(name, "true" | "false") {
+            return Err(self.error(format!(
+                "`{name}` is a `bool` literal and cannot name a Click binder"
+            )));
+        }
+        Ok(())
     }
 
     /// A C variable named in a contract, or the length a slice parameter's
@@ -5406,8 +5523,12 @@ impl Parser {
                             | Token::Pipe
                             | Token::Caret
                             | Token::LBracket
+                            | Token::Arrow
+                            | Token::Dot
+                            | Token::DotDot
                     )
                 )
+                && !matches!(self.peek_ident(), Some("as" | "in"))
             {
                 // Refuse only once the proposition reading is chosen, so the
                 // refusal is not mistaken for a reason to reparse.
@@ -5570,6 +5691,9 @@ impl Parser {
                     self.position = start;
                     return self.parse_proposition_comparison();
                 }
+                _ if self.pure_function_names.contains(&name) => {
+                    return Ok(bool_truth(ContractExpression::Call { name, arguments }));
+                }
                 _ => return Ok(ClickProposition::PredicateCall { name, arguments }),
             }
         }
@@ -5646,6 +5770,7 @@ impl Parser {
                         } else {
                             "exists variable name"
                         })?;
+                        self.refuse_bool_literal_binder(&name)?;
                         if is_c_type_keyword(&name) {
                             return Err(self.error(
                                 "Click-native binders use `name: type`, for example `exists (k: int32)`",
@@ -5881,6 +6006,13 @@ impl Parser {
 
     fn parse_proposition_comparison(&mut self) -> Result<ClickProposition, ClickError> {
         let left = self.parse_comparison_operand()?;
+        // A value written alone where a proposition is expected is a `bool`
+        // claim: `flag` means `flag == true`. Type checking refuses it when
+        // the value is not a `bool`, so an integer is never read with C's
+        // nonzero truth.
+        if self.at_proposition_end() {
+            return Ok(bool_truth(left));
+        }
         let operator = self.parse_comparison_operator("proposition")?;
         let right = self.parse_comparison_operand()?;
 
@@ -10877,6 +11009,7 @@ impl Parser {
     }
 
     fn parse_contract_match(&mut self) -> Result<ContractExpression, ClickError> {
+        let bool_arms = std::mem::take(&mut self.bool_value_context);
         self.position += 1;
         let scrutinee = self.parse_contract_expression()?;
         self.expect(Token::LBrace)?;
@@ -10914,7 +11047,7 @@ impl Parser {
                 .filter(|binding| self.current_contract_bindings.insert((*binding).clone()))
                 .cloned()
                 .collect::<Vec<_>>();
-            let body = self.parse_contract_expression();
+            let body = self.parse_branch_value(bool_arms);
             for binding in newly_bound {
                 self.current_contract_bindings.remove(&binding);
             }
@@ -11211,7 +11344,10 @@ impl Parser {
                                 binder_index: *binder_index,
                             })
                         }
-                        None => Ok(self.c_variable_expression(name)),
+                        None => match self.bool_literal_spelling(&name) {
+                            Some(value) => Ok(bool_literal(value)),
+                            None => Ok(self.c_variable_expression(name)),
+                        },
                     }
                 }
             }
@@ -11305,6 +11441,7 @@ impl Parser {
     }
 
     fn parse_contract_value_let_expression(&mut self) -> Result<ContractExpression, ClickError> {
+        let bool_body = std::mem::take(&mut self.bool_value_context);
         let mut bindings = Vec::new();
         loop {
             if bindings.len() >= CONTRACT_LET_CHAIN_LIMIT {
@@ -11332,7 +11469,7 @@ impl Parser {
             }
         }
 
-        let body = self.parse_contract_expression();
+        let body = self.parse_branch_value(bool_body);
         for (name, _, _, binding_was_in_scope, previous_integer_context) in bindings.iter().rev() {
             self.integer_literal_context = *previous_integer_context;
             if !*binding_was_in_scope {
@@ -11351,21 +11488,80 @@ impl Parser {
         Ok(body)
     }
 
+    /// The value of an `if` branch, `match` arm or `let` body: a `bool`
+    /// value when the enclosing expression is one.
+    fn parse_branch_value(&mut self, bool_value: bool) -> Result<ContractExpression, ClickError> {
+        if bool_value {
+            self.parse_bool_value()
+        } else {
+            self.parse_contract_expression()
+        }
+    }
+
+    /// A value of a `bool` context: a pure function's `-> bool` body, or a
+    /// branch of one. A proposition written here is its truth value, so
+    /// `x > 0` is `if x > 0 { true } else { false }`; a value written alone
+    /// is itself. `if`, `match` and `let` pass the context to their branches.
+    fn parse_bool_value(&mut self) -> Result<ContractExpression, ClickError> {
+        if matches!(self.peek_ident(), Some("if" | "match" | "let"))
+            && self.peek_next() != Some(&Token::LParen)
+        {
+            let start = self.position;
+            self.bool_value_context = true;
+            let value = self.parse_contract_primary();
+            self.bool_value_context = false;
+            // `let ... where` is a proposition: read it as one below.
+            if !(value.is_err()
+                && self
+                    .tokens
+                    .get(start)
+                    .is_some_and(|token| matches!(token, Token::Ident(word) if word == "let")))
+            {
+                return value;
+            }
+            self.position = start;
+        }
+        let proposition = self.parse_proposition()?;
+        proposition_bool_value(proposition).map_err(|message| self.error(message))
+    }
+
+    /// Whether the token after a value ends the proposition it stands in.
+    fn at_proposition_end(&self) -> bool {
+        match self.peek() {
+            None => true,
+            Some(
+                Token::Semicolon
+                | Token::RParen
+                | Token::RBrace
+                | Token::LBrace
+                | Token::RBracket
+                | Token::Comma
+                | Token::FatArrow,
+            ) => true,
+            Some(Token::Ident(word)) => matches!(
+                word.as_str(),
+                "and" | "or" | "implies" | "by" | "using" | "else" | "if" | "produces"
+            ),
+            Some(_) => false,
+        }
+    }
+
     fn parse_contract_if_expression(&mut self) -> Result<ContractExpression, ClickError> {
+        let bool_branches = std::mem::take(&mut self.bool_value_context);
         self.position += 1;
         // These children are boxed in the AST. Box each one as soon as it is
         // parsed so a nested conditional does not retain large enum values in
         // every parser stack frame while parsing its next child.
         let condition = Box::new(self.parse_proposition()?);
         self.expect(Token::LBrace)?;
-        let then_branch = Box::new(self.parse_contract_expression()?);
+        let then_branch = Box::new(self.parse_branch_value(bool_branches)?);
         self.expect(Token::RBrace)?;
         if self.peek_ident() != Some("else") {
             return Err(self.error("expected `else` in `if` expression"));
         }
         self.position += 1;
         self.expect(Token::LBrace)?;
-        let else_branch = Box::new(self.parse_contract_expression()?);
+        let else_branch = Box::new(self.parse_branch_value(bool_branches)?);
         self.expect(Token::RBrace)?;
         Ok(ContractExpression::If {
             condition,

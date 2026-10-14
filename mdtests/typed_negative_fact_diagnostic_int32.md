@@ -12,5 +12,5 @@ int32 caller() { ensures result == 200 by auto; }
 ```
 
 ```expect
-fail: pure facts: [<unnamed A> == -56]
+fail: pure facts: [result == -56]
 ```

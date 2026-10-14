@@ -412,6 +412,7 @@ fn prove_claims_by_checked_tactics(
         ParameterBinding::new(parsed_function.parameters(), &arguments),
         state.memory(),
     );
+    crate::surface::diagnostics::enter_ambient_object_fields(parsed_function);
     let entry_context = Arc::new(ProofEntryContext {
         state: state.clone(),
         arguments: arguments.clone(),
@@ -1275,7 +1276,16 @@ fn close_claim_directly_from_outcome<'a>(
         labels.register_current_state(state);
     }
     if let CFunctionOutcome::Return { value, .. } = outcome {
-        labels.source_value_type(value);
+        labels.source_result(value);
+    }
+    // A value the outcome state no longer names may be what a local held
+    // at a statement boundary this path recorded, which an `ensures` cites
+    // as `at(statement(N).entry, x)`.
+    if let Some(view) = proof.outcome_fixed_state_view() {
+        super::proof_object::register_recorded_snapshot_names(
+            &mut labels,
+            view.fixed_state.recorded_snapshots,
+        );
     }
     // A comparison reports what each side evaluates to at the outcome, by
     // the same kernel evaluation every proof-side expression gets. Two

@@ -38,7 +38,7 @@ documentation inventory keep the following accepted words synchronized.
 | `import` | Loads declarations from a local Click module without selecting that module's proofs. |
 | `verifying` | C-source declaration. |
 | `target` | Selects the C implementation target the file's C sources are preprocessed and verified under. |
-| `predicate`, `function`, `theorem`, `contract`, `tactic` | Top-level logic and behavioral-interface declarations; `function` also starts a C contract, and `tactic` declares a user-defined tactic. |
+| `predicate`, `function`, `theorem`, `contract`, `tactic` | Top-level logic and behavioral-interface declarations; `tactic` declares a user-defined tactic. A C function's contract starts with its C return type, not `function`. |
 | `executes` | Gives a contract-refinement theorem an explicit one-call execution frontier, over the theorem's callback parameter or a named project function. |
 | `spec`, `enum`, `match` | Specification-only algebraic datatype declarations and exhaustive elimination. |
 | `abstract`, `resource`, `authorized` | Abstract and composite resource declarations. `authorized resource` (or `authorized abstract resource`) marks a family that takes part in population accounting, so `authority(...)` and `count(...)` may name it. |
@@ -50,8 +50,9 @@ documentation inventory keep the following accepted words synchronized.
 | `constructs` | Authorizes one function to create an abstract resource token. |
 | `invariant`, `initialize`, `preserve` | Loop structural items and phase proofs; a loop header also takes `owns` and `views` clauses of its own. |
 | `contains`, `fact`, `field`, `if` | The containment proposition `contains(parent, child)`, resource facts, pure field declarations, and optional resource guard. A resource holds a child resource with `owns`, as it holds memory. `if` also forms expressions and proof splits. |
-| `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. |
+| `object`, `memory`, `of`, `count` | Memory-resource forms, quantified resources, and resource-population expressions. `count(r(args))` is the population operator when its one argument is a resource call; otherwise `count` names the prelude function. |
 | `read`, `write` | Reserved: no resource may be named either. `read(N)` is also an execution target, below. |
+| `true`, `false` | The specification `bool` literals, the C `bool` values `1` and `0`. A C name of either spelling in scope keeps its C meaning; a Click binder may not use them. See [Booleans](index.md#booleans). |
 | `and`, `or`, `implies`, `not`, `in` | Proposition connectives and sequence membership. `and`, `or`, and `implies` have increasing precedence except right-associative `implies`; `in` has comparison precedence. |
 | `forall`, `exists` | Universal and existential quantifiers; `exists (x: T, y: U) { P }` binds multiple variables. |
 | `all`, `any`, `fold` | Range proposition and expression methods. |
@@ -66,7 +67,23 @@ documentation inventory keep the following accepted words synchronized.
 | `apply`, `have`, `if`, `cases`, `both`, `branch`, `outcomes`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `obtain` | Existential introduction and elimination. `let` binds what an operation produces. |
 | `assumption`, `extract`, `normalize`, `intro`, `enumerate`, `contradiction` | Explicit proposition tactics. |
-| `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; checked machine families are `arithmetic_certificate signed_int32 { ... }` and `arithmetic_certificate rules { ... }`. |
+| `arithmetic_certificate` | Starts the typed arithmetic-certificate envelope. The canonical mathematical family is `arithmetic_certificate { ... }`; checked machine families are `arithmetic_certificate signed_int32 { ... }` and `arithmetic_certificate rules { ... }`. Its step words are listed under [Arithmetic-certificate words](#arithmetic-certificate-words). |
+| `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |
+| `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. `as` also introduces the target contract's proof instances on an `executes` conclusion. |
+| `function`, `loop`, `statement`, `assignment`, `read`, `back_edge`, `entry`, `exit` | Program-region and program-point selectors. `assignment(local, N)`, `read(N)` and `back_edge()` are execution targets only. |
+
+See [Tactics](../tactics/index.md) for tactic syntax and classification. A word
+listed here isn't necessarily valid in every identifier or expression
+position; the construct entry defines its allowed context.
+
+### Arithmetic-certificate words
+
+These words have their meaning only inside an `arithmetic_certificate { ... }`
+block, where each starts one certificate step. Elsewhere they are ordinary
+identifiers.
+
+| Words | Context and status |
+| --- | --- |
 | `signed_int32` | Selects the public checked signed-machine arithmetic-certificate family. |
 | `rules` | Selects the pointer, tagged-word, finite-float, and `int32` / `int64` definedness arithmetic-certificate family. |
 | `int32_defined`, `int64_defined` | Proves `defined(a + b)` or `defined(a - b)` over `int32` or `int64` in a `rules` certificate from the operands' width ranges and the listed constant bounds on them. When an operand carries definedness of its own, such as a field read through a resource or an inner sum, list `defined(a)` too: each part of the claim beyond the operation's overflow must be part of a listed premise (`mdtests/simp_defined_read_through_a_produced_resource.md`). One checker serves both widths. |
@@ -85,13 +102,6 @@ documentation inventory keep the following accepted words synchronized.
 | `affine_conclusion`, `affine_conclusion_pair` | Bridge an affine claim to a machine proposition using one, or separately named left and right, interval/definedness evidence. The pair form is required when both comparison sides contain compound operations. |
 | `conclusion` | Selects the final node of an arithmetic certificate. In the mathematical `Integer` family, a conclusion node that is a contradiction, such as `1 <= 0`, also proves the goal. |
 | `reverse` | Selects the reverse equality direction for `less_equal_from_equal`. |
-| `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |
-| `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. `as` also introduces the target contract's proof instances on an `executes` conclusion. |
-| `function`, `loop`, `statement`, `assignment`, `read`, `back_edge`, `entry`, `exit` | Program-region and program-point selectors. `assignment(local, N)`, `read(N)` and `back_edge()` are execution targets only. |
-
-See [Tactics](../tactics/index.md) for tactic syntax and classification. A word
-listed here isn't necessarily valid in every identifier or expression
-position; the construct entry defines its allowed context.
 
 ## File-level declarations
 
@@ -151,11 +161,13 @@ From lowest to highest precedence:
 | 2 | `or` | Left |
 | 3 | `and` | Left |
 | 4 | prefix `not` | Prefix |
-| 5 | atoms, predicate calls, comparisons | Not applicable |
+| 5 | atoms, predicate calls, comparisons, `bool` values | Not applicable |
 
 Thus `p implies q implies r` means `p implies (q implies r)`, while `p or q
 or r` means `(p or q) or r`. Use parentheses whenever grouping carries the
-explanation.
+explanation. A `bool` value written alone as an atom, such as `flag` or a
+call `f(x)` of a `bool` function, means `value == true`; see
+[Booleans](index.md#booleans).
 
 ## Contract-expression precedence
 

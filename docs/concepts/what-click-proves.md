@@ -27,8 +27,8 @@ verification would make adoption much harder and would hide exactly the proof
 patterns Click needs to learn.
 
 For C within Click's supported semantics, an inability to prove a true claim is
-a limitation in the specification, proof language, verifier, or automation. It
-is not a reason to add a no-op branch, route the operation through a special
+a limitation in the specification, the specification language, the verifier,
+or automation. It is not a reason to add a no-op branch, route the operation through a special
 helper, rename a local, or otherwise make the C more proof-friendly. The proof
 may need more explicit contracts, invariants, resources, or lemmas; Click may
 need a new general reasoning rule. The implementation being verified stays the

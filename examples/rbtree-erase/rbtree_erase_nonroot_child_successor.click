@@ -72,16 +72,12 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
             have right_model != RbTree::Empty by { rewrite(right_model == rb_right(tree.model)); assumption(); }
             have rb_left(right_model) == RbTree::Empty by { rewrite(right_model == rb_right(tree.model)); assumption(); }
             have rb_right(right_model) != RbTree::Empty by { rewrite(right_model == rb_right(tree.model)); assumption(); }
-            have is_rb(RbTree::Node(identity, parent, color, left_model, right_model)) == 1 by {
-                rewrite(RbTree::Node(identity, parent, color, left_model, right_model) == tree.model); assumption();
-            }
+            have is_rb(RbTree::Node(identity, parent, color, left_model, right_model)) == 1 by auto;
             have ctx_rb(up.model, black_height(RbTree::Node(identity, parent, color, left_model, right_model)),
                 rb_color(RbTree::Node(identity, parent, color, left_model, right_model))) == 1 by {
                 rewrite(RbTree::Node(identity, parent, color, left_model, right_model) == tree.model); assumption();
             }
-            have ctx_consistent(up.model, RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1 by {
-                rewrite(RbTree::Node(identity, parent, color, left_model, right_model) == tree.model); assumption();
-            }
+            have ctx_consistent(up.model, RbTree::Node(identity, parent, color, left_model, right_model), 0) == 1 by auto;
             apply(ctx_consistent_node_children(up.model, identity, parent, color, left_model, right_model, 0));
             apply(rb_node_is_reflexive(parent));
             apply(rb_parent_consistent_node(identity, parent, color, left_model, right_model, parent));
@@ -90,21 +86,12 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                     rb_color(RbTree::Node(identity, parent, color, left_model, right_model))) by {
                 unfold(rb_color(RbTree::Node(identity, parent, color, left_model, right_model))); normalize();
             }
-            have ctx_rb(up.model, black_height(RbTree::Node(identity, parent, color, left_model, right_model)), color) == 1 by {
-                rewrite(ctx_rb(up.model, black_height(RbTree::Node(identity, parent, color, left_model, right_model)), color)
-                    == ctx_rb(up.model, black_height(RbTree::Node(identity, parent, color, left_model, right_model)),
-                        rb_color(RbTree::Node(identity, parent, color, left_model, right_model)))); assumption();
-            }
             let { left: l, right: r } = unfold(tree);
-            have color_bit(Color::Black) == 1 by { unfold(color_bit(Color::Black)); normalize(); }
+            have color_bit(Color::Black) == 1 by auto;
             match right_model {
                 RbTree::Empty => { contradiction(right_model == RbTree::Empty); },
                 RbTree::Node(sid, sp, sc, sl, sr) => {
-                    have sl == RbTree::Empty by {
-                        unfold(rb_left(RbTree::Node(sid, sp, sc, sl, sr)));
-                        rewrite(sl == rb_left(RbTree::Node(sid, sp, sc, sl, sr)));
-                        rewrite(RbTree::Node(sid, sp, sc, sl, sr) == right_model); assumption();
-                    }
+                    have sl == RbTree::Empty by auto;
                     have sr != RbTree::Empty by {
                         unfold(rb_right(RbTree::Node(sid, sp, sc, sl, sr)));
                         rewrite(sr == rb_right(RbTree::Node(sid, sp, sc, sl, sr)));
@@ -329,40 +316,14 @@ tactic refold_to_root(focus: struct rb_node*, root: struct rb_root*) {
                 unfold(ctx_depth(Context::Left(identity, grandparent, color, sibling_model, up_model)));
                 normalize();
             }
-            have ctx_depth(u.model) < ctx_depth(old(c.model)) by {
-                rewrite(u.model == up_model);
-                arithmetic() using { ctx_depth(old(c.model)) == ctx_depth(up_model) + 1; }
-            }
-            have plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, old(t.model), sibling_model)) by {
-                unfold(plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)));
-                normalize();
-            }
-            have rb_tree_parent_consistent(plug(u.model, sub.model)) == 1 by {
-                rewrite(u.model == up_model);
-                rewrite(sub.model == RbTree::Node(identity, grandparent, color, old(t.model), sibling_model));
-                rewrite(plug(up_model, RbTree::Node(identity, grandparent, color, old(t.model), sibling_model)) == plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)));
-                rewrite(Context::Left(identity, grandparent, color, sibling_model, up_model) == old(c.model));
-                assumption();
-            }
+            have ctx_depth(u.model) < ctx_depth(old(c.model)) by auto;
+            have plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, old(t.model), sibling_model)) by auto;
+            have rb_tree_parent_consistent(plug(u.model, sub.model)) == 1 by auto;
             let { whole: whole } = refold_to_root(identity, root, { c: u, t: sub });
-            have whole.model == plug(old(c.model), old(t.model)) by {
-                rewrite(old(c.model) == Context::Left(identity, grandparent, color, sibling_model, up_model));
-                rewrite(plug(Context::Left(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, old(t.model), sibling_model)));
-                simp();
-            }
+            have whole.model == plug(old(c.model), old(t.model)) by auto;
         },
         Context::Right(identity, grandparent, color, sibling_model, up_model) => {
-            have rb_parent_consistent(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), t.model), 0) == 1 by {
-                rewrite(Context::Right(identity, grandparent, color, sibling_model, up_model) == c.model);
-                have rb_parent_consistent(plug(c.model, t.model), 0)
-                == rb_tree_parent_consistent(plug(c.model, t.model)) by {
-                    unfold(rb_tree_parent_consistent(plug(c.model, t.model)));
-                    normalize();
-                }
-                rewrite(rb_parent_consistent(plug(c.model, t.model), 0)
-                == rb_tree_parent_consistent(plug(c.model, t.model)));
-                assumption();
-            }
+            have rb_parent_consistent(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), t.model), 0) == 1 by auto;
             apply(plug_parent_consistent_ctx(Context::Right(identity, grandparent, color, sibling_model, up_model), t.model, 0)) using {
                 rb_parent_consistent(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), t.model), 0) == 1;
             }
@@ -375,36 +336,16 @@ tactic refold_to_root(focus: struct rb_node*, root: struct rb_root*) {
             let { sibling: s, up: u } = unfold(c);
             let sub = fold(rb_at(identity), { model: RbTree::Node(identity, grandparent, color, sibling_model, old(t.model)) }, { left: s, right: t });
             apply(ctx_depth_is_nonnegative(up_model));
-            have 0 <= ctx_depth(u.model) by {
-                rewrite(u.model == up_model);
-                assumption();
-            }
             have ctx_depth(old(c.model)) == ctx_depth(up_model) + 1 by {
                 rewrite(old(c.model) == Context::Right(identity, grandparent, color, sibling_model, up_model));
                 unfold(ctx_depth(Context::Right(identity, grandparent, color, sibling_model, up_model)));
                 normalize();
             }
-            have ctx_depth(u.model) < ctx_depth(old(c.model)) by {
-                rewrite(u.model == up_model);
-                arithmetic() using { ctx_depth(old(c.model)) == ctx_depth(up_model) + 1; }
-            }
-            have plug(Context::Right(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, old(t.model))) by {
-                unfold(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), old(t.model)));
-                normalize();
-            }
-            have rb_tree_parent_consistent(plug(u.model, sub.model)) == 1 by {
-                rewrite(u.model == up_model);
-                rewrite(sub.model == RbTree::Node(identity, grandparent, color, sibling_model, old(t.model)));
-                rewrite(plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, old(t.model))) == plug(Context::Right(identity, grandparent, color, sibling_model, up_model), old(t.model)));
-                rewrite(Context::Right(identity, grandparent, color, sibling_model, up_model) == old(c.model));
-                assumption();
-            }
+            have ctx_depth(u.model) < ctx_depth(old(c.model)) by auto;
+            have plug(Context::Right(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, old(t.model))) by auto;
+            have rb_tree_parent_consistent(plug(u.model, sub.model)) == 1 by auto;
             let { whole: whole } = refold_to_root(identity, root, { c: u, t: sub });
-            have whole.model == plug(old(c.model), old(t.model)) by {
-                rewrite(old(c.model) == Context::Right(identity, grandparent, color, sibling_model, up_model));
-                rewrite(plug(Context::Right(identity, grandparent, color, sibling_model, up_model), old(t.model)) == plug(up_model, RbTree::Node(identity, grandparent, color, sibling_model, old(t.model))));
-                simp();
-            }
+            have whole.model == plug(old(c.model), old(t.model)) by auto;
         },
     }
 }
@@ -470,9 +411,6 @@ void rb_erase(struct rb_node* node, struct rb_root* root) {
     have rb_tree_parent_consistent(plug(remaining.model, replacement.model)) == 1 by {
         unfold(rb_tree_parent_consistent(plug(remaining.model, replacement.model))); assumption();
     }
-    have rb_inorder(rb_erase_immediate_child_model(old(tree.model))) == list_append(rb_inorder(rb_left(old(tree.model))), rb_inorder(rb_right(old(tree.model)))) by {
-        rewrite(rb_erase_immediate_child_model(old(tree.model)) == replacement.model); assumption();
-    }
     mark balanced;
     let { whole: whole } = refold_to_root(old(node->rb_right), root, { c: remaining, t: replacement });
     have whole.model == plug(old(up.model), rb_erase_immediate_child_model(old(tree.model))) by {
@@ -483,8 +421,6 @@ void rb_erase(struct rb_node* node, struct rb_root* root) {
     have is_rb_root(whole.model) == 1 by {
         rewrite(whole.model == plug(at(balanced, remaining.model), at(balanced, replacement.model))); assumption();
     }
-    have rb_tree_parent_consistent(whole.model) == 1 by {
-        rewrite(whole.model == plug(at(balanced, remaining.model), at(balanced, replacement.model))); assumption();
-    }
+    have rb_tree_parent_consistent(whole.model) == 1 by auto;
     execute(); simp();
 }

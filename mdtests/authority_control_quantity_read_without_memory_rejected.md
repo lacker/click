@@ -22,5 +22,5 @@ void inspect(struct pool* pool) {
 ```
 
 ```expect
-fail: declared resource quantity must evaluate to int32
+fail: declared resource quantity could not be evaluated: required access authority is unavailable
 ```

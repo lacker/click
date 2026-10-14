@@ -45,8 +45,7 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 /// prerequisites simple statement checking derived by a search the proof does
 /// not retain, over the whole unfiltered corpus, by route and top rule. A
 /// count may only fall; `issues/simplify-step.md` drives it to zero.
-const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] =
-    &[((HiddenPrerequisiteRoute::StepObligation, "And"), 1)];
+const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] = &[];
 
 #[test]
 #[ignore = "nightly: 4s in the parallel gate"]
@@ -478,6 +477,81 @@ fn bounded_audit_batches_only_claims_that_fit_the_remaining_cap() {
     assert_eq!(stdout.matches("2 sites together:").count(), 1, "{stdout}");
     assert!(!stdout.contains("RESUME:"), "{stdout}");
     fs::remove_dir_all(directory).unwrap();
+}
+
+/// Auto must choose a spellable certificate for the original recoloring equality.
+#[test]
+#[ignore = "nightly: rechecks rbtree recoloring expansion"]
+fn rbtree_auto_recolor_expansion_rechecks() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = root.join("examples/rbtree-insert/rbtree_insert.click");
+    let mut source = fs::read_to_string(&path).unwrap();
+    let anchor =
+        "have rb_inorder(plug(Context::Top, RbTree::Node(nid, 0, Color::Black, nleft, nright)))";
+    let have = source.find(anchor).expect("keep the original rbtree case");
+    let start = have + source[have..].find("by {").unwrap();
+    let open = start + "by ".len();
+    let mut depth = 0;
+    let end = source[open..]
+        .char_indices()
+        .find_map(|(offset, character)| {
+            match character {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(open + offset + character.len_utf8())
+        })
+        .expect("the written proof block ends");
+    source.replace_range(start..end, "by auto;");
+    let c_sources = read_verifying_sources(&path, &source).unwrap();
+    let project = read_click_project_at_root(&path, &source, &root.join("examples")).unwrap();
+    let line = source[..start]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = source[..start].rsplit('\n').next().unwrap().len() + 4;
+    let expanded = click::surface::expand_project_tactic_source_at(
+        &project,
+        &ProgramInputs::Bundle(source_refs(&c_sources)),
+        line,
+        column,
+    )
+    .expect("auto's selected certificate must have source spelling");
+    let rewritten = project.with_entry_source(expanded);
+    click::surface::verify_project_at(
+        &rewritten,
+        &ProgramInputs::Bundle(source_refs(&c_sources)),
+        line,
+        column,
+    )
+    .expect("the expanded original-pattern site must reverify");
+    let result = click::surface::expand_project_claim_source_by_label(
+        &project,
+        &ProgramInputs::Bundle(source_refs(&c_sources)),
+        "__rb_insert.contract",
+    );
+    let error = match result {
+        Ok(expanded) => {
+            click::surface::verify_c0_project(
+                &project.with_entry_source(expanded),
+                &source_refs(&c_sources),
+            )
+            .expect("a whole-claim expansion must not emit unspellable values");
+            return;
+        }
+        Err(error) => error,
+    };
+    assert!(
+        error.message().contains("which has no surface spelling"),
+        "{error:?}"
+    );
+    assert!(error.message().contains("__rb_insert"), "{error:?}");
+    assert!(
+        !error.message().contains("unexpected character"),
+        "{error:?}"
+    );
 }
 
 /// Nested execution matches must retain their own branch's shared tactics.

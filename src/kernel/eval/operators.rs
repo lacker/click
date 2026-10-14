@@ -5013,7 +5013,7 @@ fn apply_pointer_adjacency_guard(
         return apply(facts, obligations);
     }
     let mut guards = Vec::new();
-    let mut one_past_end = None;
+    let mut one_past_end = false;
     for (end, start) in [(left, right), (right, left)] {
         let Some(at_end) = pointer_at_block_end_condition(state, end) else {
             continue;
@@ -5035,12 +5035,12 @@ fn apply_pointer_adjacency_guard(
                 value: false,
             }),
         }
-        one_past_end.get_or_insert_with(|| describe_pointer_for_diagnostic(end));
+        one_past_end = true;
     }
-    let Some(pointer) = one_past_end else {
+    if !one_past_end {
         return apply(facts, obligations);
-    };
-    let refusal = CUndefinedBehavior::OnePastEndComparison { pointer };
+    }
+    let refusal = CUndefinedBehavior::OnePastEndComparison;
     let Some(mut paths) = owed_guard_paths(guards, &facts, &obligations, assumptions, &refusal)
     else {
         return vec![CExpressionPath {
@@ -5099,16 +5099,6 @@ fn pointer_at_object_start_condition(pointer: &Pointer) -> Option<ConditionTerm>
             Some(offset) => Some(ConditionTerm::equal(offset, Bitvector32Term::Constant(0))),
             None => Some(ConditionTerm::Constant(true)),
         },
-    }
-}
-
-/// The block and offset of a pointer, for a diagnostic; the same spelling the
-/// freed-allocation diagnostic uses.
-fn describe_pointer_for_diagnostic(pointer: &Pointer) -> String {
-    match &pointer.offset {
-        PointerOffsetTerm::Constant(offset) => format!("{}@{offset}", pointer.block),
-        PointerOffsetTerm::Variable(variable) => format!("{}@v{}", pointer.block, variable.0),
-        _ => format!("{}@<symbolic offset>", pointer.block),
     }
 }
 

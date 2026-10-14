@@ -1217,6 +1217,19 @@ pub(in crate::surface) fn annotated_function_with_assumptions(
             opaque_contract_supported,
         )
         .with_contract_requirement_sources(contract_requirement_sources);
+    // The peers travel with the measure: they are what the anchor
+    // ranks calls to, and a function without an expression measure ranks
+    // none.
+    let recursion_binder = match function_block.decreases() {
+        Some(CFunctionDecrease::Binder(binder)) if !function_block.recursion_peers().is_empty() => {
+            Some(binder.clone())
+        }
+        _ => None,
+    };
+    if !recursion_measure.is_empty() || recursion_binder.is_some() {
+        function = function.with_recursion_peers(function_block.recursion_peers().to_vec());
+    }
+    function = function.with_recursion_binder(recursion_binder);
     function = function.with_recursion_measure(recursion_measure);
     if function_block.signature().exceptional_type().is_some() {
         function = function

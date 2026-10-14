@@ -782,6 +782,9 @@ pub(super) fn c_layouts(
         plain_char: Some(target.plain_char()),
         ..Default::default()
     };
+    // The C call graph over every verified function, for the recursion
+    // peers an expression `decreases` measure ranks.
+    let mut calls = BTreeMap::<String, BTreeSet<String>>::new();
     for source_path in verifying_paths {
         let unit = parse_c_source_unit(&source_path, c_sources, target)?;
         tables
@@ -806,9 +809,14 @@ pub(super) fn c_layouts(
             }
         }
         for function in unit.functions {
+            calls
+                .entry(function.source_name().to_string())
+                .or_default()
+                .extend(super::c0_statement_calls(&function).into_iter().flatten());
             record_function_tables(&mut tables, function);
         }
     }
+    tables.recursion_peers = crate::kernel::recursive_component_peers(&calls);
     Ok(tables)
 }
 

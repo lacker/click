@@ -292,7 +292,10 @@ pub fn expand_c0_claim_source(
             unreachable!("function claim edits are never loop phases")
         }
     };
-    Ok(splice_source(click_source, &tokens, span, &replacement))
+    let expanded = splice_source(click_source, &tokens, span, &replacement);
+    checked_expanded_source(click_source, &sources, &replacement, expanded).map_err(|error| {
+        error.with_context(format!("expanding `{function_name}` {}", claim.describe()))
+    })
 }
 
 /// Formats a function claim's already-checked certificate into its source.
@@ -383,7 +386,15 @@ fn expand_project_claim_source(
         }
         ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
     };
-    Ok(splice_source(click_source, &tokens, span, &replacement))
+    let expanded = splice_source(click_source, &tokens, span, &replacement);
+    let rewritten = project.with_entry_source(expanded.clone());
+    let rewritten_sources = CSourceContext::of(inputs)?.with_click_project(&rewritten);
+    resolve_click_project_context(&rewritten, &rewritten_sources)
+        .map(|_| expanded)
+        .map_err(|error| {
+            unparseable_expansion_error_for_file(&replacement, error, Some(&file))
+                .with_context(format!("expanding `{function_name}` {}", claim.describe()))
+        })
 }
 
 fn expand_c0_prepared_claim_source(
@@ -422,7 +433,10 @@ fn expand_c0_prepared_claim_source(
         }
         ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
     };
-    Ok(splice_source(click_source, &tokens, span, &replacement))
+    let expanded = splice_source(click_source, &tokens, span, &replacement);
+    checked_expanded_source(click_source, &sources, &replacement, expanded).map_err(|error| {
+        error.with_context(format!("expanding `{function_name}` {}", claim.describe()))
+    })
 }
 
 /// Use the same claim labels for every source/import route. A selected
@@ -654,7 +668,10 @@ fn expand_program_prepared_claim_source_context(
         }
         ProofSourceEdit::OmittedLoopPhase { .. } => unreachable!(),
     };
-    Ok(splice_source(click_source, &tokens, span, &replacement))
+    let expanded = splice_source(click_source, &tokens, span, &replacement);
+    checked_expanded_source(click_source, &sources, &replacement, expanded).map_err(|error| {
+        error.with_context(format!("expanding `{function_name}` {}", claim.describe()))
+    })
 }
 
 fn verify_expansion_claim_context(

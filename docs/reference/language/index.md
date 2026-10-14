@@ -37,6 +37,7 @@ this page covers each form's full rules and edge cases.
 | `P and Q`, `P or Q`, `P implies Q`, `not P` | Proposition connectives (C's `&&` and `\|\|` are not Click syntax) | [Propositions](#propositions) |
 | `forall (k: int32) { P }`, `(lo..hi).all(\|k\| { P })` | Quantified propositions; the range form guards memory reads | [Propositions](#propositions) |
 | `Integer`, `to_integer(x)` | Unbounded mathematical integers | [Mathematical integers](#mathematical-integers) |
+| `true`, `false`, `-> bool`, `ensures p(x);` | Specification booleans; a `bool` value written alone is the claim `value == true` | [Booleans](#booleans) |
 | `function f(x: int32) -> int32 { ... }` | A pure Click function | [Pure Click functions](#pure-click-functions) |
 | `predicate p(...) { ... }` | A named proposition, possibly over resources | [Predicates](#predicates) |
 | `theorem t() { requires P; ensures Q; }` | A pure theorem | [Pure theorems](#pure-theorems) |
@@ -295,7 +296,6 @@ The order of the components is part of the measure
 (`mdtests/c_decreases_lexicographic_recursion_rejects_swapped_order.md`), and
 a later component must stay nonnegative even when an earlier one decreases
 (`mdtests/c_decreases_lexicographic_recursion_rejects_negative_component.md`).
-A tuple, like any expression measure, ranks direct self-recursion only.
 
 The same rule about fixed states applies: a function-level component may not
 mention `old(...)` or `at(...)`, because Click reads each declared component
@@ -317,13 +317,26 @@ A loop whose verified rule was certified without the anchor is refused by
 name rather than summarized past: the summary would answer for a call that
 owed nothing.
 
-An expression measure ranks **direct self-recursion only**. The
-descent is owed at a call to the function that declared the measure, so a
-recursive component with more than one function would leave its other edges
-ranked by nothing; Click refuses such a declaration by name
-(`mdtests/c_decreases_pure_expression_rejects_mutual_recursion.md`).
+An expression measure also ranks a **mutually recursive component**. Every
+member declares an expression measure, all of one shape: the same number of
+components, each read in the same carrier position by position. While one
+member is certified, a call to any other member of its component owes that
+member's own measure, read at the call, nonnegative and lexicographically
+below the caller's entry reading, exactly as a self-call does. Every call in
+the cycle then descends in one order
+(`mdtests/c_decreases_pure_expression_mutual_recursion.md`, and the negative
+`mdtests/c_decreases_pure_expression_mutual_recursion_must_descend.md`). A
+member that declares no expression measure, or one of another shape, is
+refused at the call that reaches it
+(`mdtests/c_decreases_pure_expression_mutual_recursion_requires_every_measure.md`,
+`mdtests/c_decreases_pure_expression_mutual_recursion_rejects_mixed_shapes.md`).
+Click finds the component from the C call graph of the verified sources. A
+measure over a resource binder's model, such as `decreases links_len(x.model)`,
+is an expression measure too, so it ranks mutual structural recursion down a
+data structure
+(`mdtests/c_decreases_model_measure_mutual_recursion.md`).
 `decreases <int32 parameter>`, whose analysis reads the body rather than the
-call steps, still ranks that shape. A self-recursive `static inline` helper
+call steps, also ranks that shape. A self-recursive `static inline` helper
 with a contract is called through its contract, so an expression measure
 ranks it like any function
 (`mdtests/inline_helper_expression_measure_recursion.md`).
@@ -359,6 +372,18 @@ contract checks the actual resource transfer at each call, the traversal may
 consume or mutate resources; postorder recursive deallocation is supported.
 This proves descent of the finite resource witness, not descent of a pointer
 value.
+
+In a recursive component of two or more, a binder measure is ranked at each
+call instead, as an expression measure is: every member declares `decreases`
+on one of its own binders, of a resource with a `match model` body, and the
+instance a call passes for the callee's measured binder must hold a model
+strictly contained in the model the caller's binder held at its entry. The
+decision is the one a loop's `decreases` binder makes at its back edge: it
+follows the arms the path's facts decide, so the unfold that exposed the child
+is the evidence, and no size function is needed
+(`mdtests/c_decreases_binder_measure_mutual_recursion.md`, and the negatives
+`mdtests/c_decreases_binder_measure_mutual_recursion_must_descend.md` and
+`mdtests/c_decreases_binder_measure_mutual_recursion_rejects_mixed_kinds.md`).
 
 A loop measure is one component, or a nonempty lexicographic tuple of components, and each component
 is any pure `int32`, unsigned, or mathematical `Integer` expression: a C
@@ -486,8 +511,9 @@ order, then one decrease obligation. For a single component that obligation is
 `post < pre`; for a tuple it is the disjunction over pivots, `post[0] < pre[0]`
 or `post[0] == pre[0] and post[1] < pre[1]`, and so on, where `pre` reads the
 component at the start of the iteration and `post` at the back edge. Choosing
-the pivot is therefore an ordinary `left` or `right` arm choice that the proof
-makes and [`click expand`](../cli/expand.md) prints, not a search the kernel
+the pivot is therefore an ordinary proof of one disjunct, closed with
+`assumption()`, that the proof makes and [`click expand`](../cli/expand.md)
+prints, not a search the kernel
 performs. `close_invariants()` plans those members with the same bounded
 search it uses for the invariants; where it misses, spell them in a
 `close_invariants by { ... }` body, whose `both { ... } and { ... }` structure
@@ -536,7 +562,7 @@ The function-level `decreases <int32 parameter>` analysis still requires the
 parameter to be unchanged, and each recursive edge to pass `measure - K` for
 a positive constant `K`. Mutually recursive functions all declare their
 corresponding numeric parameter. Any other descent, such as `gcd(b, a % b)`,
-is written as an expression or tuple measure on a self-recursive function. Every variable mentioned by a numeric measure must also remain
+is written as an expression or tuple measure. Every variable mentioned by a numeric measure must also remain
 unaddressed: if its address is taken anywhere (`&measure`), a store through
 that pointer, directly or inside a callee, could change the measure without a
 ranked update, so the plan is rejected. Structural measures do not support
@@ -2525,6 +2551,70 @@ declares it. An application runs at an execution frontier before the function
 exits. See [User-defined tactics (design)](../../internals/user-defined-tactics.md)
 for the kernel rule.
 
+## Booleans
+
+`bool` is the specification boolean type. Its values are the C `bool` values,
+exactly `0` and `1`, written `true` and `false`; there is no separate kernel
+sort. A C `bool` parameter or result, a `bool` parameter of a pure function or
+theorem, and a `bool` pure function's application are all `bool` values.
+
+<!-- verified-example: mdtests/a_bool_pure_function_states_a_claim.md -->
+```click
+function positive(x: int32) -> bool { x > 0 }
+function in_range(x: int32) -> bool { x > 0 and x < 10 }
+function outside(x: int32) -> bool { not in_range(x) }
+function choose(flag: bool, x: int32) -> bool {
+    if flag { positive(x) } else { false }
+}
+
+theorem three_is_in_range() {
+    ensures in_range(3) by {
+        unfold(in_range(3));
+        normalize();
+    }
+}
+```
+
+- **Literals.** `true` and `false` are literals wherever no C name of that
+  spelling is in scope. C's `true` and `false` are conveniences rather than
+  reserved words, so a C parameter, local or global named `true` keeps its C
+  meaning inside its function's contract
+  (`mdtests/a_c_name_spelled_true_keeps_its_c_meaning.md`). A Click binder
+  (a Click parameter, `let`, or quantifier variable) may not use either
+  spelling (`mdtests/a_click_binder_spelled_true_is_refused.md`).
+- **Typing.** A `bool` literal compares only with a `bool` value. Comparing
+  an integer, pointer or other non-`bool` value with `true` or `false` is a
+  type error; compare an integer with `0` or `1` instead. A `bool` value
+  compared with an integer follows C's promotion, so `flag == 1` is
+  `flag == true`.
+- **A `bool` value as a claim.** A value written alone where a proposition
+  is expected means `value == true`: `requires flag;`, `ensures result;` for
+  a C function returning `bool`, and `ensures in_range(3);` for a call of a
+  `bool` pure function. The value must be a `bool`; an integer is not read
+  with C's nonzero truth, so `requires count;` for an `int` is refused
+  (`mdtests/an_integer_value_is_not_a_proposition.md`). A bare call of a
+  pure function is read this way; a predicate call is unchanged.
+- **`bool` pure functions.** A `-> bool` body is a `bool` value: `true`,
+  `false`, a `bool` parameter or binding, a call of a `bool` function, a
+  comparison, `and`, `or`, `not` or `implies` of such values, or an `if`,
+  `match` or `let` whose results all are. A proposition written as the value
+  is its truth value: `x > 0` is `if x > 0 { true } else { false }`, and a
+  connective opens into conditionals that each test one comparison, so
+  `p and q` is `if p { if q { true } else { false } } else { false }`. Only
+  this body, and the branches of its `if`, `match` and `let`, read a
+  proposition as a value; everywhere else a comparison is a proposition, and
+  C fragments keep C's `int` comparisons. A quantifier or predicate call is
+  not a `bool` value. An integer anywhere the body can produce a value is a
+  type error (`mdtests/an_integer_body_for_a_bool_function_is_refused.md`).
+- **Exactly `0` or `1`.** The kernel reads a `bool` function's application
+  through C's conversion to `bool`, so its value is `0` or `1` whatever its
+  definition says. For that reason `b != false`, `b == true` and `b` are one
+  claim, and `not b`, `b != true` and `b == false` are one claim, for a
+  `bool` application or a `bool` parameter of a pure theorem: no lemma moves
+  between the spellings (`mdtests/bool_negation_and_disequality_agree.md`).
+  The range `b == true or b == false` is a disjunction, proved like any other
+  with a case split such as `if b { ... } else { ... }`.
+
 ## Propositions
 
 Click proposition connectives are words:
@@ -2898,6 +2988,11 @@ Supported expression features include parameters, literals, `+`, `-`, `*`,
 `let name [: type] = value; body`, `if proposition { then } else { else }`,
 range `.fold`, and calls to other Click functions.
 
+A function returning `bool` states a truth value, and its body may be a
+comparison or a connective of comparisons: `function positive(x: int32) ->
+bool { x > 0 }`. A call of it written alone is a claim, `ensures
+positive(3);`. See [Booleans](#booleans).
+
 A range's endpoints are both `int32`, both `uint64`, or both `Integer`, and
 its item has that type. A `uint64` range is what a function over a `size_t`
 or `usize` index uses, `(0..end).fold(...)` with `end: uint64`; a nonnegative
@@ -2919,7 +3014,7 @@ function countdown(n: int32) -> int32
 Every direct or mutual integer-recursive edge must pass a nonnegative measure
 strictly smaller than the caller's. This form restricts the measure to one
 named `int32` parameter and recursive components to `int32` parameters and
-results.
+`int32` or `bool` results.
 
 A recursive algebraic datatype parameter can also be the named measure. After
 matching it, recursive calls may pass algebraic fields bound by that match;

@@ -8,10 +8,14 @@ pub(in crate::kernel) mod pointer_domains;
 pub(in crate::kernel) mod pointer_tags;
 mod statements;
 pub(in crate::kernel) mod uint32_representation;
+mod undefined_site;
 pub(in crate::kernel) use statements::{
     end_scope_automatic_lifetimes, missing_aggregate_copy_read_resource,
     refresh_scalar_local_after_memory_store, refresh_scalar_local_from_memory,
     retire_automatic_storage_owner, return_authority_refusal,
+};
+pub(crate) use undefined_site::{
+    CUndefinedBehaviorSite, locate_undefined_behavior, locate_undefined_behavior_in_condition,
 };
 
 /// Retain each sequential volatile access as a unique, kernel-certified fact.

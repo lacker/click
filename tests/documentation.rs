@@ -1324,6 +1324,11 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
     files.sort();
 
     let retired = [
+        // `target language` and `specification language` (docs/style.md).
+        "program language",
+        "program-language",
+        "proof language",
+        "proof-language",
         "canonical load variable",
         "canonical load variables",
         "canonical name",

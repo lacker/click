@@ -164,75 +164,21 @@ function heap_inorder(tree: HeapTree) -> List<struct tree_node*>
     }
 }
 
-function heap_member(tree: HeapTree, target: struct tree_node*) -> int32
+function heap_member(tree: HeapTree, target: struct tree_node*) -> bool
     decreases tree
 {
     match tree {
-        HeapTree::Empty => 0,
+        HeapTree::Empty => false,
         HeapTree::Node(node, value, left, right) =>
             if node == target {
-                1
+                true
             } else {
-                if heap_member(left, target) == 1 {
-                    1
+                if heap_member(left, target) {
+                    true
                 } else {
                     heap_member(right, target)
                 }
             },
-    }
-}
-
-theorem heap_member_nonzero_is_one(tree: HeapTree, target: struct tree_node*) {
-    ensures heap_member(tree, target) != 0 implies heap_member(tree, target) == 1 by {
-        induct(tree) as ih {
-            HeapTree::Empty => {
-                intro();
-                have heap_member(HeapTree::Empty, target) == 0 by auto;
-                contradiction(heap_member(HeapTree::Empty, target) == 0);
-            }
-            HeapTree::Node(node, value, left, right) => {
-                intro();
-                if node == target {
-                    have heap_member(HeapTree::Node(node, value, left, right), target) == 1 by {
-                        unfold(heap_member(
-                            HeapTree::Node(node, value, left, right), target));
-                        normalize() using { node == target; }
-                    }
-                    assumption();
-                } else {
-                    if heap_member(left, target) == 0 {
-                        have heap_member(right, target)
-                            == heap_member(HeapTree::Node(node, value, left, right), target) by {
-                            unfold(heap_member(
-                                HeapTree::Node(node, value, left, right), target));
-                            rewrite(heap_member(left, target) == 0);
-                            normalize() using { not(node == target); }
-                        }
-                        have heap_member(HeapTree::Node(node, value, left, right), target)
-                            == heap_member(right, target) by {
-                            unfold(heap_member(
-                                HeapTree::Node(node, value, left, right), target));
-                            rewrite(heap_member(left, target) == 0);
-                            normalize() using { not(node == target); }
-                        }
-                        have heap_member(right, target) != 0 by auto;
-                        apply(ih(right));
-                        extract(heap_member(right, target) == 1);
-                        assumption();
-                    } else {
-                        apply(ih(left));
-                        extract(heap_member(left, target) == 1);
-                        have heap_member(HeapTree::Node(node, value, left, right), target) == 1 by {
-                            unfold(heap_member(
-                                HeapTree::Node(node, value, left, right), target));
-                            rewrite(heap_member(left, target) == 1);
-                            normalize() using { not(node == target); }
-                        }
-                        assumption();
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -254,15 +200,15 @@ theorem heap_member_is_inorder_membership(tree: HeapTree, target: struct tree_no
                     List<struct tree_node*>::Cons(node, heap_inorder(right)), target));
                 rewrite(list_contains(list_append(heap_inorder(left),
                     List<struct tree_node*>::Cons(node, heap_inorder(right))), target)
-                    == if list_contains(heap_inorder(left), target) == 1 {
-                        1
+                    == if list_contains(heap_inorder(left), target) {
+                        true
                     } else {
                         list_contains(List<struct tree_node*>::Cons(node, heap_inorder(right)), target)
                     });
                 apply(list_contains_cons(node, heap_inorder(right), target));
                 rewrite(list_contains(List<struct tree_node*>::Cons(node, heap_inorder(right)), target)
                     == if node == target {
-                        1
+                        true
                     } else {
                         list_contains(heap_inorder(right), target)
                     });
@@ -514,14 +460,12 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
             let found_left = step(tree_contains(root->left, target), { t: l });
             branch then {
                 step();
-                have heap_member(left_model, target) == 1 by {
+                have heap_member(left_model, target) by {
                     have left_model == l.model by {
                         rewrite(l.model == left_model);
                         normalize();
                     }
-                    have heap_member(l.model, target) != 0 by auto;
-                    apply(heap_member_nonzero_is_one(l.model, target));
-                    extract(heap_member(l.model, target) == 1);
+                    have heap_member(l.model, target) != false by auto;
                     rewrite(left_model == l.model);
                     assumption();
                 }
@@ -536,7 +480,7 @@ int tree_contains(struct tree_node* root, struct tree_node* target) {
                     == HeapTree::Node(node, value, left_model, right_model));
                 unfold(heap_member(
                     HeapTree::Node(node, value, left_model, right_model), target));
-                rewrite(heap_member(left_model, target) == 0);
+                rewrite(heap_member(left_model, target) == false);
                 rewrite(result == heap_member(right_model, target));
                 normalize() using { not(node == target); }
             }

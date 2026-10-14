@@ -1096,3 +1096,22 @@ retain the existing behavior. Connected pointer-alias regressions at 8, 16,
 32, 64 and 128 facts check work growth and refuse either missing required link.
 The native-prefix fixture also checks that redundant bounds cannot crowd out
 the source view and its necessary coverage bound.
+
+### Native read alignment and theorem premise spelling
+
+A read of a held native range uses the address graph's retained wide-index
+producer, as borrowed-range matching does. A narrow alias must not replace
+that index with a spelling whose bounds are absent. The retained occurrence
+still owes byte width, quantity, and native containment; address equality
+supplies no authority. `wide_read_keeps_native_index_beside_a_narrow_alias`
+checks rejection of missing authority and wrong widths and bounds alignment
+work across 16, 64, 256, and 1024 aliases.
+
+Theorem application first retrieves the latest recorded source form of its
+exact matched premise from `SurfacePropositionMap`. It re-lowers that form
+and checks equality and availability before retaining it in `apply using`.
+This avoids mechanically substituting a historical array read inside a cast
+that the source grammar cannot express. The lookup follows one selected fact,
+not the ambient fact vector or the fact's source-history bucket. Expanded
+project claims are parsed through the rewritten entry module and its unchanged
+import graph. The caller still checks the expanded proof.

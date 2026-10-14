@@ -971,6 +971,20 @@ pub(super) fn validate_algebraic_type_uses(
             &definitions,
             &format!("function `{}`", definition.name()),
         )?;
+        if definition.return_type() == &ClickType::C(C0Type::Bool) {
+            let click_variables = definition
+                .parameters()
+                .iter()
+                .map(|parameter| (parameter.name().to_string(), parameter.click_type().clone()))
+                .collect();
+            require_bool_value(
+                definition.body(),
+                &click_variables,
+                click_functions,
+                &definitions,
+                &format!("function `{}`", definition.name()),
+            )?;
+        }
         match (definition.return_type(), body_type) {
             (ClickType::Parameter(_), _) => {}
             (ClickType::Algebraic(expected), Some(actual)) if expected == &actual => {}
@@ -2418,6 +2432,140 @@ fn generic_click_types_compatible(actual: &ClickType, expected: &ClickType) -> b
             click_types_compatible(*actual, *expected)
         }
         _ => actual == expected,
+    }
+}
+
+/// Refuse a `-> bool` body unless every value it can produce is a `bool`:
+/// `true`, `false`, a `bool` parameter or binding, a `bool` function's
+/// application, or a conditional, `match` or `let` whose results all are. A
+/// C integer is not read as a truth value here, so `-> bool { 1 }` and a
+/// conditional with an integer branch are type errors.
+fn require_bool_value(
+    expression: &ContractExpression,
+    variables: &BTreeMap<String, ClickType>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    definitions: &BTreeMap<&str, &AlgebraicTypeDefinition>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match expression {
+        ContractExpression::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            require_bool_value(
+                then_branch,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            require_bool_value(
+                else_branch,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )
+        }
+        ContractExpression::AlgebraicMatch { scrutinee, arms } => {
+            let scrutinee_type = infer_generic_expression_type(
+                scrutinee,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            for arm in arms {
+                let mut arm_variables = variables.clone();
+                let fields = match &scrutinee_type {
+                    Some(ClickType::Algebraic(application)) => definitions
+                        .get(application.name.as_str())
+                        .and_then(|definition| {
+                            let variant = definition
+                                .variants()
+                                .iter()
+                                .find(|variant| variant.name() == arm.variant)?;
+                            Some((*definition, application, variant.fields()))
+                        }),
+                    _ => None,
+                };
+                for (index, binding) in arm.bindings.iter().enumerate() {
+                    match fields.and_then(|(definition, application, fields)| {
+                        Some((definition, application, fields.get(index)?))
+                    }) {
+                        Some((definition, application, field)) => {
+                            arm_variables.insert(
+                                binding.clone(),
+                                instantiate_field_type(definition, application, field)?,
+                            );
+                        }
+                        None => {
+                            arm_variables.remove(binding);
+                        }
+                    }
+                }
+                require_bool_value(
+                    &arm.body,
+                    &arm_variables,
+                    click_functions,
+                    definitions,
+                    context,
+                )?;
+            }
+            Ok(())
+        }
+        ContractExpression::Let {
+            name,
+            click_type,
+            value,
+            body,
+        } => {
+            let value_type = infer_generic_expression_type(
+                value,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            let mut body_variables = variables.clone();
+            match click_type.clone().or(value_type) {
+                Some(value_type) => {
+                    body_variables.insert(name.clone(), value_type);
+                }
+                None => {
+                    body_variables.remove(name);
+                }
+            }
+            require_bool_value(body, &body_variables, click_functions, definitions, context)
+        }
+        // A fold's result has its accumulator's type, so the initial value
+        // decides; the fold validator then checks the accumulator carrier.
+        ContractExpression::RangeFold { initial, .. } => {
+            require_bool_value(initial, variables, click_functions, definitions, context)
+        }
+        value => {
+            let actual = infer_generic_expression_type(
+                value,
+                variables,
+                click_functions,
+                definitions,
+                context,
+            )?;
+            match actual {
+                Some(ClickType::C(C0Type::Bool)) => Ok(()),
+                Some(actual) => Err(ClickError::new(format!(
+                    "{context} returns bool, but its body can produce `{}` of type {}; \
+                     a `bool` body's values are `true`, `false`, comparisons and other `bool` values",
+                    crate::surface::diagnostics::describe_contract_expression(value),
+                    describe_click_type(&actual)
+                ))),
+                None => Err(ClickError::new(format!(
+                    "{context} returns bool, but its body can produce `{}`, whose type is not known to be bool",
+                    crate::surface::diagnostics::describe_contract_expression(value)
+                ))),
+            }
+        }
     }
 }
 

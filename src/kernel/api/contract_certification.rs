@@ -849,7 +849,17 @@ pub(in crate::kernel) fn describe_certification_runtime_error(error: &CRuntimeEr
         CRuntimeError::UnsupportedConcurrentMutex => {
             "Click cannot yet verify pthread workers sharing an initialized mutex".to_string()
         }
-        CRuntimeError::InvalidFree(_) => "an invalid free".to_string(),
+        CRuntimeError::InvalidFree(reason) => match reason {
+            CInvalidFree::InteriorPointer => {
+                "cannot free an interior pointer; free requires the allocation base".to_string()
+            }
+            CInvalidFree::NonHeapPointer => {
+                "cannot free a pointer that is not a live heap allocation".to_string()
+            }
+            CInvalidFree::DoubleFree => {
+                "cannot free an allocation whose lifetime has already ended".to_string()
+            }
+        },
         CRuntimeError::UnresolvedAllocationOutcome => {
             "an unresolved allocation outcome".to_string()
         }

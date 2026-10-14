@@ -979,14 +979,16 @@ pub(super) fn validate_well_founded_click_recursion(
         }
         if recursive_functions.contains(name)
             && matches!(measure, Some(ClickRecursionMeasure::Int32 { .. }))
-            && (definition.return_type() != &ClickType::C(C0Type::Int32)
-                || definition
-                    .parameters()
-                    .iter()
-                    .any(|parameter| parameter.click_type() != &ClickType::C(C0Type::Int32)))
+            && (!matches!(
+                definition.return_type(),
+                ClickType::C(C0Type::Int32 | C0Type::Bool)
+            ) || definition
+                .parameters()
+                .iter()
+                .any(|parameter| parameter.click_type() != &ClickType::C(C0Type::Int32)))
         {
             return Err(ClickError::new(format!(
-                "recursive pure function `{name}` currently supports only int32 parameters and an int32 result"
+                "recursive pure function `{name}` currently supports only int32 parameters and an int32 or bool result"
             )));
         }
         if let Some(measure) = measure {

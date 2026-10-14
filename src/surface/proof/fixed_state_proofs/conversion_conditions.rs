@@ -68,6 +68,10 @@ pub(in crate::surface::proof) struct StatedSite<'a> {
     form: StatedForm<'a>,
     state: &'a CState,
     values: &'a BTreeMap<String, CValue>,
+    /// The `Integer` bindings in scope where the statement is written, which
+    /// name a theorem's `Integer` binders.
+    integer_values:
+        Option<&'a crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>>,
     // Built only when a message is spelled: most lowerings raise nothing,
     // and one per resource clause must not cost every value in scope.
     naming: std::cell::OnceCell<(Vec<syntax::C0Parameter>, Vec<CExpression>)>,
@@ -84,8 +88,45 @@ impl<'a> StatedSite<'a> {
             form,
             state,
             values,
+            integer_values: None,
             naming: std::cell::OnceCell::new(),
         }
+    }
+
+    /// The same site, with the `Integer` bindings its statement was lowered
+    /// under.
+    pub(in crate::surface::proof) fn with_integer_values(
+        mut self,
+        integer_values: &'a crate::persistent::PersistentMap<
+            String,
+            crate::kernel::SpecIntegerExpression,
+        >,
+    ) -> Self {
+        self.integer_values = Some(integer_values);
+        self
+    }
+
+    /// The report's labels: what the verified function declares, and each
+    /// `Integer` binding in scope that is exactly one kernel variable under
+    /// its source name. A name a machine value in scope also has is left
+    /// out: which of the two the source name denotes there is not this
+    /// report's to say.
+    fn labels(&self) -> render::SnapshotLabels {
+        let mut labels = render::SnapshotLabels::ambient();
+        for (name, value) in self
+            .integer_values
+            .into_iter()
+            .flat_map(|values| values.iter())
+        {
+            if let crate::kernel::SpecIntegerExpression::Term(crate::kernel::IntegerTerm::Variable(
+                variable,
+            )) = value
+                && !self.values.contains_key(name)
+            {
+                labels.integer_source_name(*variable, name.clone());
+            }
+        }
+        labels
     }
 
     fn naming(&self) -> &(Vec<syntax::C0Parameter>, Vec<CExpression>) {
@@ -180,7 +221,7 @@ fn spell_condition(
         };
     }
     if let Proposition::ConditionIs(condition, true) = condition
-        && let Some((side, value, bound)) = conversion_bound(condition)
+        && let Some((side, value, bound)) = conversion_bound(condition, labels)
     {
         // The bound remains actionable even when this lowering supplied no
         // exact source names for the converted Integer value.
@@ -297,7 +338,10 @@ fn spelled_alone(expression: &ContractExpression) -> String {
 
 /// The side, converted value, and limit of a machine-range bound on an
 /// `Integer` conversion.
-fn conversion_bound(condition: &ConditionTerm) -> Option<(&'static str, String, String)> {
+fn conversion_bound(
+    condition: &ConditionTerm,
+    labels: &mut render::SnapshotLabels,
+) -> Option<(&'static str, String, String)> {
     let (side, value, bound) = match condition {
         ConditionTerm::IntegerGreaterEqual(value, bound) => ("lower", value, bound),
         ConditionTerm::IntegerLessEqual(value, bound) => ("upper", value, bound),
@@ -305,8 +349,8 @@ fn conversion_bound(condition: &ConditionTerm) -> Option<(&'static str, String, 
     };
     Some((
         side,
-        render::render_integer_term(value),
-        render::render_integer_term(bound),
+        render::render_integer_term_labeled(value, labels),
+        render::render_integer_term_labeled(bound, labels),
     ))
 }
 
@@ -466,7 +510,7 @@ fn describe_refusal(
     assumptions: &PureFactContext,
     site: &StatedSite<'_>,
 ) -> String {
-    let mut labels = render::SnapshotLabels::ambient();
+    let mut labels = site.labels();
     let mut conjuncts = Vec::new();
     let mut pending = vec![obligation];
     while let Some(proposition) = pending.pop() {
@@ -599,7 +643,7 @@ pub(in crate::surface::proof) fn describe_dropped_fold_body(
     assumptions: &PureFactContext,
     site: &StatedSite<'_>,
 ) -> String {
-    let mut labels = render::SnapshotLabels::ambient();
+    let mut labels = site.labels();
     let written = written_range_fold(&site.form);
     let item = written.as_ref().map_or_else(
         || "the fold's item".to_string(),

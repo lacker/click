@@ -1704,7 +1704,10 @@ fn conditional_resource_certification_checks_the_unsafe_case_too() {
     assert_eq!(execution.path_count(), 2);
     let error = c_unverified_function_contract_claims(&function, &execution)
         .expect_err("the nonnull double-free case must invalidate certification");
-    assert!(error.contains("DoubleFree"), "unexpected failure: {error}");
+    assert!(
+        error.contains("cannot free an allocation whose lifetime has already ended"),
+        "unexpected failure: {error}"
+    );
 }
 
 #[test]

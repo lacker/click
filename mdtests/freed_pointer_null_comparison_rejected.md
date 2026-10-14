@@ -1,6 +1,6 @@
 # Comparing a freed pointer with null is refused
 
-`p != 0` after `free(p)` is a comparison of an indeterminate pointer value, even though the other operand is the null pointer constant. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names the freed allocation; see `docs/concepts/undefined-behavior.md`.
+`p != 0` after `free(p)` is a comparison of an indeterminate pointer value, even though the other operand is the null pointer constant. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names it; see `docs/concepts/undefined-behavior.md`.
 
 ```c filename=freed_null.c
 void *malloc(unsigned long size);
@@ -31,5 +31,5 @@ int f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation
 ```

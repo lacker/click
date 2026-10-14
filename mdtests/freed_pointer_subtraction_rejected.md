@@ -1,6 +1,6 @@
 # Subtracting pointers into a freed array is refused
 
-`end - p` is `1` while the array is live. After `free(p)` the difference uses two indeterminate pointer values and is refused. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names the freed allocation; see `docs/concepts/undefined-behavior.md`.
+`end - p` is `1` while the array is live. After `free(p)` the difference uses two indeterminate pointer values and is refused. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names it; see `docs/concepts/undefined-behavior.md`.
 
 ```c filename=freed_diff.c
 void *malloc(unsigned long size);
@@ -29,5 +29,6 @@ int f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation: its value is indeterminate after the free
+  operation: `end - p`
 ```

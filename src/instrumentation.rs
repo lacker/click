@@ -1916,26 +1916,20 @@ pub fn take_artifact_reuse_rejection_census() -> ArtifactReuseRejectionCensus {
     std::mem::take(&mut *artifact_reuse_rejection_census())
 }
 
-/// Where simple statement checking derived a prerequisite that no fact states
-/// exactly, by a search whose result the proof does not retain. The
-/// simplify-step plan (`issues/simplify-step.md`) moves each of these to an
-/// exact check or an expandable `auto`; this census is its ratchet.
+/// Where statement checking derived a prerequisite that no fact states
+/// exactly, by a search whose result the proof does not retain. A `step()`
+/// no longer searches (`issues/simplify-step.md`); these are the routes that
+/// still do, and this census is their ratchet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum HiddenPrerequisiteRoute {
-    /// A call or access obligation of a `step()`, derived by
-    /// `derive_proposition` over the whole proof context.
-    StepObligation,
-    /// The same, under the contextual policy loop phases and their re-runs use.
+    /// A call or access obligation under the contextual policy loop phases
+    /// use, derived by `derive_proposition` over the proof context.
     ContextualObligation,
-    /// A condition-transition obligation of a `step()`, decided by a boolean
-    /// search over the whole proof context.
-    StepCondition,
-    /// The same, under the contextual policy.
+    /// A condition-transition obligation under the contextual policy, decided
+    /// by a boolean search over the proof context.
     ContextualCondition,
     /// The same, under the explicit policy.
     ExplicitCondition,
-    /// A refused `step()` re-run contextually over retained `have` facts.
-    RetainedHaveRerun,
 }
 
 /// The count of hidden prerequisite derivations by route and by the top rule
@@ -2146,7 +2140,7 @@ mod hidden_prerequisite_census_tests {
 
     #[test]
     fn a_shard_reports_only_rises_and_a_whole_run_reports_both() {
-        let key = (HiddenPrerequisiteRoute::StepObligation, "And");
+        let key = (HiddenPrerequisiteRoute::ContextualObligation, "And");
         let census = HiddenPrerequisiteCensus::from([(key, 3)]);
         assert!(hidden_prerequisite_census_mismatch(&census, &[(key, 3)], false).is_none());
         assert!(hidden_prerequisite_census_mismatch(&census, &[(key, 4)], true).is_none());

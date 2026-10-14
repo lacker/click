@@ -1,6 +1,6 @@
 # Language coverage
 
-This page states, for each program language Click verifies, which source
+This page states, for each target language Click verifies, which source
 features and runtime errors a proof covers. Use it to decide whether Click
 applies to a codebase before reading the per-language references:
 [supported C](language/c.md), [C++ import](cli/import.md#preliminary-c-semantic-artifact),
@@ -11,8 +11,8 @@ C is Click's primary language. C++ and Rust support is experimental: each
 covers a small subset and needs a repository checkout and a separately built
 importer (Click's C++ exporter, or pinned Charon for Rust).
 
-C, C++, and Rust share one proof language, one execution and memory model, and
-one kernel. Coverage differs only in which source constructs each frontend
+C, C++, and Rust share one specification language, one execution and memory
+model, and one kernel. Coverage differs only in which source constructs each frontend
 admits. Anything outside the admitted subset is refused with a diagnostic; it
 is never silently approximated.
 

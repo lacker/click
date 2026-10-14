@@ -1621,6 +1621,7 @@ fn validate_comparison_expression_types(
     }
     let left_type = infer_spec_value_type(left, variables, click_functions, context)?;
     let right_type = infer_spec_value_type(right, variables, click_functions, context)?;
+    refuse_bool_literal_comparison(left, &left_type, right, &right_type, context)?;
     match (left_type, right_type) {
         (SpecValueType::Scalar(element), SpecValueType::Sequence(sequence))
             if operator == ComparisonOperator::In =>
@@ -1702,6 +1703,107 @@ fn validate_comparison_expression_types(
             "sequence equality requires a sequence on both sides in {context}"
         ))),
     }
+}
+
+/// Refuse each comparison of a `bool` literal with a value whose type is
+/// known and is not `bool`, anywhere in `proposition`. Contract clauses of a
+/// C function are otherwise typed when they are lowered; this one check runs
+/// before that so `requires count;` for an integer `count` is a type error,
+/// not the claim `count == 1`. A value whose type this pass cannot infer is
+/// left to lowering.
+pub(super) fn refuse_bool_literal_comparisons(
+    proposition: &ClickProposition,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    let mut pending = vec![(proposition, None::<BTreeMap<String, C0Type>>)];
+    while let Some((proposition, scoped)) = pending.pop() {
+        let scope = scoped.as_ref().unwrap_or(variables);
+        match proposition {
+            ClickProposition::Comparison { left, right, .. } => {
+                let infer = |expression: &ContractExpression| {
+                    if crate::surface::bool_literal_value(expression).is_some() {
+                        return SpecValueType::Scalar(Some(C0Type::Bool));
+                    }
+                    infer_contract_expression_type(expression, scope, click_functions, context)
+                        .map(SpecValueType::Scalar)
+                        .unwrap_or(SpecValueType::Scalar(None))
+                };
+                refuse_bool_literal_comparison(left, &infer(left), right, &infer(right), context)?;
+            }
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                pending.push((right, scoped.clone()));
+                pending.push((left, scoped));
+            }
+            ClickProposition::Not(body)
+            | ClickProposition::At {
+                proposition: body, ..
+            } => {
+                pending.push((body, scoped));
+            }
+            ClickProposition::ForAll {
+                click_type,
+                name,
+                body,
+                ..
+            }
+            | ClickProposition::Exists {
+                click_type,
+                name,
+                body,
+                ..
+            } => {
+                let mut body_variables = scope.clone();
+                match click_type.c_type() {
+                    Some(c_type) => body_variables.insert(name.clone(), c_type),
+                    None => body_variables.remove(name),
+                };
+                pending.push((body, Some(body_variables)));
+            }
+            ClickProposition::RangeAll { item, body, .. }
+            | ClickProposition::RangeAny { item, body, .. } => {
+                let mut body_variables = scope.clone();
+                body_variables.remove(item);
+                pending.push((body, Some(body_variables)));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `true` and `false` are `bool` values, so they compare only with `bool`
+/// values. A value written alone as a proposition is the comparison
+/// `value == true`, so this is also what refuses `requires count;` for an
+/// integer `count`: Click does not read an integer as a truth value.
+fn refuse_bool_literal_comparison(
+    left: &ContractExpression,
+    left_type: &SpecValueType,
+    right: &ContractExpression,
+    right_type: &SpecValueType,
+    context: &str,
+) -> Result<(), ClickError> {
+    for (literal, other, other_type) in [(right, left, left_type), (left, right, right_type)] {
+        let Some(literal) = crate::surface::bool_literal_value(literal) else {
+            continue;
+        };
+        let other_type = match other_type {
+            SpecValueType::Scalar(Some(C0Type::Bool)) => continue,
+            SpecValueType::Scalar(Some(c_type)) => describe_c0_type(*c_type),
+            SpecValueType::Scalar(None) => continue,
+            other_type => describe_spec_value_type(other_type),
+        };
+        return Err(ClickError::new(format!(
+            "`{}` has type {other_type}, not bool, so it is not compared with `{literal}` and is \
+             not a proposition on its own in {context}; write a comparison such as `{} != 0`",
+            crate::surface::diagnostics::describe_contract_expression(other),
+            crate::surface::diagnostics::describe_contract_expression(other),
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_to_nat_argument_type(

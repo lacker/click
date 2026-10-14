@@ -76,7 +76,7 @@ pub(super) fn propagate_owned_footprint_reach(definitions: &mut [CCompositeResou
 }
 
 /// Kosaraju's two passes, iteratively: each node and edge is visited twice.
-fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+pub(super) fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let count = edges.len();
     let mut order = Vec::with_capacity(count);
     let mut visited = vec![false; count];

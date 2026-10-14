@@ -45,5 +45,5 @@ int f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation
 ```

@@ -8716,26 +8716,97 @@ fn prepare_verified_function_call<'a>(
     // not discharge them does not get past the step, and an undischarged one
     // is a premise of the path theorem.
     //
-    // The anchor names one function and is installed only for the function
-    // being certified, so an ordinary call to another verified function is
-    // untouched, and so is every function that declares no measure. It is
-    // placed after the applicability gate above so a callback candidate is
-    // still selected by its preconditions alone.
+    // The anchor names the function being certified and the other members
+    // of its recursive component, and is installed only for that function,
+    // so an ordinary call to another verified function is untouched, and so
+    // is every function that declares no measure. It is placed after the
+    // applicability gate above so a callback candidate is still selected by
+    // its preconditions alone.
     if let Some(anchor) = environment.recursion_anchor()
-        && anchor.function() == application.name
+        && anchor.ranks_call_to(application.name)
+        && let Some(entry) = anchor.structural_entry()
     {
-        // The measure ranked here is the one the anchor was derived from, so
-        // the two states being compared are readings of one declared object.
-        // An interface applied under this name that declares a different
-        // measure is refused rather than ranked by the wrong one.
-        if contract_interface.recursion_measure() != Some(anchor.components()) {
-            obligations.push(
-                ProofObligation::verification_condition(false_equals_true_proposition())
-                    .with_context(format!(
-                        "the contract applied for the recursive call to `{}` declares a different \
-                         `decreases` measure than the one being certified",
+        // A structural measure is ranked by the instance this call passes for
+        // the callee's own measured binder: its model must be strictly
+        // contained in the model the certified function's binder held at its
+        // entry, through the arms this path's facts decide. The decision is
+        // the loop back edge's, so nothing here proves by cases or unfolds.
+        let failure = match contract_interface.recursion_binder() {
+            None => Some(format!(
+                "`{}` is in `{}`'s recursive component but declares no structural \
+                 `decreases` binder; every member of a component ranked by structural \
+                 binders must declare one",
+                application.name,
+                anchor.function()
+            )),
+            Some(binder) => {
+                let passed = contract_interface
+                    .resource_binder_identity(binder)
+                    .and_then(|formal| {
+                        resource_application.and_then(|call| call.bindings.get(&formal))
+                    })
+                    .and_then(|actual| caller_state.resources().owned_instance(*actual));
+                match passed {
+                    None => Some(format!(
+                        "the call to `{}` passes no owned instance for its measured binder \
+                         `{binder}`, so its structural descent cannot be ranked",
                         application.name
                     )),
+                    Some(next) => crate::kernel::loops::structural_instance_descent_failure(
+                        entry,
+                        next,
+                        &format!(
+                            "{} recursion measure `decreases {binder}`",
+                            anchor.function()
+                        ),
+                        &format!("the call to `{}` passes", application.name),
+                        &format!("`{}` held at its entry", anchor.function()),
+                        contract_interface.composite_resource_definitions(),
+                        &path_assumptions,
+                    ),
+                }
+            }
+        };
+        if let Some(message) = failure {
+            obligations.push(
+                ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context(message),
+            );
+        }
+    } else if let Some(anchor) = environment.recursion_anchor()
+        && anchor.ranks_call_to(application.name)
+    {
+        // A self-call ranks the measure the anchor was derived from, so the
+        // two states being compared are readings of one declared object. An
+        // interface applied under this name that declares a different
+        // measure is refused rather than ranked by the wrong one. A call to a
+        // peer reads the peer's own declared measure, so the peer must
+        // declare one; the descent below checks that its shape matches.
+        let called_measure = contract_interface.recursion_measure();
+        let mismatch = if anchor.function() == application.name {
+            called_measure != Some(anchor.components())
+        } else {
+            called_measure.is_none()
+        };
+        if mismatch {
+            let message = if anchor.function() == application.name {
+                format!(
+                    "the contract applied for the recursive call to `{}` declares a different \
+                     `decreases` measure than the one being certified",
+                    application.name
+                )
+            } else {
+                format!(
+                    "`{}` is in `{}`'s recursive component but declares no expression \
+                     `decreases` measure; every member of a component ranked by expression \
+                     measures must declare one, of the same shape",
+                    application.name,
+                    anchor.function()
+                )
+            };
+            obligations.push(
+                ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context(message),
             );
         } else {
             // Stable-view recovery cannot use pending obligations as return
@@ -8749,6 +8820,8 @@ fn prepare_verified_function_call<'a>(
                 assumptions_with_path_context(&path_assumptions, &facts, &obligations);
             match crate::kernel::termination::collect_recursion_descent_obligations(
                 anchor,
+                application.name,
+                called_measure.unwrap_or_default(),
                 &precondition_state,
                 &descent_assumptions,
                 budget,
@@ -22804,17 +22877,18 @@ fn lower_selected_resource_body_clauses(
         .map_err(|limit| match limit {
             // A deadline is the budget, not a property of the body: say so
             // rather than suggest the fact cannot be evaluated at all.
-            ExecutionLimit::Deadline => {
-                "evaluating an instance body fact exhausted the verification budget"
-            }
+            ExecutionLimit::Deadline => ResourceRewriteRefusal::Message(
+                "evaluating an instance body fact exhausted the verification budget",
+            ),
             // A worker-held or worker-changed total is the cause, not the body.
-            ExecutionLimit::AuthorityCountPendingLockedWorker => {
-                "count(...) is unknown until pthread_join returns the workers that change this population under its mutex"
+            ExecutionLimit::AuthorityCountPendingLockedWorker
+            | ExecutionLimit::AuthorityCountLentToWorker => {
+                ResourceRewriteRefusal::OwnedMessage(limit.describe())
             }
-            ExecutionLimit::AuthorityCountLentToWorker => {
-                "count(...) requires owning authority for that population, which an outstanding worker holds until its pthread_join"
-            }
-            _ => "could not evaluate instance body fact",
+            limit => ResourceRewriteRefusal::OwnedMessage(format!(
+                "could not evaluate instance body fact: evaluation stopped at {}",
+                limit.describe()
+            )),
         })?;
         let path = crate::kernel::api::exactly_selected_spec_proposition_path(&paths, &context)
             .ok_or("instance body fact needs an unsupported conditional proof")?;
@@ -23220,7 +23294,12 @@ fn check_instance_resource_arguments(
         }
         let fact = evaluate_function_resource_spec(evaluation, &spec, assumptions, &mut budget)
             .map_err(|_| "resource reference type evaluation exceeded its budget")?
-            .map_err(|_| "could not evaluate resource reference parameter type")?;
+            .map_err(|error| {
+                ResourceRewriteRefusal::OwnedMessage(format!(
+                    "could not evaluate resource reference parameter type: {}",
+                    super::api::describe_certification_runtime_error(&error)
+                ))
+            })?;
         let CResourceFact::Own(CResource::Composite { name, arguments }, quantity) = fact else {
             return Err("resource reference parameter requires an exclusive resource type".into());
         };
@@ -23529,8 +23608,12 @@ fn rewrite_resource_instance_selecting_children_unspelled(
                 &mut budget,
             )
             .map_err(|_| "instance quantity guard evaluation exceeded its budget")?
-            .map_err(|_| "instance quantity requires a proved clause guard case")?
-            {
+            .map_err(|error| {
+                ResourceRewriteRefusal::OwnedMessage(format!(
+                    "instance quantity requires a proved clause guard case: {}",
+                    super::api::describe_certification_runtime_error(&error)
+                ))
+            })? {
                 continue;
             }
             let value = evaluate_loop_effect_segment_value(
@@ -23541,7 +23624,11 @@ fn rewrite_resource_instance_selecting_children_unspelled(
                 &mut budget,
             )
             .map_err(|_| "instance body quantity evaluation exceeded its budget")?
-            .map_err(|_| "could not evaluate instance body quantity")?;
+            .map_err(|message| {
+                ResourceRewriteRefusal::OwnedMessage(format!(
+                    "could not evaluate instance body quantity: {message}"
+                ))
+            })?;
             let CValue::Int32(quantity) = value else {
                 return Err("instance body quantity must have type int32".into());
             };
@@ -23661,9 +23748,14 @@ fn rewrite_resource_instance_selecting_children_unspelled(
             &mut budget,
         )
         .map_err(|_| "instance body authority evaluation exceeded its budget")?
-        .map_err(|_| "could not evaluate instance body authority")?;
+        .map_err(|error| {
+            ResourceRewriteRefusal::OwnedMessage(format!(
+                "could not evaluate instance body authority: {}",
+                super::api::describe_certification_runtime_error(&error)
+            ))
+        })?;
         let CResource::PopulationAuthority(description) = authority.resource() else {
-            return Err("could not evaluate instance body authority".into());
+            return Err("instance body authority is not a population authority".into());
         };
         if !state.recognizes_population_authority(description) {
             return Err(ResourceRewriteRefusal::OwnedMessage(format!(
@@ -23687,11 +23779,11 @@ fn rewrite_resource_instance_selecting_children_unspelled(
     )
     .map_err(|_| "instance body evaluation exceeded its budget")?
     .map(|(context, _)| context)
-    .map_err(|error| match error {
-        CRuntimeError::FunctionContract(message) => ResourceRewriteRefusal::OwnedMessage(format!(
-            "could not evaluate instance memory body: {message}"
-        )),
-        _ => ResourceRewriteRefusal::Message("could not evaluate instance memory body"),
+    .map_err(|error| {
+        ResourceRewriteRefusal::OwnedMessage(format!(
+            "could not evaluate instance memory body: {}",
+            super::api::describe_certification_runtime_error(&error)
+        ))
     })?;
     if !authorities.is_empty() {
         body = body
@@ -23901,7 +23993,14 @@ fn rewrite_resource_instance_selecting_children_unspelled(
                 body.facts().iter().cloned(),
                 assumptions,
             )
-            .map_err(|_| "instance body overlaps existing ownership")?;
+            .map_err(|error| {
+                ResourceRewriteRefusal::OwnedMessage(format!(
+                    "instance body overlaps existing ownership: {}",
+                    super::api::describe_certification_runtime_error(
+                        &resource_context_runtime_error(error)
+                    )
+                ))
+            })?;
     } else {
         // The immediate body was consumed before evaluating child arguments;
         // only the selected children remain to be consumed.
@@ -25119,7 +25218,12 @@ pub(super) fn loop_instance_guard(
         assumptions,
         &mut budget,
     )
-    .map_err(|_| "could not evaluate loop guard condition")?;
+    .map_err(|limit| {
+        format!(
+            "evaluating the loop guard condition stopped at {}",
+            limit.describe()
+        )
+    })?;
     let [path] = paths.as_slice() else {
         return Err("conditional loop guard requires one model condition".into());
     };
@@ -25140,9 +25244,16 @@ pub(super) fn loop_instance_guard(
         "loop guard mutex",
         &mut budget,
     )
-    .map_err(|_| "could not evaluate loop guard mutex")?;
-    let Ok(CValue::Pointer(pointer)) = pointer else {
-        return Err("loop guard requires a mutex pointer".into());
+    .map_err(|limit| {
+        format!(
+            "evaluating the loop guard mutex stopped at {}",
+            limit.describe()
+        )
+    })?;
+    let pointer = match pointer {
+        Ok(CValue::Pointer(pointer)) => pointer,
+        Ok(_) => return Err("loop guard requires a mutex pointer".into()),
+        Err(message) => return Err(message),
     };
     Ok(Some((pointer.pointer().clone(), held.clone())))
 }
@@ -30190,19 +30301,14 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                     assumptions,
                     budget,
                 )?;
-                let quantity = match evaluate_loop_effect_segment_value(
+                let quantity = match evaluate_declared_quantity(
                     quantity_state,
                     &quantity,
                     assumptions,
-                    "declared resource quantity",
                     budget,
                 )? {
-                    Ok(CValue::Int32(quantity)) => quantity,
-                    Ok(_) | Err(_) => {
-                        return Ok(Err(CRuntimeError::FunctionContract(
-                            "declared resource quantity must evaluate to int32".to_string(),
-                        )));
-                    }
+                    Ok(quantity) => quantity,
+                    Err(error) => return Ok(Err(error)),
                 };
                 if !quantity_condition_holds(
                     assumptions,
@@ -30297,6 +30403,49 @@ pub(super) fn evaluate_iterated_resource_spec(
     }))
 }
 
+/// A clause's declared resource quantity as an int32 term, or the reason it
+/// has none. A read the quantity has no authority for is reported as the
+/// resource it needed, the way a resource argument's is. The diagnostic
+/// carries no memory snapshot: a quantity's failure is its own, and a
+/// snapshot would mark it as waiting for a later clause to supply the cell.
+fn evaluate_declared_quantity(
+    state: &CState,
+    quantity: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<Bitvector32Term, CRuntimeError>> {
+    let mut diagnostic = None;
+    Ok(
+        match super::loops::evaluate_resource_argument_value(
+            state,
+            quantity,
+            assumptions,
+            "declared resource quantity",
+            budget,
+            &mut diagnostic,
+        )? {
+            Ok(CValue::Int32(quantity)) => Ok(quantity),
+            Ok(_) => Err(CRuntimeError::FunctionContract(
+                "declared resource quantity must evaluate to int32".to_string(),
+            )),
+            Err(message) => Err(match diagnostic {
+                Some(CRuntimeError::ContractResourceDiagnostic {
+                    reason,
+                    held,
+                    required,
+                    memory: _,
+                }) => CRuntimeError::ContractResourceDiagnostic {
+                    reason,
+                    held,
+                    required,
+                    memory: None,
+                },
+                _ => CRuntimeError::FunctionContract(message),
+            }),
+        },
+    )
+}
+
 /// Lowers the nonnegativity conditions implicit in quantified resource
 /// requirements. A function may assume these at its own entry just as it may
 /// assume its ordinary `requires`; call sites still use
@@ -30314,11 +30463,10 @@ pub(crate) fn quantified_resource_requirement_assumptions(
         let CResourceQuantity::Count(quantity) = resource.quantity() else {
             continue;
         };
-        let mut evaluated = evaluate_loop_effect_segment_value(
+        let mut evaluated = evaluate_declared_quantity(
             quantity_read_state.as_ref().unwrap_or(state),
             quantity,
             assumptions,
-            "declared resource quantity",
             budget,
         )?;
         if evaluated.is_err() && quantity_read_state.is_none() {
@@ -30356,23 +30504,18 @@ pub(crate) fn quantified_resource_requirement_assumptions(
                 Err(_) => state.resources().clone(),
             };
             quantity_read_state = Some(state.clone().with_resource_context(read_resources));
-            evaluated = evaluate_loop_effect_segment_value(
+            evaluated = evaluate_declared_quantity(
                 quantity_read_state
                     .as_ref()
                     .expect("quantity read frame established"),
                 quantity,
                 assumptions,
-                "declared resource quantity",
                 budget,
             )?;
         }
         let quantity = match evaluated {
-            Ok(CValue::Int32(quantity)) => quantity,
-            Ok(_) | Err(_) => {
-                return Ok(Err(CRuntimeError::FunctionContract(
-                    "declared resource quantity must evaluate to int32".to_string(),
-                )));
-            }
+            Ok(quantity) => quantity,
+            Err(error) => return Ok(Err(error)),
         };
         propositions.push(Proposition::ConditionIs(
             ConditionTerm::Bitvector32SignedGreaterEqual(

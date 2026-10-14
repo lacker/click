@@ -1,9 +1,9 @@
 # Architecture
 
-Click is divided into one Surface Click proof language, a family of supported
-program languages, a kernel semantic core, and command-line orchestration.
-Both the proof language and each program language have frontend stages such as
-parsing, validation, and lowering; *frontend* names a stage, not either
+Click is divided into one specification language, Surface Click, a family of
+supported target languages, a kernel semantic core, and command-line
+orchestration. Both the specification language and each target language have
+frontend stages such as parsing, validation, and lowering; *frontend* names a stage, not either
 language's role.
 
 ## Repository map
@@ -17,7 +17,7 @@ language's role.
 | `src/surface/lowering/` | Translate checked surface contracts, propositions, resources, and source locations. |
 | `src/surface/checking/` | Evaluate contract forms and connect them to kernel structures. |
 | `src/surface/proof/` | Interpret tactics, orchestrate checked proof operations, run smart search, and synthesize surface expansions. |
-| `src/source.rs` | Share source-file positions between Surface Click and program-language frontends. |
+| `src/source.rs` | Share source-file positions between Surface Click and target-language frontends. |
 | `src/kernel/` | Define primitive terms, states, rules, symbolic execution, assumptions, memory reasoning, and the persistent checked proof object. |
 | `src/cli.rs` | Shared CLI parsing, target selection, durations, and user-facing command metadata. |
 | `src/bin/` | Thin entry points and command-specific reporting for verify, profile, expand, and audit. |
@@ -28,9 +28,8 @@ language's role.
 
 ## Data flow
 
-The C program-language and Surface Click proof-language parsers retain source
-spans. Validation builds a
-`C0VerificationSession`, which owns checked declarations and function blocks.
+The C target-language and Surface Click specification-language parsers
+retain source spans. Validation builds a `C0VerificationSession`, which owns checked declarations and function blocks.
 Lowering records the relationship between surface propositions and kernel
 propositions so diagnostics and expansion can return to source language.
 Those records are presentation hints, not evidence that a fact is available.

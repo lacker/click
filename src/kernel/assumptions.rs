@@ -2505,6 +2505,32 @@ fn is_algebraic_constructor_conflict(proposition: &Proposition) -> bool {
     )
 }
 
+/// For `b == k`, with `b` a specification `bool` (see
+/// `crate::kernel::spec_bool_value`) and `k` either `0` or `1`, the equation
+/// `b == 1 - k`, which holds exactly when the first does not.
+fn spec_bool_complement_equation(condition: &ConditionTerm) -> Option<ConditionTerm> {
+    let ConditionTerm::Bitvector32Equal(left, right) = condition else {
+        return None;
+    };
+    let complement = |constant: &Bitvector32Term| match constant.as_const() {
+        Some(bit @ (0 | 1)) => Some(Bitvector32Term::Constant(1 - bit)),
+        _ => None,
+    };
+    if crate::kernel::spec_bool_term(left).is_some() {
+        return Some(ConditionTerm::equal(
+            left.as_ref().clone(),
+            complement(right)?,
+        ));
+    }
+    if crate::kernel::spec_bool_term(right).is_some() {
+        return Some(ConditionTerm::equal(
+            complement(left)?,
+            right.as_ref().clone(),
+        ));
+    }
+    None
+}
+
 impl PureFactContext {
     #[cfg(test)]
     pub(crate) fn reset_bitvector_equality_index_fact_visits() {
@@ -5622,7 +5648,17 @@ impl PureFactContext {
         if self.equality_graph.add_condition(&condition, value) {
             self.congruence_conditions.insert(condition.clone(), value);
         }
+        // A specification `bool` is exactly `0` or `1` by its structure, so
+        // its equation with one of them also files the other's: `b != true`
+        // is `b == false`, however the negation was reached. One constant
+        // check per filed equation; nothing else in the context is visited.
+        // This fact is filed first, so the complement's own complement
+        // finds it and stops.
+        let complement = spec_bool_complement_equation(&condition);
         self.content_fingerprint ^= Self::fingerprint(1, &(condition, value));
+        if let Some(complement) = complement {
+            self = self.assume_condition_uncharged(complement, !value);
+        }
         self
     }
 

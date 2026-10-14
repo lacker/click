@@ -6039,9 +6039,14 @@ fn lower_spec_comparison_proposition_at_state_in(
                 merge_failure_count = merge_failure_count.saturating_add(1);
                 continue;
             };
-            if let Some(proposition) =
+            if let Some(proposition) = bool_disequality_as_equality(
+                &left_path.value,
+                operator,
+                &right_path.value,
+            )
+            .or_else(|| {
                 c_value_comparison_proposition(&left_path.value, operator, &right_path.value)
-            {
+            }) {
                 paths.push(SpecPropositionPath {
                     introductions: Vec::new(),
                     proposition,
@@ -7706,6 +7711,15 @@ fn evaluate_spec_pure_function_application_paths_in(
                 },
                 result_type,
             )
+        } else if result_type == CType::Bool {
+            // An opaque `bool` application is read through C's conversion to
+            // `bool`, so its value is exactly `0` or `1` by construction,
+            // whatever the definition says, and has the shape of every other
+            // `bool` value.
+            super::api::spec_bool_value(Bitvector32Term::ClickFunctionApplication {
+                name: name.to_string(),
+                arguments,
+            })
         } else {
             c_value_from_bitvector_term(
                 result_type,
@@ -7877,6 +7891,7 @@ pub(super) fn integer_machine_bounds(
 
 fn c_value_from_bitvector_term(c_type: CType, term: Bitvector32Term) -> Option<CValue> {
     Some(match c_type {
+        CType::Bool => CValue::Bool(term),
         CType::Int8 => CValue::Int8(term),
         CType::Int16 => CValue::Int16(term),
         CType::Int32 => CValue::Int32(term),
@@ -8511,15 +8526,30 @@ pub(super) fn conditional_spec_value(
         return Some(then_value);
     }
     let (condition, expected) = proposition_as_single_condition(proposition)?;
-    let (CValue::Int32(then_term), CValue::Int32(else_term)) = (then_value, else_value) else {
-        return None;
-    };
+    // A `bool` conditional of two `bool` values selects one of them, so its
+    // leaves stay exactly `0` or `1`.
+    let (then_term, else_term, rebuild): (_, _, fn(Bitvector32Term) -> CValue) =
+        match (then_value, else_value) {
+            (CValue::Int32(then_term), CValue::Int32(else_term)) => {
+                (then_term, else_term, CValue::Int32)
+            }
+            (CValue::Bool(then_term), CValue::Bool(else_term)) => {
+                (then_term, else_term, CValue::Bool)
+            }
+            // C's usual arithmetic conversions promote a `bool` arm to the
+            // `int` of the other; its value, `0` or `1`, is unchanged.
+            (CValue::Int32(then_term), CValue::Bool(else_term))
+            | (CValue::Bool(then_term), CValue::Int32(else_term)) => {
+                (then_term, else_term, CValue::Int32)
+            }
+            _ => return None,
+        };
     let (then_term, else_term) = if expected {
         (then_term, else_term)
     } else {
         (else_term, then_term)
     };
-    Some(CValue::Int32(Bitvector32Term::if_then_else(
+    Some(rebuild(Bitvector32Term::if_then_else(
         condition, then_term, else_term,
     )))
 }
@@ -8564,6 +8594,69 @@ pub(super) fn constant_spec_condition_value(proposition: &Proposition) -> Option
         }
         _ => None,
     }
+}
+
+/// Whether a `bool` term is a conditional whose leaves are all `0` or `1`,
+/// the shape of every `bool` value the kernel builds: C's conversion to
+/// `bool`, a `_Bool` load, a `bool` parameter and a `bool` pure function's
+/// application. The walk is bounded by the term's conditional spine.
+fn bool_term_is_zero_or_one(term: &Bitvector32Term) -> bool {
+    match term {
+        Bitvector32Term::Constant(0 | 1) => true,
+        Bitvector32Term::If {
+            then_term,
+            else_term,
+            ..
+        } => bool_term_is_zero_or_one(then_term) && bool_term_is_zero_or_one(else_term),
+        _ => false,
+    }
+}
+
+/// Whether a value is a specification `bool` over an opaque term, such as a
+/// `bool` function's application.
+fn is_spec_bool(value: &CValue) -> bool {
+    matches!(value, CValue::Bool(term) if super::api::spec_bool_term(term).is_some())
+}
+
+/// A `bool` value's disequality with `true` or `false` (or, for a
+/// specification `bool` such as a function's application, with `1` or `0`)
+/// as its equality with the other constant. The value is exactly `0` or `1`,
+/// so `b != false` is `b == true`: both spellings lower to one equation,
+/// which a later `b == true` matches and `rewrite` can use, without a case
+/// split on the value's range. Comparisons of C `_Bool` values with integers
+/// keep their established form.
+fn bool_disequality_as_equality(
+    left: &CValue,
+    operator: CComparisonOperator,
+    right: &CValue,
+) -> Option<Proposition> {
+    if operator != CComparisonOperator::NotEqual {
+        return None;
+    }
+    let other = |value: &CValue, constant: &CValue| -> Option<CValue> {
+        let CValue::Bool(term) = value else {
+            return None;
+        };
+        if matches!(term, Bitvector32Term::Constant(_)) || !bool_term_is_zero_or_one(term) {
+            return None;
+        }
+        match constant {
+            CValue::Bool(Bitvector32Term::Constant(bit @ (0 | 1))) => {
+                Some(CValue::Bool(Bitvector32Term::Constant(1 - bit)))
+            }
+            CValue::Int32(Bitvector32Term::Constant(bit @ (0 | 1))) if is_spec_bool(value) => {
+                Some(CValue::Int32(Bitvector32Term::Constant(1 - bit)))
+            }
+            _ => None,
+        }
+    };
+    if let Some(constant) = other(left, right) {
+        return c_value_comparison_proposition(left, CComparisonOperator::Equal, &constant);
+    }
+    if let Some(constant) = other(right, left) {
+        return c_value_comparison_proposition(&constant, CComparisonOperator::Equal, right);
+    }
+    None
 }
 
 pub(super) fn c_value_comparison_proposition(

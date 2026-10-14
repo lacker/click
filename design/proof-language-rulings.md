@@ -7,8 +7,21 @@ the parser refuses C-shaped function contracts and `->` field access for Rust
 sources. The hash-pinned migration fixtures stay unchanged and are adapted
 only by the tests that read them.
 
-- `unfold(pred)` keeps both of its meanings; it is documented as a
-  branch-wide transparency switch.
+- `unfold` keeps all of its meanings: one equation of a function call, a
+  predicate made transparent for the rest of the branch, and one layer of a
+  resource, which for an `authorized` member also accounts for the
+  population. Each opens a definition one level; a word per target kind
+  would add vocabulary without removing a choice.
+- The other words with several uses stay (closed 2026-10-14). Each use sits
+  in a position no other use can occupy: `count(r(args))` is the
+  population operator only when its single argument is a resource call,
+  and the prelude `count` takes four arguments; `fold` is a range method
+  after `.` and a resource tactic in statement position; `function` starts
+  a pure function at top level and is the `function` region selector in a
+  proof; `as` names what a structural form binds, and in a Rust sidecar it
+  is Rust's cast. Arithmetic-certificate step names are words only inside
+  `arithmetic_certificate { ... }` and are listed apart from the general
+  word index.
 - `owns p` for a pointer is the pointer's own slot. `owns *p` is what it
   points at.
 - A separate tactic for conjunction and disjunction goals was dropped;

@@ -91,9 +91,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                     apply(ctx_consistent_left_focus(pid, gp, pc, sibling_model, above_model,
                         RbTree::Node(id, parent, color, left, right), 0));
                     apply(rb_parent_consistent_node_fixes_parent(id, parent, color, left, right, pid));
-                    have ctx_rb(Context::Left(pid, gp, pc, sibling_model, above_model), Nat::Zero, Color::Black) == 1 by {
-                        rewrite(Context::Left(pid, gp, pc, sibling_model, above_model) == up.model); assumption();
-                    }
+                    have ctx_rb(Context::Left(pid, gp, pc, sibling_model, above_model), Nat::Zero, Color::Black) == 1 by auto;
                     have ctx_consistent(Context::Left(pid, gp, pc, sibling_model, above_model), RbTree::Empty, 0) == 1 by {
                         rewrite(Context::Left(pid, gp, pc, sibling_model, above_model) == up.model); assumption();
                     }

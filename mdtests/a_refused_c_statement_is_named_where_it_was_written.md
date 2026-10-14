@@ -30,5 +30,6 @@ int32 add(int32 a, int32 b) {
 
 ```expect
 fail: `step()` produced undefined behavior: signed overflow
+  operation: `a + b`
   C statement at a_refused_c_statement_is_named_where_it_was_written.c:3:5: `total = a + b;`
 ```

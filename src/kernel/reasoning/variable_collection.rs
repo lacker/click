@@ -1466,6 +1466,14 @@ fn collect_execution_environment_variables_uncached(
         for component in anchor.components() {
             collect_c_ranking_component_variables(component, variables);
         }
+        // A structural anchor holds the entry instance whose model later call
+        // steps compare against, so its names are reserved like a measure's.
+        if let Some(entry) = anchor.structural_entry() {
+            variables.insert(entry.identity);
+            for value in entry.arguments.iter().chain(entry.fields.iter()) {
+                collect_algebraic_value_bitvector_variables(value, variables);
+            }
+        }
         for obligation in anchor.entry_obligations() {
             collect_proposition_bitvector_variables(obligation.proposition(), variables);
             collect_proposition_bound_variables(obligation.proposition(), variables);

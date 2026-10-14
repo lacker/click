@@ -2632,6 +2632,47 @@ fn byte_pointer_view_aliases_rewrite_readable_addresses() {
 }
 
 #[test]
+fn native_read_aliases_do_not_supply_missing_authority_or_bounds() {
+    let (click, sources) = loop_fixture("native_read_retains_wide_index_beside_narrow_alias");
+    let sources = borrowed_sources(&sources);
+    for invalid in [
+        click.replace(
+            "views base[0u64..held];",
+            "requires viewable(cursor[0u64..1u64]);",
+        ),
+        click.replace("requires cursor == base + (held - remaining);", ""),
+        click.replace("requires 1u64 <= remaining;", "requires 0u64 <= remaining;"),
+        click.replace("requires remaining <= held;", ""),
+    ] {
+        assert_ne!(invalid, click);
+        verify_c0_sources(&invalid, &sources).expect_err(
+            "a pointer equality or pure viewability cannot authorize an unchecked read",
+        );
+    }
+}
+
+#[test]
+#[ignore = "nightly: native read alias expansion"]
+fn native_read_aliases_expand_and_reverify() {
+    let (click, sources) = loop_fixture("native_read_retains_wide_index_beside_narrow_alias");
+    let sources = borrowed_sources(&sources);
+    let expanded = expand_c0_claim_source(&click, &sources, "read", CProofClaim::Grouped).unwrap();
+    verify_c0_sources(&expanded, &sources).unwrap();
+}
+
+#[test]
+fn theorem_application_expands_with_a_recorded_historical_byte_premise() {
+    let (click, sources) = loop_fixture("theorem_application_reuses_recorded_historical_premise");
+    let sources = borrowed_sources(&sources);
+    let expanded = expand_c0_claim_source(&click, &sources, "f", CProofClaim::Grouped).unwrap();
+    assert!(expanded.contains("p[0] == old(p)[index];"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).unwrap();
+    let missing = expanded.replace("requires index == 0;", "");
+    verify_c0_sources(&missing, &sources)
+        .expect_err("retaining a source spelling cannot supply its missing premise");
+}
+
+#[test]
 #[ignore = "nightly: readable pointer alias mutations and expansion"]
 fn byte_pointer_view_alias_rewrites_refuse_missing_authority_and_expand() {
     let (click, sources) = loop_fixture("byte_pointer_view_alias_rewrite");

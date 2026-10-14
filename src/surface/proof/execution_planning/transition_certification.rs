@@ -82,10 +82,6 @@ fn missing_prerequisite_error(
 pub(in crate::surface) struct OpenObligationProbe {
     /// The open obligations that carry a structured requirement, in order.
     pub(in crate::surface) recorded: Vec<UnresolvedRequirement>,
-    /// Whether the step was refused at a search site for an obligation with
-    /// no structured requirement. Only then can the former search-backed
-    /// checking succeed where the probe failed.
-    pub(in crate::surface) refused_where_search_ran: bool,
 }
 
 thread_local! {
@@ -128,24 +124,19 @@ fn refuse_or_probe(
     if !matches!(policy, StatementPrerequisitePolicy::Fast) {
         return Err(error);
     }
+    let Some(requirement) = error.unresolved_requirement() else {
+        return Err(error);
+    };
     let recorded = OPEN_OBLIGATION_PROBE.with(|probe| {
         let mut probe = probe.borrow_mut();
         let probe = probe.as_mut()?;
-        match error.unresolved_requirement() {
-            Some(requirement) => {
-                probe.recorded.push(requirement.clone());
-                Some(true)
-            }
-            None => {
-                probe.refused_where_search_ran = true;
-                Some(false)
-            }
-        }
+        probe.recorded.push(requirement.clone());
+        Some(())
     });
-    if recorded == Some(true) {
-        return Ok(());
+    match recorded {
+        Some(()) => Ok(()),
+        None => Err(error),
     }
-    Err(error)
 }
 
 /// A condition's unmet prerequisite, spelled as a proof would state it over
@@ -300,8 +291,15 @@ pub(in crate::surface::proof) fn certified_proof_condition_split(
                     theorem: path.theorem().clone(),
                 }),
                 CConditionOutcome::UndefinedBehavior(kind) => Err(ClickError::new(format!(
-                    "{context_label} could not evaluate the C condition because it has undefined behavior: {}",
-                    kind.description()
+                    "{context_label} could not evaluate the C condition because it has undefined behavior: {}{}{}",
+                    kind.description(),
+                    crate::surface::diagnostics::describe_undefined_behavior_site(
+                        state,
+                        branch_statement,
+                        pure_facts.assumptions(),
+                        kind,
+                    ),
+                    crate::surface::diagnostics::describe_c_statement_site()
                 ))),
                 CConditionOutcome::RuntimeError(error) => Err(proof_condition_runtime_error(
                     context_label,
@@ -411,8 +409,11 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                         if exact_fact_is_available(obligation.proposition(), pure_facts)
                             || prerequisite_assumptions.states_required_goal(obligation.proposition())
                         {
-                        } else if !matches!(prerequisite_policy, StatementPrerequisitePolicy::Fast)
-                            && prerequisite_assumptions.proves(obligation.proposition())
+                        } else if matches!(
+                            prerequisite_policy,
+                            StatementPrerequisitePolicy::Explicit
+                                | StatementPrerequisitePolicy::Contextual
+                        ) && prerequisite_assumptions.proves(obligation.proposition())
                         {
                             crate::instrumentation::record_hidden_prerequisite(
                                 hidden_prerequisite_route(prerequisite_policy, true),
@@ -446,8 +447,14 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                     outcome: CConditionOutcome::UndefinedBehavior(kind),
                     ..
                 } => Err(ClickError::new(format!(
-                    "{context_label} produced undefined behavior while evaluating the condition: {}{}",
+                    "{context_label} produced undefined behavior while evaluating the condition: {}{}{}",
                     kind.description(),
+                    crate::surface::diagnostics::describe_undefined_behavior_condition_site(
+                        state,
+                        condition,
+                        &assumptions,
+                        kind,
+                    ),
                     crate::surface::diagnostics::describe_c_statement_site()
                 ))),
                 Proposition::CConditionEvaluates {
@@ -474,8 +481,6 @@ fn hidden_prerequisite_route(
 ) -> crate::instrumentation::HiddenPrerequisiteRoute {
     use crate::instrumentation::HiddenPrerequisiteRoute as Route;
     match (policy, condition) {
-        (StatementPrerequisitePolicy::Retained, false) => Route::StepObligation,
-        (StatementPrerequisitePolicy::Retained, true) => Route::StepCondition,
         (StatementPrerequisitePolicy::Explicit, true) => Route::ExplicitCondition,
         (_, false) => Route::ContextualObligation,
         (_, true) => Route::ContextualCondition,
@@ -987,10 +992,10 @@ fn certified_transitions_from_execution(
                                 .is_some())
                         {
                             None
-                        } else if let Some(derivation) = (!matches!(
+                        } else if let Some(derivation) = matches!(
                             prerequisite_policy,
-                            StatementPrerequisitePolicy::Fast
-                        ))
+                            StatementPrerequisitePolicy::Contextual
+                        )
                         .then(|| prerequisite_assumptions.derive_proposition(proposition))
                         .flatten()
                         .filter(|derivation| derivation.check(&prerequisite_assumptions))
@@ -1020,6 +1025,12 @@ fn certified_transitions_from_execution(
                                         ),
                                     ),
                                     obligation,
+                                )
+                                .with_assertion_condition(
+                                    crate::surface::proof::fact_reasoning::asserted_condition(
+                                        proposition,
+                                        statement,
+                                    ),
                                 ),
                             )?;
                             None

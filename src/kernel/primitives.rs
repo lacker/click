@@ -5032,6 +5032,20 @@ pub struct CFunctionContractInterface {
     /// A lexicographic measure has several components, ranked as a loop's
     /// tuple is; an empty list declares no expression measure.
     pub(crate) recursion_measure: Vec<CRankingComponent>,
+    /// The other functions of this function's recursive component, sorted,
+    /// when it declares an expression measure. A call to one of them owes the
+    /// same descent a self-call owes, against this function's entry reading,
+    /// so the measures of a mutually recursive component rank one order.
+    /// The termination check refuses a component whose members do not all
+    /// name each other here, so a peer left out is a refusal, never an
+    /// unranked edge.
+    pub(crate) recursion_peers: Vec<String>,
+    /// The contract resource binder a structural `decreases t` measure names,
+    /// when the measure is ranked at each call rather than by reading the
+    /// body: every call to a member of the component passes, for the callee's
+    /// own measured binder, an instance whose model is strictly contained in
+    /// this function's entry model.
+    pub(crate) recursion_binder: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -5849,7 +5863,13 @@ pub enum CFunctionTerminationMeasure {
 pub struct CRecursionAnchor {
     pub(super) function: String,
     pub(super) components: Vec<CRankingComponent>,
+    /// The other functions whose calls owe descent against `measure`, read
+    /// off the same interface as `components`.
+    pub(super) peers: Vec<String>,
     pub(super) measure: Vec<CRankingMeasureValue>,
+    /// For a structural measure, the instance the measured binder held at
+    /// the function's own entry; `components` and `measure` are then empty.
+    pub(super) structural_entry: Option<ResourceInstance>,
     pub(super) entry_obligations: Vec<ProofObligation>,
 }
 
@@ -5866,6 +5886,16 @@ impl CRecursionAnchor {
         &self.components
     }
 
+    /// Whether a call to `callee` owes descent against this anchor: a
+    /// self-call, or a call to a declared member of the same component.
+    pub(super) fn ranks_call_to(&self, callee: &str) -> bool {
+        self.function == callee
+            || self
+                .peers
+                .binary_search_by(|peer| peer.as_str().cmp(callee))
+                .is_ok()
+    }
+
     pub(super) fn entry_obligations(&self) -> &[ProofObligation] {
         &self.entry_obligations
     }
@@ -5875,8 +5905,15 @@ impl CRecursionAnchor {
     /// The certified [`CFunction`] is what a judgment has in hand, and its
     /// interface is where the anchor's component was read from, so comparing
     /// both is what binds an anchor to one declared measure of one function.
-    pub(super) fn ranks(&self, function: &str, measure: Option<&[CRankingComponent]>) -> bool {
-        self.function == function && measure == Some(self.components.as_slice())
+    pub(super) fn ranks(&self, function: &str, interface: &CFunctionContractInterface) -> bool {
+        self.function == function
+            && interface.recursion_measure().unwrap_or_default() == self.components.as_slice()
+            && interface.recursion_binder().is_some() == self.structural_entry.is_some()
+            && interface.recursion_peers() == self.peers.as_slice()
+    }
+
+    pub(super) fn structural_entry(&self) -> Option<&ResourceInstance> {
+        self.structural_entry.as_ref()
     }
 }
 
@@ -5981,21 +6018,18 @@ pub enum CUndefinedBehavior {
     UninitializedRead,
     /// An operation on a pointer value whose pointee's lifetime has ended
     /// (C11 6.2.4p2, Annex J.2): comparing, subtracting, offsetting, testing
-    /// or converting a pointer into a freed allocation. `allocation` names
-    /// the freed allocation for the diagnostic.
-    FreedPointerUse {
-        allocation: String,
-    },
+    /// or converting a pointer into a freed allocation. A refusal names the
+    /// operation through [`crate::kernel::locate_undefined_behavior`]; the
+    /// kernel's name for the allocation is not something the reader wrote.
+    FreedPointerUse,
     /// An equality comparison whose answer C11 6.5.9p6 leaves to the
     /// implementation's object layout: one operand may be one past the end
     /// of its object and the other the start of a different object, and the
     /// two are equal exactly when the objects are adjacent. The result is
     /// unspecified rather than undefined, and refused because the kernel does
-    /// not model object placement. `pointer` names the one-past-the-end
-    /// operand for the diagnostic.
-    OnePastEndComparison {
-        pointer: String,
-    },
+    /// not model object placement. A refusal names the comparison through
+    /// [`crate::kernel::locate_undefined_behavior`].
+    OnePastEndComparison,
 }
 
 impl CUndefinedBehavior {
@@ -6011,14 +6045,12 @@ impl CUndefinedBehavior {
             Self::InvalidShift => "invalid shift".to_string(),
             Self::InvalidMemory => "invalid memory access".to_string(),
             Self::UninitializedRead => "read of uninitialized storage".to_string(),
-            Self::FreedPointerUse { allocation } => format!(
-                "use of a pointer into freed allocation {allocation}: its value is \
+            Self::FreedPointerUse => "use of a pointer into a freed allocation: its value is \
                  indeterminate after the free"
-            ),
-            Self::OnePastEndComparison { pointer } => format!(
-                "comparison of the one-past-the-end pointer {pointer} with the start of \
-                 another object: whether the two objects are adjacent is unspecified"
-            ),
+                .to_string(),
+            Self::OnePastEndComparison => "comparison of a one-past-the-end pointer with the start \
+                 of another object: whether the two objects are adjacent is unspecified"
+                .to_string(),
         }
     }
 }

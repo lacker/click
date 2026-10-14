@@ -455,7 +455,7 @@ verifying "stdlib_every_symbol.c";
 
 theorem list_laws(xs: List<int32>, ys: List<int32>, zs: List<int32>, value: int32) {
     ensures list_contains(list_append(xs, ys), value)
-        == if list_contains(xs, value) == 1 { 1 } else { list_contains(ys, value) } by {
+        == if list_contains(xs, value) { true } else { list_contains(ys, value) } by {
         apply(list_contains_append(xs, ys, value));
     }
     ensures list_append(List<int32>::Nil, xs) == xs by {
@@ -470,11 +470,11 @@ theorem list_laws(xs: List<int32>, ys: List<int32>, zs: List<int32>, value: int3
         apply(list_append_associative(xs, ys, zs));
         assumption();
     }
-    ensures list_contains(List<int32>::Nil, value) == 0 by {
+    ensures list_contains(List<int32>::Nil, value) == false by {
         apply(list_contains_nil(value));
         assumption();
     }
-    ensures list_contains(List<int32>::Cons(value, xs), value) == 1 by {
+    ensures list_contains(List<int32>::Cons(value, xs), value) by {
         apply(list_contains_cons(value, xs, value));
         simp();
     }

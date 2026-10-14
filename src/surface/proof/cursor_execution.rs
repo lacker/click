@@ -2808,9 +2808,17 @@ fn execute_step_from_frontier_position_selecting_path(
                 _ => None,
             })
         {
+            let site = crate::surface::diagnostics::describe_undefined_behavior_site(
+                &current_state,
+                &step_statement,
+                &context
+                    .cloned()
+                    .unwrap_or_else(|| available_pure_facts.context()),
+                &kind,
+            );
             let outcome = CFunctionOutcome::UndefinedBehavior(kind);
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}{}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}{site}{}\n{}",
                 describe_function_outcome(&outcome, parameter_binding),
                 crate::surface::diagnostics::describe_c_statement_site(),
                 describe_proof_context(
@@ -3469,9 +3477,17 @@ fn execute_step_from_frontier_position_selecting_path(
             execution.core.state = execution_state.into();
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
+            let site = crate::surface::diagnostics::describe_undefined_behavior_site(
+                &current_state,
+                &step_statement,
+                &context
+                    .cloned()
+                    .unwrap_or_else(|| available_pure_facts.context()),
+                &kind,
+            );
             let outcome = CFunctionOutcome::UndefinedBehavior(kind);
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}{}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}{site}{}\n{}",
                 describe_function_outcome(&outcome, parameter_binding),
                 crate::surface::diagnostics::describe_c_statement_site(),
                 describe_proof_context(

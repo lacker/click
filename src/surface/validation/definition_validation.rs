@@ -521,6 +521,12 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                     &click_function_types,
                     &context,
                 )?;
+                refuse_bool_literal_comparisons(
+                    proposition,
+                    &requires_type_environment,
+                    &click_function_types,
+                    &context,
+                )?;
             } else if let Requirement::Resource(resource) = requirement {
                 validate_resource_clause(
                     resource,
@@ -555,6 +561,12 @@ pub(in crate::surface) fn validate_click_definitions(file: &ClickFile) -> Result
                     validate_contract_applications_in_proposition(
                         proposition,
                         &contracts,
+                        &ensures_type_environment,
+                        &click_function_types,
+                        &context,
+                    )?;
+                    refuse_bool_literal_comparisons(
+                        proposition,
                         &ensures_type_environment,
                         &click_function_types,
                         &context,
@@ -629,13 +641,8 @@ fn validate_contract_proposition_names(
                 "`result` is not available in {context}"
             )));
         }
-        let hint = if matches!(name.as_str(), "true" | "false") {
-            "; `true` and `false` are not contract literals; compare with `1`/`0` or another `bool` value"
-        } else {
-            ""
-        };
         return Err(ClickError::new(format!(
-            "unknown name `{name}` in `{clause} {}` ({context}){hint}",
+            "unknown name `{name}` in `{clause} {}` ({context})",
             describe_click_proposition(proposition),
         )));
     }
@@ -3268,8 +3275,6 @@ mod contract_name_tests {
         for (clause, name) in [
             ("requires missing > 0; ensures result == 1;", "missing"),
             ("ensures result == one;", "one"),
-            ("ensures result == true;", "true"),
-            ("ensures result == false;", "false"),
             ("ensures forall (k: int32) { k == absent };", "absent"),
         ] {
             let source = format!("int32 f(int32 x) {{ {clause} }} by {{ assumption(); }}");
@@ -3286,11 +3291,46 @@ mod contract_name_tests {
                 "{}",
                 error.message()
             );
-            if matches!(name, "true" | "false") {
-                assert!(error.message().contains("not contract literals"));
-                assert!(error.message().contains("`1`/`0`"));
+        }
+    }
+
+    #[test]
+    fn true_and_false_are_bool_literals_that_compare_only_with_bool_values() {
+        for (clause, accepted) in [
+            ("ensures result == true;", false),
+            ("ensures result == false;", false),
+            ("requires x; ensures result == x;", false),
+            ("requires flag; ensures result == x;", true),
+            ("requires flag == false; ensures result == x;", true),
+            ("ensures result == 1 or flag != true;", true),
+        ] {
+            let source =
+                format!("int32 f(int32 x, bool flag) {{ {clause} }} by {{ assumption(); }}");
+            let file = crate::surface::parser::parse_file_items(&source).unwrap();
+            let result = validate_click_definitions(&file);
+            if accepted {
+                result.unwrap_or_else(|error| panic!("{clause}: {}", error.message()));
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.message().contains("not bool"),
+                    "{clause}: {}",
+                    error.message()
+                );
+                assert!(
+                    !error.message().contains("unknown name"),
+                    "{}",
+                    error.message()
+                );
             }
         }
+    }
+
+    #[test]
+    fn a_c_parameter_spelled_true_keeps_its_c_meaning() {
+        let source = "int32 f(int32 true) { ensures result == true + 1; } by { assumption(); }";
+        let file = crate::surface::parser::parse_file_items(source).unwrap();
+        validate_click_definitions(&file).unwrap();
     }
 
     #[test]

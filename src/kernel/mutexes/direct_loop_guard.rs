@@ -82,7 +82,12 @@ fn source_condition(
         assumptions,
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|_| "could not evaluate conditional loop resource")?;
+    .map_err(|limit| {
+        format!(
+            "evaluating the conditional loop resource stopped at {}",
+            limit.describe()
+        )
+    })?;
     let [path] = paths.as_slice() else {
         return Err("conditional loop resources require one scalar condition".into());
     };
@@ -141,9 +146,16 @@ fn source_mutex(
         "conditional loop mutex",
         &mut ExecutionBudget::beside_live_state(),
     )
-    .map_err(|_| "could not evaluate conditional loop mutex")?;
-    let Ok(CValue::Pointer(pointer)) = result else {
-        return Err("conditional loop guard requires a mutex pointer".into());
+    .map_err(|limit| {
+        format!(
+            "evaluating the conditional loop mutex stopped at {}",
+            limit.describe()
+        )
+    })?;
+    let pointer = match result {
+        Ok(CValue::Pointer(pointer)) => pointer,
+        Ok(_) => return Err("conditional loop guard requires a mutex pointer".into()),
+        Err(message) => return Err(message),
     };
     Ok(pointer.pointer().clone())
 }

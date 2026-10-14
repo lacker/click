@@ -172,6 +172,44 @@ pub fn bool_value(bits: impl Into<Bitvector32Term>) -> CValue {
     ))
 }
 
+/// A specification `bool` value over an opaque term: a `bool` pure
+/// function's application or a `bool` theorem parameter. It is C's
+/// conversion of the term to `bool`, so the value is exactly `0` or `1`
+/// whatever the term is. The comparison is spelled `0 == term`, with the
+/// constant first, which tells it apart from a conversion a C program or a
+/// contract wrote; [`spec_bool_term`] reads it back, so the proof surface can
+/// treat the value as the one `bool` it names.
+pub(crate) fn spec_bool_value(term: Bitvector32Term) -> CValue {
+    CValue::Bool(Bitvector32Term::if_then_else(
+        ConditionTerm::equal(Bitvector32Term::Constant(0), term),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ))
+}
+
+/// The opaque term inside a value built by [`spec_bool_value`].
+pub(crate) fn spec_bool_term(term: &Bitvector32Term) -> Option<&Bitvector32Term> {
+    let Bitvector32Term::If {
+        condition,
+        then_term,
+        else_term,
+    } = term
+    else {
+        return None;
+    };
+    if then_term.as_const() != Some(0) || else_term.as_const() != Some(1) {
+        return None;
+    }
+    match condition.as_ref() {
+        ConditionTerm::Bitvector32Equal(zero, inner)
+            if zero.as_const() == Some(0) && inner.as_const().is_none() =>
+        {
+            Some(inner)
+        }
+        _ => None,
+    }
+}
+
 /// The range fact `value == 0 or value == 1` of a `_Bool` rvalue, when its
 /// term is structurally normalized.
 ///
@@ -1168,6 +1206,53 @@ pub fn c_ranking_measures_source(measures: &[CRankingComponent]) -> String {
     crate::kernel::termination::c_ranking_measures_display(measures)
 }
 
+/// The other members of each function's recursive component, for the
+/// functions in a component of two or more, from a call graph keyed by
+/// function name. Callees that are not keys are ignored.
+///
+/// This is untrusted input to the contract interface: a function's peers
+/// decide which of its calls owe descent, and the termination check refuses
+/// a component whose certified interfaces leave a member out. Work is linear
+/// in the graph.
+pub fn recursive_component_peers(
+    calls: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, Vec<String>> {
+    let names = calls.keys().collect::<Vec<_>>();
+    let index = names
+        .iter()
+        .enumerate()
+        .map(|(position, name)| (name.as_str(), position))
+        .collect::<BTreeMap<_, _>>();
+    let edges = calls
+        .values()
+        .map(|callees| {
+            callees
+                .iter()
+                .filter_map(|callee| index.get(callee.as_str()).copied())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut peers = BTreeMap::new();
+    for component in super::owned_footprint_reach::strongly_connected_components(&edges) {
+        if component.len() < 2 {
+            continue;
+        }
+        for &member in &component {
+            peers.insert(
+                names[member].clone(),
+                component
+                    .iter()
+                    .filter(|&&other| other != member)
+                    .map(|&other| names[other].clone())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+            );
+        }
+    }
+    peers
+}
+
 /// The environment one C function is certified under, carrying its recursion
 /// anchor when it declares an expression `decreases` measure.
 ///
@@ -1188,7 +1273,7 @@ pub fn c_execution_environment_with_recursion_anchor(
     caller_state: &CState,
     arguments: &[CExpression],
 ) -> Result<CExecutionEnvironment, String> {
-    if function.contract_interface().recursion_measure().is_none() {
+    if !function.contract_interface().has_call_ranked_recursion() {
         return Ok(environment);
     }
     let entry_state =

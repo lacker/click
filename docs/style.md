@@ -69,9 +69,11 @@ diagnostic.
 ## Canonical terms
 
 - **Surface Click** is the user-written `.click` language.
-- A **program language** is the language of the program being verified;
-  the program languages are supported C, C++, and Rust. Surface Click is the
-  proof language, and Rust is also Click's implementation language.
+- A **target language** is the language of the program being verified; the
+  target languages are supported C, C++, and Rust. Surface Click is the
+  **specification language**, in which contracts, models, and proofs are
+  written. Rust is also Click's implementation language. Do not write
+  *program language* or *proof language*.
 - **Kernel Click** is the explicit proof core. It has no textual user syntax.
 - A **C fragment** is C syntax embedded in Surface Click and elaborated into
   Kernel Click meaning.

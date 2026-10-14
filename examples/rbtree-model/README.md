@@ -55,7 +55,7 @@ ported proofs carry the re-parenting through without new inductions.
 `rb_inorder` derives the `List<struct rb_node*>` of node identities in left,
 node, right order, exactly as `heap_inorder` does in
 [`examples/modeled-binary-tree`](../modeled-binary-tree/README.md).
-`rb_member` is the recursive membership test on the model, and
+`rb_member` is the recursive `bool` membership test on the model, and
 `rb_member_is_inorder_membership` proves it equals
 `list_contains(rb_inorder(tree), target)`. `rb_left`, `rb_right`, and
 `rb_color` are the accessors a C contract needs to state that a child is

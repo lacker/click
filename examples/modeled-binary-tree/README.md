@@ -163,8 +163,8 @@ let found_left = step(tree_contains(root->left, target), { t: l });
 to the call's scalar result instead of to a produced instance. The name is then
 usable on either side of the `branch` that spells the C `if`: the then arm
 combines `found_left != 0` with the callee's
-`found_left == heap_member(left_model, target)`, and the else arm combines
-`found_left == 0` with the same guarantee. The final
+`found_left == heap_member(left_model, target)`, an `int` compared with a
+`bool`, and the else arm combines `found_left == 0` with the same guarantee. The final
 `return tree_contains(root->right, target);` is named the same way, and `result`
 is that value.
 
@@ -260,16 +260,16 @@ cite.
   `heap_rotate_left_preserves_inorder` and `heap_rotate_right_preserves_inorder`
   prove that each preserves `heap_inorder`, through a per-node helper and the
   standard library's `list_append_associative`.
-- `heap_member` is the recursive `int32`-valued membership test, searching the
+- `heap_member` is the recursive `bool` membership test, searching the
   node, then the left subtree, then the right one, in the order the C search
   uses. `heap_member_is_inorder_membership` proves
   `heap_member(tree, target) == list_contains(heap_inorder(tree), target)` by
   structural induction from `list_contains_append` and `list_contains_cons`, so
   membership in the model is exactly membership in the sequence the rotations
-  preserve. `heap_member_nonzero_is_one` proves that a nonzero result is `1`,
-  which is the range fact the C proof needs: the search only learns that a
-  recursive call returned nonzero, while `heap_member` tests its left subtree
-  with `heap_member(left, target) == 1`.
+  preserve. The C search only learns that a recursive call returned nonzero;
+  since a `bool` is exactly `false` or `true`, that `heap_member(l.model,
+  target) != false` is already the `heap_member(left_model, target)` the
+  model's left test needs, with no range lemma.
 - `plug_top_frame`, `plug_left_frame`, and `plug_right_frame` each state one
   step of `plug`: taking one frame off the stack rebuilds one node. The walk
   proofs take that step inline with `unfold(plug(...))`; the theorems name it

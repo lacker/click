@@ -258,10 +258,7 @@ const ARTIFACT_REUSE_REJECTION_BASELINE: &[(ArtifactReuseRejection, usize)] = &[
 /// prerequisites simple statement checking derived by a search the proof does
 /// not retain, over the whole unfiltered corpus, by route and top rule. A
 /// count may only fall; `issues/simplify-step.md` drives it to zero.
-const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] = &[(
-    (HiddenPrerequisiteRoute::StepObligation, "ContextualAtomic"),
-    2,
-)];
+const HIDDEN_PREREQUISITE_BASELINE: &[((HiddenPrerequisiteRoute, &str), usize)] = &[];
 
 #[test]
 fn mdtests() {

@@ -50,5 +50,5 @@ int32 f(int32 u, int32 v) {
 ```
 
 ```expect
-fail: case: [<pointer A> != 0, 0 == v]
+fail: case: [at(statement(2).exit, buf) != 0, 0 == v]
 ```

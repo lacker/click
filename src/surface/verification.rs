@@ -5259,6 +5259,14 @@ pub(in crate::surface) fn c_function_termination_plans(
                     "function-level `decreases` in `{}` was never classified; declared-resource expansion did not run",
                     function.signature().name()
                 ))),
+                // In a component of two or more, a binder measure is ranked at
+                // each call by the instance it passes, as an expression
+                // measure is: the body analysis below sees only self-calls.
+                CFunctionDecrease::Binder(binder) if !function.recursion_peers().is_empty() => {
+                    Ok(crate::kernel::CFunctionTerminationMeasure::Expression(
+                        binder.clone(),
+                    ))
+                }
                 CFunctionDecrease::Binder(binder) => {
                     // `decreases t;` names one of this contract's own resource
                     // binders. The kernel measure is an index into the entry
@@ -6003,6 +6011,22 @@ pub(in crate::surface) fn build_function_environment(
                         opaque_supported,
                     )
                     .with_contract_requirement_sources(contract_requirement_sources);
+                // The peers travel with the measure: they are what the anchor
+                // ranks calls to, and a function without an expression measure ranks
+                // none.
+                let recursion_binder = match function_block.decreases() {
+                    Some(CFunctionDecrease::Binder(binder))
+                        if !function_block.recursion_peers().is_empty() =>
+                    {
+                        Some(binder.clone())
+                    }
+                    _ => None,
+                };
+                if !recursion_measure.is_empty() || recursion_binder.is_some() {
+                    function =
+                        function.with_recursion_peers(function_block.recursion_peers().to_vec());
+                }
+                function = function.with_recursion_binder(recursion_binder);
                 function = function.with_recursion_measure(recursion_measure);
                 if function_block.signature().exceptional_type().is_some() {
                     function = function

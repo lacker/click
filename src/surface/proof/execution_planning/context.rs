@@ -672,16 +672,18 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
     Exact,
     Explicit,
     Contextual,
-    /// Contextual checking with supported source-backed call prerequisites
-    /// exposed unless that exact proposition is already present. Ordinary
-    /// `step()` uses this boundary; smart execution may answer the refusal by
+    /// A simple step's checking, with no search over the proof context
+    /// (`issues/simplify-step.md`): an obligation no fact states and no local
+    /// kernel decision closes is refused with its structured requirement.
+    /// Supported source-backed call prerequisites are refused even when the
+    /// exact proposition is present, so smart execution answers them by
     /// retaining a checked `have` and retrying the same simple step.
     Retained,
-    /// `Retained` without either search (`issues/simplify-step.md`): an
-    /// obligation no fact states and no local kernel decision closes is
-    /// refused with its structured requirement. A step written with a `by`
-    /// body or `requires` entries uses it to find the obligations those
-    /// proofs answer.
+    /// `Retained` without that exposure: what a bare `step()` and a step
+    /// written with a `by` body or `requires` entries use. Inside
+    /// [`probe_open_obligations`], its refusals are recorded instead.
+    ///
+    /// [`probe_open_obligations`]: super::transition_certification::probe_open_obligations
     Fast,
 }
 

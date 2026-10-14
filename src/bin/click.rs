@@ -393,7 +393,7 @@ mod tests {
         ));
         assert!(
             overflow.contains(
-                "`step()` produced undefined behavior\n  signed overflow\n  C statement at f.c:18:5\n  `total = a + b;`\n"
+                "`step()` produced undefined behavior\n  signed overflow\n  operation\n  `a + b`\n  C statement at f.c:18:5\n  `total = a + b;`\n"
             ),
             "{overflow}"
         );
@@ -450,7 +450,7 @@ mod tests {
         let error = entry(["verify".to_string(), path.display().to_string()]).unwrap_err();
         assert!(
             error.contains(
-                "\n  signed overflow\n  C statement at located.md:8:5\n  `total = a + b;`\n"
+                "\n  signed overflow\n  operation\n  `a + b`\n  C statement at located.md:8:5\n  `total = a + b;`\n"
             ),
             "{error}"
         );

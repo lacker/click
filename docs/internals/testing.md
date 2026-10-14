@@ -311,7 +311,13 @@ The budget is kept by what the gate leaves out, not by a faster machine:
 - The live Charon re-extraction is nightly.
 
 `scripts/check.sh --nightly` runs all of it, with no budget, and
-`.github/workflows/nightly.yml` runs that every night. The same workflow has a
+`.github/workflows/nightly.yml` runs that every night. It takes hours, so it
+is not a per-PR check: agents and contributors do not run it before opening
+or updating a PR. The gate is the merge bar; a nightly failure is fixed
+forward. To check a change against nightly coverage it plausibly affects,
+run those tests or fixtures by name (`MDTEST_FILTER`, `CLICK_EXAMPLE`, or one
+`cargo nextest run --run-ignored all <name>`), and say in the PR what was not
+run. The same workflow has a
 second job, `scripts/check.sh --audit`, which runs `click audit` over the
 whole repository on a release build: every smart tactic in the examples and
 mdtests must expand to a proof that verifies. It takes about twenty minutes.
@@ -837,9 +843,10 @@ skips the comparison.
 
 A simple tactic must close each requirement by an exact or indexed check
 ([`issues/simplify-step.md`](https://github.com/clicklang/click/blob/master/issues/simplify-step.md)).
-Where statement checking instead derives a prerequisite by a search whose
-result the proof does not retain, it counts the derivation by route and top
-rule (`instrumentation::HiddenPrerequisiteRoute`). The fixture harnesses take
+A `step()` no longer searches; where statement checking under the contextual
+or explicit policies still derives a prerequisite by a search whose result
+the proof does not retain, it counts the derivation by route and top rule
+(`instrumentation::HiddenPrerequisiteRoute`). Both pins are empty. The fixture harnesses take
 that census after an unfiltered run and compare it with
 `HIDDEN_PREREQUISITE_BASELINE` in `tests/mdtests.rs` and `tests/examples.rs`,
 exactly as the artifact reuse ratchet does: a count that rose must not land,

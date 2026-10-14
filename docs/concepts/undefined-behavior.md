@@ -104,8 +104,9 @@ refused too:
   assignment, a `return` from a `_Bool` function, or passing it as an
   argument to a `_Bool` parameter.
 
-The diagnostic names the freed allocation, for example
-`use of a pointer into freed allocation heap-allocation:1000000`.
+The diagnostic names the operation that uses the pointer, for example
+`use of a pointer into a freed allocation` followed by the line
+``operation: `p < end` ``.
 
 <!-- verified-example: mdtests/freed_pointer_equality_rejected.md -->
 ```c

@@ -1,6 +1,6 @@
 # Testing a freed pointer for truth is refused
 
-`if (p)` compares `p` with null, so after `free(p)` it uses an indeterminate pointer value exactly as `p != 0` does. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names the freed allocation; see `docs/concepts/undefined-behavior.md`.
+`if (p)` compares `p` with null, so after `free(p)` it uses an indeterminate pointer value exactly as `p != 0` does. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names it; see `docs/concepts/undefined-behavior.md`.
 
 ```c filename=freed_truth.c
 void *malloc(unsigned long size);
@@ -31,5 +31,5 @@ int f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation
 ```

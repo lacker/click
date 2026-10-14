@@ -691,6 +691,10 @@ id = "language.word.field"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.false"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.fold"
 path = "reference/language/grammar.md#word-index"
 
@@ -926,6 +930,10 @@ id = "language.word.transport"
 path = "reference/language/grammar.md#word-index"
 
 [[item]]
+id = "language.word.true"
+path = "reference/language/grammar.md#word-index"
+
+[[item]]
 id = "language.word.uint8"
 path = "reference/language/grammar.md#word-index"
 
@@ -1075,6 +1083,10 @@ id = "language.iterated-ownership"
 path = "reference/language/index.md#iterated-guarded-ownership"
 
 
+
+[[item]]
+id = "language.bool"
+path = "reference/language/index.md#booleans"
 
 [[item]]
 id = "language.and"
@@ -2880,8 +2892,12 @@ id = "glossary.program-point"
 path = "reference/glossary.md#program-point"
 
 [[item]]
-id = "glossary.program-language"
-path = "reference/glossary.md#program-language"
+id = "glossary.specification-language"
+path = "reference/glossary.md#specification-language"
+
+[[item]]
+id = "glossary.target-language"
+path = "reference/glossary.md#target-language"
 
 [[item]]
 id = "glossary.proof-clause"

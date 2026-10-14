@@ -71,39 +71,23 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                 rewrite(tree.model == RbTree::Node(identity, parent, color, left_model, right_model));
                 unfold(rb_left(RbTree::Node(identity, parent, color, left_model, right_model))); normalize();
             }
-            have rb_right(tree.model) == right_model by {
-                rewrite(tree.model == RbTree::Node(identity, parent, color, left_model, right_model));
-                unfold(rb_right(RbTree::Node(identity, parent, color, left_model, right_model))); normalize();
-            }
-            have left_model == RbTree::Empty or right_model == RbTree::Empty by {
-                rewrite(left_model == rb_left(tree.model));
-                rewrite(right_model == rb_right(tree.model));
-                assumption();
-            }
+            have rb_right(tree.model) == right_model by auto;
+            have left_model == RbTree::Empty or right_model == RbTree::Empty by auto;
             unfold(up);
             let { left: l, right: r } = unfold(tree);
-            have color_bit(Color::Black) == 1 by {
-                unfold(color_bit(Color::Black)); normalize();
-            }
+            have color_bit(Color::Black) == 1 by auto;
             have (node->__rb_parent_color & 1) == 1 by {
                 rewrite((node->__rb_parent_color & 1) == color_bit(color));
                 rewrite(color == Color::Black);
                 unfold(color_bit(Color::Black)); normalize();
             }
-            have node->__rb_parent_color == 1;
             if left_model == RbTree::Empty {
                 unfold(l);
                 have node->rb_left == 0;
-                have rb_erase_root_child(old(tree.model)) == right_model by {
-                    rewrite(old(tree.model) == RbTree::Node(identity, parent, color, left_model, right_model));
-                    rewrite(left_model == RbTree::Empty);
-                    unfold(rb_erase_root_child(RbTree::Node(identity, parent, color, RbTree::Empty, right_model)));
-                    normalize();
-                }
+                have rb_erase_root_child(old(tree.model)) == right_model by auto;
                 match right_model {
                     RbTree::Empty => {
                         unfold(r);
-                        have node->rb_right == 0;
                         open(erase_callbacks(augment)) { execute(); }
                         let result_tree = fold(rb_at(0), { model: RbTree::Empty });
                         let remaining = fold(rb_root_at(root), { model: RbTree::Empty }, { tree: result_tree });
@@ -126,8 +110,8 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                     },
                     RbTree::Node(child_id, child_parent, child_color, child_left, child_right) => {
                         let { left: cl, right: cr } = unfold(r);
-                        have node->rb_right != 0 by assumption();
-                        have separate(memory(*augment), memory(node->rb_right->__rb_parent_color)) by extract(separate(memory(*augment), memory(node->rb_right->__rb_parent_color)));
+                        have node->rb_right != 0 by auto;
+                        have separate(memory(*augment), memory(node->rb_right->__rb_parent_color)) by auto;
                         open(erase_callbacks(augment)) { execute(); }
                         let result_tree = fold(rb_at(child_id), {
                             model: RbTree::Node(child_id, 0, Color::Black, child_left, child_right)
@@ -172,8 +156,7 @@ struct rb_node* __rb_erase_augmented(struct rb_node* node, struct rb_root* root,
                             normalize();
                         }
                         let { left: cl, right: cr } = unfold(l);
-                        have node->rb_left != 0 by assumption();
-                        have separate(memory(*augment), memory(node->rb_left->__rb_parent_color)) by extract(separate(memory(*augment), memory(node->rb_left->__rb_parent_color)));
+                        have separate(memory(*augment), memory(node->rb_left->__rb_parent_color)) by auto;
                         open(erase_callbacks(augment)) { execute(); }
                         let result_tree = fold(rb_at(child_id), {
                             model: RbTree::Node(child_id, 0, Color::Black, child_left, child_right)

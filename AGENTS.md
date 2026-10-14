@@ -33,7 +33,11 @@ changes. `scripts/check.sh` is the full green-tree verdict, not `cargo test
 For prose-only changes, use `scripts/check.sh --docs-only`.
 
 Preserve the gate's ten-minute budget. Keep slow audits and mutations in nightly
-and add tests for distinct behavior, not duplicate coverage. Follow
+and add tests for distinct behavior, not duplicate coverage. Do not run the
+nightly suite (`scripts/check.sh --nightly`, `CLICK_NIGHTLY`, or
+`--run-ignored`) before a PR: it takes hours, and the nightly workflow runs it.
+At most run the few nightly tests or fixtures the change plausibly affects,
+by name, and say in the PR what was not run. Follow
 [Testing Click](docs/internals/testing.md) for test selection, limits, and
 expansion checks.
 

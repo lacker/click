@@ -585,6 +585,16 @@ impl MemoryAccessCandidates {
                 .are_equal(&self.query, &start)
                 .then_some(start)
         } else {
+            if range.wide_bounds().is_some() {
+                // A narrow alias can share this address while carrying none
+                // of the bounds stated on its native producer's index.
+                // Preserve that index as borrow matching already does; the
+                // caller still checks width, quantity, and containment.
+                return self
+                    .index
+                    .graph
+                    .pointer_at_base_with_wide_index(&self.query, range.base());
+            }
             let spelling = if matches!(self.query.offset, PointerOffsetTerm::Add(_, _)) {
                 self.query.clone()
             } else {
@@ -2038,6 +2048,129 @@ mod tests {
             resources
                 .without_fact_incrementally(&changed, &context)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn wide_read_aligns_external_buffer_from_symbolic_cursor() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(989_100)), 1),
+        };
+        let narrow = base.offset_by_elements(Bitvector32Term::Variable(Variable(989_101)), 1);
+        let index = Bitvector32Term::Variable(Variable(989_102));
+        let wide = base.offset_by_typed_elements(index.clone(), 1, true, true);
+        let query = Pointer::symbolic(Variable(989_103));
+        let aliases = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::pointer_equal(query.clone(), narrow.clone()),
+                true,
+            )
+            .assume_condition(ConditionTerm::pointer_equal(narrow, wide.clone()), true);
+        let facts = aliases.clone().assume_condition(
+            ConditionTerm::uint64_less_than(index.clone(), Bitvector32Term::UInt64Constant(5552)),
+            true,
+        );
+        let facts = facts.assume_condition(
+            ConditionTerm::uint64_less_than(
+                Bitvector32Term::uint64_add(index.clone(), Bitvector32Term::UInt64Constant(1)),
+                Bitvector32Term::UInt64Constant(5552),
+            ),
+            true,
+        );
+        let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::view_memory(
+            CMemoryRange::new_wide(
+                base.clone(),
+                Bitvector32Term::UInt64Constant(0),
+                Bitvector32Term::UInt64Constant(5552),
+                1,
+            ),
+        ));
+        resources.synchronize_memory_equalities(&facts);
+        let mut candidates = resources
+            .read_access_entries(&query, 1, &facts)
+            .expect("buffer supplier remains indexed");
+        assert!(
+            candidates.index.graph.are_equal(&query, &wide),
+            "cursor equality remains checked"
+        );
+        assert_eq!(
+            candidates
+                .index
+                .graph
+                .pointer_at_base_with_wide_index(&query, &base),
+            Some(wide),
+            "alignment keeps native index"
+        );
+        let entry = candidates.next().expect("buffer candidate");
+        assert!(candidates.address(entry).is_some(), "candidate address");
+        assert!(resources.permits_memory_read(&query, 1, &facts));
+        assert!(resources.permits_memory_read(&query.offset_by_bytes(1), 1, &facts));
+        assert!(!resources.permits_memory_read(&query, 2, &facts));
+        assert!(!ResourceContext::new().permits_memory_read(&query, 1, &facts));
+        let boundary = aliases.assume_condition(
+            ConditionTerm::uint64_equal(index, Bitvector32Term::UInt64Constant(5552)),
+            true,
+        );
+        assert!(!resources.permits_memory_read(&query, 1, &boundary));
+        assert!(!resources.permits_memory_read(&query.offset_by_bytes(1), 1, &boundary));
+    }
+
+    #[test]
+    fn wide_read_keeps_native_index_beside_a_narrow_alias() {
+        let mut samples = Vec::new();
+        for count in [16_u64, 64, 256, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let bytes = Pointer::symbolic(Variable(986_000));
+            let alternate = Pointer::symbolic(Variable(986_001));
+            let native_index = Bitvector32Term::Variable(Variable(986_002));
+            let narrow =
+                alternate.offset_by_elements(Bitvector32Term::Variable(Variable(986_003)), 1);
+            let wide = bytes.offset_by_typed_elements(native_index.clone(), 1, true, true);
+            let query = Pointer::symbolic(Variable(986_004));
+            let mut facts = PureFactContext::new()
+                .assume_condition(ConditionTerm::pointer_equal(query.clone(), narrow), true)
+                .assume_condition(ConditionTerm::pointer_equal(query.clone(), wide), true)
+                .assume_condition(
+                    ConditionTerm::uint64_less_than(
+                        native_index.clone(),
+                        Bitvector32Term::UInt64Constant(15),
+                    ),
+                    true,
+                );
+            let resources = ResourceContext::new().unchecked_with_fact(CResourceFact::view_memory(
+                CMemoryRange::new_wide(
+                    bytes,
+                    Bitvector32Term::UInt64Constant(0),
+                    Bitvector32Term::UInt64Constant(15),
+                    1,
+                ),
+            ));
+            for item in 0..count {
+                facts = facts.assume_condition(
+                    ConditionTerm::pointer_equal(
+                        Pointer::symbolic(Variable(987_000 + item)),
+                        query.clone(),
+                    ),
+                    true,
+                );
+            }
+            resources.synchronize_memory_equalities(&facts);
+            let (permitted, work) = crate::instrumentation::measure_deterministic_work(|| {
+                resources.permits_memory_read(&query, 1, &facts)
+            });
+            assert!(
+                permitted,
+                "native bounds remain available beside a narrow alias"
+            );
+            assert!(!resources.permits_memory_read(&query, 2, &facts));
+            assert!(!ResourceContext::new().permits_memory_read(&query, 1, &facts));
+            samples.push(work);
+        }
+        assert!(
+            samples[3] <= samples[0] * 3 + 128,
+            "native read alignment scanned its address class: {samples:?}"
         );
     }
 

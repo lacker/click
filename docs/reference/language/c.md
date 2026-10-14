@@ -1670,7 +1670,7 @@ contract with resource proof parameters are in
 [Automatic formation at `&f`](index.md#automatic-formation-at-f).
 
 A refinement outside that route is stated as a closed pure theorem, whose proof
-spells the step with `both`, `left`/`right`, `intro`, `extract`, `rewrite`, or
+spells the step with `both`, `assumption`, `intro`, `extract`, `rewrite`, or
 `contradiction`, and `click expand` prints the spelling. `apply` the theorem
 before the call that needs the contract.
 

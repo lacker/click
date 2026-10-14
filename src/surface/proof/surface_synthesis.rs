@@ -3937,6 +3937,36 @@ fn synthesize_surface_pointer_expression(
     synthesize_snapshot_pointer_expression(pointer, parameter_binding, bound_variables)
 }
 
+/// A pointer value read from a struct field, whose block is the read itself
+/// as a loaded pointer to a heap object is, spelled `local->field` where this
+/// state, or failing that the snapshot state as `at(<selector>, ..)`,
+/// registers that read.
+fn synthesize_loaded_pointer_value(
+    pointer: &crate::kernel::CPointerValue,
+    parameter_binding: ParameterBinding<'_>,
+    state: &CState,
+) -> Option<ContractExpression> {
+    let at_state = |state: &CState| {
+        let PointerBlock::Symbolic(variable) = pointer.pointer().block else {
+            return None;
+        };
+        if pointer.pointer().offset != PointerOffsetTerm::Constant(0) {
+            return None;
+        }
+        registered_load_in_state(&variable, state)?;
+        let (_, address) = crate::kernel::registered_load_for_variable(&variable)?;
+        synthesize_struct_field_load(&address, pointer.c_type(), parameter_binding, state)
+    };
+    at_state(state).or_else(|| {
+        let (snapshot, selector) = SYNTHESIS_SNAPSHOT_STATE.with(|slot| slot.borrow().clone())?;
+        let expression = at_state(&snapshot)?;
+        Some(ContractExpression::At {
+            selector,
+            expression: Box::new(expression),
+        })
+    })
+}
+
 /// The `at(<selector>, e)` spelling of a pointer the current state cannot
 /// name but the snapshot state can, such as a call's `old(p->kid)` read at
 /// that call's entry. The snapshot scope is cleared for the inner synthesis,
@@ -4013,6 +4043,9 @@ fn synthesize_surface_algebraic(
                             state,
                             bound_variables,
                         )
+                        .or_else(|| {
+                            synthesize_loaded_pointer_value(pointer, parameter_binding, state)
+                        })
                     }
                     crate::kernel::AlgebraicValue::C(CValue::Int32(value)) => {
                         synthesize_surface_bitvector(

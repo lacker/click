@@ -1,6 +1,6 @@
 # Ordering pointers into a freed array is refused
 
-`end` points one element into the same allocation as `p`; before the free `p < end` is defined and true. After `free(p)` both values are indeterminate, so the relational comparison is refused. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names the freed allocation; see `docs/concepts/undefined-behavior.md`.
+`end` points one element into the same allocation as `p`; before the free `p < end` is defined and true. After `free(p)` both values are indeterminate, so the relational comparison is refused. Under C11 6.2.4p2 a pointer's value becomes indeterminate when its pointee's lifetime ends, and Annex J.2 makes using that value undefined. Click refuses the operation and names it; see `docs/concepts/undefined-behavior.md`.
 
 ```c filename=freed_less.c
 void *malloc(unsigned long size);
@@ -29,5 +29,6 @@ int f() {
 ```
 
 ```expect
-fail: use of a pointer into freed allocation heap-allocation:1000000
+fail: use of a pointer into a freed allocation: its value is indeterminate after the free
+  operation: `p < end`
 ```

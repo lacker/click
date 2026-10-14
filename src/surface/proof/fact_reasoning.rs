@@ -400,25 +400,7 @@ fn describe_assertion_prerequisite(
     state: &CState,
     statement: &CStatement,
 ) -> Option<String> {
-    // The truthiness obligation an assertion leaves on its false path.
-    if !matches!(
-        proposition,
-        Proposition::Equal(Term::CValue(_), Term::CValue(one)) if *one == int32(1)
-    ) {
-        return None;
-    }
-    let mut pending = vec![statement];
-    let condition = loop {
-        match pending.pop()? {
-            CStatement::Scope { body } => pending.push(body),
-            CStatement::Seq(first, second) => {
-                pending.push(second);
-                pending.push(first);
-            }
-            CStatement::Assert { condition, .. } => break condition,
-            _ => {}
-        }
-    };
+    let condition = asserted_condition(proposition, statement)?;
     let mut names = Vec::new();
     collect_c_expression_variables(condition, &mut names);
     let names = names.iter().map(String::as_str).collect::<Vec<_>>();
@@ -431,6 +413,32 @@ fn describe_assertion_prerequisite(
         "could not show `{condition}` from {}",
         describe_consulted_facts_mentioning(available, state, &names)
     ))
+}
+
+/// The condition of the `assert` in `statement` when `proposition` is the
+/// truthiness obligation an assertion leaves on its false path.
+pub(in crate::surface) fn asserted_condition<'s>(
+    proposition: &Proposition,
+    statement: &'s CStatement,
+) -> Option<&'s CExpression> {
+    if !matches!(
+        proposition,
+        Proposition::Equal(Term::CValue(_), Term::CValue(one)) if *one == int32(1)
+    ) {
+        return None;
+    }
+    let mut pending = vec![statement];
+    loop {
+        match pending.pop()? {
+            CStatement::Scope { body } => pending.push(body),
+            CStatement::Seq(first, second) => {
+                pending.push(second);
+                pending.push(first);
+            }
+            CStatement::Assert { condition, .. } => return Some(condition),
+            _ => {}
+        }
+    }
 }
 
 /// A condition as a proof states it: a conjunction joined by `&&` without

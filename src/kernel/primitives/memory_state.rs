@@ -9448,9 +9448,14 @@ impl CState {
                 &mut budget,
             )
             .map_err(|_| "acquired control authority evaluation exceeded its budget")?
-            .map_err(|_| "could not evaluate the acquired control authority")?;
+            .map_err(|error| {
+                format!(
+                    "could not evaluate the acquired control authority: {}",
+                    crate::kernel::api::describe_certification_runtime_error(&error)
+                )
+            })?;
             let CResource::PopulationAuthority(description) = authority.resource() else {
-                return Err("could not evaluate the acquired control authority".into());
+                return Err("the acquired control authority is not a population authority".into());
             };
             let events = next
                 .population_effects

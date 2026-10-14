@@ -215,6 +215,7 @@ fn printer(labels: &mut SnapshotLabels, mode: Mode) -> Printer<'_> {
         mode,
         remaining: 512,
         bound: Vec::new(),
+        before_return: false,
     }
 }
 
@@ -224,6 +225,10 @@ struct Printer<'a> {
     remaining: usize,
     /// Names of the binders in scope, innermost last.
     bound: Vec<(Variable, String)>,
+    /// Whether the place being spelled is read in a memory other than the
+    /// outcome state. `result` does not exist before the return, so a read
+    /// there is not spelled through it.
+    before_return: bool,
 }
 
 impl Printer<'_> {
@@ -267,7 +272,29 @@ impl Printer<'_> {
             .rev()
             .find(|(bound, _)| *bound == variable)
             .map(|(_, name)| name.clone())
-            .or_else(|| self.labels.source_name_for(variable).map(str::to_owned))
+            .or_else(|| {
+                self.labels
+                    .source_name_for(variable)
+                    .filter(|name| !(self.before_return && names_result(name)))
+                    .map(str::to_owned)
+            })
+    }
+
+    /// Spells a place read in `memory`, then qualifies it with that memory.
+    fn place_read_in(
+        &mut self,
+        memory: &CMemory,
+        place: impl FnOnce(&mut Self) -> Option<Spelled>,
+    ) -> Option<Spelled> {
+        let outer = self.before_return;
+        self.before_return = outer
+            || !matches!(
+                self.labels.source_memory_context(memory),
+                Some(("current", _))
+            );
+        let place = place(self);
+        self.before_return = outer;
+        self.qualify(memory, place?)
     }
 
     fn binder(&mut self, variable: Variable) -> String {
@@ -399,8 +426,9 @@ impl Printer<'_> {
             Proposition::CMemoryReadDefined {
                 memory, pointer, ..
             } => {
-                let place = atom(self.place_at(pointer, depth));
-                let place = self.qualify(memory, place)?;
+                let place = self.place_read_in(memory, |printer| {
+                    Some(atom(printer.place_at(pointer, depth)))
+                })?;
                 Some(atom(format!("defined({})", place.text)))
             }
             // Retain the exact internal rendering for these object-model
@@ -1198,6 +1226,10 @@ impl Printer<'_> {
                 value.to_integer(),
                 if value.format().is_signed() { "i" } else { "u" }
             ))),
+            // A specification `bool` is read as the term it names.
+            B::If { .. } if let Some(application) = crate::kernel::spec_bool_term(value) => {
+                self.bitvector(application, hint, depth)
+            }
             B::If {
                 condition,
                 then_term,
@@ -1324,6 +1356,19 @@ impl Printer<'_> {
             Some((false, _)) => return None,
             None => self.labels.naming.clone(),
         };
+        self.place_read_in(memory, |printer| {
+            printer.load_place(&naming, pointer, kind, depth)
+        })
+    }
+
+    /// The place a load reads, before its memory qualifies it.
+    fn load_place(
+        &mut self,
+        naming: &Option<std::rc::Rc<NamingTables>>,
+        pointer: &Pointer,
+        kind: crate::kernel::LoadKind,
+        depth: usize,
+    ) -> Option<Spelled> {
         let cell = naming.as_deref().and_then(|naming| {
             if let Some(model) = crate::surface::diagnostics::diagnostic_model_load_cell(
                 pointer,
@@ -1378,7 +1423,7 @@ impl Printer<'_> {
                 }
             }
         };
-        self.qualify(memory, place)
+        Some(place)
     }
 
     /// `place` read in `memory`.
@@ -1456,6 +1501,14 @@ impl Printer<'_> {
                 return Some(spelled(address, precedence));
             }
         }
+        if self.before_return
+            && self
+                .labels
+                .snapshot_pointer_name(pointer)
+                .is_some_and(names_result)
+        {
+            return Some(atom(self.labels.placeholder_pointer(pointer)));
+        }
         Some(atom(self.labels.unnamed_pointer(pointer)))
     }
 
@@ -1468,14 +1521,16 @@ impl Printer<'_> {
             crate::surface::diagnostics::diagnostic_source_pointer_cell(address, binding, None)
                 .or_else(|| crate::surface::diagnostics::diagnostic_source_cell(address, binding))
         });
-        let place = match cell {
-            Some(cell) => atom(cell),
-            None => match self.pointer(address, depth) {
-                Some(address) => atom(dereference(address)),
-                None => atom("…"),
-            },
-        };
-        self.qualify(memory, place).unwrap_or_else(|| atom("…"))
+        self.place_read_in(memory, |printer| {
+            Some(match cell {
+                Some(cell) => atom(cell),
+                None => match printer.pointer(address, depth) {
+                    Some(address) => atom(dereference(address)),
+                    None => atom("…"),
+                },
+            })
+        })
+        .unwrap_or_else(|| atom("…"))
     }
 
     /// A byte range as Click writes a viewable range: in elements of the
@@ -1765,8 +1820,9 @@ impl Printer<'_> {
                         format!("at({point}, {name})")
                     }));
                 }
-                let name = self.pointer(pointer.pointer(), depth + 1)?;
-                self.qualify(memory, name)
+                self.place_read_in(memory, |printer| {
+                    printer.pointer(pointer.pointer(), depth + 1)
+                })
             }
             PureFunctionArgument::ArrayRef { .. } => self.placeholder(|_| "<array>".into()),
         }
@@ -1863,7 +1919,13 @@ impl Printer<'_> {
                 self.placeholder(|_| format!("<{}-bit integer>", value.bits()))
             }
             IntegerTerm::Variable(variable) => match self
-                .variable_name(*variable)
+                .bound
+                .iter()
+                .rev()
+                .find(|(bound, _)| bound == variable)
+                .map(|(_, name)| name.clone())
+                .or_else(|| self.labels.integer_name_for(*variable).map(str::to_owned))
+                .or_else(|| self.variable_name(*variable))
                 .or_else(|| crate::kernel::model_fields::model_field_spelling(*variable))
             {
                 Some(name) => Some(atom(name)),
@@ -2011,6 +2073,11 @@ fn negation(body: Spelled) -> Spelled {
 }
 
 /// The place at `address`: `*p` for a plain pointer, `x` for `&x`.
+/// Whether a registered source name is the function outcome's `result`.
+fn names_result(name: &str) -> bool {
+    matches!(name, "result" | "&result")
+}
+
 fn dereference(address: Spelled) -> String {
     if address.precedence == UNARY
         && let Some(place) = address.text.strip_prefix('&')
@@ -2234,6 +2301,43 @@ mod tests {
             "cells[0] == 0"
         );
         assert!(labels.trace_legend().contains("<state A> is "));
+    }
+
+    #[test]
+    fn result_names_the_returned_value_only_where_result_exists() {
+        let index = Variable(9);
+        let heap = Pointer {
+            block: PointerBlock::Heap(1),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CState::new().with_memory(CMemory::new().with_block("global:a", 4));
+        let after = CState::new().with_memory(CMemory::new().with_block("global:a", 8));
+        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &after);
+        labels.source_state(&before, "pre".into());
+        labels.source_result(&CValue::Int32(Bitvector32Term::Variable(index)));
+        // An allocation no local holds is the returned pointer.
+        labels.source_result(&CValue::Pointer(CPointerValue::new(
+            heap.clone(),
+            CType::Int32Pointer,
+        )));
+        let load = |memory: &CMemory| {
+            equality(Bitvector32Term::MemoryLoad(
+                SharedCMemory::from(memory.clone()),
+                Box::new(heap.clone()),
+                LoadKind::Bits32,
+            ))
+        };
+        assert_eq!(
+            source(&equality(Bitvector32Term::Variable(index)), &mut labels),
+            "result == 0"
+        );
+        assert_eq!(source(&load(after.memory()), &mut labels), "*result == 0");
+        // `result` does not exist at `pre`, so a read there is not spelled
+        // through it.
+        assert_eq!(
+            source(&load(before.memory()), &mut labels),
+            "at(pre, *<pointer A>) == 0"
+        );
     }
 
     #[test]

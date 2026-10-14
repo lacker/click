@@ -157,58 +157,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             requirement_pure_facts.assumptions(),
         )
     };
-    let successor = match apply(prerequisite_policy, context) {
-        Err(error)
-            if matches!(
-                prerequisite_policy,
-                StatementPrerequisitePolicy::Retained | StatementPrerequisitePolicy::Fast
-            ) =>
-        {
-            let exact_retained_requirement =
-                error.unresolved_requirement().is_some_and(|requirement| {
-                    // The execution obligation is an implication from the
-                    // currently refused prerequisite to the remaining call.
-                    // Authorize the retry from that one exact antecedent,
-                    // never from a related ambient fact.
-                    let stated_prerequisite = match &requirement.proposition {
-                        Proposition::Implies(prerequisite, _) => prerequisite.as_ref(),
-                        proposition => proposition,
-                    };
-                    requirement.call_site.is_some()
-                        && execution
-                            .presentation
-                            .surface_record
-                            .retained_have_facts
-                            .pure_assumption_available(stated_prerequisite)
-                });
-            if !exact_retained_requirement {
-                return Err(error);
-            }
-            // Contextual checking may now compose the call, but only from
-            // ordinary checked `have`s and this statement's local path or
-            // resource facts. The ambient proof context is deliberately not
-            // visible to the retry.
-            let retained_context = step_facts.iter().fold(
-                execution
-                    .presentation
-                    .surface_record
-                    .retained_have_facts
-                    .assumptions()
-                    .clone(),
-                |context, fact| context.assume_proposition(fact.clone()),
-            );
-            let successor = apply(
-                StatementPrerequisitePolicy::Contextual,
-                Some(&retained_context),
-            )?;
-            crate::instrumentation::record_hidden_prerequisite(
-                crate::instrumentation::HiddenPrerequisiteRoute::RetainedHaveRerun,
-                "rerun",
-            );
-            successor
-        }
-        result => result?,
-    };
+    let successor = apply(prerequisite_policy, context)?;
     let mut completed = successor.execution;
     let facts = requirement_pure_facts.with_statement_facts_retaining_prefix(
         successor.pure_facts.into_vec(),

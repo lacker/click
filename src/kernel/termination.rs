@@ -2867,7 +2867,38 @@ pub(super) fn c_function_recursion_anchor(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Result<Option<CRecursionAnchor>, String> {
-    let Some(components) = function.contract_interface().recursion_measure() else {
+    let interface = function.contract_interface();
+    if let Some(binder) = interface.recursion_binder() {
+        // A structural measure is the instance the binder holds at entry; the
+        // descent at each call compares the instance it passes with this one.
+        let identity = interface.resource_binder_identity(binder).ok_or_else(|| {
+            format!(
+                "the `decreases {binder}` measure of `{}` names no resource binder of its \
+                 contract",
+                function.name()
+            )
+        })?;
+        let entry = entry_state
+            .resources()
+            .owned_instance(identity)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "the `decreases {binder}` measure of `{}` names a binder with no owned \
+                     instance at the function's entry",
+                    function.name()
+                )
+            })?;
+        return Ok(Some(CRecursionAnchor {
+            function: function.name().to_string(),
+            components: Vec::new(),
+            peers: interface.recursion_peers().to_vec(),
+            measure: Vec::new(),
+            structural_entry: Some(entry),
+            entry_obligations: Vec::new(),
+        }));
+    }
+    let Some(components) = interface.recursion_measure() else {
         return Ok(None);
     };
     let mut reader = CRankingMeasureReader {
@@ -2903,12 +2934,21 @@ pub(super) fn c_function_recursion_anchor(
     Ok(Some(CRecursionAnchor {
         function: function.name().to_string(),
         components: components.to_vec(),
+        peers: function.contract_interface().recursion_peers().to_vec(),
         measure,
+        structural_entry: None,
         entry_obligations,
     }))
 }
 
-/// The ranking members one self-call owes, against the anchor's M0.
+/// The ranking members one call to a member of the anchor's component owes,
+/// against the anchor's M0.
+///
+/// `components` is the callee's declared measure: the anchor's own for a
+/// self-call, a peer's for a call to another member, whose tuple must have the
+/// anchor's length and, position by position, its carrier. Every member's
+/// measure then lies in one lexicographic order, and a chain of calls through
+/// the component descends in it whichever member each call reaches.
 ///
 /// The callee's declared measure is read at `state`, the same state the
 /// callee's preconditions are read at, so the parameters it names hold the
@@ -2920,11 +2960,22 @@ pub(super) fn c_function_recursion_anchor(
 /// whatever the measure counts.
 pub(super) fn collect_recursion_descent_obligations(
     anchor: &CRecursionAnchor,
+    callee: &str,
+    components: &[CRankingComponent],
     state: &CState,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> Result<Vec<ProofObligation>, String> {
-    let components = anchor.components();
+    if components.len() != anchor.measure().len() {
+        return Err(format!(
+            "`{callee}`'s `decreases` measure `{}` has {} components, but `{}`'s has {}; the \
+             members of a recursive component must declare measures of one shape",
+            c_ranking_measures_display(components),
+            components.len(),
+            anchor.function(),
+            anchor.measure().len()
+        ));
+    }
     let mut reader = CRankingMeasureReader {
         assumptions,
         budget,
@@ -2935,10 +2986,9 @@ pub(super) fn collect_recursion_descent_obligations(
         .map(|component| {
             c_ranking_measure_term(component, state, &mut reader).map_err(|error| {
                 format!(
-                    "the `decreases` measure `{}` of `{}` could not be read at the recursive \
+                    "the `decreases` measure `{}` of `{callee}` could not be read at the recursive \
                      call: {error}",
-                    c_ranking_measure_display(component),
-                    anchor.function()
+                    c_ranking_measure_display(component)
                 )
             })
         })
@@ -4199,12 +4249,16 @@ fn termination_call_graph<'a>(
 ///   rule was issued for, so a measure present here is a measure that was
 ///   anchored. A plan claiming a measure the interface does not carry is a
 ///   plan for obligations nobody emitted, and it is refused.
-/// * every recursive edge of this component is a call to this function
-///   itself. The anchor names one function, so a call to a *different*
-///   member of the cycle owes nothing, and a two-function cycle would be
-///   certified with no descent anywhere. Such a component is refused by name
-///   rather than admitted; `decreases <parameter>` still ranks it.
-/// * every loop the self-call sits inside was certified under this function's
+/// * every recursive edge of this function is a self-call or a call to a
+///   member its own interface names as a recursion peer, and that member
+///   declares an expression measure too. The anchor is read off the same
+///   interface, so a call to a named peer owed the peer's measure below this
+///   function's entry reading; a call to an unnamed member would owe
+///   nothing, and a cycle through it would be certified with no descent, so
+///   it is refused by name. Every member of a component is checked this
+///   way, so every edge of the cycle was ranked, each in the one
+///   lexicographic order all the members' measures share.
+/// * every loop a recursive call sits inside was certified under this function's
 ///   anchor. A loop is verified once as its own judgment and then applied as
 ///   a summary, so a call the summary swallowed owes nothing at the step that
 ///   applies it; what makes it owe the descent is that the loop's own body
@@ -4223,37 +4277,44 @@ fn check_expression_measure_recursion(
     plans: &BTreeMap<String, &CFunctionTerminationPlan>,
     loop_rules: &[CVerifiedLoopRule],
 ) -> Result<(), CTerminationError> {
-    if function.contract_interface().recursion_measure().is_none() {
+    if !function.contract_interface().has_call_ranked_recursion() {
         return Err(error(format!(
             "the termination plan ranks `{name}` by the expression measure `{source}`, but the \
              certified `{name}` carries no declared measure, so no recursive call of it owed a \
              descent obligation"
         )));
     }
+    let peers = function.contract_interface().recursion_peers();
     for callee in recursive_callees {
         charge_termination_work(1);
         if callee == name {
             continue;
         }
-        return Err(error(format!(
-            "`{name}` declares the expression `decreases` measure `{source}` and is in a \
-             recursive component with `{callee}`. An expression measure currently ranks direct \
-             self-recursion only: the descent is owed at a call to the function that declared \
-             the measure, so a call to `{callee}` would be ranked by nothing. Rank this component \
-             with `decreases <int32 parameter>`"
-        )));
+        if peers
+            .binary_search_by(|peer| peer.as_str().cmp(callee))
+            .is_err()
+        {
+            return Err(error(format!(
+                "`{name}` declares the expression `decreases` measure `{source}` and is in a \
+                 recursive component with `{callee}`, but its certified interface does not name \
+                 `{callee}` as a recursion peer, so a call to `{callee}` would be ranked by \
+                 nothing"
+            )));
+        }
     }
-    // Every member of a settled component agrees on its measure kind. With
-    // the loop above, the component is `{name}` alone, so this reads one plan.
-    if !matches!(
-        plans
-            .get(name)
-            .and_then(|plan| plan.recursive_measure.as_ref()),
-        Some(CFunctionTerminationMeasure::Expression(_))
-    ) {
-        return Err(error(
-            "a recursive component cannot mix an expression measure with another measure kind",
-        ));
+    // Every member of a settled component agrees on its measure kind.
+    for member in std::iter::once(name).chain(recursive_callees.iter().map(String::as_str)) {
+        charge_termination_work(1);
+        if !matches!(
+            plans
+                .get(member)
+                .and_then(|plan| plan.recursive_measure.as_ref()),
+            Some(CFunctionTerminationMeasure::Expression(_))
+        ) {
+            return Err(error(
+                "a recursive component cannot mix an expression measure with another measure kind",
+            ));
+        }
     }
     // A loop is verified once, as its own judgment, and then applied as a
     // summary, so a self-call the summary swallowed owes nothing at the step
@@ -4264,13 +4325,12 @@ fn check_expression_measure_recursion(
     // certified without the anchor is a summary that swallowed the inner
     // one's, so the requirement is the same at every level and nesting needs
     // no separate case.
-    let declared = function.contract_interface().recursion_measure();
     let mut next_index = 0;
     let mut enclosing = Vec::new();
     let mut self_call_loops = BTreeSet::new();
     self_call_loop_indices(
         &function.source_body,
-        name,
+        recursive_callees,
         &mut next_index,
         &mut enclosing,
         &mut self_call_loops,
@@ -4288,15 +4348,15 @@ fn check_expression_measure_recursion(
                 && rule
                     .recursion_anchor
                     .as_ref()
-                    .is_some_and(|anchor| anchor.ranks(name, declared))
+                    .is_some_and(|anchor| anchor.ranks(name, function.contract_interface()))
                 && source_loop.is_some_and(|source_loop| {
                     same_statement_shape(source_loop, &rule.loop_statement)
                 })
         });
         if !anchored {
             return Err(error(format!(
-                "`{name}` declares the expression `decreases` measure `{source}` and calls itself \
-                 inside loop {index}, whose verified rule was certified without `{name}`'s \
+                "`{name}` declares the expression `decreases` measure `{source}` and makes a \
+                 recursive call inside loop {index}, whose verified rule was certified without `{name}`'s \
                  recursion anchor. A loop is verified as its own judgment and then applied as a \
                  summary, so the descent at that call would be owed by no step of `{name}`'s \
                  proof. Give loop {index} a `decreases` clause and a proof of its own, rank \
@@ -4369,7 +4429,7 @@ pub(super) fn statement_calls_function(statement: &CStatement, callee: &str) -> 
 /// outside it is read.
 fn self_call_loop_indices(
     statement: &CStatement,
-    callee: &str,
+    callee: &BTreeSet<String>,
     next_index: &mut usize,
     enclosing: &mut Vec<usize>,
     found: &mut BTreeSet<usize>,
@@ -4380,7 +4440,7 @@ fn self_call_loop_indices(
     };
     match statement {
         CStatement::Call { function_name, .. } | CStatement::CallAssign { function_name, .. } => {
-            if function_name == callee {
+            if callee.contains(function_name) {
                 found.extend(enclosing.iter().copied());
             }
         }
@@ -6929,7 +6989,7 @@ mod local_descent_tests {
     /// nothing. Slice 1 refuses such a component rather than certifying a
     /// recursion with an unranked edge.
     #[test]
-    fn an_expression_measure_refuses_a_mutually_recursive_component() {
+    fn an_expression_measure_refuses_a_component_whose_peers_are_undeclared() {
         let rules = [
             recursive_rule("even", &["odd"], true, false, false),
             recursive_rule("odd", &["even"], true, false, false),
@@ -6946,6 +7006,36 @@ mod local_descent_tests {
             error.message.contains("recursive component with"),
             "{error:?}"
         );
+    }
+
+    /// Members whose certified interfaces name each other as recursion
+    /// peers had every cross-member call ranked under their anchors, so the
+    /// component checks; one side naming the other is not enough.
+    #[test]
+    fn an_expression_measure_ranks_a_component_whose_members_name_each_other() {
+        let with_peers = |name: &str, peer: &str, named: bool| {
+            let mut rule = recursive_rule(name, &[peer], true, false, false);
+            if named {
+                rule.function = rule.function.with_recursion_peers(vec![peer.to_string()]);
+            }
+            rule
+        };
+        let heights = heights(&[("even", 0), ("odd", 0)]);
+        let plans = [expression_plan("even"), expression_plan("odd")];
+        let rules = [
+            with_peers("even", "odd", true),
+            with_peers("odd", "even", true),
+        ];
+        let verdicts = check(&rules, &plans, &heights, &[])
+            .expect("a component whose members name each other checks");
+        assert_eq!(terminating(&verdicts), BTreeSet::from(["even", "odd"]));
+        let rules = [
+            with_peers("even", "odd", true),
+            with_peers("odd", "even", false),
+        ];
+        let error = check(&rules, &plans, &heights, &[])
+            .expect_err("a member that does not name its peer leaves an edge unranked");
+        assert!(error.message.contains("recursion peer"), "{error:?}");
     }
 
     /// A helper with an inline body and a verified rule is called through
@@ -7041,6 +7131,8 @@ mod local_descent_tests {
         CRecursionAnchor {
             function: name.to_string(),
             components: vec![declared_component()],
+            peers: Vec::new(),
+            structural_entry: None,
             measure: vec![CRankingMeasureValue::Machine(Bitvector32Term::Constant(7))],
             entry_obligations: Vec::new(),
         }

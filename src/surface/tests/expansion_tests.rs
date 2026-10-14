@@ -17225,6 +17225,29 @@ fn exceptional_claim_labels_preserve_names_and_covering_proofs_in_projects() {
 }
 
 #[test]
+fn whole_function_expansion_validates_against_imported_pure_declarations() {
+    let source = "import \"spec.click\"; verifying \"identity.c\"; int32 identity(int32 x) { ensures result == spec(x); } by { execute(); unfold(spec(x)); simp(); }";
+    let project = ClickProject::new(
+        "identity.click",
+        [
+            ClickModuleSource::new("identity.click", source, ["spec.click".to_owned()]),
+            ClickModuleSource::new("spec.click", "function spec(x: int32) -> int32 { x }", []),
+        ],
+    );
+    let sources = [("identity.c", "int32 identity(int32 x) { return x; }")];
+    let expanded = expand_project_claim_source_by_label(
+        &project,
+        &ProgramInputs::Bundle(sources.to_vec()),
+        "identity.contract",
+    )
+    .unwrap();
+    verify_c0_project(&project.with_entry_source(&expanded), &sources).unwrap();
+    let false_claim = expanded.replace("result == spec(x)", "result == spec(x) + 1");
+    verify_c0_project(&project.with_entry_source(false_claim), &sources)
+        .expect_err("import resolution must not bypass the expanded claim check");
+}
+
+#[test]
 #[ignore = "nightly: 5s in the parallel gate"]
 fn loaded_struct_field_loop_expansion_names_fields_and_reverifies() {
     let (source, sources) =

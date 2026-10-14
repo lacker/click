@@ -19,5 +19,6 @@ int32 f(int32 x) {
 ```
 
 ```expect
-fail: one-past-the-end pointer
+fail: one-past-the-end pointer with the start of another object: whether the two objects are adjacent is unspecified
+  operation: `(a + 2) != b`
 ```
