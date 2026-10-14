@@ -2952,6 +2952,62 @@ pub(crate) fn pointer_offset_read_has_recorded_value(
         })
 }
 
+/// Select one exact complete pointer read's checked endpoint for address-index
+/// discovery. The result carries no object designation or access authority.
+/// The caller must keep any numeric union local to its resource query.
+pub(in crate::kernel) fn checked_pointer_read_endpoint(
+    read: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<Pointer> {
+    let Bitvector32Term::MemoryLoad(memory, address, kind) =
+        crate::kernel::equality_graph::logical_pointer_read_term(read)?
+    else {
+        return None;
+    };
+    if crate::kernel::load_term_access_width(&memory, &address, kind)
+        != crate::kernel::C_POINTER_BYTE_WIDTH
+    {
+        return None;
+    }
+    let source =
+        canonical_load_projection_source(&memory, &address).unwrap_or_else(|| memory.clone());
+    // Ask the existing explicit checker to produce typed frame evidence;
+    // planner-only separation answers cannot certify a query-local union.
+    struct ExplicitReadScope(bool);
+    impl Drop for ExplicitReadScope {
+        fn drop(&mut self) {
+            EXPLICIT_DAG_CHECK.with(|flag| flag.set(self.0));
+        }
+    }
+    let _scope = ExplicitReadScope(EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true)));
+    with_extended_dag_bridging(|| {
+        let cell = memory_dag_cell_source_with_hop_limit(
+            &source,
+            &address,
+            crate::kernel::C_POINTER_BYTE_WIDTH,
+            assumptions,
+            64,
+        )?;
+        if !cell.checks_walk_from(
+            &source,
+            &address,
+            crate::kernel::C_POINTER_BYTE_WIDTH,
+            assumptions,
+        ) {
+            return None;
+        }
+        match &cell {
+            MemoryDagCell::Stored { value, .. } => match kind.read_cell(value) {
+                Some(CValue::Pointer(stored)) => Some(stored.into_pointer()),
+                _ => None,
+            },
+            // A walk can stop at an unproved or affecting edge. Its cached
+            // cell map is not a certificate for a value across that edge.
+            MemoryDagCell::Unwritten { .. } => Some(Pointer::loaded_value(cell.node(), &address)),
+        }
+    })
+}
+
 fn pointer_read_stored_value(
     read: &Pointer,
     assumptions: &PureFactContext,

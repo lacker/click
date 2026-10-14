@@ -2502,7 +2502,19 @@ impl PureFactContext {
         let mut current = left;
         let mut strict = false;
         for step in path {
-            if current != &step.lower || !self.checks_exact_order_step(step) {
+            if current != &step.lower {
+                // A normalized direct premise can start at a successor
+                // literal (1 < n becomes 2 <= n). Retain that intrinsic
+                // connection just as the final literal connection below.
+                let Some(connection) = signed_bitvector_constant(current)
+                    .zip(signed_bitvector_constant(&step.lower))
+                    .and_then(|(current, next)| (current <= next).then_some(current < next))
+                else {
+                    return false;
+                };
+                strict |= connection;
+            }
+            if !self.checks_exact_order_step(step) {
                 return false;
             }
             current = &step.upper;
@@ -4240,5 +4252,33 @@ mod wide_range_reader_tests {
                 right: Box::new(CResource::Memory(range(second))),
             });
         assert!(!facts.alias_guard_refuted_by_separation());
+    }
+}
+
+#[cfg(test)]
+mod constant_prefix_certificate_tests {
+    use super::*;
+
+    #[test]
+    fn order_path_checks_normalized_constant_prefix_and_live_premise() {
+        let upper = Bitvector32Term::Variable(Variable(999_481));
+        let premise = ConditionTerm::signed_less_equal(2u32.into(), upper.clone());
+        let context = PureFactContext::new().assume_condition(premise.clone(), true);
+        let path = context
+            .exact_signed_order_path_evidence(&1u32.into(), &upper, true)
+            .unwrap();
+        assert_eq!(path[0].lower, Bitvector32Term::Constant(2));
+        assert!(context.checks_exact_signed_order_path(&path, &1u32.into(), &upper, true));
+        assert!(context.checks_exact_signed_order_path(&path, &2u32.into(), &upper, false));
+        assert!(!context.checks_exact_signed_order_path(&path, &2u32.into(), &upper, true));
+        assert!(!context.checks_exact_signed_order_path(&path, &3u32.into(), &upper, false));
+        assert!(!context.checks_exact_signed_order_path(
+            &path,
+            &Bitvector32Term::Variable(Variable(999_482)),
+            &upper,
+            false,
+        ));
+        let withdrawn = context.without_exact_fact(&Proposition::ConditionIs(premise, true));
+        assert!(!withdrawn.checks_exact_signed_order_path(&path, &1u32.into(), &upper, true));
     }
 }

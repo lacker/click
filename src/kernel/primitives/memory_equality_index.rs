@@ -1934,11 +1934,15 @@ impl ResourceContext {
         owned: bool,
         assumptions: &PureFactContext,
     ) -> MemoryFactCandidates {
-        let index = self.pair_memory_equalities_in_graph(
-            graph_for_memory_query(assumptions, range.base()),
-            false,
-            Some(MemoryQuery::Footprint(range)),
-        );
+        let graph = graph_for_memory_query(assumptions, range.base());
+        if let Some(endpoint) = crate::kernel::memory_provenance::checked_pointer_read_endpoint(
+            range.base(),
+            assumptions,
+        ) {
+            graph.add_checked_read_equality(range.base(), &endpoint);
+        }
+        let index =
+            self.pair_memory_equalities_in_graph(graph, false, Some(MemoryQuery::Footprint(range)));
         // A wide range is found by its footprint and addresses; it has no
         // 32-bit element coordinate.
         let bound_coordinates = range
@@ -2049,6 +2053,128 @@ mod tests {
                 .without_fact_incrementally(&changed, &context)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn checked_read_endpoint_selects_framed_ranges_without_ambient_scan() {
+        for size in [16u32, 64, 256, 1024] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let field = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let before = CMemory::new();
+            let read = |context: &PureFactContext, memory: &CMemory, address: &Pointer| {
+                let snapshot = crate::kernel::intern_c_memory_ref(memory);
+                let variable = crate::kernel::load_variable_for_cell_with_origin(
+                    &snapshot,
+                    address,
+                    LoadKind::Pointer,
+                    C_POINTER_BYTE_WIDTH,
+                    &snapshot,
+                );
+                let pointer = Pointer::loaded(
+                    address.block.clone(),
+                    Bitvector32Term::Variable(variable),
+                    4,
+                );
+                context.register_pointer_read(&pointer, &snapshot, address);
+                pointer
+            };
+            let source = read(&PureFactContext::new(), &before, &field);
+            // Match the contract's complete pointer-valued descriptor cell.
+            // Its unknown value is retained as the initial opaque read.
+            let before = before.store(
+                field.clone(),
+                CValue::Pointer(CPointerValue::new(source.clone(), CType::Int32Pointer)),
+            );
+            let count = Bitvector32Term::Variable(Variable(999_321));
+            let range =
+                |base| CMemoryRange::new_with_element_width(base, 0u32.into(), count.clone(), 4);
+            let field_range =
+                CMemoryRange::new_with_element_width(field.clone(), 0u32.into(), 2u32.into(), 4);
+            let separation = Proposition::CResourceSeparate {
+                left: Box::new(CResource::Memory(field_range.clone())),
+                right: Box::new(CResource::Memory(range(source.clone()))),
+            };
+            let context = PureFactContext::new()
+                .assume_proposition(separation.clone())
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(2u32.into(), count.clone()),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(count.clone(), 1000u32.into()),
+                    true,
+                );
+            let held = CResourceFact::own_memory(range(source.clone()));
+            let mut resources = ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::view_memory(field_range))
+                .unchecked_with_fact(held.clone());
+            for index in 0..size {
+                let unrelated = read(&context, &before, &field.offset_by_bytes(64 + index * 8));
+                resources =
+                    resources.unchecked_with_fact(CResourceFact::own_memory(range(unrelated)));
+            }
+            resources.synchronize_memory_equalities(&context);
+            let local = Pointer {
+                block: PointerBlock::Concrete("local:frame-counter".into()),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let after = before
+                .clone()
+                .with_block(local.block.clone(), 4)
+                .store(source.offset_by_bytes(4), CValue::Int32(7u32.into()))
+                .store(local, CValue::Int32(8u32.into()));
+            let current = read(&context, &after, &field);
+            let weakened = context.without_exact_fact(&separation);
+            let required = CResourceFact::own_memory(range(current.clone()));
+            let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
+                resources
+                    .directly_supporting_fact(&required, &context)
+                    .cloned()
+            });
+            assert_eq!(found, Some(held.clone()), "size={size}, work={work}");
+            assert!(work < 2000, "size={size}, work={work}");
+            assert_eq!(
+                crate::kernel::memory_provenance::checked_pointer_read_endpoint(&current, &context),
+                Some(source.clone()),
+                "the complete-cell certificate must recover this exact stored value",
+            );
+            assert!(!context.equality_graph.are_equal(&source, &current));
+            assert!(
+                resources
+                    .clone()
+                    .without_fact_incrementally(&required, &context)
+                    .is_some()
+            );
+            assert!(
+                resources
+                    .directly_supporting_fact(&required, &weakened)
+                    .is_none()
+            );
+            let withdrawn = resources
+                .clone()
+                .without_exact_representation(&held)
+                .unwrap();
+            assert!(
+                withdrawn
+                    .directly_supporting_fact(&required, &context)
+                    .is_none()
+            );
+            let partial = after.store(field.offset_by_bytes(4), CValue::Int32(9u32.into()));
+            let changed = CResourceFact::own_memory(range(read(&context, &partial, &field)));
+            assert!(
+                resources
+                    .directly_supporting_fact(&changed, &context)
+                    .is_none()
+            );
+            assert!(
+                resources
+                    .without_fact_incrementally(&changed, &context)
+                    .is_none()
+            );
+        }
     }
 
     #[test]
