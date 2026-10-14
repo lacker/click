@@ -114,11 +114,27 @@ Keep the approved native cast and shared scalar-initialization semantics.
 Their implementation and delivery status belong in the audit; reopen a design
 choice only for a concrete contradiction or a newly selected source behavior.
 
+## Audit progress
+
+The [fixed-baseline recovery audit](../design/object-model-recovery-audit.md)
+records the immutable comparison, preserved fork archive, commands, dependency
+inventory and failure ledger. Master `325f9f604` passes all 52 normal example
+projects; a fresh archive run passes 35 and rejects 17 with unchanged source and
+contracts. All 17 are branch verification regressions; their introducing changes
+and semantic causes still require attribution. The ordinary C scalar-subobject
+P1 probe remains incorrectly accepted on both revisions.
+
+An independent captured-pointer type-lookup defect reproduces on master. Its
+one-case correction and paired Markdown controls are committed in a separate
+master-based worktree and rebased onto `2010b27f1` for delivery. Alignment typing is dependent on branch-only machinery
+and is not bundled into that extraction. Full normal-gate results and publication
+remain tracked separately; focused successes are not a green-tree verdict.
+
 ## Recovery and delivery sequence
 
 ### 1. Preserve and classify before repairing more examples
 
-- [ ] Record the archived branch/commit, published #646 head, fixed master
+- [x] Record the archived branch/commit, published #646 head, fixed master
   baseline, compiler/tool versions and selected fixture/artifact identities.
 - [ ] Inventory the accumulated changes by semantic responsibility and
   dependency. Separate proposed laws, implementation, isolated bug fixes,
@@ -150,13 +166,13 @@ Reproduce them on the fixed baseline and the archive before deciding which
 activation changes are mandatory. Independent small fixes can land while that
 work proceeds, with accurate scope and no claim that the object model is complete.
 
-- [ ] Select the smallest useful change that reproduces on the baseline and
+- [x] Select the smallest useful change that reproduces on the baseline and
   has no dependency on unreviewed object-model activation. Candidate bug fixes
   include captured-pointer pointee typing and alignment-result typing, subject
   to baseline reproduction and current-master status.
 - [ ] Treat entry-snapshot argument folding as a separate candidate with its
   own dependency check, original-source witness and wrong-cell rejection.
-- [ ] Extract complete changes with their tests and accurate documentation.
+- [x] Extract complete changes with their tests and accurate documentation.
   A historical commit is not automatically a clean semantic unit; reconstruct
   the patch when it combines concerns or depends on later fixes.
 - [ ] Establish the first replacement's green result and reviewable scope,

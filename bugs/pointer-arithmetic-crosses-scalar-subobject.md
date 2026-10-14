@@ -1,5 +1,13 @@
 # A one-past scalar-member pointer can read its sibling
 
+Soundness: unsound. Ordinary C verification accepts dereferencing the pointer
+one past a scalar member to read its sibling, despite C11's one-element scalar
+array rule. The program's accepted memory-safety/defined-behavior claim is false.
+The fixed-baseline recovery audit reproduces this on master `325f9f604` and the
+archived implementation `e3d84a785` without changing source or claims.
+
+Priority: P1.
+
 The shared evaluator accepts a C++ and C program that dereferences the pointer
 one past a scalar record member to read the following member. Both probes
 verified locally during the object-model audit at `8153b3ac0`.
@@ -115,3 +123,12 @@ The current verifier refuses the native `return h->value[0];` with
 `pointer arithmetic left the pointed-to object`. The separate unchanged
 `c0_const_pointer_fields_store_proof_expands_and_reverifies` regression retains
 positive coverage for storing and reloading the actual pointer carrier.
+
+## Recovery audit status (2026-10-14)
+
+The [shared object-model recovery audit](../design/object-model-recovery-audit.md)
+reran the ordinary C reproduction with `int32` fields, views of both fields and
+`ensures result == p->second;` proved by `execute(); simp();`. Both fixed master
+`325f9f604` and archive `e3d84a785` accept it. This bug therefore remains open
+for ordinary C; native/C++ rejection controls do not establish its closure.
+The earlier implementation notes above describe historical checkpoints.
