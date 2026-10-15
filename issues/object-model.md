@@ -754,3 +754,11 @@ controls, four-size scaling check and fixture. All nine selected kernel controls
 and the fixture pass; documentation lint passes with the advisory Vale skip.
 The original arena window fold and owned-vector frame transport still fail.
 This reuses upstream machinery and does not change the **50/52** checkpoint.
+
+The iterator proof landed through
+[PR #1150](https://github.com/clicklang/click/pull/1150). Its pushed commit
+`64f0f0d46` is confirmed upstream by GitHub's compare endpoint (the merge base
+is that commit, with zero commits behind). Managed command-line Git credentials
+subsequently failed for fetch/push; the GitHub connector still provides read
+verification. Recovery work remains committed locally for a normal push when
+managed authentication recovers; no alternate Git-object publication is used.
