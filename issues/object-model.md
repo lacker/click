@@ -776,3 +776,12 @@ A private cell-walk probe identifies arena's read-endpoint barrier as
 `LoopHavoc`; the published reduction and isolation notes are in PR #1160.
 The endpoint-chain experiment is reverted. Managed Git authentication has
 recovered; normal fetch and push work without alternate Git-object publication.
+
+
+The complete normal example audit of `df56e3e28` is **51/52** in 116.53
+seconds, with no new failure. Owned-vector passes; arena alone still fails at
+`arena_alloc.contract` tactic 239, the window fold. This is a failed full audit
+with one known failure, not a green-tree verdict. The next reduced-proof check
+explicitly establishes the current data pointer's equality to its entry value:
+it gets past ownership reassembly and exposes the resource's separation-fact
+obligation. Keep that distinction when diagnosing indexed supplier selection.
