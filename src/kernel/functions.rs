@@ -6242,14 +6242,14 @@ fn execute_verified_function_applications_with_suspension(
                 );
             }
         }
-        // Input C field copies already have checked write authority and
+        // Input C field effects already have checked access authority and
         // initialized storage. Publish their complete values before evaluating
         // returned views, which must name the actual source, not a fresh address.
         // Construction/output-only destinations retain the later checked phase.
         let input_field_copies = application
             .pointer_store_effects
             .iter()
-            .filter(|effect| pointer_store_effects::is_c_parameter_field_copy(interface, effect))
+            .filter(|effect| pointer_store_effects::is_c_input_field_effect(interface, effect))
             .cloned()
             .collect::<Vec<_>>();
         if !input_field_copies.is_empty() {

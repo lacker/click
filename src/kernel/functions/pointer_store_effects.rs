@@ -678,6 +678,15 @@ pub(super) fn is_c_parameter_field_copy(
         && matches!(effect.source, CPointerEffectRoot::Parameter(_))
 }
 
+pub(super) fn is_c_input_field_effect(
+    interface: &CFunctionContractInterface,
+    effect: &CPointerStoreEffect,
+) -> bool {
+    is_c_parameter_field_copy(interface, effect)
+        || (interface.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed
+            && preserves_input_field(effect))
+}
+
 pub(super) fn writes_authorized(
     state: &CState,
     interface: &CFunctionContractInterface,

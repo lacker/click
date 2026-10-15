@@ -532,3 +532,15 @@ expanded, rewritten and retained verification. The original shared pipeline
 passes both initializer calls and next fails at `input_cursor_take` returning
 a borrowing composite whose backing pointer is fresh. Continue that preservation
 case separately. Keep 42/52 until a new full archive audit runs.
+
+
+Existing certified C input-field preservation effects now run in the same
+early return-image phase as direct copies, before returned-view matching.
+Read authority suffices for preservation; initialization, source/full-read
+evidence and the final output checks remain unchanged. The original
+`input_cursor_shared_pipeline` now passes fresh, expanded, rewritten and
+retained verification with its original C and proof. The broader pointer
+selection still has 477 passes, the same two failures and 17 ignored controls.
+Run a new normal example audit before changing the 42/52 count. A smaller caller
+whose entry gives the cursor a native model identity still fails returned-view
+matching; this original-project success does not close that separate witness.

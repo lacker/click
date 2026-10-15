@@ -94,3 +94,40 @@ machinery, not an upstream activation verdict.
 - Attribute the introducing change; do not submit the accumulated archive as an
   independently validated activation or claim baseline acceptance closes P1
   pointer-domain soundness defects.
+
+
+## Cursor input model follow-up
+
+The original cursor shared pipeline passes all four proof modes after early
+restoration of certified C input-field copies and preservation. This is not
+a general closure of returned-view carrier matching. A narrower caller still
+fails with the original `input_cursor_take.c`, its resource definitions and
+its `input_cursor_take` contract from `examples/input-cursor/input_cursor.click`.
+Append this C wrapper to the unchanged take source:
+
+```c
+int32 caller(struct input_cursor* owner) { return input_cursor_take(owner); }
+```
+
+Use the same resources and callee proof, and this caller:
+
+```click
+int32 caller(struct input_cursor* owner) {
+    requires owner->pos < owner->len;
+    owns input_cursor(owner);
+    ensures result == old(owner->data[owner->pos]);
+    ensures owner->pos == old(owner->pos) + 1;
+    ensures owner->len == old(owner->len);
+    ensures owner->data == old(owner->data);
+} by { execute(); simp(); }
+```
+
+The caller receives an unresolved model identity for `owner`. Its returned
+`readable_input` view uses a pointer with an exact loaded-read identity, but
+matching reports that no viewed input backs it. This differs from the original
+shared pipeline's legacy cursor arguments, which now work. Diagnose the input
+and output complete read identities and their numeric spellings before changing
+any equality rule. An address equation alone must not establish full identity.
+The local reduction is preserved in
+`target/cursor-take-output-preservation-reduction/`; the source above and the
+tracked original example reconstruct it after build artifacts are removed.
