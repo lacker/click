@@ -762,3 +762,17 @@ is that commit, with zero commits behind). Managed command-line Git credentials
 subsequently failed for fetch/push; the GitHub connector still provides read
 verification. Recovery work remains committed locally for a normal push when
 managed authentication recovers; no alternate Git-object publication is used.
+
+
+The owned-vector repair from upstream PR #1155 (`0606e4caa`) is now reconciled
+into recovery: retain checked statement-effect records at structural branch
+joins, then explicitly use the callee's preservation postcondition around the
+capacity store. Applying the proof alone first exposed the missing structural
+join evidence; bringing both parts together restores the original vector entry
+module audit. C and contracts are unchanged. The latest complete audit remains
+**50/52**, with vector individually restored pending a complete rerun.
+
+A private cell-walk probe identifies arena's read-endpoint barrier as
+`LoopHavoc`; the published reduction and isolation notes are in PR #1160.
+The endpoint-chain experiment is reverted. Managed Git authentication has
+recovered; normal fetch and push work without alternate Git-object publication.

@@ -515,11 +515,25 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                 extract(0 <= k);
                 extract(k < old(owner->len));
                 instantiate(forall (j: int32) { 0 <= j and j < old(owner->len) implies at(statement(4).entry, owner->data[j]) == old(owner->data[j]) }, k);
-                transport(at(statement(4).entry, owner->data[k]) == old(owner->data[k]), owner->data[k] == old(owner->data[k])) using {
+                have k < at(statement(8).entry, owner->len) by {
+                    rewrite(at(statement(8).entry, owner->len) == old(owner->len));
+                    assumption();
+                }
+                instantiate(forall (j: int32) { 0 <= j and j < at(statement(8).entry, owner->len) implies at(statement(8).exit, owner->data[j]) == at(statement(8).entry, owner->data[j]) }, k) using {
+                    0 <= k;
+                    k < at(statement(8).entry, owner->len);
+                }
+                transport(at(statement(8).exit, owner->data[k]) == at(statement(8).entry, owner->data[k]), owner->data[k] == at(statement(8).entry, owner->data[k])) using {
+                    at(statement(8).exit, owner->data[k]) == at(statement(8).entry, owner->data[k]);
+                    0 <= k;
+                    k < at(statement(8).entry, owner->len);
+                }
+                transport(at(statement(4).entry, owner->data[k]) == old(owner->data[k]), at(statement(8).entry, owner->data[k]) == old(owner->data[k])) using {
                     at(statement(4).entry, owner->data[k]) == old(owner->data[k]);
                     0 <= k;
                     k < old(owner->len);
                 }
+                rewrite(owner->data[k] == at(statement(8).entry, owner->data[k]));
                 assumption();
             }
             have old(owner->len) < old(owner->cap) implies result == 1 by {

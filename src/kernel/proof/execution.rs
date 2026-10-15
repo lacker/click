@@ -4657,6 +4657,7 @@ impl CheckedExecutionBranch {
             split.continuation.clone(),
         );
         let mut checked_arms = Vec::with_capacity(2);
+        let mut memory_steps = Vec::with_capacity(2);
         for (index, arm) in arms.iter().enumerate() {
             let events = arm.execution_evidence[0]
                 .suffix_since(parent_trace)
@@ -4689,6 +4690,7 @@ impl CheckedExecutionBranch {
             if &progress.state != arm.reached_state() {
                 return Err("a branch arm theorem trace does not reach its recorded state");
             }
+            memory_steps.push(progress.memory_steps);
             checked_arms.push(CheckedExecutionBranchArm {
                 facts: arm_facts[index].clone(),
                 events,
@@ -4697,12 +4699,15 @@ impl CheckedExecutionBranch {
         let [then_arm, else_arm] = checked_arms
             .try_into()
             .map_err(|_| "the checked branch does not have exactly two arms")?;
-        let interface_effect_facts = checked_interface_effect_facts(
+        // A structural join retains the same checked statement-effect records
+        // as an interface join, including a call's complete-pointer refinements.
+        let interface_effect_facts = checked_interface_effect_facts_along(
             &split.state,
             arms[0].reached_state(),
             arms,
             arm_facts,
             arm_effect_facts,
+            Some([&memory_steps[0], &memory_steps[1]]),
         )?;
         Ok(Self {
             split,
@@ -5104,6 +5109,7 @@ fn interface_chain_memory_matches(
     c_memories_definitionally_equal(ended.as_ref().unwrap_or(produced), recorded, assumptions)
 }
 
+#[cfg(test)]
 fn checked_interface_effect_facts(
     split_state: &CState,
     joined_state: &CState,
