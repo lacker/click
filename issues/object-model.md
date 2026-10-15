@@ -694,3 +694,10 @@ contract. The normal archive audit now passes **48/52** in 111.13 seconds;
 remaining failures are arena, owned-vector, rust-byte-sum and rust-chunks-exact.
 This remains an entry-module compatibility verdict, not verification of every
 imported helper, a full green gate or native-feature activation.
+
+Rust byte-sum's two exhausted `auto` searches are replaced with the existing
+`int32_add_to_integer`, `uint64_add_to_integer` and order-conversion lemmas,
+then arithmetic over explicit relevant premises. Original Rust and contracts
+are unchanged. The result proof passes fresh, expansion, rewritten and retained
+checking on the archive. The last complete normal audit remains **48/52**;
+byte-sum is individually restored pending the next complete audit.

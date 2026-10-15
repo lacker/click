@@ -42,9 +42,38 @@ fn sum(bytes: &[u8]) -> i32 {
                 }
                 simp();
             }
-            have to_integer(total + (int32)bytes[i]) == prefix(bytes, i + 1u64) by auto;
+            have to_integer(total + (int32)bytes[i]) == to_integer(total) + to_integer((int32)bytes[i]) by {
+                apply(int32_add_to_integer(total, (int32)bytes[i])) using { defined(total + (int32)bytes[i]); }
+            }
+            have to_integer(total + (int32)bytes[i]) == prefix(bytes, i + 1u64) by {
+                arithmetic() using {
+                    to_integer(total + (int32)bytes[i]) == to_integer(total) + to_integer((int32)bytes[i]);
+                    to_integer(total) == prefix(bytes, i);
+                    prefix(bytes, i + 1u64) == prefix(bytes, i) + to_integer((int32)bytes[i]);
+                }
+            }
             have 0 <= to_integer(total + (int32)bytes[i]) by auto;
-            have to_integer(total + (int32)bytes[i]) <= 255 * to_integer(i + 1u64) by auto;
+            have i <= 1000u64 by { arithmetic() using { i <= bytes.len(); bytes.len() <= 1000u64; } }
+            have to_integer(i) <= 1000 by {
+                apply(uint64_less_equal_to_integer(i, 1000u64)) using { i <= 1000u64; }
+            }
+            have to_integer(i) + 1 <= 18446744073709551615 by {
+                arithmetic() using { to_integer(i) <= 1000; }
+            }
+            have to_integer(i + 1u64) == to_integer(i) + 1 by {
+                apply(uint64_add_to_integer(i, 1u64)) using { to_integer(i) + 1 <= 18446744073709551615; }
+            }
+            have to_integer((int32)bytes[i]) <= 255 by {
+                apply(int32_less_equal_to_integer((int32)bytes[i], 255)) using { 255 >= (int32)bytes[i]; }
+            }
+            have to_integer(total + (int32)bytes[i]) <= 255 * to_integer(i + 1u64) by {
+                arithmetic() using {
+                    to_integer(total) <= 255 * to_integer(i);
+                    to_integer((int32)bytes[i]) <= 255;
+                    to_integer(total + (int32)bytes[i]) == to_integer(total) + to_integer((int32)bytes[i]);
+                    to_integer(i + 1u64) == to_integer(i) + 1;
+                }
+            }
             execute_until(assignment(i, 1));
             step();
             have i <= bytes.len();
