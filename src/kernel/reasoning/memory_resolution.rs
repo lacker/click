@@ -4341,6 +4341,7 @@ fn one_element_gap_separates_bytes(
         // recursively start another history walk. Use recorded order evidence;
         // unknown geometry is left to the complete range-separation checks.
         assumptions.exact_condition_value(&condition) == Some(true)
+            || assumptions.proves_recorded_signed_order(low, high, true)
     };
     let lower_access_bytes = if strictly_below(&left_index, &right_index) {
         left_bytes

@@ -2,6 +2,84 @@ use super::*;
 use crate::kernel::equality_graph::{Int32AtomClass, Int32MergeToken};
 
 impl PureFactContext {
+    /// Follow only written signed-order edges filed under the selected
+    /// endpoint. No equality transport, arithmetic search or memory-history
+    /// query participates. Retain provenance only for the successful path.
+    pub(in crate::kernel) fn proves_recorded_signed_order(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        let start = (left.clone(), false);
+        let mut parents = BTreeMap::from([(start.clone(), None)]);
+        let mut stack = vec![start];
+        while let Some(state) = stack.pop() {
+            let (current, strict_so_far) = &state;
+            crate::instrumentation::record_deterministic_work(1);
+            if crate::kernel::assumptions::reasoning_interrupted() {
+                return false;
+            }
+            if current == right && (!require_strict || *strict_so_far) {
+                let mut cursor = &state;
+                while let Some(Some((previous, premise))) = parents.get(cursor) {
+                    record_implicit_reasoning_provenance(self, premise);
+                    cursor = previous;
+                }
+                return true;
+            }
+            let Some(bounds) = self.signed_order_bounds.get(current) else {
+                continue;
+            };
+            for ((lower, upper, strict, outgoing), _) in bounds.iter() {
+                crate::instrumentation::record_deterministic_work(1);
+                if !outgoing || lower != current {
+                    continue;
+                }
+                let next = (upper.clone(), *strict_so_far || *strict);
+                if parents.contains_key(&next) {
+                    continue;
+                }
+                // The index normalizes direction and polarity. Recover the
+                // exact written premise before retaining a successful path.
+                let positive = if *strict {
+                    ConditionTerm::signed_less_than(lower.clone(), upper.clone())
+                } else {
+                    ConditionTerm::signed_less_equal(lower.clone(), upper.clone())
+                };
+                let reversed = if *strict {
+                    ConditionTerm::signed_greater_than(upper.clone(), lower.clone())
+                } else {
+                    ConditionTerm::signed_greater_equal(upper.clone(), lower.clone())
+                };
+                let negative = if *strict {
+                    ConditionTerm::signed_less_equal(upper.clone(), lower.clone())
+                } else {
+                    ConditionTerm::signed_less_than(upper.clone(), lower.clone())
+                };
+                let negative_reversed = if *strict {
+                    ConditionTerm::signed_greater_equal(lower.clone(), upper.clone())
+                } else {
+                    ConditionTerm::signed_greater_than(lower.clone(), upper.clone())
+                };
+                let premise = [
+                    (positive, true),
+                    (reversed, true),
+                    (negative, false),
+                    (negative_reversed, false),
+                ]
+                .into_iter()
+                .find(|(condition, value)| self.condition_facts.get(condition) == Some(value))
+                .map(|(condition, value)| Proposition::ConditionIs(condition, value));
+                if let Some(premise) = premise {
+                    parents.insert(next.clone(), Some((state.clone(), premise)));
+                    stack.push(next);
+                }
+            }
+        }
+        false
+    }
+
     #[cfg(test)]
     /// Whether one recorded strict order fact separates `left` from `right`
     /// directly (`left < right` or `right < left`, under either term or its

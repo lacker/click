@@ -5232,6 +5232,7 @@ fn preliminary_byte_gap_uses_only_selected_recorded_order() {
             crate::kernel::LoadKind::Bits32,
         )
     };
+    let middle = index(2);
     let left_index = index(0);
     let right_index = index(1);
     let at = |index: &Bitvector32Term| Pointer {
@@ -5240,7 +5241,7 @@ fn preliminary_byte_gap_uses_only_selected_recorded_order() {
     };
     let left = at(&left_index);
     let right = at(&right_index);
-    let order = ConditionTerm::signed_less_than(left_index, right_index);
+    let order = ConditionTerm::signed_less_than(left_index.clone(), right_index.clone());
     let mut baseline_work = None;
     for size in [0u64, 16, 64, 256] {
         let mut context = PureFactContext::new();
@@ -5256,6 +5257,19 @@ fn preliminary_byte_gap_uses_only_selected_recorded_order() {
         let ordered = context.clone().assume_condition(order.clone(), true);
         let withdrawn = ordered.without_exact_fact(&Proposition::ConditionIs(order.clone(), true));
         let reversed = context.clone().assume_condition(order.clone(), false);
+        let first_edge = Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(left_index.clone(), middle.clone()),
+            true,
+        );
+        let second_edge = Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(middle.clone(), right_index.clone()),
+            true,
+        );
+        let chained = context
+            .clone()
+            .assume_proposition(first_edge.clone())
+            .assume_proposition(second_edge);
+        let broken = chained.without_exact_fact(&first_edge);
         let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
             assert_eq!(
                 access_byte_overlap(&left, 4, &right, 8, &context),
@@ -5283,10 +5297,18 @@ fn preliminary_byte_gap_uses_only_selected_recorded_order() {
                 access_byte_overlap(&left, 4, &right, 8, &reversed),
                 AccessByteOverlap::Unknown
             );
+            assert_eq!(
+                access_byte_overlap(&left, 4, &right, 8, &chained),
+                AccessByteOverlap::Separate
+            );
+            assert_eq!(
+                access_byte_overlap(&left, 4, &right, 8, &broken),
+                AccessByteOverlap::Unknown
+            );
         });
         let baseline = *baseline_work.get_or_insert(work);
         assert!(
-            work <= baseline + 8 && work <= 128,
+            work <= baseline + 8 && work <= 256,
             "unrelated order context caused {work} work at size {size} (baseline {baseline})"
         );
     }
