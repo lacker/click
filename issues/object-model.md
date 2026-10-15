@@ -318,3 +318,14 @@ and all four proof modes; 220 related controls pass, including deterministic
 multi-size lookup and rejection controls. This is an archive checkpoint, not an
 upstream activation. The adjacent refold-and-free reduction still rejects exact
 allocation-spelling lookup, and the original vector comparison remains open.
+
+The adjacent refold-and-free reduction is now repaired as well: selected read
+history discovers the held allocation owner, full pointer-value equality checks
+it, and retirement uses its original coordinates. The native-input witness is
+retired along with the allocation. Both return and free reductions pass all four
+proof modes; 312 related controls and 90 transfer/proof-execution controls pass.
+The original two-call reduction still fails its later allocation fold after
+`advance`; the original vector still fails after modular push. Investigate
+body-certified preservation of an unchanged C pointer field next, without
+turning numeric postcondition equality or C layout metadata into native object
+authority. The last normal archive audit remains 42/52; no new audit is claimed.

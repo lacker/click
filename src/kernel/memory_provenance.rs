@@ -3464,6 +3464,40 @@ fn resolve_pointer_read_carrier(
     allow_opaque: bool,
     allow_stored_legacy: bool,
 ) -> Option<CPointerValue> {
+    resolve_pointer_read_carrier_with_candidates(
+        pointer,
+        assumptions,
+        allow_opaque,
+        allow_stored_legacy,
+        None,
+    )
+}
+
+/// Candidate discovery follows only the queried complete read's selected
+/// history. These names are not equality evidence: consumers must check the
+/// selected owner independently under their retained assumptions.
+pub(in crate::kernel) fn loaded_pointer_read_candidate_ids(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> BTreeSet<PointerLoadId> {
+    let mut candidates = BTreeSet::new();
+    let _ = resolve_pointer_read_carrier_with_candidates(
+        pointer,
+        assumptions,
+        true,
+        false,
+        Some(&mut candidates),
+    );
+    candidates
+}
+
+fn resolve_pointer_read_carrier_with_candidates(
+    pointer: &CPointerValue,
+    assumptions: &PureFactContext,
+    allow_opaque: bool,
+    allow_stored_legacy: bool,
+    candidates: Option<&mut BTreeSet<PointerLoadId>>,
+) -> Option<CPointerValue> {
     // Native carrier authentication asks about the complete selected read,
     // rather than the planner's conservative load spelling. Metadata-only
     // forgetting and a separated write may preserve that read; each crossed
@@ -3482,7 +3516,13 @@ fn resolve_pointer_read_carrier(
         explicit: EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true)),
         bridging: EXTENDED_DAG_BRIDGING.with(|flag| flag.replace(true)),
     };
-    resolve_pointer_read_carrier_checked(pointer, assumptions, allow_opaque, allow_stored_legacy)
+    resolve_pointer_read_carrier_checked(
+        pointer,
+        assumptions,
+        allow_opaque,
+        allow_stored_legacy,
+        candidates,
+    )
 }
 
 fn resolve_pointer_read_carrier_checked(
@@ -3490,6 +3530,7 @@ fn resolve_pointer_read_carrier_checked(
     assumptions: &PureFactContext,
     allow_opaque: bool,
     allow_stored_legacy: bool,
+    mut candidates: Option<&mut BTreeSet<PointerLoadId>>,
 ) -> Option<CPointerValue> {
     let mut current = pointer.clone();
     let mut pending = Vec::new();
@@ -3500,6 +3541,9 @@ fn resolve_pointer_read_carrier_checked(
         }
         crate::instrumentation::record_deterministic_work(1);
         let displacement = paired_pointer_load_displacement(&current, origin)?;
+        if let Some(candidates) = candidates.as_deref_mut() {
+            candidates.insert(origin.id());
+        }
         let memory = canonical_load_projection_source(origin.memory(), origin.address())
             .unwrap_or_else(|| origin.memory().clone());
         let cell = memory_dag_cell_source(
@@ -3515,6 +3559,20 @@ fn resolve_pointer_read_carrier_checked(
         // Untyped hops and a real nested lookup still supply no certificate.
         if !cell.checks_walk_from(&memory, origin.address(), C_POINTER_BYTE_WIDTH, assumptions) {
             return None;
+        }
+        if let Some(candidates) = candidates.as_deref_mut() {
+            let path = match &cell {
+                MemoryDagCell::Stored { path, .. } | MemoryDagCell::Unwritten { path, .. } => path,
+            };
+            for memory in std::iter::once(&memory)
+                .chain(path.iter().map(|hop| &hop.derived))
+                .chain(std::iter::once(cell.node()))
+            {
+                crate::instrumentation::record_deterministic_work(1);
+                candidates.insert(
+                    PointerLoadIdentity::new(memory.clone(), origin.address().clone()).id(),
+                );
+            }
         }
         let stored = match cell.resolved_value(origin.address(), LoadKind::Pointer) {
             Some(CValue::Pointer(stored)) => Some(stored),

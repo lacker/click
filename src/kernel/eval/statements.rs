@@ -2119,13 +2119,32 @@ fn execute_c_heap_free_paths(
             continue;
         }
 
+        // Select an existing owner through the resource index, then check its
+        // complete pointer value. Numeric address equality is insufficient to
+        // exchange an allocation identity. Retire the owner's original address
+        // coordinates rather than creating a second spelling of its storage.
+        let query = CResourceFact::own_allocation_value(pointer.clone(), 0);
         let declared_allocation = state
             .resources
-            .facts()
-            .iter()
-            .filter_map(|fact| fact.allocation())
-            .find(|(base, _)| **base == *pointer.pointer())
-            .map(|(_, bytes)| bytes.clone());
+            .direct_match_candidates_for(&query, &effective_assumptions)
+            .into_iter()
+            .filter_map(CResourceFact::allocation_value)
+            .find(|(base, _)| {
+                crate::kernel::reasoning::c_values_proven_equal_for_memory_resolution(
+                    &CValue::Pointer((*base).clone()),
+                    &CValue::Pointer(pointer.clone()),
+                    &effective_assumptions,
+                )
+            });
+        let pointer = declared_allocation
+            .map(|(base, _)| {
+                base.clone()
+                    .with_type(pointer.c_type())
+                    .with_pointee_constant(pointer.pointee_constant())
+                    .with_pointee_volatile(pointer.pointee_volatile())
+            })
+            .unwrap_or(pointer);
+        let declared_allocation = declared_allocation.map(|(_, bytes)| bytes.clone());
         let element_width = pointer
             .c_type()
             .pointee_type()

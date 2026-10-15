@@ -2487,3 +2487,188 @@ fn an_unplaced_heap_store_keeps_the_elements_it_may_alias_initialized() {
         "a never-written element stays uninitialized"
     );
 }
+
+#[test]
+fn free_selects_framed_owner_through_intermediate_read_names() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let field = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let read = |memory: &CMemory, address: &Pointer| {
+        let memory = intern_c_memory_ref(memory);
+        let variable = crate::kernel::eval::load_variable_for_exact_cell(
+            &memory,
+            address,
+            LoadKind::Pointer,
+            8,
+        );
+        CPointerValue::new(
+            Pointer::loaded(
+                address.block.clone(),
+                Bitvector32Term::Variable(variable),
+                4,
+            ),
+            CType::Int32Pointer,
+        )
+        .with_designation(PointerDesignation::Loaded(PointerLoadIdentity::new(
+            memory,
+            address.clone(),
+        )))
+    };
+    let initial = CMemory::new();
+    let initial_read = read(&initial, &field);
+    let first = initial.store(initial_read.pointer().clone(), int32(1));
+    let owner = read(&first, &field);
+    let second = first.store(owner.pointer().clone(), int32(2));
+    let current = read(&second, &field);
+    let descriptor = CMemoryRange::new(field.clone(), 0.into(), 2.into());
+    let backing = CMemoryRange::new(owner.pointer().clone(), 0.into(), 4.into());
+    let separate = |left: CMemoryRange, right: CMemoryRange| Proposition::CResourceSeparate {
+        left: Box::new(CResource::Memory(left)),
+        right: Box::new(CResource::Memory(right)),
+    };
+    let facts = PureFactContext::new()
+        .assume_proposition(separate(descriptor.clone(), backing.clone()))
+        .assume_proposition(separate(
+            descriptor,
+            CMemoryRange::new(initial_read.pointer().clone(), 0.into(), 4.into()),
+        ));
+    assert!(
+        crate::kernel::reasoning::c_values_proven_equal_for_memory_resolution(
+            &CValue::Pointer(owner.clone()),
+            &CValue::Pointer(current.clone()),
+            &facts
+        )
+    );
+    let mut samples = Vec::new();
+    for count in [0, 16, 64, 256] {
+        let mut resources = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_allocation_value(owner.clone(), 16))
+            .unchecked_with_fact(CResourceFact::own_memory(backing.clone()));
+        for index in 0..count {
+            resources = resources.unchecked_with_fact(CResourceFact::own_allocation(
+                Pointer {
+                    block: PointerBlock::Heap(996_000 + index),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                16,
+            ));
+        }
+        let state = CState::new()
+            .with_memory(
+                second
+                    .clone()
+                    .with_heap_allocation_claim(owner.pointer().clone(), 16)
+                    .unwrap()
+                    .with_native_input_span(
+                        owner.clone(),
+                        CType::Int32,
+                        IntegerTerm::constant_i64(4).into(),
+                    )
+                    .unwrap(),
+            )
+            .with_resource_context(resources)
+            .with_local("p", CValue::Pointer(current.clone()));
+        let witnessed = state
+            .memory()
+            .loaded_input_coordinate_carrier(&current, &facts)
+            .expect("the same selected history finds the live native witness");
+        assert_eq!(witnessed.pointer(), owner.pointer());
+        let (paths, work) = crate::instrumentation::measure_deterministic_work(|| {
+            execute_c_statement_paths(
+                &state,
+                &c_heap_free(c_variable("p")),
+                &facts,
+                CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap()
+        });
+        let [
+            CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(after),
+                ..
+            },
+        ] = paths.as_slice()
+        else {
+            panic!("complete framed owner should free: {paths:?}");
+        };
+        assert!(
+            after
+                .memory()
+                .is_deallocated_heap_address(owner.pointer(), &facts)
+        );
+        assert_eq!(after.resources().facts().len(), count as usize);
+        assert!(after.memory().native_input_span(&owner).is_none());
+        assert!(
+            after
+                .memory()
+                .loaded_input_coordinate_carrier(&current, &facts)
+                .is_none()
+        );
+        samples.push(work);
+        let free = |state: &CState| {
+            execute_c_statement_paths(
+                state,
+                &c_heap_free(c_variable("p")),
+                &facts,
+                CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
+                &mut ExecutionBudget::default(),
+            )
+            .unwrap()
+        };
+        let rejects = |paths: Vec<CStatementExecutionPath>| {
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| !matches!(&path.outcome, CStatementOutcome::Normal(_))),
+                "invalid free accepted: {paths:?}"
+            )
+        };
+        rejects(free(
+            &after
+                .as_ref()
+                .clone()
+                .with_local("p", CValue::Pointer(current.clone())),
+        ));
+        rejects(free(
+            &state.clone().with_local(
+                "p",
+                CValue::Pointer(
+                    current
+                        .clone()
+                        .with_pointer(current.pointer().offset_by_bytes(4)),
+                ),
+            ),
+        ));
+        let partial = second.clone().store(field.offset_by_bytes(4), int32(0));
+        rejects(free(
+            &state
+                .clone()
+                .with_local("p", CValue::Pointer(read(&partial, &field))),
+        ));
+        let unrelated = read(&second, &field.offset_by_bytes(40));
+        let numeric = facts.clone().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(unrelated.pointer().clone(), owner.pointer().clone()),
+            true,
+        ));
+        let paths = execute_c_statement_paths(
+            &state.clone().with_local("p", CValue::Pointer(unrelated)),
+            &c_heap_free(c_variable("p")),
+            &numeric,
+            CExecutionContext::execute_bodies(&CExecutionEnvironment::new()),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        rejects(paths);
+        let loaned = state
+            .clone()
+            .with_loan_ledger(Some(active_heap_memory_loan(backing.clone())));
+        rejects(free(&loaned));
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 32),
+        "{samples:?}"
+    );
+}

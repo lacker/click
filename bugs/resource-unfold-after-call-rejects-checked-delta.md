@@ -71,8 +71,37 @@ provenance, substitution and resource-delta controls pass. The new deterministic
 regression covers unrelated row counts 0/16/64/256, three storage-address forms,
 offsets, type/qualifier checks, partial overwrites, ambiguous inputs and retirement.
 
-The [refold-and-free reduction](resource-unfold-after-call-rejects-checked-delta/refold-and-free.md)
-still rejects `free`: allocation discovery requires an exact raw pointer spelling.
-Keep this failure separate from the repaired prefix and checked-unfold failures.
+At checkpoint `576012956`, the [refold-and-free reduction](resource-unfold-after-call-rejects-checked-delta/refold-and-free.md)
+still rejected `free`: allocation discovery required an exact raw pointer spelling.
+The follow-up below repairs that separate lookup failure.
 The original vector and the ten-failure archive audit remain unresolved; no
 new green archive verdict or upstream native-model activation is claimed.
+
+## Selected owner retirement repaired
+
+The allocation token's source read and the `free` argument pass the existing
+complete-pointer-value comparison under the current separation facts. However,
+the resource index omitted the token: publication indexed an unconditional
+endpoint, while the query normalized past it under scoped facts. Candidate
+discovery now includes intermediate read names from the selected complete-cell
+walk. It scans no unrelated resources and grants no authority; the selected
+owner still must pass the full-value comparison. Execution retires that owner's
+original coordinates, consumes its allocation token and complete backing
+ownership, and checks active loans and lifetime retirement as before.
+
+Native-input lookup shares that selected-history discovery. An ambiguous bucket
+is refused by its size without copying its members. The conditional-frame
+regression also checks that retirement removes the selected native witness.
+
+The refold-and-free reduction verifies all three proofs and passes fresh,
+expanded, rewritten and retained checks with a rebuilt library; the return
+reduction still passes all four modes. All 312 selected resource, heap, native
+input, span, provenance, substitution and pointer-result controls pass, as do
+90 pointer-store, independent-entry and proof-execution controls. The new
+0/16/64/256 unrelated-token regression rejects interior pointers, numeric-only
+aliases, partial upper-half overwrites, double frees and active loans.
+
+The original two-call reduction now reaches its later allocation fold after
+`advance`, which still loses the full field value across that modular call. The
+original vector still rejects its allocation fold. Neither this repair nor the
+passing reductions establish archive activation or a new normal-audit result.

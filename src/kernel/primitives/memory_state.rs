@@ -4156,15 +4156,25 @@ impl CMemory {
         pointer: &CPointerValue,
         assumptions: &PureFactContext,
     ) -> Option<CPointerValue> {
-        let canonical = crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+        let mut candidates = BTreeSet::new();
+        for read in crate::kernel::memory_provenance::loaded_pointer_read_candidate_ids(
             pointer,
             assumptions,
-        )?;
-        let Some(PointerDesignation::Loaded(origin)) = canonical.designation() else {
-            return None;
-        };
-        crate::instrumentation::record_deterministic_work(1);
-        let candidates = self.heap.native_record_input_reads.get(&origin.id())?;
+        ) {
+            crate::instrumentation::record_deterministic_work(1);
+            if let Some(found) = self.heap.native_record_input_reads.get(&read) {
+                // Refuse an ambiguous bucket without copying its members.
+                if found.len() > 1 {
+                    return None;
+                }
+                if let Some(identity) = found.iter().next() {
+                    candidates.insert(identity.clone());
+                    if candidates.len() > 1 {
+                        return None;
+                    }
+                }
+            }
+        }
         if candidates.len() != 1 {
             return None;
         }

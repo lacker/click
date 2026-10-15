@@ -2647,6 +2647,14 @@ impl ResourceContext {
         for read in shape_pointer_reads(arguments) {
             read_ids.insert(read);
         }
+        if let Some(AlgebraicValue::C(CValue::Pointer(carrier))) = arguments.first() {
+            read_ids.extend(
+                crate::kernel::memory_provenance::loaded_pointer_read_candidate_ids(
+                    carrier,
+                    assumptions,
+                ),
+            );
+        }
         if let Some(AlgebraicValue::C(CValue::Pointer(carrier))) = arguments.first()
             && let Some(canonical) =
                 crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
@@ -9707,6 +9715,11 @@ impl CResourceFact {
     }
 
     pub fn allocation(&self) -> Option<(&Pointer, &Bitvector32Term)> {
+        self.allocation_value()
+            .map(|(base, bytes)| (base.pointer(), bytes))
+    }
+
+    pub(in crate::kernel) fn allocation_value(&self) -> Option<(&CPointerValue, &Bitvector32Term)> {
         let Self::Own(CResource::Token { name, arguments }, _) = self else {
             return None;
         };
@@ -9720,7 +9733,7 @@ impl CResourceFact {
         else {
             return None;
         };
-        Some((base.pointer(), bytes))
+        Some((base, bytes))
     }
 
     pub(in crate::kernel) fn may_refer_to_memory_block(&self, block: &PointerBlock) -> bool {
