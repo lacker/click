@@ -78,3 +78,14 @@ obligation, not a reason to weaken the example or broaden `assumption`.
 The archive also still rejects the later allocation fold described above.
 Keep this report open for recovery activation; do not equate upstream example
 success with closure of those two archive failures.
+
+## More precise split-field reduction
+
+Explicitly proving `0 <= old(owner->len) + 1` lets the archive check the final
+backing-pointer equality across the terminator store. The resource keeps its
+original separate descriptor fields. Explicit stored-value and unfolded
+terminator facts then check, but the subsequent simple resource fold exhausts
+its deterministic work budget. The
+[reduced fold defect](split-descriptor-fold-exhausts-simple-budget.md) preserves
+this next blocker and the profile. No claim that the full archive project
+passes, and no new full-audit count, follows from this reduction.

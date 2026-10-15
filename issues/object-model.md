@@ -298,3 +298,11 @@ projects verify. At this recovery checkpoint, that pointer equality still
 rejects after the zero store, and vector still rejects its later allocation
 fold. Keep reducing these archive-specific failures; upstream control success
 does not activate this branch or change the 41/52 archive audit.
+
+The split-field string reduction now identifies a narrower next blocker:
+explicit append-index bounds and stored-value proofs check, but the subsequent
+simple fold exhausts its work budget. Reduce and fix the
+[fold performance defect](../bugs/split-descriptor-fold-exhausts-simple-budget.md)
+before continuing the archive's string proof or activation. Keep the original
+C, split-field resource and existing budgets; the vector allocation fold remains
+separate.
