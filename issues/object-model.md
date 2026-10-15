@@ -648,3 +648,24 @@ the failed claim. Both selected call-trace controls pass on the archive; all
 73 active diagnostic controls pass upstream, with nine ignored. The unchanged
 refcount trace is now available and records the post-retain read equal to
 `1 + amount`; its functional failure remains open. Keep the 46/52 verdict.
+
+The restored refcount trace confirms its failing goal and the post-call value
+fact use the exact same read. The amount bounds and overflow premise are also
+present. A direct rewrite of `obj->refs` to `1 + amount`, followed by
+`arithmetic() using` those existing premises, closes the comparison. This is a
+bounded auto-search miss; the C, contracts, resource definitions and object
+model are unchanged. The original pipeline passes fresh, expanded, rewritten
+and retained verification with the explicit proof.
+
+The normal archive audit now passes **47/52** in 146.33 seconds, restoring
+refcount with no new failing project. The five remaining failures are arena,
+owned-vector, rbtree-augmented, rust-byte-sum and rust-chunks-exact. Concurrent
+local compilation affected this run's timing; the deterministic scaling
+controls remain the performance evidence. This is not a full green gate or
+native-feature activation.
+
+For the rbtree open failure, target `rb_erase_augmented.contract` through the
+selected-proof API. A broad CLI invocation also checks the earlier
+`__rb_rotate_set_parents` helper, which reaches the separately documented
+integer-to-pointer origin refusal before the selected trace target. That
+expected helper boundary is not a missing trace of the later open failure.
