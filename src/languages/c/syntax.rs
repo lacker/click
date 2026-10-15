@@ -1,5 +1,7 @@
 //! Tiny C0 syntax import for the executable C model.
 
+pub(crate) mod walk;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::source::{SourcePosition, SourcePositionCursor};
@@ -3265,6 +3267,48 @@ pub struct C0SyntaxError {
     position: Option<SourcePosition>,
 }
 
+/// Complete executable row selectors only when their original global declaration
+/// had an unknown outer bound. Source-resolved names distinguish shadowing locals.
+/// The linker has checked declaration compatibility; inner dimensions and scalar
+/// types must still match here, and the kernel authenticates the full final shape.
+fn complete_linked_array_rows(
+    body: &mut C0Statement,
+    declared: &BTreeMap<String, C0GlobalArray>,
+    linked: &BTreeMap<String, C0GlobalArray>,
+) {
+    let mut expressions = Vec::new();
+    let mut statements = vec![body];
+    loop {
+        if let Some(statement) = statements.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            walk::child_statements_mut(statement, &mut expressions, &mut statements);
+        } else if let Some(expression) = expressions.pop() {
+            crate::instrumentation::record_deterministic_work(1);
+            if let C0Expression::ArrayRowAddress {
+                array,
+                element_type,
+                shape,
+                ..
+            } = expression
+                && let C0Expression::Variable(name) = array.as_ref()
+                && let Some(original) = declared.get(name)
+                && original.is_incomplete()
+                && let Some(completed) = linked.get(name)
+                && original.element_type() == *element_type
+                && completed.element_type() == *element_type
+                && let Some(completed_shape) = completed.shape()
+                && shape.len() == completed_shape.len()
+                && shape[1..] == completed_shape[1..]
+            {
+                *shape = std::sync::Arc::from(completed_shape);
+            }
+            walk::child_expressions_mut(expression, &mut expressions, &mut statements);
+        } else {
+            break;
+        }
+    }
+}
+
 impl C0Function {
     /// An explicitly declared one-call proof, represented with ordinary C AST nodes.
     pub(crate) fn with_proof_body(mut self, body: C0Statement) -> Self {
@@ -3556,6 +3600,7 @@ impl C0Function {
         mut self,
         global_arrays: BTreeMap<String, C0GlobalArray>,
     ) -> Self {
+        complete_linked_array_rows(&mut self.body, &self.global_arrays, &global_arrays);
         self.global_arrays = global_arrays;
         self
     }
@@ -24204,5 +24249,102 @@ mod unsigned_pointer_record_value_tests {
         let parameter = &function.parameters()[0];
         assert!(parameter.is_struct_value());
         assert_eq!(parameter.struct_layout().unwrap().size_bytes(), 16);
+    }
+}
+
+#[cfg(test)]
+mod linked_array_row_tests {
+    use super::*;
+
+    fn row_shapes(function: &C0Function) -> Vec<Vec<u32>> {
+        let mut shapes = Vec::new();
+        let mut expressions = Vec::new();
+        let mut statements = vec![function.body()];
+        loop {
+            if let Some(statement) = statements.pop() {
+                walk::child_statements(statement, &mut expressions, &mut statements);
+            } else if let Some(expression) = expressions.pop() {
+                if let C0Expression::ArrayRowAddress { shape, .. } = expression {
+                    shapes.push(shape.to_vec());
+                }
+                walk::child_expressions(expression, &mut expressions, &mut statements);
+            } else {
+                return shapes;
+            }
+        }
+    }
+
+    fn parsed(source: &str) -> C0Function {
+        parse_functions(source).unwrap().remove(0)
+    }
+
+    #[test]
+    fn linked_array_rows_complete_only_an_incomplete_matching_global() {
+        let incomplete =
+            parsed("extern const int32 weights[][2]; int32 probe() { return weights[1][1]; }");
+        assert_eq!(row_shapes(&incomplete), vec![vec![1, 2]]);
+        let complete =
+            parsed("const int32 weights[2][2] = {{1}, {2, 3}}; int32 probe() { return 0; }");
+        let linked = incomplete
+            .clone()
+            .with_global_arrays(complete.global_arrays.clone());
+        assert_eq!(row_shapes(&linked), vec![vec![2, 2]]);
+        for source in [
+            "const int32 weights[2][3] = {{1}, {2, 3}}; int32 probe() { return 0; }",
+            "const uint32 weights[2][2] = {{1}, {2, 3}}; int32 probe() { return 0; }",
+        ] {
+            let incompatible = parsed(source);
+            let unchanged = incomplete
+                .clone()
+                .with_global_arrays(incompatible.global_arrays);
+            assert_eq!(
+                row_shapes(&unchanged),
+                vec![vec![1, 2]],
+                "the linker must reject incompatible declarations, not repair their selectors"
+            );
+        }
+        let already_bounded =
+            parsed("extern const int32 weights[1][2]; int32 probe() { return weights[0][1]; }");
+        assert_eq!(
+            row_shapes(&already_bounded.with_global_arrays(complete.global_arrays)),
+            vec![vec![1, 2]]
+        );
+    }
+
+    #[test]
+    fn linked_array_rows_keep_a_shadowing_locals_shape() {
+        let function = parsed(
+            "extern const int32 weights[][2]; int32 probe() { int32 weights[1][3] = {{4, 5, 6}}; return weights[0][2]; }",
+        );
+        let complete =
+            parsed("const int32 weights[2][2] = {{1}, {2, 3}}; int32 probe() { return 0; }");
+        let linked = function.with_global_arrays(complete.global_arrays);
+        let shapes = row_shapes(&linked);
+        assert!(!shapes.is_empty());
+        assert!(shapes.iter().all(|shape| shape == &[1, 3]), "{shapes:?}");
+    }
+
+    #[test]
+    fn linked_array_row_completion_work_ignores_unrelated_global_arrays() {
+        let mut samples = Vec::new();
+        for count in [0, 16, 64, 256] {
+            let function =
+                parsed("extern const int32 weights[][2]; int32 probe() { return weights[1][1]; }");
+            let mut source = "const int32 weights[2][2] = {{1}, {2, 3}};\n".to_string();
+            for index in 0..count {
+                source.push_str(&format!("int32 unrelated_{index}[2][2];\n"));
+            }
+            source.push_str("int32 probe() { return 0; }");
+            let definitions = parsed(&source).global_arrays;
+            let (linked, work) = crate::instrumentation::measure_deterministic_work(|| {
+                function.with_global_arrays(definitions)
+            });
+            assert_eq!(row_shapes(&linked), vec![vec![2, 2]]);
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "{samples:?}"
+        );
     }
 }

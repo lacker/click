@@ -14,14 +14,15 @@
 //! pointer literal in an imported body — is simply absent from
 //! the result, which is the same as being addressable.
 //!
-//! The two structural walks below (`child_expressions`, `child_statements`)
+//! The shared structural walks in `syntax::walk`
 //! are the only exhaustive matches: a syntax form added later must be added to
 //! them, and until it is, the compiler refuses to build rather than letting
 //! the pass walk past it.
 
 use std::collections::BTreeSet;
 
-use super::syntax::{C0Expression, C0Function, C0Statement, C0SwitchCase, C0Type};
+use super::syntax::walk::{child_expressions, child_statements};
+use super::syntax::{C0Expression, C0Function, C0Statement, C0Type};
 
 mod lowered;
 
@@ -249,198 +250,6 @@ fn statement_mentioned_names(statement: &C0Statement, names: &mut BTreeSet<Strin
     }
     for statement in statements {
         statement_mentioned_names(statement, names);
-    }
-}
-
-/// The immediate subexpressions and substatements of one expression.
-fn child_expressions<'a>(
-    expression: &'a C0Expression,
-    expressions: &mut Vec<&'a C0Expression>,
-    statements: &mut Vec<&'a C0Statement>,
-) {
-    match expression {
-        C0Expression::ScalarUpdate { .. } => {}
-        C0Expression::Void
-        | C0Expression::Variable(_)
-        | C0Expression::FunctionAddress(_)
-        | C0Expression::Int32Literal(_)
-        | C0Expression::UInt8Literal(_)
-        | C0Expression::UInt32Literal(_)
-        | C0Expression::Int64Literal(_)
-        | C0Expression::UInt64Literal(_)
-        | C0Expression::Float32Literal(_)
-        | C0Expression::Float64Literal(_)
-        | C0Expression::SizeOfStruct { .. }
-        | C0Expression::SizeOfUnion { .. }
-        | C0Expression::SizeOfType { .. } => {}
-        C0Expression::Call { arguments, .. } => expressions.extend(arguments.iter()),
-        C0Expression::IndirectCall {
-            function,
-            arguments,
-            ..
-        } => {
-            expressions.push(function);
-            expressions.extend(arguments.iter());
-        }
-        C0Expression::Assignment { value, .. } => expressions.push(value),
-        C0Expression::StatementExpression { body, value, .. } => {
-            statements.push(body);
-            expressions.push(value);
-        }
-        C0Expression::Cast { expression, .. }
-        | C0Expression::FloatNegate(expression)
-        | C0Expression::FloatClassification { expression, .. }
-        | C0Expression::AddressOf(expression)
-        | C0Expression::PointerOffsetBytes {
-            pointer: expression,
-            ..
-        }
-        | C0Expression::MemberAddress {
-            pointer: expression,
-            ..
-        }
-        | C0Expression::Not(expression)
-        | C0Expression::BitwiseNot(expression)
-        | C0Expression::Load(expression)
-        | C0Expression::SequentialRead {
-            target: expression, ..
-        }
-        | C0Expression::AggregateAddress {
-            pointer: expression,
-            ..
-        }
-        | C0Expression::Field {
-            pointer: expression,
-            ..
-        }
-        | C0Expression::UnionField {
-            pointer: expression,
-            ..
-        }
-        | C0Expression::UnionAddress {
-            pointer: expression,
-            ..
-        }
-        | C0Expression::CheckedArrayIndex {
-            index: expression, ..
-        } => expressions.push(expression),
-        C0Expression::Conditional {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            expressions.push(condition);
-            expressions.push(then_branch);
-            expressions.push(else_branch);
-        }
-        C0Expression::SequentialWrite { target, value, .. } => {
-            expressions.push(target);
-            expressions.push(value);
-        }
-        crate::languages::c::syntax::binary_c0_expression!(left, right) => {
-            expressions.push(left);
-            expressions.push(right);
-        }
-    }
-}
-
-/// The immediate subexpressions and substatements of one statement.
-fn child_statements<'a>(
-    statement: &'a C0Statement,
-    expressions: &mut Vec<&'a C0Expression>,
-    statements: &mut Vec<&'a C0Statement>,
-) {
-    match statement {
-        C0Statement::Skip
-        | C0Statement::Break
-        | C0Statement::Continue
-        | C0Statement::Goto { .. }
-        | C0Statement::Declare {
-            initializer: None, ..
-        }
-        | C0Statement::DeclareStructValue { .. } => {}
-        C0Statement::Label { statement, .. } => statements.push(statement),
-        C0Statement::Scope { body } => statements.push(body),
-        C0Statement::Declare {
-            initializer: Some(expression),
-            ..
-        }
-        | C0Statement::Assign { expression, .. } => expressions.push(expression),
-        C0Statement::CallAssign { arguments, .. } | C0Statement::Call { arguments, .. } => {
-            expressions.extend(arguments.iter());
-        }
-        C0Statement::IndirectCall {
-            function,
-            arguments,
-            ..
-        } => {
-            expressions.push(function);
-            expressions.extend(arguments.iter());
-        }
-        C0Statement::HeapAllocate { bytes, .. } => expressions.push(bytes),
-        C0Statement::HeapFree { pointer, .. } => expressions.push(pointer),
-        C0Statement::Assert { condition, .. } => expressions.push(condition),
-        C0Statement::Seq(first, second) => {
-            statements.push(first);
-            statements.push(second);
-        }
-        C0Statement::Return(value, _) => expressions.push(value),
-        C0Statement::Store { pointer, value, .. } => {
-            expressions.push(pointer);
-            expressions.push(value);
-        }
-        C0Statement::SequentialStore { target, value, .. }
-        | C0Statement::AggregateCopy {
-            target,
-            source: value,
-            ..
-        } => {
-            expressions.push(target);
-            expressions.push(value);
-        }
-        C0Statement::Update {
-            target, operand, ..
-        } => {
-            expressions.push(target);
-            expressions.push(operand);
-        }
-        C0Statement::If {
-            condition,
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            expressions.push(condition);
-            statements.push(then_branch);
-            statements.push(else_branch);
-        }
-        C0Statement::While {
-            condition, body, ..
-        }
-        | C0Statement::DoWhile {
-            condition, body, ..
-        } => {
-            expressions.push(condition);
-            statements.push(body);
-        }
-        C0Statement::For {
-            initializer,
-            condition,
-            step,
-            body,
-            ..
-        } => {
-            statements.push(initializer);
-            expressions.push(condition);
-            statements.push(step);
-            statements.push(body);
-        }
-        C0Statement::Switch {
-            expression, cases, ..
-        } => {
-            expressions.push(expression);
-            statements.extend(cases.iter().map(C0SwitchCase::body));
-        }
     }
 }
 

@@ -608,3 +608,33 @@ Ring-buffer is restored with no new failing project. The seven remaining
 failures are arena, multifile-registry, owned-vector, rbtree-augmented, refcount,
 rust-byte-sum and rust-chunks-exact. This remains a recovery checkpoint, not a
 full green gate or activation of native object-model support.
+
+The multifile-registry failure is now attributed to stale executable row
+metadata: a reader of `extern const int32_t weights[][2]` retained the parser's
+placeholder outer dimension after linkage selected the complete two-row
+definition. Complete only row selectors rooted in the source-resolved global
+whose original declaration was incomplete. Require matching scalar type, rank
+and inner dimensions. Shadowing locals and complete declarations are unchanged;
+the kernel still authenticates the exact complete shape and row bound.
+
+Immutable and mutable C AST child walks now share one exhaustive definition.
+The completion pass visits source nodes and indexed declarations, not unrelated
+global tables per node. Three completion controls pass, including incompatible
+metadata, shadowing and four-size ambient-global scaling. All ten selected
+addressability controls and eleven selected array-row controls pass, retaining
+the existing strict shape and sibling-row rejections.
+
+The reduced reader and original registry result proof pass fresh, expanded,
+rewritten and retained verification; all five original registry project proofs
+also verify. Three Markdown controls cover the positive reader, a shadowing
+local and a row beyond the actual definition. They pass on both trees; master
+refuses the last case for missing read authority, while the archive rejects the
+invalid row before that access. The normal archive audit now passes **46/52**
+in 106.44 seconds, restoring multifile-registry with no new failing project.
+Remaining projects: arena, owned-vector, rbtree-augmented, refcount, rust-byte-sum
+and rust-chunks-exact. This is not a full green gate or native activation.
+
+The refcount diagnostic follow-up is preserved in
+`bugs/archive-refcount-failure-loses-proof-trace.md`: the original failure after
+a modular call and control-resource open loses its checked trace prefix. Repair
+or reduce that recording defect before guessing at the missing count relation.
