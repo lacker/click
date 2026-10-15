@@ -687,3 +687,10 @@ cell address and unchanged snapshot. Two kernel controls pass, including
 wrong-cell, narrow-load, arbitrary-symbol and displaced-pointer refusals.
 The original rbtree entry-module proof now passes `open` and stops later at
 its result equality; retain **47/52** until the complete audit is rerun.
+
+Adding explicit references to the callee's existing result and inorder facts
+completes the original red-black tree entry proofs without changing C or any
+contract. The normal archive audit now passes **48/52** in 111.13 seconds;
+remaining failures are arena, owned-vector, rust-byte-sum and rust-chunks-exact.
+This remains an entry-module compatibility verdict, not verification of every
+imported helper, a full green gate or native-feature activation.

@@ -42,6 +42,10 @@ void rb_erase_augmented(struct rb_node* node, struct rb_root* root,
         open(erase_callbacks(augment)) {
             mark repair;
             let { whole: whole } = step(__rb_erase_color(rebalance, root, augment->rotate), { c: deficit });
+            have whole.model == erase_flips_red_all_result(at(repair, deficit.model), RbTree::Empty);
+            have erase_leaf_result(old(up.model), rb_color(old(tree.model))) == erase_flips_red_all_result(at(repair, deficit.model), RbTree::Empty);
+            have rb_inorder(whole.model) == rb_inorder(plug(at(repair, deficit.model), RbTree::Empty));
+            have at(repair, deficit.model) == old(up.model);
             execute(); simp();
         }
     } else {
