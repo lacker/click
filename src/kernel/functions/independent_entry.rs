@@ -9,6 +9,70 @@ pub(crate) struct IndependentEntry {
     pub(crate) arguments: Vec<CExpression>,
 }
 
+/// Reproduce only declared C storage observations from an opaque input head.
+/// The resource remains folded and supplies no native object designation.
+fn name_c_composite_input_cells(
+    state: &CState,
+    definition: &CCompositeResourceDefinition,
+    fact: &CResourceFact,
+) -> Option<(CState, Vec<CResourceFact>)> {
+    if state.typed_access_policy() != CTypedAccessPolicy::CAllocatedAccessAllowed
+        || state.memory().has_uninitialized_object_footprints()
+        || fact.owned_quantity() != Some(1)
+        || definition.matched.is_some()
+        || definition.condition().is_some()
+        || !definition
+            .contains()
+            .iter()
+            .any(|spec| spec.declared_storage_type().is_some())
+    {
+        return Some((state.clone(), Vec::new()));
+    }
+    let CResource::Composite { arguments, .. } = fact.resource() else {
+        return None;
+    };
+    let mut scope = state.clone();
+    let mut body_resources = ResourceContext::new();
+    for (formal, actual) in definition.parameters().iter().zip(arguments.iter()) {
+        let value = actual.as_c_value()?;
+        if value.c_type() != formal.c_type() {
+            return None;
+        }
+        scope
+            .locals
+            .set_typed(formal.name().to_string(), value.clone(), formal.c_type());
+    }
+    let source = intern_c_memory_ref(state.memory());
+    let empty = PureFactContext::new();
+    let mut budget = ExecutionBudget::beside_live_state();
+    for spec in definition.contains() {
+        if spec.guard().is_some() || !matches!(spec.term(), CResourceTerm::Memory(_)) {
+            continue;
+        }
+        crate::instrumentation::record_deterministic_work(1);
+        let Ok(Ok(fact)) = evaluate_function_resource_spec(&scope, spec, &empty, &mut budget)
+        else {
+            return None;
+        };
+        let named =
+            name_direct_input_from_source(&scope, spec, &fact, &empty, Some(source.clone()))?;
+        scope.set_memory(named.memory().clone());
+        body_resources = body_resources.unchecked_with_fact(fact.clone());
+        // Earlier clauses supply scratch read authority for a later address
+        // through a pointer field. Keep it out of the returned folded input.
+        scope = scope
+            .clone()
+            .with_resource_context(scope.resources().clone().unchecked_with_fact(fact));
+    }
+    let cores = body_resources
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.core_with_assumptions(&empty))
+        .filter(|fact| fact.memory_view_range().is_some())
+        .collect();
+    Some((state.clone().with_memory(scope.memory().clone()), cores))
+}
+
 fn binder(value: &CValue, ty: CType) -> Option<Variable> {
     match value {
         CValue::Pointer(pointer) => match (&pointer.pointer().block, &pointer.pointer().offset) {
@@ -477,6 +541,7 @@ pub(crate) fn construct(
     entry = native_record_inputs::assume_native_record_specs(&entry, &root_specs, &empty).ok()?;
     state.set_memory(entry.memory().clone());
     let mut budget = ExecutionBudget::beside_live_state();
+    let mut c_input_cores = Vec::new();
     // A supported entry recipe consumes explicit input clauses once, in
     // declaration order. A later prerequisite is unsupported rather than a
     // reason to repeatedly rescan all pending clauses.
@@ -537,6 +602,16 @@ pub(crate) fn construct(
                     .memory()
                     .clone(),
             );
+        } else if let CResource::Composite { name, .. } = fact.resource() {
+            let (named, cores) = name_c_composite_input_cells(
+                &state,
+                interface.composite_resource_definition(name)?,
+                &fact,
+            )?;
+            state = named;
+            if !cores.is_empty() {
+                c_input_cores.push((fact, cores));
+            }
         }
     }
     state = native_record_inputs::c_state_with_assumed_native_record_inputs(
@@ -554,6 +629,29 @@ pub(crate) fn construct(
         .try_compose_with_facts(state.resources().facts().iter().cloned(), &empty)
         .ok()?;
     state = state.with_resource_context(resources);
+    // Source entry attaches the declared one-level read observations to the
+    // exact owned head. Rebuild them after canonical composition, so dropping
+    // that owner also drops its observations. No child owner is installed.
+    for (head, cores) in c_input_cores {
+        let occurrence = *state
+            .resources()
+            .owned_occurrences_for_fact(&head)
+            .first()?;
+        let fresh = cores
+            .into_iter()
+            .filter(|core| !state.resources().contains_exact_representation(core))
+            .collect::<Vec<_>>();
+        let resources = state
+            .resources()
+            .clone()
+            .unchecked_with_supported_facts_from_occurrence_with_memory(
+                occurrence,
+                &head,
+                fresh,
+                state.memory(),
+            );
+        state = state.with_resource_context(resources);
+    }
     // Source entry names inputs beside raw construction outputs only after
     // the kernel has checked the whole declared clause partition. Reconstruct
     // that same stage, using its own premises and one immutable source image.
@@ -813,6 +911,108 @@ mod tests {
         .with_resource_summary(vec![input.clone()], vec![input])
         .with_composite_resource_definitions(vec![definition]);
         (function, vec![CExpression::Value(value)], pointer, head)
+    }
+
+    #[test]
+    fn declared_c_input_observations_are_parametric_and_attached_to_the_owner() {
+        let _session = crate::kernel::VerificationSession::enter();
+        for count in [0, 16, 64, 256] {
+            let (function, arguments, pointer, head) = opaque_input();
+            let definition = CCompositeResourceDefinition::new(
+                "opaque_cell",
+                vec![c_parameter("p", CType::Int32Pointer)],
+                None,
+                false,
+                vec![
+                    CResourceSpec::owned_memory(CMemorySegment::new(
+                        c_variable("p"),
+                        c_int32_literal(0),
+                        c_int32_literal(count),
+                    ))
+                    .with_declared_storage_observation(Some((CType::Int32, count))),
+                ],
+                vec![],
+            );
+            let function = function.with_composite_resource_definitions(vec![definition.clone()]);
+            let entry = construct(&function, &arguments, None, false).unwrap();
+            let premises =
+                crate::kernel::c_function_contract_entry(&entry.caller, &function, &arguments)
+                    .unwrap()
+                    .into_assumptions();
+            assert!(matches(
+                &function,
+                &arguments,
+                &entry.caller,
+                &premises,
+                None
+            ));
+            assert!(
+                entry
+                    .caller
+                    .resources()
+                    .facts()
+                    .iter()
+                    .all(|fact| fact.memory_own_range().is_none()),
+                "observations cannot become child ownership"
+            );
+            if count > 0 {
+                assert!(matches!(
+                    entry.caller.memory().load(&pointer),
+                    CExpressionOutcome::Value(CValue::Int32(_))
+                ));
+                let view = CResourceFact::view_memory(CMemoryRange::new(
+                    pointer.clone(),
+                    0.into(),
+                    count.into(),
+                ));
+                assert!(
+                    entry
+                        .caller
+                        .resources()
+                        .contains_exact_representation(&view)
+                );
+                let retired = entry
+                    .caller
+                    .resources()
+                    .clone()
+                    .without_exact_representation(&head)
+                    .unwrap();
+                assert!(
+                    !retired.contains_exact_representation(&view),
+                    "observations retire with their exact owner"
+                );
+                let specialized = entry.caller.clone().with_memory(
+                    entry
+                        .caller
+                        .memory()
+                        .clone()
+                        .store(pointer.clone(), int32(7)),
+                );
+                assert!(!matches(
+                    &function,
+                    &arguments,
+                    &specialized,
+                    &premises,
+                    None
+                ));
+            }
+            for unsupported in [
+                CResourceFact::view_composite(
+                    "opaque_cell".into(),
+                    vec![CValue::pointer(pointer.clone())],
+                ),
+                CResourceFact::own_quantity(head.resource().clone(), 0.into()),
+                CResourceFact::own_quantity(head.resource().clone(), 2.into()),
+            ] {
+                let state = CState::new().with_resource_context(
+                    ResourceContext::new().unchecked_with_fact(unsupported.clone()),
+                );
+                let (named, cores) =
+                    name_c_composite_input_cells(&state, &definition, &unsupported).unwrap();
+                assert_eq!(named.memory(), state.memory());
+                assert!(cores.is_empty());
+            }
+        }
     }
 
     #[test]

@@ -353,3 +353,22 @@ that independent entry construction does not reconstruct. Keep exact independent
 input checking; resolve the observation protocol rather than trusting caller
 cells or promoting numeric equality. The original-vector result and latest
 42/52 normal audit are unchanged.
+
+The archive now reconstructs declaration-based observations for unconditional,
+single-unit owned C input heads. It evaluates direct memory clauses in order
+with scratch read authority, names their values from one fixed entry snapshot,
+and attaches only read cores to the exact owned occurrence. It does not install
+child ownership or accept caller-specific cell values. Borrowed and quantified
+head recipes remain unsupported.
+
+The comparison exposed frontend naming of an `int32` in the padding between
+`len` and `data`. Field naming now respects the retained declaration's element
+count and complete value width within the physical ownership span. Owned/viewed
+scalar, array-padding and complete-pointer controls pass, including multiple
+sizes. All 98 focused controls and 341 broader kernel/projection controls pass.
+
+The original two-call reduction now passes independent entry matching and
+infers the preservation effect, but stops while applying `advance`: the new
+permission check sees the folded input rather than the existing checked
+precondition observation state. Connect that state to preservation next. No
+full-project four-mode acceptance or new normal-audit count is claimed.
