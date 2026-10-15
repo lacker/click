@@ -349,6 +349,18 @@ separate(memory(range1), memory(range2))
 resource algebra. For owned memory facts, that valid composition rules out
 overlap between the memory ranges.
 
+At a checked execution frontier, a selected fixed-size memory-separation goal
+can use two distinct live owned members, including members opened from different
+resource instances. The held-member lookup shares the address-class resource
+index used for memory accesses, so a transitive pointer equality selects the
+same owner without requiring a redundant direct equality or scanning unrelated
+owners. Selection supplies the live occurrence identity; positive ownership and
+containment of the entire physical byte extent remain required. Two accesses
+inside one owner do not supply the distinct-member observation, and a view
+supplies no owned member. The logical pointer-cell convention used by permission
+lookup does not shorten the physical extent of a separation query. See
+[`held_separation_uses_transitive_pointer_aliases.md`](../../mdtests/held_separation_uses_transitive_pointer_aliases.md).
+
 Click also exposes resource inclusion/decomposition as:
 
 <!-- verified-example: mdtests/composite_resource_composes_token.md -->

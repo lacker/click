@@ -747,3 +747,10 @@ reverted. The next investigation reuses the already-landed upstream held-owner
 address-class selection repair (`a676ba284`), with its scope, width and scaling
 controls; it is not a new ownership rule. No full green gate or activation is
 claimed.
+
+The upstream held-owner address-class repair `a676ba284` is now reconciled into
+the recovery branch, including its transitive-alias scope/physical-width
+controls, four-size scaling check and fixture. All nine selected kernel controls
+and the fixture pass; documentation lint passes with the advisory Vale skip.
+The original arena window fold and owned-vector frame transport still fail.
+This reuses upstream machinery and does not change the **50/52** checkpoint.

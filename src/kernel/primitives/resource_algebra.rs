@@ -5717,6 +5717,40 @@ impl ResourceContext {
         None
     }
 
+    /// The live owner selected by the shared address-class access index.
+    /// Keep its occurrence identity so separation can distinguish independent
+    /// members from two accesses within one member. Equality selects the
+    /// candidate; the physical frame judgment checks its complete byte extent.
+    pub(in crate::kernel) fn owned_memory_member_covering_access(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+        assumptions: &PureFactContext,
+    ) -> Option<(u64, &CMemoryRange)> {
+        if let Some(mut entries) = self.write_access_entries(pointer, byte_width, assumptions) {
+            while let Some(entry) = entries.next() {
+                crate::instrumentation::record_deterministic_work(1);
+                let resource = self.fact(entry);
+                let Some(range) = resource.memory_own_range() else {
+                    continue;
+                };
+                let Some(address) = entries.address(entry) else {
+                    continue;
+                };
+                // Permission lookup uses the historical logical pointer-cell
+                // unit when selecting candidates. Separation needs all physical
+                // bytes, just as the existing held-range/frame judgment does.
+                if resource.has_proven_positive_quantity(assumptions)
+                    && assumptions.kept_range_holds_access(range, &address, byte_width)
+                {
+                    return Some((entry, range));
+                }
+            }
+            return None;
+        }
+        None
+    }
+
     pub fn without_fact(self, fact: &CResourceFact, assumptions: &PureFactContext) -> Option<Self> {
         self.without_fact_delaying_normalization(fact, assumptions)
             .map(|context| context.normalized(assumptions))

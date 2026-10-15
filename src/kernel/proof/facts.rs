@@ -3684,6 +3684,47 @@ mod retained_root_context_tests {
 mod held_separation_tests {
     use super::*;
 
+    #[test]
+    fn held_separation_transitive_alias_uses_the_shared_resource_index() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let mut samples = Vec::new();
+        for size in [16u64, 64, 256, 1024] {
+            let pointer = |index| {
+                let CResource::Memory(range) = cell(index) else {
+                    unreachable!()
+                };
+                range.base().clone()
+            };
+            let link = |a, b| {
+                Proposition::ConditionIs(ConditionTerm::pointer_equal(pointer(a), pointer(b)), true)
+            };
+            let mut facts =
+                ProofFacts::from_ordered(&[link(0, size + 1), link(size + 1, size + 2)]);
+            for index in 0..size {
+                facts = facts.with_fact(link(size + 10 + 2 * index, size + 11 + 2 * index));
+            }
+            let resources = ResourceContext::new_with_equalities(facts.assumptions())
+                .unchecked_with_facts(
+                    (0..size).map(|index| CResourceFact::own(range(index, 0, 6, 4))),
+                );
+            let state = CState::new().with_resource_context(resources);
+            let goal = separation(range(size + 2, 1, 2, 8), range(1, 0, 1, 8));
+            let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert!(
+                    facts
+                        .with_selected_held_resource_separation(&goal, &state)
+                        .contains(&goal)
+                );
+            });
+            samples.push(work);
+        }
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "transitive selected ownership visited unrelated inputs: {samples:?}"
+        );
+    }
+
     fn cell(index: u64) -> CResource {
         CResource::Memory(CMemoryRange::new(
             Pointer {
@@ -3737,6 +3778,61 @@ mod held_separation_tests {
             Bitvector32Term::Constant(end),
             width,
         ))
+    }
+
+    #[test]
+    fn held_separation_uses_transitive_address_classes_without_leaking_scope() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = |index| {
+            let CResource::Memory(range) = cell(index) else {
+                unreachable!()
+            };
+            range.base().clone()
+        };
+        let link = |a, b| {
+            Proposition::ConditionIs(ConditionTerm::pointer_equal(pointer(a), pointer(b)), true)
+        };
+        let first = link(0, 2);
+        let second = link(2, 3);
+        let facts = ProofFacts::from_ordered(&[first.clone(), second]);
+        assert!(
+            facts
+                .assumptions()
+                .pointers_known_equal(&pointer(0), &pointer(3))
+        );
+        let resources = ResourceContext::new_with_equalities(facts.assumptions())
+            .unchecked_with_facts([
+                CResourceFact::own(range(0, 0, 6, 4)),
+                CResourceFact::own(range(1, 0, 3, 8)),
+            ]);
+        let state = CState::new().with_resource_context(resources);
+        let goal = separation(range(3, 1, 2, 8), range(1, 0, 1, 8));
+        assert!(
+            facts
+                .with_selected_held_resource_separation(&goal, &state)
+                .contains(&goal)
+        );
+        let withdrawn = ProofFacts::from_ordered(&[first]);
+        assert!(
+            !withdrawn
+                .with_selected_held_resource_separation(&goal, &state)
+                .contains(&goal)
+        );
+        assert!(
+            facts
+                .with_selected_held_resource_separation(&goal, &state)
+                .contains(&goal)
+        );
+        for refused in [
+            separation(range(3, 0, 1, 8), range(0, 1, 2, 8)),
+            separation(range(3, 2, 4, 8), range(1, 0, 1, 8)),
+        ] {
+            assert!(
+                !facts
+                    .with_selected_held_resource_separation(&refused, &state)
+                    .contains(&refused)
+            );
+        }
     }
 
     #[test]
