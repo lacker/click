@@ -5575,7 +5575,7 @@ pub(super) enum CPointerEffectRoot {
 /// A pointer value stored in a member, distinct from its member address.
 /// The retained nominal layout and declared full-width pointer type are part
 /// of the selector; numeric address equality never authenticates this source.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug)]
 pub(super) struct CPointerFieldSource {
     pub(super) parameter: usize,
     pub(super) layout: Arc<CAggregateLayout>,
@@ -5585,14 +5585,107 @@ pub(super) struct CPointerFieldSource {
     pub(super) pointee_volatile: bool,
 }
 
+impl CPointerFieldSource {
+    fn selection(&self) -> CAggregateMemberSelection {
+        CAggregateMemberSelection {
+            layout: self.layout.clone(),
+            path: self.path.clone(),
+            value_type: self.value_type,
+        }
+    }
+}
+impl PartialEq for CPointerFieldSource {
+    fn eq(&self, other: &Self) -> bool {
+        self.parameter == other.parameter
+            && self.pointee_constant == other.pointee_constant
+            && self.pointee_volatile == other.pointee_volatile
+            && self.selection() == other.selection()
+    }
+}
+impl Eq for CPointerFieldSource {}
+impl Hash for CPointerFieldSource {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.parameter.hash(state);
+        self.selection().hash(state);
+        self.pointee_constant.hash(state);
+        self.pointee_volatile.hash(state);
+    }
+}
+impl Ord for CPointerFieldSource {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.parameter
+            .cmp(&other.parameter)
+            .then_with(|| self.selection().cmp(&other.selection()))
+            .then_with(|| self.pointee_constant.cmp(&other.pointee_constant))
+            .then_with(|| self.pointee_volatile.cmp(&other.pointee_volatile))
+    }
+}
+impl PartialOrd for CPointerFieldSource {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) struct CPointerStoreEffect {
+    /// Present only for a body-checked input-field preservation equation.
+    pub(super) destination_field: Option<CPointerFieldSource>,
     pub(super) destination: CPointerEffectRoot,
     pub(super) destination_path: std::sync::Arc<[String]>,
     pub(super) value_type: CType,
     pub(super) source: CPointerEffectRoot,
     pub(super) source_path: std::sync::Arc<[String]>,
     pub(super) source_field: Option<CPointerFieldSource>,
+}
+
+#[cfg(test)]
+mod pointer_field_source_key_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_field_source_keys_cache_the_declared_layout() {
+        let mut warm_work = Vec::new();
+        for size in [0, 16, 64, 256] {
+            let mut fields = vec![CAggregateField::new("data", 0, CType::Int32Pointer)];
+            fields.extend((0..size).map(|index| {
+                CAggregateField::new(format!("unused{index}"), 8 + index * 4, CType::Int32)
+            }));
+            let layout = Arc::new(CAggregateLayout::new(8 + size * 4, 8, fields));
+            let key = CPointerFieldSource {
+                parameter: 0,
+                layout: layout.clone(),
+                path: vec!["data".into()].into(),
+                value_type: CType::Int32Pointer,
+                pointee_constant: false,
+                pointee_volatile: false,
+            };
+            let digest = |key: &CPointerFieldSource| {
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                key.hash(&mut hash);
+                hash.finish()
+            };
+            assert!(layout.index.0.definition_hash.get().is_none());
+            let cold = digest(&key);
+            assert!(layout.index.0.definition_hash.get().is_some());
+            let (warm, work) = crate::instrumentation::measure_deterministic_work(|| {
+                assert_eq!(key, key.clone());
+                assert_eq!(key.cmp(&key.clone()), std::cmp::Ordering::Equal);
+                digest(&key)
+            });
+            assert_eq!(cold, warm);
+            warm_work.push(work);
+            let mut other = key.clone();
+            other.parameter = 1;
+            assert_ne!(key, other);
+            other = key.clone();
+            other.pointee_constant = true;
+            assert_ne!(key, other);
+        }
+        assert!(
+            warm_work.windows(2).all(|pair| pair[1] <= pair[0] + 8),
+            "{warm_work:?}"
+        );
+    }
 }
 
 impl CVerifiedFunctionRule {

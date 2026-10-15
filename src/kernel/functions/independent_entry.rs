@@ -725,6 +725,8 @@ pub(crate) fn has_store_roots(interface: &CFunctionContractInterface) -> bool {
         .any(|input| input.layout.scalar_array().is_none())
         || interface.resource_requires().iter().any(|spec| {
             !spec.native_record_places().is_empty()
+                || (interface.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed
+                    && spec.declared_storage_type().is_some_and(CType::is_pointer))
                 || matches!(spec.term(), CResourceTerm::Composite { .. })
         })
 }

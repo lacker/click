@@ -564,6 +564,7 @@ fn complete_body_certifies_a_full_pointer_member_store() {
     .expect("independent input recipe");
     let rule = certify_in_state(entry.caller, function, entry.arguments);
     assert!(rule.pointer_store_effects.contains(&CPointerStoreEffect {
+        destination_field: None,
         destination: CPointerEffectRoot::Parameter(0),
         destination_path: vec!["kid".into()].into(),
         value_type: CType::Int32Pointer,
@@ -1133,4 +1134,296 @@ fn external_return_placeholder_keeps_conservative_pointer_cell_havoc() {
             .collect::<Vec<_>>(),
         "the ownership transfer is conserved independently of the byte frame",
     );
+}
+
+#[test]
+fn complete_c_body_preserves_owned_and_viewed_input_pointer_fields_without_native_place() {
+    for viewed in [false, true] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            16,
+            8,
+            vec![
+                CAggregateField::new("len", 0, CType::Int32),
+                CAggregateField::new("data", 8, CType::Int32Pointer),
+            ],
+        ));
+        let member = |name: &str, value_type| CExpression::MemberAddress {
+            object: Box::new(c_variable("p")),
+            selection: Arc::new(CAggregateMemberSelection {
+                layout: layout.clone(),
+                path: vec![name.to_string()].into(),
+                value_type,
+            }),
+        };
+        let len = member("len", CType::Int32);
+        let data = member("data", CType::Int32Pointer);
+        let field_spec = if viewed {
+            CResourceSpec::viewed_memory
+        } else {
+            CResourceSpec::owned_memory
+        };
+        let inputs = vec![
+            CResourceSpec::owned_memory(CMemorySegment::new(
+                len.clone(),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            ))
+            .with_declared_storage_observation(Some((CType::Int32, 1))),
+            field_spec(CMemorySegment::new(
+                data.clone(),
+                c_int32_literal(0),
+                c_int32_literal(2),
+            ))
+            .with_declared_storage_observation(Some((CType::Int32Pointer, 1))),
+        ];
+        let function = c_function(
+            CType::Int32Pointer,
+            "preserve_c_field",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_seq(
+                c_typed_store(len, c_int32_literal(0), CType::Int32),
+                c_return(c_typed_load(data, CType::Int32Pointer)),
+            ),
+        )
+        .with_resource_summary(inputs.clone(), inputs)
+        .with_contract(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CFunctionContractClaim::body_safety(),
+                CFunctionContractClaim::ensure_resource(0, 0),
+                CFunctionContractClaim::ensure_resource(1, 1),
+            ],
+            true,
+        );
+        let args = vec![CExpression::Value(CValue::typed_pointer(
+            Pointer::symbolic(Variable(9_899_100)),
+            CType::Int32Pointer,
+        ))];
+        let entry = independent_entry::construct(&function, &args, None, false)
+            .expect("typed C input recipe");
+        assert!(entry.caller.memory().heap.native_record_inputs.is_empty());
+        assert!(entry.caller.memory().heap.object_input_domains.is_empty());
+        let rule = certify_in_state(entry.caller, function, entry.arguments);
+        assert!(rule.pointer_store_effects.iter().any(|effect| {
+            pointer_store_effects::preserves_input_field(effect)
+                && effect.destination_path.as_ref() == ["data"]
+        }));
+        let address = Pointer::symbolic(Variable(9_899_101));
+        let owner = CPointerValue::new(address.clone(), CType::Int32Pointer);
+        let source = designated(9_899_102);
+        let memory = CMemory::new()
+            .store(address.clone(), int32(1))
+            .store(address.offset_by_bytes(8), source.clone());
+        let field_fact = if viewed {
+            CResourceFact::view_memory
+        } else {
+            CResourceFact::own_memory
+        };
+        let resources = ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                address.clone(),
+                0.into(),
+                1.into(),
+            )))
+            .unchecked_with_fact(field_fact(CMemoryRange::new(
+                address.offset_by_bytes(8),
+                0.into(),
+                2.into(),
+            )));
+        let state = CState::new()
+            .with_population_creation_tracking()
+            .with_memory(memory)
+            .with_resource_context(resources);
+        let function = rule.function.clone();
+        let call_arguments = [CExpression::Value(CValue::Pointer(owner.clone()))];
+        let state = if viewed {
+            let premises = c_function_contract_entry(&state, &function, &call_arguments)
+                .unwrap()
+                .into_assumptions();
+            crate::kernel::c_state_with_borrowed_contract_inputs(
+                state,
+                &function,
+                &call_arguments,
+                &premises,
+            )
+            .unwrap()
+        } else {
+            state
+        };
+        let environment = CExecutionEnvironment::new().with_verified_function_rule(rule);
+        let paths = execute_c_function_call_paths(
+            &state,
+            &function,
+            &[CExpression::Value(CValue::Pointer(owner.clone()))],
+            &PureFactContext::new(),
+            CExecutionContext::apply_verified_rules(&environment),
+            &mut ExecutionBudget::default(),
+        )
+        .unwrap();
+        let [
+            CFunctionPath {
+                outcome: CFunctionOutcome::Return { state: after, .. },
+                ..
+            },
+        ] = paths.as_slice()
+        else {
+            panic!("C preservation call should return: {paths:?}");
+        };
+        assert_eq!(
+            after.memory().known_value(&address.offset_by_bytes(8)),
+            Some(source)
+        );
+        assert!(
+            after
+                .memory()
+                .checked_native_record_pointer(&owner)
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn c_field_preservation_rejects_equal_address_store_partial_write_and_changed_branch() {
+    for mode in 0..3 {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+        ));
+        let data = CExpression::MemberAddress {
+            object: Box::new(c_variable("p")),
+            selection: Arc::new(CAggregateMemberSelection {
+                layout,
+                path: vec!["data".to_string()].into(),
+                value_type: CType::Int32Pointer,
+            }),
+        };
+        let input = CResourceSpec::owned_memory(CMemorySegment::new(
+            data.clone(),
+            c_int32_literal(0),
+            c_int32_literal(2),
+        ))
+        .with_declared_storage_observation(Some((CType::Int32Pointer, 1)));
+        let store = c_typed_store(data.clone(), c_variable("other"), CType::Int32Pointer);
+        let body = match mode {
+            0 => store,
+            1 => c_typed_store(
+                c_pointer_offset_bytes(c_cast(data.clone(), CType::UInt8Pointer), 4),
+                CExpression::Value(uint8(0)),
+                CType::UInt8,
+            ),
+            _ => c_if(c_variable("flag"), store, c_skip()),
+        };
+        let requirement = SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("other")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_typed_load(data, CType::Int32Pointer)),
+        };
+        let function = c_function(
+            CType::Void,
+            "changed_c_field",
+            vec![
+                c_parameter("p", CType::Int32Pointer),
+                c_parameter("other", CType::Int32Pointer).with_native_pointer_input(true),
+                c_parameter("flag", CType::Int32),
+            ],
+            c_seq(body, c_return(c_void_value())),
+        )
+        .with_resource_summary(vec![input.clone()], vec![input])
+        .with_contract(
+            vec![requirement],
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CFunctionContractClaim::body_safety(),
+                CFunctionContractClaim::ensure_resource(0, 0),
+            ],
+            true,
+        );
+        let args = vec![
+            CExpression::Value(CValue::typed_pointer(
+                Pointer::symbolic(Variable(9_899_200)),
+                CType::Int32Pointer,
+            )),
+            CExpression::Value(designated(9_899_201)),
+            CExpression::Value(int32(Bitvector32Term::Variable(Variable(9_899_202)))),
+        ];
+        let entry = independent_entry::construct(&function, &args, None, false)
+            .expect("independent C change control");
+        let rule = certify_in_state(entry.caller, function, entry.arguments);
+        assert!(
+            !rule
+                .pointer_store_effects
+                .iter()
+                .any(pointer_store_effects::preserves_input_field),
+            "mode {mode} must not preserve an overwritten full pointer merely from equal addresses"
+        );
+    }
+}
+
+#[test]
+fn c_pointer_field_metadata_is_checked_once_across_contract_claims() {
+    for size in [0, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+        ));
+        let data = CExpression::MemberAddress {
+            object: Box::new(c_variable("p")),
+            selection: Arc::new(CAggregateMemberSelection {
+                layout,
+                path: vec!["data".into()].into(),
+                value_type: CType::Int32Pointer,
+            }),
+        };
+        let input = CResourceSpec::owned_memory(CMemorySegment::new(
+            data.clone(),
+            c_int32_literal(0),
+            c_int32_literal(2),
+        ))
+        .with_declared_storage_observation(Some((CType::Int32Pointer, 1)));
+        let mut body = c_return(c_typed_load(data, CType::Int32Pointer));
+        for _ in 0..size {
+            body = CStatement::Seq(Arc::new(c_skip()), Arc::new(body));
+        }
+        let truth = SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_int32_literal(0)),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        };
+        let mut claims = vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_resource(size, 0),
+        ];
+        claims.extend(
+            (0..size).map(|index| CFunctionContractClaim::ensure_proposition(index, index)),
+        );
+        let function = c_function(
+            CType::Int32Pointer,
+            "many_field_claims",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            body,
+        )
+        .with_resource_summary(vec![input.clone()], vec![input])
+        .with_contract(Vec::new(), vec![truth; size], Vec::new(), claims, true);
+        let args = vec![CExpression::Value(CValue::typed_pointer(
+            Pointer::symbolic(Variable(9_899_400)),
+            CType::Int32Pointer,
+        ))];
+        let entry = independent_entry::construct(&function, &args, None, false).unwrap();
+        pointer_store_effects::take_c_field_declaration_visits();
+        let rule = certify_in_state(entry.caller, function, entry.arguments);
+        let visits = pointer_store_effects::take_c_field_declaration_visits();
+        assert_eq!(rule.pointer_store_effects.len(), 1);
+        assert!(
+            visits <= 2 * size + 8,
+            "{size} claims and body nodes revisited declaration metadata {visits} times"
+        );
+    }
 }

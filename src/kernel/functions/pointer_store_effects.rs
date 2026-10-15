@@ -348,6 +348,245 @@ pub(crate) fn pointer_fields(state: &CState, pointer: &CPointerValue) -> Vec<(Ve
         .collect()
 }
 
+#[cfg(test)]
+thread_local! {
+    static C_FIELD_DECLARATION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(crate) fn take_c_field_declaration_visits() -> usize {
+    C_FIELD_DECLARATION_VISITS.with(|visits| visits.replace(0))
+}
+
+/// Source selectors are candidates only. Complete independent body checking
+/// decides which final-cell equations become reusable effects.
+pub(crate) fn c_declared_fields(function: &CFunction) -> Vec<CPointerFieldSource> {
+    if function.contract_interface().typed_access_policy()
+        != CTypedAccessPolicy::CAllocatedAccessAllowed
+    {
+        return Vec::new();
+    }
+    enum Node<'a> {
+        Statement(&'a CStatement),
+        Expression(&'a CExpression),
+    }
+    let parameters = function
+        .parameters()
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| (parameter.name(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut pending = vec![Node::Statement(function.body())];
+    let mut fields = BTreeSet::new();
+    while let Some(node) = pending.pop() {
+        crate::instrumentation::record_deterministic_work(1);
+        #[cfg(test)]
+        C_FIELD_DECLARATION_VISITS.with(|visits| visits.set(visits.get() + 1));
+        match node {
+            Node::Statement(statement) => match statement {
+                CStatement::Scope { body } | CStatement::While { body, .. } => {
+                    pending.push(Node::Statement(body))
+                }
+                CStatement::Seq(left, right) => {
+                    pending.push(Node::Statement(right));
+                    pending.push(Node::Statement(left));
+                }
+                CStatement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    pending.push(Node::Expression(condition));
+                    pending.push(Node::Statement(then_branch));
+                    pending.push(Node::Statement(else_branch));
+                }
+                CStatement::Store { pointer, value }
+                | CStatement::TypedStore { pointer, value, .. } => {
+                    pending.push(Node::Expression(pointer));
+                    pending.push(Node::Expression(value));
+                }
+                CStatement::Assign { expression, .. }
+                | CStatement::Return(expression)
+                | CStatement::Throw(expression) => pending.push(Node::Expression(expression)),
+                CStatement::Declare {
+                    initializer: Some(expression),
+                    ..
+                } => pending.push(Node::Expression(expression)),
+                CStatement::Call { arguments, .. } | CStatement::CallAssign { arguments, .. } => {
+                    pending.extend(arguments.iter().map(Node::Expression))
+                }
+                CStatement::ForStep { step, .. } => pending.push(Node::Statement(step)),
+                CStatement::TryCatchInt32 {
+                    try_body, handler, ..
+                } => {
+                    pending.push(Node::Statement(try_body));
+                    pending.push(Node::Statement(handler));
+                }
+                CStatement::Switch { expression, cases } => {
+                    pending.push(Node::Expression(expression));
+                    pending.extend(cases.iter().map(|case| Node::Statement(&case.body)));
+                }
+                CStatement::HeapAllocate { bytes, .. } => pending.push(Node::Expression(bytes)),
+                CStatement::HeapFree { pointer } => pending.push(Node::Expression(pointer)),
+                CStatement::Assert { condition, .. } => pending.push(Node::Expression(condition)),
+                CStatement::CopyAggregate { target, source, .. }
+                | CStatement::InitializeScalarArray { target, source, .. } => {
+                    pending.push(Node::Expression(target));
+                    pending.push(Node::Expression(source));
+                }
+                CStatement::Update {
+                    target, operand, ..
+                } => {
+                    pending.push(Node::Expression(target));
+                    pending.push(Node::Expression(operand));
+                }
+                _ => {}
+            },
+            Node::Expression(expression) => match expression {
+                CExpression::MemberAddress { object, selection } => {
+                    if let CExpression::Variable(name) = object.as_ref()
+                        && let Some(parameter) = parameters.get(name.as_str())
+                        && function.parameters()[*parameter].c_type().is_pointer()
+                        && function.parameters()[*parameter]
+                            .aggregate_layout()
+                            .is_none()
+                        && selection.value_type.is_pointer()
+                        && selection.value_type.byte_width() == C_POINTER_BYTE_WIDTH
+                    {
+                        fields.insert(CPointerFieldSource {
+                            parameter: *parameter,
+                            layout: selection.layout.clone(),
+                            path: selection.path.clone().into(),
+                            value_type: selection.value_type,
+                            pointee_constant: false,
+                            pointee_volatile: false,
+                        });
+                    }
+                    pending.push(Node::Expression(object));
+                }
+                CExpression::Cast { expression, .. }
+                | CExpression::FloatClassification { expression, .. } => {
+                    pending.push(Node::Expression(expression))
+                }
+                CExpression::FloatNegate(value)
+                | CExpression::AddressOf(value)
+                | CExpression::CheckedObjectAddress(value)
+                | CExpression::Not(value)
+                | CExpression::BitwiseNot(value)
+                | CExpression::Load(value) => pending.push(Node::Expression(value)),
+                CExpression::TypedLoad { pointer, .. }
+                | CExpression::PointerOffsetBytes { pointer, .. }
+                | CExpression::PointerAligned { pointer, .. } => {
+                    pending.push(Node::Expression(pointer))
+                }
+                CExpression::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    pending.push(Node::Expression(condition));
+                    pending.push(Node::Expression(then_branch));
+                    pending.push(Node::Expression(else_branch));
+                }
+                CExpression::ArrayRowAddress {
+                    array: pointer,
+                    index,
+                    ..
+                }
+                | CExpression::RecordPointerOffset { pointer, index, .. } => {
+                    pending.push(Node::Expression(pointer));
+                    pending.push(Node::Expression(index));
+                }
+                CExpression::LessThan(left, right)
+                | CExpression::LessEqual(left, right)
+                | CExpression::GreaterThan(left, right)
+                | CExpression::GreaterEqual(left, right)
+                | CExpression::Equal(left, right)
+                | CExpression::NotEqual(left, right)
+                | CExpression::And(left, right)
+                | CExpression::Or(left, right)
+                | CExpression::Add(left, right)
+                | CExpression::Subtract(left, right)
+                | CExpression::Multiply(left, right)
+                | CExpression::Divide(left, right)
+                | CExpression::Remainder(left, right)
+                | CExpression::ShiftLeft(left, right)
+                | CExpression::ShiftRight(left, right)
+                | CExpression::BitwiseAnd(left, right)
+                | CExpression::BitwiseOr(left, right)
+                | CExpression::BitwiseXor(left, right)
+                | CExpression::Index(left, right) => {
+                    pending.push(Node::Expression(left));
+                    pending.push(Node::Expression(right));
+                }
+                CExpression::Value(_)
+                | CExpression::Variable(_)
+                | CExpression::FunctionAddress(_) => {}
+            },
+        }
+    }
+    fields.into_iter().collect()
+}
+
+pub(crate) fn observed_field_selector(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    field: &CPointerFieldSource,
+    assumptions: &PureFactContext,
+) -> Option<CPointerFieldSource> {
+    let value = field_source_in(
+        state,
+        interface,
+        arguments,
+        field,
+        field.value_type,
+        assumptions,
+        false,
+    )?;
+    let mut field = field.clone();
+    field.pointee_constant = value.pointee_constant();
+    field.pointee_volatile = value.pointee_volatile();
+    Some(field)
+}
+
+pub(crate) fn preserves_input_field(effect: &CPointerStoreEffect) -> bool {
+    effect.destination_field.as_ref().is_some_and(|field| {
+        effect.source_field.as_ref() == Some(field)
+            && effect.destination == CPointerEffectRoot::Parameter(field.parameter)
+            && effect.source == effect.destination
+            && effect.destination_path.as_ref() == field.path.as_ref()
+            && effect.source_path.is_empty()
+            && effect.value_type == field.value_type
+    })
+}
+
+pub(crate) fn destination(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    effect: &CPointerStoreEffect,
+    assumptions: &PureFactContext,
+) -> Option<(CPointerValue, CType)> {
+    if let Some(field) = &effect.destination_field {
+        if !preserves_input_field(effect) {
+            return None;
+        }
+        Some((
+            declared_field_address(state, interface, arguments, field, assumptions)?,
+            field.value_type,
+        ))
+    } else {
+        let pointer = selected(
+            state,
+            interface,
+            arguments,
+            &effect.destination,
+            &effect.destination_path,
+        )?;
+        let element_type = selected_element_type(state, &pointer, assumptions)?;
+        Some((pointer, element_type))
+    }
+}
 pub(super) fn writes_authorized(
     state: &CState,
     interface: &CFunctionContractInterface,
@@ -356,16 +595,18 @@ pub(super) fn writes_authorized(
     assumptions: &PureFactContext,
 ) -> bool {
     effects.iter().all(|effect| {
-        let Some(destination) = selected(
-            state,
-            interface,
-            arguments,
-            &effect.destination,
-            &effect.destination_path,
-        ) else {
+        let Some((destination, _)) = destination(state, interface, arguments, effect, assumptions)
+        else {
             return false;
         };
         let bytes = effect.value_type.byte_width();
+        if preserves_input_field(effect) {
+            return state.resources().permits_memory_read(
+                destination.pointer(),
+                bytes,
+                assumptions,
+            );
+        }
         state
             .resources()
             .memory_write_range(destination.pointer(), bytes, assumptions)
@@ -390,17 +631,9 @@ pub(super) fn apply(
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
     for effect in effects {
-        let destination = selected(
-            state,
-            interface,
-            arguments,
-            &effect.destination,
-            &effect.destination_path,
-        )
-        .ok_or("certified pointer cell destination is not a declared member")?;
-        let Some(element_type) = selected_element_type(state, &destination, assumptions) else {
-            return Err("certified pointer cell lacks its retained member type".into());
-        };
+        let (destination, element_type) =
+            destination(state, interface, arguments, effect, assumptions)
+                .ok_or("certified pointer cell destination lacks its checked selection")?;
         if element_type != effect.value_type
             || !effect.value_type.is_pointer()
             || !memory.has_initialized_bytes_under(
@@ -414,13 +647,14 @@ pub(super) fn apply(
             );
         }
         let source = if let Some(field) = &effect.source_field {
-            field_source(
+            field_source_in(
                 source_state,
                 interface,
                 arguments,
                 field,
                 effect.value_type,
                 assumptions,
+                !preserves_input_field(effect),
             )
         } else {
             selected(
@@ -447,6 +681,44 @@ pub(super) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c_field_candidate_inventory_ignores_unread_record_members() {
+        let mut samples = Vec::new();
+        for size in [0, 16, 64, 256] {
+            let mut fields = vec![CAggregateField::new("data", 0, CType::Int32Pointer)];
+            fields.extend((0..size).map(|index| {
+                CAggregateField::new(format!("unused{index}"), 8 + index * 4, CType::Int32)
+            }));
+            let layout = Arc::new(CAggregateLayout::new(8 + size * 4, 8, fields));
+            let selection = Arc::new(CAggregateMemberSelection {
+                layout,
+                path: vec!["data".into()].into(),
+                value_type: CType::Int32Pointer,
+            });
+            let function = c_function(
+                CType::Int32Pointer,
+                "read_field",
+                vec![c_parameter("p", CType::Int32Pointer)],
+                c_return(c_typed_load(
+                    CExpression::MemberAddress {
+                        object: Box::new(c_variable("p")),
+                        selection,
+                    },
+                    CType::Int32Pointer,
+                )),
+            );
+            let (fields, work) =
+                crate::instrumentation::measure_deterministic_work(|| c_declared_fields(&function));
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].path.as_ref(), ["data"]);
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] + 8),
+            "{samples:?}"
+        );
+    }
 
     #[test]
     fn c_field_observation_preserves_value_without_admitting_native_record() {
@@ -751,6 +1023,7 @@ mod tests {
         .contract_interface()
         .clone();
         let effect = CPointerStoreEffect {
+            destination_field: None,
             destination: CPointerEffectRoot::Parameter(0),
             destination_path: vec!["kid".into()].into(),
             value_type: CType::Int32Pointer,

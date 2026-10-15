@@ -147,3 +147,21 @@ application. No new original-vector result or archive audit is claimed.
 All 33 selected field-source, pointer-result and independent-entry controls pass
 (0.38s harness); formatting and whitespace checks pass. The initial test setup
 had two compile errors, corrected before this accepted run.
+
+## Direct-input preservation certified in the kernel
+
+The archive now certifies unchanged ordinary C pointer fields from complete
+independent body execution and transfers their full values at modular calls.
+It requires complete initialized input bytes and read authority, and rejects
+every overlapping write, including a full equal-address replacement. Owned
+and viewed input controls pass without creating a native record witness.
+Cached field identity, selected-body discovery and once-per-claim-batch inference
+have deterministic multi-size controls. All 96 focused controls and 337 broader
+kernel controls pass.
+
+This does not close source-level activation. The folded-resource frontend
+materializes three cached read names absent from independently reconstructed
+entry memory; exact entry matching therefore rejects the summary. Resolve that
+checked observation protocol without importing arbitrary caller values or
+weakening independent certification. No new original-vector or audit result is
+claimed.

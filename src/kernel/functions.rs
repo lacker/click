@@ -7498,14 +7498,14 @@ fn execute_verified_function_applications_with_suspension(
                         .pointer_store_effects
                         .iter()
                         .map(|effect| {
-                            pointer_store_effects::selected(
+                            pointer_store_effects::destination(
                                 &return_state,
                                 interface,
                                 &argument_values,
-                                &effect.destination,
-                                &effect.destination_path,
+                                effect,
+                                &ensured_assumptions,
                             )
-                            .map(|destination| {
+                            .map(|(destination, _)| {
                                 (
                                     destination.pointer().clone(),
                                     effect.value_type.byte_width(),

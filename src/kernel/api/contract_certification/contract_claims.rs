@@ -2485,6 +2485,10 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
     let prepare_started = std::time::Instant::now();
     let cases = contract_path_set_views(contract_execution, false);
     let checked_propositions = checked_proposition_index(checked_propositions);
+    // Carrier effects describe the complete body, independently of which
+    // ordinary claim asks for certification. Compute and share that summary
+    // once rather than rescanning source and paths for every postcondition.
+    let pointer_store_effects = std::cell::OnceCell::<Arc<[CPointerStoreEffect]>>::new();
     let claims = function
         .contract_claims()
         .iter()
@@ -2533,7 +2537,9 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                 // sets. Effect inference independently prepares and checks all
                 // cases; a proposition completion alone cannot supply it.
                 pointer_result_effects: infer_pointer_result_effects(function, &cases).into(),
-                pointer_store_effects: infer_pointer_store_effects(function, &cases).into(),
+                pointer_store_effects: pointer_store_effects
+                    .get_or_init(|| infer_pointer_store_effects(function, &cases).into())
+                    .clone(),
                 native_output_places_certified: infer_native_output_places(function, &cases),
                 key: claim.key().clone(),
                 load_equalities,
@@ -2666,27 +2672,23 @@ fn pointer_store_effect_holds(
     let Some(arguments) = pointer_store_arguments(function, path) else {
         return false;
     };
-    let Some(destination) = crate::kernel::functions::pointer_store_effects::selected(
-        &path.body_entry_state,
-        function.contract_interface(),
-        &arguments,
-        &effect.destination,
-        &effect.destination_path,
-    ) else {
+    let Some((destination, element_type)) =
+        crate::kernel::functions::pointer_store_effects::destination(
+            &path.body_entry_state,
+            function.contract_interface(),
+            &arguments,
+            effect,
+            &path.assumptions,
+        )
+    else {
         return false;
     };
-    let Some(element_type) = crate::kernel::functions::pointer_store_effects::selected_element_type(
-        &path.body_entry_state,
-        &destination,
-        &path.assumptions,
-    ) else {
-        return false;
-    };
+    let preserves = crate::kernel::functions::pointer_store_effects::preserves_input_field(effect);
     let writes = crate::kernel::reasoning::memory_effect_write_accesses(&path.effect_facts);
     // Another possibly overlapping write can invalidate a cached final cell,
     // including when two independently bound parameters alias at the call.
     if writes.iter().any(|(pointer, bytes)| {
-        pointer != destination.pointer()
+        (preserves || pointer != destination.pointer())
             && !crate::kernel::memory_provenance::write_access_is_disjoint_from_load(
                 pointer,
                 *bytes,
@@ -2699,10 +2701,11 @@ fn pointer_store_effect_holds(
     }
     if element_type != effect.value_type
         || !effect.value_type.is_pointer()
-        || !crate::kernel::reasoning::memory_effect_write_accesses(&path.effect_facts).contains(&(
-            destination.pointer().clone(),
-            effect.value_type.byte_width(),
-        ))
+        || (!preserves
+            && !writes.contains(&(
+                destination.pointer().clone(),
+                effect.value_type.byte_width(),
+            )))
         || !post_state.memory().has_initialized_bytes_under(
             destination.pointer(),
             effect.value_type.byte_width(),
@@ -2731,9 +2734,31 @@ fn pointer_store_effect_holds(
         .map(|source| source.with_type(effect.value_type))
     };
     source.is_some_and(|source| {
-        source.designation().is_some()
-            && post_state.memory().known_value(destination.pointer())
-                == Some(CValue::Pointer(source))
+        if preserves {
+            // A C input observation need not carry a native designation.
+            // Check the complete pointer read itself, not a numeric address
+            // equation or a guessed designation for that symbolic value.
+            let before = Bitvector32Term::MemoryLoad(
+                intern_c_memory_ref(path.body_entry_state.memory()),
+                Box::new(destination.pointer().clone()),
+                LoadKind::Pointer,
+            );
+            let after = Bitvector32Term::MemoryLoad(
+                intern_c_memory_ref(post_state.memory()),
+                Box::new(destination.pointer().clone()),
+                LoadKind::Pointer,
+            );
+            crate::kernel::CheckedLoadEquality::for_pointer_read_frame(
+                &before,
+                &after,
+                &path.assumptions,
+            )
+            .is_some_and(|evidence| evidence.check_and_retain(&path.assumptions))
+        } else {
+            source.designation().is_some()
+                && post_state.memory().known_value(destination.pointer())
+                    == Some(CValue::Pointer(source))
+        }
     })
 }
 
@@ -2746,6 +2771,8 @@ fn infer_pointer_store_effects(
         return Vec::new();
     }
 
+    let declared_fields =
+        crate::kernel::functions::pointer_store_effects::c_declared_fields(function);
     let mut candidates = BTreeSet::new();
     for view in cases.iter().flatten() {
         let Ok(paths) = view.prepared(function) else {
@@ -2763,6 +2790,32 @@ fn infer_pointer_store_effects(
             let Some(arguments) = pointer_store_arguments(function, path) else {
                 continue;
             };
+            for field in &declared_fields {
+                let Some(field) =
+                    crate::kernel::functions::pointer_store_effects::observed_field_selector(
+                        &path.body_entry_state,
+                        function.contract_interface(),
+                        &arguments,
+                        field,
+                        &path.assumptions,
+                    )
+                else {
+                    continue;
+                };
+                let effect = CPointerStoreEffect {
+                    destination: CPointerEffectRoot::Parameter(field.parameter),
+                    destination_path: field.path.clone(),
+                    destination_field: Some(field.clone()),
+                    value_type: field.value_type,
+                    source: CPointerEffectRoot::Parameter(field.parameter),
+                    source_path: Default::default(),
+                    source_field: Some(field),
+                };
+                let holds = pointer_store_effect_holds(function, &effect, path);
+                if holds {
+                    candidates.insert(effect);
+                }
+            }
             let mut roots = function
                 .contract_interface()
                 .parameters()
@@ -2821,6 +2874,7 @@ fn infer_pointer_store_effects(
                         &path.assumptions,
                     ) {
                         let effect = CPointerStoreEffect {
+                            destination_field: None,
                             destination: destination_root.clone(),
                             destination_path: destination_path.clone().into(),
                             value_type,
@@ -2897,6 +2951,7 @@ fn infer_pointer_store_effects(
                         }
                         for source_path in source_paths {
                             let effect = CPointerStoreEffect {
+                                destination_field: None,
                                 destination: destination_root.clone(),
                                 destination_path: destination_path.clone().into(),
                                 value_type,
@@ -3460,18 +3515,23 @@ pub fn c_verified_function_rule(
     } else {
         CLoopSemantics::Verify
     };
+    let mut store_effects = BTreeSet::new();
+    let mut summaries = BTreeSet::new();
+    for proof in proofs {
+        // Sharing only avoids repeated work; every effect was independently
+        // certified for the exact function checked above.
+        let identity =
+            Arc::as_ptr(&proof.pointer_store_effects) as *const CPointerStoreEffect as usize;
+        if summaries.insert(identity) {
+            store_effects.extend(proof.pointer_store_effects.iter().cloned());
+        }
+    }
     Some(CVerifiedFunctionRule {
         source_declaration: None,
         native_output_places_certified: proofs
             .iter()
             .any(|proof| proof.native_output_places_certified),
-        pointer_store_effects: proofs
-            .iter()
-            .flat_map(|proof| proof.pointer_store_effects.iter().cloned())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>()
-            .into(),
+        pointer_store_effects: store_effects.into_iter().collect::<Vec<_>>().into(),
         pointer_result_effects: proofs
             .iter()
             .flat_map(|proof| proof.pointer_result_effects.iter().cloned())

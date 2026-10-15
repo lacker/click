@@ -337,3 +337,19 @@ selection. The next increment must connect checked C field candidates to
 universal body certification and modular full-value transfer; numeric equality
 alone remains insufficient. This prerequisite does not change the latest
 original-vector or normal-audit results.
+
+The next archive increment connects direct C input-field candidates to complete
+body certification and modular transfer. A preservation equation requires an
+initialized full pointer read and no overlapping write on any normal return
+path; full replacement, partial overwrite and a changed branch are rejected.
+It preserves the caller's complete value and qualifiers without admitting a
+native record. Candidate discovery visits the selected body, field keys use
+cached layout identities, and inference is shared across contract claims.
+Deterministic 0/16/64/256 controls cover those costs. All 96 focused C++/effect
+controls and 337 broader kernel controls pass.
+
+Source-level activation remains blocked: the frontend names folded-input reads
+that independent entry construction does not reconstruct. Keep exact independent
+input checking; resolve the observation protocol rather than trusting caller
+cells or promoting numeric equality. The original-vector result and latest
+42/52 normal audit are unchanged.
