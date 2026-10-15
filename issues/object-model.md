@@ -725,3 +725,8 @@ arena (window fold after the repaired take), owned-vector (post-store frame
 transport) and rust-chunks-exact (iterator cursor formation). Concurrent local
 compilation affected elapsed time; this is compatibility evidence, not a
 performance claim, full green gate or native-feature activation.
+
+The migrated byte-sum sidecar in `design/charon-trial/loop-headers/sum-proof.click`
+now mirrors the explicit canonical proof as required by the parity inventory.
+The frozen `sum.click` and source remain unchanged. Both affected upstream Rust
+parity checks pass after syncing this migration copy; the fix is in PR #1144.
