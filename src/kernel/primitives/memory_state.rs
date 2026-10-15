@@ -7472,9 +7472,10 @@ impl CMemory {
         value: CPointerValue,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
-        if value.designation().is_none()
-            || !self.has_initialized_bytes_under(&pointer, value.c_type().byte_width(), assumptions)
-        {
+        // The checked effect's source may be an ordinary C value or null.
+        // Retaining that exact value does not authenticate a native object.
+        // Callers separately check source admissibility and write permission.
+        if !self.has_initialized_bytes_under(&pointer, value.c_type().byte_width(), assumptions) {
             return None;
         }
         let value = CValue::Pointer(value);

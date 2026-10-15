@@ -387,12 +387,40 @@ pub(crate) fn c_body_has_pointer_field_candidates_for_formals<'a>(
     !c_declared_fields_in_body(formals, body).is_empty()
 }
 
-/// Declaration-only metadata over the selected body. It predicts dependencies;
-/// only complete independent body certification can establish an effect.
+/// Prefer opaque values only for direct C copy operands that have no other
+/// body use. This predicts a checkable entry recipe; it proves no effect and
+/// supplies no native access permission.
+pub(crate) fn c_body_opaque_pointer_copy_inputs(function: &CFunction) -> BTreeSet<usize> {
+    if function.contract_interface().typed_access_policy()
+        != CTypedAccessPolicy::CAllocatedAccessAllowed
+    {
+        return BTreeSet::new();
+    }
+    let metadata = c_field_body_metadata(
+        function.parameters().iter().map(|parameter| {
+            (
+                parameter.name(),
+                parameter.c_type().is_pointer() && parameter.aggregate_layout().is_none(),
+            )
+        }),
+        function.body(),
+    );
+    metadata.1
+}
+
 fn c_declared_fields_in_body<'a>(
     formals: impl IntoIterator<Item = (&'a str, bool)>,
     body: &CStatement,
 ) -> Vec<CPointerFieldSource> {
+    c_field_body_metadata(formals, body).0
+}
+
+/// Declaration-only metadata over the selected body. It predicts dependencies;
+/// only complete independent body certification can establish an effect.
+fn c_field_body_metadata<'a>(
+    formals: impl IntoIterator<Item = (&'a str, bool)>,
+    body: &CStatement,
+) -> (Vec<CPointerFieldSource>, BTreeSet<usize>) {
     enum Node<'a> {
         Statement(&'a CStatement),
         Expression(&'a CExpression),
@@ -404,6 +432,8 @@ fn c_declared_fields_in_body<'a>(
         .collect::<BTreeMap<_, _>>();
     let mut pending = vec![Node::Statement(body)];
     let mut fields = BTreeSet::new();
+    let mut copied = BTreeSet::new();
+    let mut other_uses = BTreeSet::new();
     while let Some(node) = pending.pop() {
         crate::instrumentation::record_deterministic_work(1);
         #[cfg(test)]
@@ -433,7 +463,17 @@ fn c_declared_fields_in_body<'a>(
                 CStatement::Store { pointer, value }
                 | CStatement::TypedStore { pointer, value, .. } => {
                     pending.push(Node::Expression(pointer));
-                    pending.push(Node::Expression(value));
+                    if let CExpression::MemberAddress { object, selection } = pointer
+                        && matches!(object.as_ref(), CExpression::Variable(name)
+                            if parameters.contains_key(name.as_str()))
+                        && selection.value_type.is_pointer()
+                        && let CExpression::Variable(name) = value
+                        && let Some(parameter) = parameters.get(name.as_str())
+                    {
+                        copied.insert(*parameter);
+                    } else {
+                        pending.push(Node::Expression(value));
+                    }
                 }
                 CStatement::Assign { expression, .. }
                 | CStatement::Return(expression)
@@ -545,13 +585,19 @@ fn c_declared_fields_in_body<'a>(
                     pending.push(Node::Expression(left));
                     pending.push(Node::Expression(right));
                 }
-                CExpression::Value(_)
-                | CExpression::Variable(_)
-                | CExpression::FunctionAddress(_) => {}
+                CExpression::Variable(name) => {
+                    if let Some(parameter) = parameters.get(name.as_str()) {
+                        other_uses.insert(*parameter);
+                    }
+                }
+                CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
             },
         }
     }
-    fields.into_iter().collect()
+    (
+        fields.into_iter().collect(),
+        copied.difference(&other_uses).copied().collect(),
+    )
 }
 
 pub(crate) fn observed_field_selector(
@@ -621,6 +667,17 @@ pub(crate) fn destination(
         Some((pointer, element_type))
     }
 }
+pub(super) fn is_c_parameter_field_copy(
+    interface: &CFunctionContractInterface,
+    effect: &CPointerStoreEffect,
+) -> bool {
+    interface.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed
+        && effect.destination_field.is_some()
+        && effect.source_field.is_none()
+        && effect.source_path.is_empty()
+        && matches!(effect.source, CPointerEffectRoot::Parameter(_))
+}
+
 pub(super) fn writes_authorized(
     state: &CState,
     interface: &CFunctionContractInterface,
@@ -707,7 +764,12 @@ pub(super) fn apply(
                 &effect.source,
                 &effect.source_path,
             )
-            .filter(|source| source.designation().is_some())
+            .filter(|source| {
+                source.designation().is_some()
+                    || source.is_null()
+                    || (state.typed_access_policy() == CTypedAccessPolicy::CAllocatedAccessAllowed
+                        && is_c_parameter_field_copy(interface, effect))
+            })
             .map(|source| source.with_type(effect.value_type))
         }
         .ok_or("certified stored pointer source lacks its checked input carrier")?;
@@ -811,6 +873,53 @@ mod tests {
             assert_eq!(fields.len(), 1);
             assert_eq!(fields[0].path.as_ref(), ["data"]);
             samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] + 8),
+            "{samples:?}"
+        );
+    }
+
+    #[test]
+    fn c_copy_input_recipe_is_bounded_to_exclusive_value_operands() {
+        let mut samples = Vec::new();
+        for size in [0, 16, 64, 256] {
+            let mut fields = vec![CAggregateField::new("data", 0, CType::Int32Pointer)];
+            fields.extend((0..size).map(|index| {
+                CAggregateField::new(format!("unused{index}"), 8 + index * 4, CType::Int32)
+            }));
+            let target = CExpression::MemberAddress {
+                object: Box::new(c_variable("owner")),
+                selection: Arc::new(CAggregateMemberSelection {
+                    layout: Arc::new(CAggregateLayout::new(8 + size * 4, 8, fields)),
+                    path: vec!["data".into()].into(),
+                    value_type: CType::Int32Pointer,
+                }),
+            };
+            let function = |body| {
+                c_function(
+                    CType::Void,
+                    "copy_recipe",
+                    vec![
+                        c_parameter("owner", CType::Int32Pointer),
+                        c_parameter("input", CType::Int32Pointer),
+                    ],
+                    c_seq(body, c_return(c_void_value())),
+                )
+            };
+            let store = c_typed_store(target.clone(), c_variable("input"), CType::Int32Pointer);
+            let (selected, work) = crate::instrumentation::measure_deterministic_work(|| {
+                c_body_opaque_pointer_copy_inputs(&function(store.clone()))
+            });
+            assert_eq!(selected, BTreeSet::from([1]));
+            samples.push(work);
+            let writes_through_source = c_seq(
+                c_typed_store(c_variable("input"), c_int32_literal(7), CType::Int32),
+                store,
+            );
+            assert!(c_body_opaque_pointer_copy_inputs(&function(writes_through_source)).is_empty());
+            let self_copy = c_typed_store(target, c_variable("owner"), CType::Int32Pointer);
+            assert!(c_body_opaque_pointer_copy_inputs(&function(self_copy)).is_empty());
         }
         assert!(
             samples.windows(2).all(|pair| pair[1] <= pair[0] + 8),
@@ -1007,6 +1116,78 @@ mod tests {
         );
         assert!(memory.checked_native_record_pointer(&owner).is_none());
         assert!(memory.native_input_span(&input).is_none());
+        for source in [
+            CPointerValue::new(Pointer::symbolic(Variable(9_899_502)), CType::Int32Pointer),
+            CPointerValue::new(Pointer::null(), CType::Int32Pointer),
+        ] {
+            let arguments = [
+                CValue::Pointer(owner.clone()),
+                CValue::Pointer(source.clone()),
+            ];
+            let memory = apply(
+                &state,
+                &state,
+                &interface,
+                &arguments,
+                std::slice::from_ref(&effect),
+                &facts,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                memory.known_value(&field_address),
+                Some(CValue::Pointer(source))
+            );
+        }
+        let native_layout = &effect.destination_field.as_ref().unwrap().layout;
+        let native_memory = state
+            .memory()
+            .clone()
+            .with_declared_aggregate_block(address.block.clone(), native_layout);
+        let native_owner = native_memory
+            .declared_aggregate_pointer(&address, native_layout)
+            .unwrap()
+            .with_type(CType::Int32Pointer);
+        let native_state = state
+            .clone()
+            .with_memory(native_memory)
+            .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+        let mut strict_interface = interface.clone();
+        strict_interface.typed_access_policy = CTypedAccessPolicy::NativeObjectOnly;
+        let null = CPointerValue::new(Pointer::null(), CType::Int32Pointer);
+        let native_arguments = [
+            CValue::Pointer(native_owner.clone()),
+            CValue::Pointer(null.clone()),
+        ];
+        let copied = apply(
+            &native_state,
+            &native_state,
+            &strict_interface,
+            &native_arguments,
+            std::slice::from_ref(&effect),
+            &facts,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            copied.known_value(&field_address),
+            Some(CValue::Pointer(null))
+        );
+        let legacy =
+            CPointerValue::new(Pointer::symbolic(Variable(9_899_503)), CType::Int32Pointer);
+        let native_arguments = [CValue::Pointer(native_owner), CValue::Pointer(legacy)];
+        assert!(
+            apply(
+                &native_state,
+                &native_state,
+                &strict_interface,
+                &native_arguments,
+                std::slice::from_ref(&effect),
+                &facts,
+                None
+            )
+            .is_err()
+        );
         let no_resources = state.clone().with_resource_context(ResourceContext::new());
         assert!(!writes_authorized(
             &no_resources,

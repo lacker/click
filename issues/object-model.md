@@ -509,3 +509,26 @@ C output transfer. Preserve complete actual values, including null, legacy and
 native carriers, without allowing address equality to manufacture an origin or
 C allocated-access rules to admit a C++ object. Keep caller/source permissions
 and output initialization separate from the value-copy effect.
+
+
+Source preparation now gives direct, exclusively copied C operands opaque
+value identities without marking their parameters as native inputs. Other
+body uses retain their existing recipe. Modular copies preserve actual null
+and legacy C values; native copies accept null without gaining a pointee
+permission and still reject other undesignated values. Certified input-field
+copies run before returned-view matching, after write authorization and
+initialization checking. Construction/output-only fields retain the later phase.
+
+The original initializer also exposed a canonical-entry mismatch: the source
+proof includes an unconditional direct memory view from its declared read-only
+head, while reconstruction retained only the head. Independent entry now
+reproduces that declared projection, with exact resource checks still rejecting
+unrelated views and ownership. Six entry and seven field controls pass; the
+broader pointer selection has 477 passes, the same two failures and 17 ignored
+controls. The new control
+`mdtests/c_pointer_field_copy_preserves_borrowed_view_across_call.md` retains
+the original cursor initializer, resource and contract and passes fresh,
+expanded, rewritten and retained verification. The original shared pipeline
+passes both initializer calls and next fails at `input_cursor_take` returning
+a borrowing composite whose backing pointer is fresh. Continue that preservation
+case separately. Keep 42/52 until a new full archive audit runs.

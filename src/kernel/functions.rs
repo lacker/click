@@ -6242,6 +6242,67 @@ fn execute_verified_function_applications_with_suspension(
                 );
             }
         }
+        // Input C field copies already have checked write authority and
+        // initialized storage. Publish their complete values before evaluating
+        // returned views, which must name the actual source, not a fresh address.
+        // Construction/output-only destinations retain the later checked phase.
+        let input_field_copies = application
+            .pointer_store_effects
+            .iter()
+            .filter(|effect| pointer_store_effects::is_c_parameter_field_copy(interface, effect))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !input_field_copies.is_empty() {
+            let context =
+                assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
+            let memory = match pointer_store_effects::apply(
+                &post_state,
+                caller_state,
+                interface,
+                &argument_values,
+                &input_field_copies,
+                &context,
+                pointer_observation_state.as_ref(),
+            ) {
+                Ok(memory) => memory,
+                Err(message) => {
+                    paths.push(resource_call_failure(&message));
+                    continue;
+                }
+            };
+            let Some(writes) = input_field_copies
+                .iter()
+                .map(|effect| {
+                    pointer_store_effects::destination(
+                        &post_state,
+                        interface,
+                        &argument_values,
+                        effect,
+                        &context,
+                    )
+                    .map(|(destination, _)| {
+                        (
+                            destination.pointer().clone(),
+                            effect.value_type.byte_width(),
+                        )
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                paths.push(resource_call_failure(
+                    "certified input pointer effect lost its checked destination",
+                ));
+                continue;
+            };
+            facts.push(ExecutionPureFact::certified(
+                Proposition::CMemoryMutatesOnly {
+                    before: post_state.memory().clone(),
+                    after: memory.clone(),
+                    writes,
+                },
+            ));
+            post_state.set_memory(memory);
+        }
         // A `produces` binder owns nothing at entry: the call creates the
         // instance under the identity the caller's `let` introduced. It is
         // built once, here, so the population transition and the returned

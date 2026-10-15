@@ -1443,6 +1443,9 @@ pub(in crate::surface) fn initial_call_state(
         function.resource_requires(),
         function.contract_requires(),
     );
+    let opaque_copy_inputs = crate::kernel::c_body_opaque_pointer_copy_inputs(function);
+    // Direct C copy-only operands retain full value identities without a native
+    // input promise. Other C pointer uses keep their existing entry recipe.
     // Explicit native source inputs, nominal C++ record inputs and selected
     // prefix/model requirements retain unresolved semantic identities. A C
     // record type alone leaves an unprofiled input on its legacy path.
@@ -1455,7 +1458,8 @@ pub(in crate::surface) fn initial_call_state(
                 .get(index)
                 .is_some_and(|parameter| parameter.is_native_pointer_input())
             || native_span_inputs.contains(&index)
-            || native_model_inputs.contains(&index))
+            || native_model_inputs.contains(&index)
+            || opaque_copy_inputs.contains(&index))
             && let CExpression::Value(CValue::Pointer(pointer)) = &mut arguments[index]
         {
             *pointer =

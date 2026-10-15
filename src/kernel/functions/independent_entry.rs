@@ -659,6 +659,52 @@ pub(crate) fn construct(
             );
         state = state.with_resource_context(resources);
     }
+    // A declared read-only head also supplies its unconditional direct memory
+    // views at the proof entry. Reproduce those projections from the definition,
+    // never from caller facts; leave nested/conditional recipes unsupported.
+    let mut projected_views = Vec::new();
+    for fact in state.resources().facts() {
+        let CResourceFact::View(CResource::Composite { name, arguments }) = fact else {
+            continue;
+        };
+        let definition = interface.composite_resource_definition(name)?;
+        if definition.matched.is_some()
+            || definition.condition().is_some()
+            || !definition.resource_parameters().is_empty()
+        {
+            continue;
+        }
+        if definition.parameters().len() != arguments.len() {
+            return None;
+        }
+        let mut scope = state.clone();
+        for (formal, argument) in definition.parameters().iter().zip(arguments.iter()) {
+            let value = argument.as_c_value()?;
+            if value.c_type() != formal.c_type() {
+                return None;
+            }
+            scope
+                .locals
+                .set_typed(formal.name().to_string(), value.clone(), formal.c_type());
+        }
+        for spec in definition.contains() {
+            if spec.guard().is_some() || !matches!(spec.term(), CResourceTerm::Memory(_)) {
+                continue;
+            }
+            let Ok(Ok(view)) = evaluate_function_resource_spec(&scope, spec, &empty, &mut budget)
+            else {
+                return None;
+            };
+            projected_views.push(CResourceFact::View(view.resource().clone()));
+        }
+    }
+    if !projected_views.is_empty() {
+        let resources = state
+            .resources()
+            .clone()
+            .unchecked_with_facts(projected_views);
+        state = state.with_resource_context(resources);
+    }
     // Source entry names inputs beside raw construction outputs only after
     // the kernel has checked the whole declared clause partition. Reconstruct
     // that same stage, using its own premises and one immutable source image.
@@ -918,6 +964,77 @@ mod tests {
         .with_resource_summary(vec![input.clone()], vec![input])
         .with_composite_resource_definitions(vec![definition]);
         (function, vec![CExpression::Value(value)], pointer, head)
+    }
+
+    #[test]
+    fn declared_readonly_heads_reconstruct_only_their_direct_memory_views() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = Pointer::symbolic(Variable(9_898_451));
+        let value = CValue::Pointer(
+            CPointerValue::new(pointer.clone(), CType::Int32Pointer)
+                .with_designation(PointerDesignation::Unresolved(Variable(9_898_451))),
+        );
+        let input = CResourceSpec::composite(
+            CResourceAccessMode::View,
+            "readable".into(),
+            vec![c_variable("p")],
+            vec![CType::Int32Pointer],
+        );
+        let definition = CCompositeResourceDefinition::new(
+            "readable",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            None,
+            false,
+            vec![CResourceSpec::viewed_memory(CMemorySegment::new(
+                c_variable("p"),
+                c_int32_literal(0),
+                c_int32_literal(1),
+            ))],
+            Vec::new(),
+        );
+        let function = c_function(
+            CType::Int32Pointer,
+            "readonly_identity",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_return(c_variable("p")),
+        )
+        .with_resource_summary(vec![input], Vec::new())
+        .with_composite_resource_definitions(vec![definition]);
+        let arguments = vec![CExpression::Value(value)];
+        let entry = construct(&function, &arguments, None, false).unwrap();
+        let view =
+            CResourceFact::view_memory(CMemoryRange::new(pointer.clone(), 0.into(), 1.into()));
+        assert!(
+            entry
+                .caller
+                .resources()
+                .contains_exact_representation(&view)
+        );
+        assert!(!entry.caller.resources().contains_exact_representation(
+            &CResourceFact::own_memory(CMemoryRange::new(pointer, 0.into(), 1.into()))
+        ));
+        let premises =
+            crate::kernel::c_function_contract_entry(&entry.caller, &function, &arguments)
+                .unwrap()
+                .into_assumptions();
+        assert!(matches(
+            &function,
+            &arguments,
+            &entry.caller,
+            &premises,
+            None
+        ));
+        let other = CMemoryRange::new(Pointer::symbolic(Variable(9_898_452)), 0.into(), 1.into());
+        for extra in [
+            CResourceFact::view_memory(other.clone()),
+            CResourceFact::own_memory(other),
+        ] {
+            let wrong = entry
+                .caller
+                .clone()
+                .with_resource_context(entry.caller.resources().clone().unchecked_with_fact(extra));
+            assert!(!matches(&function, &arguments, &wrong, &premises, None));
+        }
     }
 
     #[test]

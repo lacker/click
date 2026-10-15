@@ -24,6 +24,7 @@ mod fold_read_summary;
 mod functions;
 pub(crate) use functions::pointer_store_effects::{
     c_body_has_pointer_field_candidates, c_body_has_pointer_field_candidates_for_formals,
+    c_body_opaque_pointer_copy_inputs,
 };
 mod owned_footprint_reach;
 mod population_access;
