@@ -1933,11 +1933,14 @@ fn source_have_error(
             .as_ref()
             .is_none_or(|error| error.kind() == crate::surface::ClickErrorKind::Proof)
         {
-            return ClickError::new(format!(
+            // Keep the checked predecessor's diagnostic context, just as
+            // the other source-have failures do. Search candidates are not
+            // the environment in which this written goal failed.
+            return proof.attach_step_diagnostic(ClickError::new(format!(
                 "`{}` tactic {index}: `auto` could not prove `{}`",
                 proof.claim_label(),
                 crate::surface::diagnostics::describe_click_proposition(&have.proposition)
-            ));
+            )));
         }
     }
     if let Some(error) = cause {

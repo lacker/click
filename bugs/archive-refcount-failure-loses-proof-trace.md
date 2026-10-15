@@ -43,3 +43,46 @@ above reproduce it without that build artifact.
   failure after a modular call and resource open, with the relevant branch
   retained.
 - Then use that evidence to investigate the refcount compatibility regression.
+
+## Shared minimal reproduction
+
+The same defect also reproduces on upstream `804be33ee`; it is not specific to
+native object inputs. Use this valid C:
+
+```c filename=f.c
+int helper(void) { return 1; }
+int f(void) { int x; x = helper(); return x; }
+```
+
+```click
+verifying "f.c";
+int32 helper() { ensures result == 1; } by { execute(); simp(); }
+int32 f() { ensures result == 1; } by {
+    step();
+    step();
+    have x == 2 by auto;
+    execute();
+    simp();
+}
+```
+
+The false `have` must fail. Under `with_proof_trace("f", ...)`, however,
+`error.trace_context_report()` is `None`, despite the two checked steps and the
+helper's `x == 1` result. The early auto-miss return in `source_have_error`
+constructs a fresh error without the existing diagnostic attachment used by
+its other error paths. Preserve that exact checked predecessor and the existing
+failure message; failed smart candidates must not become trace facts.
+
+## Checked repair candidate
+
+The source auto-miss now attaches its checked predecessor's existing diagnostic
+provider, as the other source-have refusals do. The original error message is
+unchanged. A regression checks the helper-call prefix and excludes publication
+of the failed claim. That regression and the existing call-trace control pass
+on both trees; all 73 active diagnostic tests pass upstream (nine ignored).
+
+The original refcount trace now records initialization, folds and the retain
+call, including a post-call read equal to `1 + amount`. The functional
+comparison still fails. Investigate its exact goal read and state transport;
+this trace repair is not a refcount proof repair. Keep this file until the
+shared diagnostic fix lands upstream.

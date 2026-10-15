@@ -638,3 +638,13 @@ The refcount diagnostic follow-up is preserved in
 `bugs/archive-refcount-failure-loses-proof-trace.md`: the original failure after
 a modular call and control-resource open loses its checked trace prefix. Repair
 or reduce that recording defect before guessing at the missing count relation.
+
+The missing refcount trace reduces to a shared upstream bug: the early
+source-have auto-miss constructed a fresh error instead of attaching the
+checked proof's existing diagnostic context. Its repair preserves the failure
+message and reuses the existing context/trace formatter. A minimal failing
+have after a checked helper call now retains that call's facts without adding
+the failed claim. Both selected call-trace controls pass on the archive; all
+73 active diagnostic controls pass upstream, with nine ignored. The unchanged
+refcount trace is now available and records the post-retain read equal to
+`1 + amount`; its functional failure remains open. Keep the 46/52 verdict.

@@ -3118,3 +3118,30 @@ fn failed_final_assumption_preserves_its_checked_trace_context() {
         assert!(!trace.contains("adds: cell[0] == value + 1"), "{trace}");
     });
 }
+
+/// A written auto miss keeps the same checked prefix as other have failures.
+/// The failed smart candidates must not become facts in that prefix.
+#[test]
+fn auto_have_failure_trace_retains_checked_call_prefix() {
+    let c = "int helper(void) { return 1; } int f(void) { int x; x = helper(); return x; }";
+    let source = "verifying \"f.c\"; int32 helper() { ensures result == 1; } by { execute(); simp(); } \
+                  int32 f() { ensures result == 1; } by { step(); step(); have x == 2 by auto; execute(); simp(); }";
+    with_proof_trace("f", || {
+        let error =
+            verify_c0_sources(source, &[("f.c", c)]).expect_err("the false have must still fail");
+        assert!(
+            error
+                .raw_summary()
+                .contains("`auto` could not prove `x == 2`")
+        );
+        assert_eq!(error.proof_claim_label(), Some("f.contract"));
+        let trace = error.trace_context_report().expect("checked prefix trace");
+        assert!(trace.contains("step(helper("), "{trace}");
+        assert!(
+            trace.contains("== 1") || trace.contains(", 1) is true"),
+            "{trace}"
+        );
+        assert!(!trace.contains("adds: x == 2"), "{trace}");
+        assert!(!trace.contains("<no checked simple steps"), "{trace}");
+    });
+}
