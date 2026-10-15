@@ -86,7 +86,7 @@ backing-pointer equality across the terminator store. The resource keeps its
 original separate descriptor fields. Explicit stored-value and unfolded
 terminator facts then check, but the subsequent simple resource fold exhausts
 its deterministic work budget. The
-[reduced fold defect](split-descriptor-fold-exhausts-simple-budget.md) preserves
+[historical reduced fold defect](https://github.com/lacker/click/blob/ee9b29f87822302f753f53eeb1c505bcc06f21ea/bugs/split-descriptor-fold-exhausts-simple-budget.md) preserves
 this next blocker and the profile. No claim that the full archive project
 passes, and no new full-audit count, follows from this reduction.
 
@@ -120,3 +120,9 @@ justification to widen numeric equality or activate native semantics from C
 layout metadata. The smaller
 [checked-unfold mismatch](resource-unfold-after-call-rejects-checked-delta.md)
 is preserved separately and is not yet established as the same cause.
+
+The latest completed normal archive audit at `80eb92029` remains 42/52, with the
+same ten failures (136.3s harness, exit 100). The string project still passes.
+The bounded fold repair is delivered upstream in PR #1051; the separate
+read-frame delta reduction passes all four modes. These do not close the vector
+allocation fold or the native-place check exposed by the two-call reduction.

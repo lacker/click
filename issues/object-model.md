@@ -292,17 +292,18 @@ are documented, and remaining excluded features belong to their existing
 roadmaps. Preserve durable design and delivery records, then delete this issue
 under the normal issue lifecycle.
 
-Upstream control: after explicitly proving the unchanged backing pointer and
-using `simp` for string push's terminator, the complete upstream string/vector
-projects verify. At this recovery checkpoint, that pointer equality still
-rejects after the zero store, and vector still rejects its later allocation
-fold. Keep reducing these archive-specific failures; upstream control success
-does not activate this branch or change the 41/52 archive audit.
+The full original string project now passes all four verification modes. The
+latest normal archive example audit after the graph-lock and selected read-frame
+repairs remains **42/52 passing**, with the same ten compatibility failures
+(136.3s harness, exit 100). This supersedes the 41/52 checkpoint and closes the
+split-field fold-budget defect at unchanged limits. PR #1051 delivers the
+bounded byte-gap and graph-lock repairs upstream; its final pushed head
+`9d6ac45c2` is verified in upstream history. The discarded final-assumption trace
+fix is separately queued in PR #1054.
 
-The split-field string reduction now identifies a narrower next blocker:
-explicit append-index bounds and stored-value proofs check, but the subsequent
-simple fold exhausts its work budget. Reduce and fix the
-[fold performance defect](../bugs/split-descriptor-fold-exhausts-simple-budget.md)
-before continuing the archive's string proof or activation. Keep the original
-C, split-field resource and existing budgets; the vector allocation fold remains
-separate.
+Continue with the separate vector allocation fold. Address equality is available
+there, but the full loaded pointer values differ across the modular push call.
+The selected read-frame repair closes a separate checked-unfold delta mismatch;
+its focused reduction passes all four modes and 337 selected controls pass.
+Neither that reduction nor the passing upstream C examples establish archive
+activation. Keep original C, contracts, split-field resources and budgets intact.
