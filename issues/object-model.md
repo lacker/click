@@ -669,3 +669,10 @@ selected-proof API. A broad CLI invocation also checks the earlier
 `__rb_rotate_set_parents` helper, which reaches the separately documented
 integer-to-pointer origin refusal before the selected trace target. That
 expected helper boundary is not a missing trace of the later open failure.
+
+The shared auto-have diagnostic fix landed through
+[PR #1131](https://github.com/clicklang/click/pull/1131), and its pushed commit
+is verified on upstream. The fixed trace and regression close the recording
+bug; its archived reproduction remains available at the immutable link in the
+delivery ledger. The separate refcount comparison is now completed by the
+explicit proof in `cb6c3772c`, preserving all C and contracts.
