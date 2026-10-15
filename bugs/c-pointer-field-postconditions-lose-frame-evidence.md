@@ -57,3 +57,24 @@ direct `simp` attempt also rejects that equality despite the held
 descriptor/backing separation. Vector proceeds past `vector_push` and fails a
 later `allocated_vector_push` allocation-resource fold. Keep this report open
 until its full-project acceptance criteria are met.
+
+## Upstream proof recovery versus archive activation
+
+PR #1027 landed the explicit setter/vector equalities. On upstream's kernel,
+`owned_string_push` additionally verifies after explicitly proving
+`owner->data == old(owner->data)` and using `simp` for the unfolded terminator.
+With that proof adjustment, the full owned-string project (15 proofs) and the
+full owned-vector project (13 proofs) verify; their C and contracts are intact.
+The setter/vector reduced four-mode checks in #1027 do not by themselves
+establish this full-project result.
+
+The recovery archive at `d6caff076` still rejects that explicit backing-pointer
+equality after the terminator store. Its trace stops an eight-byte pointer-field
+read at the four-byte zero store. The write address contains a pointer read
+projected from the first backing store's exit; the final field read projects
+from the zero store's exit. Descriptor/backing separation is held. The same
+explicit equality succeeds on upstream, so this is an archive compatibility
+obligation, not a reason to weaken the example or broaden `assumption`.
+The archive also still rejects the later allocation fold described above.
+Keep this report open for recovery activation; do not equate upstream example
+success with closure of those two archive failures.

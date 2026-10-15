@@ -291,3 +291,10 @@ introduced regressions are closed, the acceptance evidence and supported limits
 are documented, and remaining excluded features belong to their existing
 roadmaps. Preserve durable design and delivery records, then delete this issue
 under the normal issue lifecycle.
+
+Upstream control: after explicitly proving the unchanged backing pointer and
+using `simp` for string push's terminator, the complete upstream string/vector
+projects verify. At this recovery checkpoint, that pointer equality still
+rejects after the zero store, and vector still rejects its later allocation
+fold. Keep reducing these archive-specific failures; upstream control success
+does not activate this branch or change the 41/52 archive audit.
