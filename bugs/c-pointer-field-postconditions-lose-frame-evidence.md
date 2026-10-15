@@ -5,7 +5,7 @@ Priority: P1.
 Soundness: incomplete. The verifier rejects unchanged supported C proofs. This
 reproduction does not demonstrate acceptance of a false claim.
 
-On PR 646's bounded-object-model branch, the original
+In the initial PR 646 bounded-object-model reproduction, the original
 `examples/owned-vector/vector.click` rejects `vector_push` at its final
 `assumption` steps: `owner->data == old(owner->data)` and
 `owner->data[old(owner->len)] == value` remain unproved. The C body stores through
@@ -41,3 +41,19 @@ Acceptance criteria:
 - Preserve full pointer origins: numeric address equations must not establish
   native place validity or replace the pointer stored in a field.
 - Keep existing proof and timing limits; profile only after the proof succeeds.
+
+## Current progress after the scoped read-producer repair
+
+PR #1023 fixes the intervening two-write execution gap. Explicit checked
+equalities now prove the original `owned_string_set` and `vector_push`
+contracts: the setter proves its stored element with `simp`, and vector push
+proves its backing pointer unchanged and its stored element before folding.
+The final `assumption` steps remain exact-fact lookup; no kernel rule changes.
+
+The complete recovery projects are still rejected. String push reaches the
+terminator equality `owner->data[owner->len] == 0`; its trace distinguishes the
+pointer read used by the zero store from the later projected pointer read. A
+direct `simp` attempt also rejects that equality despite the held
+descriptor/backing separation. Vector proceeds past `vector_push` and fails a
+later `allocated_vector_push` allocation-resource fold. Keep this report open
+until its full-project acceptance criteria are met.

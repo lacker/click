@@ -266,6 +266,12 @@ int32 vector_push(struct vector* owner, int32 value) {
     step();
     step();
     step();
+    have owner->data == old(owner->data) by {
+        simp();
+    }
+    have owner->data[old(owner->len)] == value by {
+        simp();
+    }
     fold(vector_storage(owner));
     have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
         intro();

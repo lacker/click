@@ -199,6 +199,9 @@ int32 owned_string_set(
     ) by {
         simp();
     }
+    have owner->data[index] == value by {
+        simp();
+    }
     fold(owned_string(owner));
     step();
     assumption();
