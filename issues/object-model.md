@@ -664,11 +664,13 @@ local compilation affected this run's timing; the deterministic scaling
 controls remain the performance evidence. This is not a full green gate or
 native-feature activation.
 
-For the rbtree open failure, target `rb_erase_augmented.contract` through the
-selected-proof API. A broad CLI invocation also checks the earlier
-`__rb_rotate_set_parents` helper, which reaches the separately documented
-integer-to-pointer origin refusal before the selected trace target. That
-expected helper boundary is not a missing trace of the later open failure.
+For the rbtree open failure, reproduce the normal audit with the entry-module
+`verify_c0_project` API and trace `rb_erase_augmented`. Imported contracts are
+conditional interfaces in that audit. Both broad CLI checking and selected
+proof-unit checking also verify the earlier `__rb_rotate_set_parents` helper,
+which reaches the separately documented integer-to-pointer origin refusal
+before this trace target. Do not confuse the audit's conditional scope with
+verification of every imported helper.
 
 The shared auto-have diagnostic fix landed through
 [PR #1131](https://github.com/clicklang/click/pull/1131), and its pushed commit
@@ -676,3 +678,12 @@ is verified on upstream. The fixed trace and regression close the recording
 bug; its archived reproduction remains available at the immutable link in the
 delivery ledger. The separate refcount comparison is now completed by the
 explicit proof in `cb6c3772c`, preserving all C and contracts.
+
+The callback-open failure is a shared cache-equivalence omission: canonical
+function-pointer reads use `FunctionSymbolic(load_variable)` at zero offset,
+whereas the comparison recognized only integer and scaled object-pointer
+loads. Recognizing that exact registered read still checks its load kind,
+cell address and unchanged snapshot. Two kernel controls pass, including
+wrong-cell, narrow-load, arbitrary-symbol and displaced-pointer refusals.
+The original rbtree entry-module proof now passes `open` and stops later at
+its result equality; retain **47/52** until the complete audit is rerun.

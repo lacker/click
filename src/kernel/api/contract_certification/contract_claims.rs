@@ -737,21 +737,26 @@ fn materialized_load_is_unchanged(
     };
     let load = match value {
         crate::kernel::integer64_c_value!(bits) => load_of(bits),
-        // A pointer-typed cell materialized from a load scales the load (or
-        // its load variable) by the pointee width, as the kernel's own
-        // symbolic pointer loads do.
+        // Object-pointer loads scale their read by the pointee width.
+        // Function-pointer loads instead name the exact registered read as
+        // a symbolic function at offset zero; neither form is a new write.
         CValue::Pointer(pointer_value) => {
             if pointer_value.designation().is_some() {
                 return false;
             }
-            let Pointer {
-                offset: PointerOffsetTerm::Int32Scaled { value: bits, .. },
-                ..
-            } = pointer_value.pointer()
-            else {
-                return false;
-            };
-            load_of(bits)
+            match pointer_value.pointer() {
+                Pointer {
+                    block: PointerBlock::FunctionSymbolic(variable),
+                    offset: PointerOffsetTerm::Constant(0),
+                } if matches!(pointer_value.c_type(), CType::FunctionPointer(_)) => {
+                    load_of(&Bitvector32Term::Variable(*variable))
+                }
+                Pointer {
+                    offset: PointerOffsetTerm::Int32Scaled { value: bits, .. },
+                    ..
+                } => load_of(bits),
+                _ => return false,
+            }
         }
         _ => return false,
     };
@@ -4085,6 +4090,84 @@ mod wide_range_reader_tests {
             &[wide],
             &[narrow],
             &facts
+        ));
+    }
+}
+
+#[cfg(test)]
+mod materialized_function_load_tests {
+    use super::*;
+
+    fn callback_load(memory: &CMemory, address: &Pointer, kind: LoadKind) -> CValue {
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(memory.clone()),
+            Box::new(address.clone()),
+            kind,
+        );
+        let (variable, _) = crate::kernel::load_variable_for_term(&load).unwrap();
+        CValue::typed_pointer(
+            Pointer::symbolic_function(variable),
+            CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
+        )
+    }
+
+    #[test]
+    fn canonical_function_pointer_cache_preserves_memory() {
+        let address = Pointer {
+            block: "callback-cache".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("callback-cache", 16);
+        let value = callback_load(&memory, &address, LoadKind::Pointer);
+        let facts = PureFactContext::new();
+        assert!(materialized_load_is_unchanged(
+            &value, &memory, &address, &facts
+        ));
+        let cached = memory.clone().store(address.clone(), value);
+        assert!(c_memories_definitionally_equal(&memory, &cached, &facts));
+        assert!(c_memories_definitionally_equal(&cached, &memory, &facts));
+    }
+
+    #[test]
+    fn function_pointer_cache_requires_the_exact_cell_and_pointer_load() {
+        let address = Pointer {
+            block: "callback-cache-controls".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = CMemory::new().with_block("callback-cache-controls", 16);
+        let facts = PureFactContext::new();
+        let value = callback_load(&memory, &address, LoadKind::Pointer);
+        assert!(!materialized_load_is_unchanged(
+            &value,
+            &memory,
+            &address.offset_by_bytes(8),
+            &facts
+        ));
+        let narrow = callback_load(&memory, &address, LoadKind::Bits32);
+        assert!(!materialized_load_is_unchanged(
+            &narrow, &memory, &address, &facts
+        ));
+        let arbitrary = CValue::typed_pointer(
+            Pointer::symbolic_function(Variable(97_555_001)),
+            CType::FunctionPointer(CallbackSignature::UNSPECIFIED),
+        );
+        assert!(!materialized_load_is_unchanged(
+            &arbitrary, &memory, &address, &facts
+        ));
+        let CValue::Pointer(pointer_value) = value else {
+            unreachable!()
+        };
+        let displaced = CValue::typed_pointer(
+            pointer_value.pointer().offset_by_bytes(1),
+            pointer_value.c_type(),
+        );
+        assert!(!materialized_load_is_unchanged(
+            &displaced, &memory, &address, &facts
+        ));
+        let changed = memory.clone().store(address.clone(), arbitrary);
+        let original = callback_load(&memory, &address, LoadKind::Pointer);
+        assert!(!materialized_load_is_unchanged(
+            &original, &changed, &address, &facts
         ));
     }
 }
