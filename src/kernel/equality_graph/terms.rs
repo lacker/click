@@ -359,7 +359,7 @@ impl TermClasses {
         term: &crate::kernel::Bitvector32Term,
         merged: &std::collections::HashSet<u64>,
     ) -> Int32AtomClass {
-        let term = crate::kernel::canonical_term(term);
+        let term = term.clone();
         match self
             .nodes
             .get(&Node::Int32(MachineAtom::int32(term.clone())))
@@ -905,7 +905,7 @@ impl TermClasses {
                             } else {
                                 crate::kernel::MachineIntegerType::Int64
                             },
-                            crate::kernel::canonical_term(value),
+                            value.as_ref().clone(),
                         ),
                         *byte_width,
                         *unsigned,
@@ -1047,8 +1047,10 @@ impl TermClasses {
     }
 
     fn intern_int32(&mut self, term: &crate::kernel::Bitvector32Term) -> u64 {
-        let term = crate::kernel::canonical_term(term);
-        self.intern_machine(&term, false)
+        // This interner runs under the graph mutex. Memory canonicalization
+        // can re-enter this graph through a cell-epoch walk; callers perform
+        // it before locking, while raw reads here retain their own snapshot.
+        self.intern_machine(term, false)
     }
 
     pub(super) fn int32_class(&mut self, term: &crate::kernel::Bitvector32Term) -> u64 {
@@ -1110,7 +1112,7 @@ impl TermClasses {
             if supported(term) {
                 return None;
             }
-            let term = crate::kernel::canonical_term(term);
+            let term = term.clone();
             (!supported(&term)).then(|| Node::Int32(MachineAtom::int32(term)))
         };
         let left_atom = opaque(left);

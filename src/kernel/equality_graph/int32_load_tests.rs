@@ -366,3 +366,52 @@ fn explicit_cross_snapshot_load_equality_composes_without_merging_snapshots() {
         .assume_condition(indices, true);
     assert!(reverse_order.equality_graph.are_int32_equal(&old_j, &new_j));
 }
+
+#[test]
+fn raw_read_address_registration_does_not_walk_memory_history() {
+    let mut baseline = None;
+    for size in [0u64, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let owner = address(87);
+        let field = owner.offset_by_bytes(8);
+        let before = CMemory::new();
+        let execution = before.with_block("local:raw-read", 8).store(
+            CMemory::local_pointer("raw-read"),
+            CValue::Int32(0u32.into()),
+        );
+        let load = |memory: &CMemory| {
+            Bitvector32Term::MemoryLoad(
+                intern_c_memory_ref(memory),
+                Box::new(field.clone()),
+                crate::kernel::LoadKind::Bits32,
+            )
+        };
+        let backing = Pointer {
+            block: owner.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(load(&execution), 4),
+        };
+        let after = execution.clone().store(
+            backing.offset_by_int32_elements(var(88)),
+            CValue::Int32(7u32.into()),
+        );
+        let selected = Pointer {
+            block: owner.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(load(&after), 4),
+        };
+        let mut graph = EqualityGraph::default();
+        for extra in 0..size {
+            graph.add_int32_equality(&var(10_000 + 2 * extra), &var(10_001 + 2 * extra));
+        }
+        let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
+            let class = graph
+                .address_class(&selected)
+                .expect("register the selected read address");
+            assert_eq!(graph.address_class(&selected), Some(class));
+        });
+        let first = *baseline.get_or_insert(work);
+        assert!(
+            work <= first + 64 && work <= 1024,
+            "size={size}, work={work}, baseline={first}"
+        );
+    }
+}
