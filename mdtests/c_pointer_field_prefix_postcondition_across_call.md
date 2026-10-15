@@ -86,7 +86,7 @@ int32 caller(struct vector* owner, int32 value) {
     requires owner->len < owner->cap;
     owns vector_storage(owner);
     ensures forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) };
-} by { execute(); assumption(); simp(); }
+} by { execute(); assumption(); assumption(); }
 ```
 
 ```expect

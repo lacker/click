@@ -7570,6 +7570,30 @@ fn execute_verified_function_applications_with_suspension(
                 }
             }
         }
+        // Pointer-effect replay refines the call's abstract post memory with
+        // body-certified complete carriers. Publish stateful ensures at that
+        // returned frontier as well: their earlier instances remain necessary
+        // to check output recovery, but name pre-replay read carriers.
+        if !application.pointer_store_effects.is_empty() {
+            let mut returned_contract_state =
+                with_contract_interface_argument_views(&return_state, interface, &argument_values);
+            if interface.return_type() != CType::Void {
+                set_contract_result(&mut returned_contract_state, interface, result.clone());
+            }
+            add_verified_function_ensure_facts_selected_with_interface(
+                &mut facts,
+                &obligations,
+                &returned_contract_state,
+                &canonical_entry_contract_state,
+                interface,
+                interface
+                    .contract_ensures()
+                    .iter()
+                    .filter(|ensure| !spec_proposition_is_state_independent(ensure)),
+                &effective_assumptions,
+                budget,
+            )?;
+        }
         return_state.next_local_frame = post_state.next_local_frame;
         return_state.next_local_lifetime = post_state.next_local_lifetime;
 

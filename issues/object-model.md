@@ -410,3 +410,13 @@ the existing control budget. Track the reproduced failure and diagnostic-only
 timing evidence in `bugs/vector-callee-prefix-proof-exhausts-control-budget.md`.
 Private probes and rejected proof variations are removed. No new full archive
 audit has run; retain 42/52 and the same ten compatibility failures.
+
+The checked pointer-effect return path now also publishes stateful ensures
+against its final returned memory, after output checking and complete-carrier
+restoration. Earlier ensure instances remain available for internal output
+recovery; this does not change initialization, ownership or origin authority.
+The modular C prefix control now uses exact `assumption` steps and passes all
+four proof modes. All 401 selected call-contract/C++/rewrite controls pass.
+The original vector still reaches the later grow-branch prefix obligation;
+its nested checked-fact spelling and repeated-lowering investigation remains
+separate. No full audit has run, so retain 42/52.

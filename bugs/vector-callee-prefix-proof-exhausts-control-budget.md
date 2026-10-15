@@ -44,6 +44,14 @@ trying up to 255 restricted queries for up to 128 selected facts. This is a
 candidate cost to isolate, not an established asymptotic defect or justification
 to disable certificate checks.
 
+A private isolation run skipped premise shortening but retained proof
+validation and the same budgets. It still exhausted 2,500,000 units, then
+inside snapshot transport (about 1.13 million units) and quantified framing
+(about 422,000 nested units). The completed distinctness/range-membership
+operations dominate that refusal. Premise minimization is therefore not a
+sufficient fix. The private switch was removed; neither isolation run is a
+successful proof or accepted performance result.
+
 Acceptance criteria:
 
 - Reduce the grow-then-push state dependency and identify the checked callee
@@ -56,3 +64,13 @@ Acceptance criteria:
 - Add deterministic multi-size regressions if a performance-sensitive path
   changes. Distinguish this failure from the separately tracked successful
   string return-resource proof cost; their causes are not established equal.
+
+## Checked call-return frontier prerequisite
+
+Stateful ensures are now also instantiated at the returned memory after
+body-certified pointer effects and output checks. The small modular control
+passes fresh, expanded, rewritten and retained checks using exact assumptions;
+401 selected call-contract, C++ and rewrite controls pass. The original vector
+prefix obligation is not closed by this repair. Its post-call descriptor-store
+frame checks individually, but reusing checked equalities in the nested proof
+still exposes repeated lowering. Keep this report open.
