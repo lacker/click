@@ -3266,6 +3266,10 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     }
 
     let mut unfolded_facts = Vec::new();
+    // Lower later selectors through earlier cached fields, but name every
+    // exposed cell at this one rewrite's input snapshot. Caching a read is
+    // not a new program write or a new load-naming epoch.
+    let naming_memory = state.memory().clone();
     // Only previously lowered clauses of this exact body supply scratch
     // read authority. The real ledger still undergoes the checked exchange.
     let mut lowering_resources = state.resources().clone();
@@ -3290,8 +3294,9 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         // receives loadability and symbolic loads without modifying the
         // certified program memory by installing cached cells into it.
         if materialize_memory {
-            let memory = materialize_composite_resource_cells(
+            let memory = materialize_composite_resource_cells_from_snapshot(
                 state.memory().clone(),
+                &naming_memory,
                 &contained,
                 &lowered,
                 parameter_binding.parameters,
@@ -4953,22 +4958,6 @@ fn instantiate_contract_segment(
         end: substitute_c_fragment(&segment.end, substitutions)?,
         surface,
     })
-}
-
-fn materialize_composite_resource_cells(
-    memory: CMemory,
-    resource_clause: &ResourceClause,
-    lowered: &CResourceFact,
-    parameters: &[syntax::C0Parameter],
-) -> CMemory {
-    let naming_memory = memory.clone();
-    materialize_composite_resource_cells_from_snapshot(
-        memory,
-        &naming_memory,
-        resource_clause,
-        lowered,
-        parameters,
-    )
 }
 
 fn materialize_composite_resource_cells_from_snapshot(

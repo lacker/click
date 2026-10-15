@@ -584,3 +584,27 @@ not a full green gate or native-feature activation.
 The narrower cursor caller is also rejected on upstream-based `2c484f457`
 for missing borrowing-composite loan backing. Keep that baseline limitation
 separate from the restored original cursor project and from archive regressions.
+
+The ring-buffer rewrite regression is reduced to a nested head containing
+pointer storage and a fixed array. The second unfold cached later array reads
+at an intermediate snapshot after naming the descriptor's fields. The kernel
+correctly could not equate those reads with the input snapshot without further
+alias evidence. Unfold/open now uses one immutable naming snapshot for the
+whole body, while lowering later selectors through earlier cached fields. This
+reuses the existing body-instantiation rule and changes no kernel acceptance
+rule, object representation, C, contract or resource definition.
+
+The original ring-buffer pipeline and the reduction pass fresh, expanded,
+rewritten and retained checking. The new
+`mdtests/c_nested_resource_pointer_body_unfold.md` passes on the archive and
+upstream-based tree. Both child-overwrite controls pass. Eight of nine existing
+`resource_unfold` fixtures pass on the archive; the remaining
+`resource_unfold_names_unmatched_body_cells.md` still fails its later loop-exit
+fold and is reproduced unchanged with the `f936e47d8` executable. Keep that
+baseline failure separate from this fix.
+
+The complete normal example audit now passes **45/52** in 109.05 seconds.
+Ring-buffer is restored with no new failing project. The seven remaining
+failures are arena, multifile-registry, owned-vector, rbtree-augmented, refcount,
+rust-byte-sum and rust-chunks-exact. This remains a recovery checkpoint, not a
+full green gate or activation of native object-model support.
