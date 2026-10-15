@@ -1460,6 +1460,15 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
                 }
             }
             have viewable(arena->occupied[0..arena->capacity]);
+            have arena->data == old(arena->data) by auto;
+            have arena->occupied == old(arena->occupied) by auto;
+            have arena->capacity == old(arena->capacity) by auto;
+            have separate(memory(arena->occupied[0..arena->capacity]), memory(arena->data[0..arena->capacity])) by {
+                rewrite(arena->data == old(arena->data));
+                rewrite(arena->occupied == old(arena->occupied));
+                rewrite(arena->capacity == old(arena->capacity));
+                assumption();
+            }
             let w = fold(arena_window(
                 arena->data,
                 arena->occupied,
@@ -1751,6 +1760,25 @@ int32 arena_alloc(struct arena* arena, int32 count, struct region* region) {
     }
     fold(arena_cells(arena->data, arena->occupied, arena->capacity));
     let allocated = fold(arena_region(region), { start: start, end: end });
+    have arena->data == old(arena->data) by auto;
+    have arena->occupied == old(arena->occupied) by auto;
+    have arena->capacity == old(arena->capacity) by auto;
+    have separate(memory(arena->occupied[0..arena->capacity]), memory(arena->data[0..arena->capacity])) by {
+        rewrite(arena->data == old(arena->data));
+        rewrite(arena->occupied == old(arena->occupied));
+        rewrite(arena->capacity == old(arena->capacity));
+        assumption();
+    }
+    have separate(memory(*arena), memory(arena->data[0..arena->capacity])) by {
+        rewrite(arena->data == old(arena->data));
+        rewrite(arena->capacity == old(arena->capacity));
+        assumption();
+    }
+    have separate(memory(*arena), memory(arena->occupied[0..arena->capacity])) by {
+        rewrite(arena->occupied == old(arena->occupied));
+        rewrite(arena->capacity == old(arena->capacity));
+        assumption();
+    }
     let st = fold(arena_state(arena), { live: n + 1, capacity: arena->capacity });
     let outcome = fold(arena_alloc_result(region), {
         model: ArenaAllocOutcome::Success(start, end)

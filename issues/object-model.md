@@ -785,3 +785,14 @@ with one known failure, not a green-tree verdict. The next reduced-proof check
 explicitly establishes the current data pointer's equality to its entry value:
 it gets past ownership reassembly and exposes the resource's separation-fact
 obligation. Keep that distinction when diagnosing indexed supplier selection.
+
+
+The original arena allocation proof now passes fresh, expansion and rewritten
+checking after explicitly proving descriptor fields unchanged and rewriting the
+existing separation facts at the loop fold and final state fold. C and all
+contracts remain unchanged; no kernel rule was relaxed. Whole-project checking
+now reaches `could not evaluate held instance native carrier body`. Retained
+session construction repeats that whole-project failure before a retained
+recheck starts; this is not evidence of a fresh/retained disagreement for the
+selected allocation proof. Keep the complete checkpoint at **51/52** until the
+original whole arena project passes.
