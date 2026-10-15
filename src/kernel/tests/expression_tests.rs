@@ -2247,28 +2247,48 @@ fn logical_and_or_short_circuit_right_operand() {
 }
 
 #[test]
-fn untyped_pointer_operations_report_indeterminate_pointee_type() {
+fn void_pointer_operations_distinguish_dereferences_from_gnu_byte_arithmetic() {
     let pointer = Pointer {
         block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let pointer_value = || c_pointer_value(pointer.clone());
+    // The generic pointer helper now carries an int32 pointee type. Use
+    // void* to exercise operations with no available pointee type.
+    let pointer_value = || c_typed_pointer_value(pointer.clone(), CType::VoidPointer);
     let expressions = [
         c_load(pointer_value()),
         c_index(pointer_value(), c_int32_literal(1)),
-        c_add(pointer_value(), c_int32_literal(1)),
-        c_add(c_int32_literal(1), pointer_value()),
     ];
 
     for expression in expressions {
         let theorem = prove_c_expression_evaluation(CState::new(), expression.clone())
-            .expect("an untyped pointer operation should produce an explicit model error");
+            .expect("a void-pointer dereference should produce an explicit model error");
         assert_eq!(
             theorem.proposition(),
             &Proposition::CExpressionEvaluates {
                 state: Box::new(CState::new()),
                 expression,
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType,),
+            }
+        );
+    }
+    // GNU C permits formation by byte arithmetic, without permitting a
+    // dereference through void*. Check both operand orders independently.
+    for expression in [
+        c_add(pointer_value(), c_int32_literal(1)),
+        c_add(c_int32_literal(1), pointer_value()),
+    ] {
+        let theorem = prove_c_expression_evaluation(CState::new(), expression.clone())
+            .expect("GNU C void-pointer byte arithmetic");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: Box::new(CState::new()),
+                expression,
+                outcome: CExpressionOutcome::Value(CValue::typed_pointer(
+                    pointer.offset_by_bytes(1),
+                    CType::VoidPointer,
+                )),
             }
         );
     }

@@ -113,6 +113,69 @@ fn pointer_result_effect_is_inferred_from_checked_body_and_instantiated_modularl
 }
 
 #[test]
+fn opaque_c_pointer_input_certifies_value_identity_without_native_input_promise() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let argument = designated(9_898_301);
+    let function = c_function(
+        CType::Int32Pointer,
+        "c_value_identity",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_variable("p")),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    assert!(!function.parameters()[0].is_native_pointer_input());
+    let rule = certify(function, vec![CExpression::Value(argument)]);
+    assert!(
+        rule.pointer_result_effects
+            .contains(&CPointerResultEffect::ExactFromParameter {
+                parameter: 0,
+                child_path: Default::default(),
+            })
+    );
+    let address = CMemory::local_pointer("c_identity_scalar");
+    let memory = CMemory::new().with_declared_scalar_block(address.block.clone(), 4, CType::Int32);
+    let input = memory
+        .declared_scalar_pointer(&address, CType::Int32)
+        .unwrap();
+    let environment = CExecutionEnvironment::new().with_verified_function_rule(rule.clone());
+    for pointer in [
+        input.clone(),
+        input.with_pointer(address.offset_by_bytes(4)),
+    ] {
+        let paths = execute_c_function_call_paths(
+            &CState::new()
+                .with_memory(memory.clone())
+                .with_population_creation_tracking(),
+            &rule.function,
+            &[CExpression::Value(CValue::Pointer(pointer.clone()))],
+            &PureFactContext::new(),
+            CExecutionContext::apply_verified_rules(&environment),
+            &mut ExecutionBudget::new(),
+        )
+        .expect("a value copy needs no pointee access");
+        let [path] = paths.as_slice() else {
+            panic!("one return")
+        };
+        let CFunctionOutcome::Return {
+            value: CValue::Pointer(result),
+            ..
+        } = &path.outcome
+        else {
+            panic!("unexpected outcome: {:?}", path.outcome)
+        };
+        assert_eq!(result, &pointer);
+        assert_eq!(result.designation(), pointer.designation());
+        assert!(path.obligations.is_empty());
+    }
+}
+
+#[test]
 fn absent_designation_does_not_certify_a_pointer_result_effect() {
     let rule = certified_identity(CValue::typed_pointer(
         Pointer::symbolic(Variable(9_898_003)),

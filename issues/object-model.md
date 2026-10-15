@@ -460,3 +460,20 @@ classification, the pointer-field address-equality rejection control, and
 modular record-pointer identity return. The extra pass is the new identity
 normalization control. These pre-existing failures remain activation blockers;
 the last full example audit is still 42/52.
+
+
+The stale untyped-pointer fixture used `c_pointer_value`, which now creates
+an `int32*`. Its replacement checks `void*` dereference/index rejection and
+GNU C byte arithmetic separately. The latter is an existing explicit kernel
+policy, not a new object-model promise. The pointer-field address-equality
+rejection and modular record-return failures above remain open.
+
+
+All 27 pointer-result effect controls now pass, including an ordinary C identity
+helper checked with a canonical opaque input and no native-input promise. Its
+modular call preserves the actual scalar and one-past values exactly. Five
+independent-entry controls still pass. The final broader pointer selection has
+474 passes, two failures and 17 ignored controls: only the documented loaded
+field/address-equality and modular declared-record identity-return failures
+remain in that selection. Formatting and documentation lint pass (Vale absent,
+advisory skipped). No full example audit has run; retain 42/52.
