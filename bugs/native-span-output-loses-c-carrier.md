@@ -131,3 +131,14 @@ any equality rule. An address equation alone must not establish full identity.
 The local reduction is preserved in
 `target/cursor-take-output-preservation-reduction/`; the source above and the
 tracked original example reconstruct it after build artifacts are removed.
+
+### Baseline check of the narrower cursor caller
+
+The narrower `caller` above also fails on upstream-based `2c484f457`, with
+`produced borrowing composite owns input_cursor(...) packages a view views
+readable_input(...) that no viewed input of this call backs`. Its entry owns
+the borrow-containing head but does not separately declare the nested input
+view. This is not an additional archive compatibility regression and should
+not block credit for restoring the unchanged input-cursor project. Investigate
+its entry hold/binding separately from complete pointer-carrier matching; the
+same diagnostic can arise from absent loan backing, not just a mismatched read.

@@ -544,3 +544,43 @@ selection still has 477 passes, the same two failures and 17 ignored controls.
 Run a new normal example audit before changing the 42/52 count. A smaller caller
 whose entry gives the cursor a native model identity still fails returned-view
 matching; this original-project success does not close that separate witness.
+
+
+The next complete normal example audit, on `07d355f0e`, still passes 42/52,
+but its failure set changed: input-cursor and binary-tree are restored, while
+borrowed-slice and perpetual-service newly fail. The other eight failures are
+arena, multifile-registry, owned-vector, rbtree-augmented, refcount, ring-buffer,
+rust-byte-sum and rust-chunks-exact. The unchanged total is not a compatibility
+verdict for the latest copy-transfer changes.
+
+The borrowed-slice reduction exposes a write-authorization mismatch: a certified
+pointer-field effect checked standalone writable bytes, while the call already
+transferred its mutable footprint through an opaque owning resource. The repair
+uses an indexed coverage context over that checked footprint, retaining mutex,
+view-partition, read-only and active-loan checks. Caller-frame ownership outside
+the transfer and partial pointer storage remain insufficient. The original
+borrowed-slice project passes fresh checking; its buffer pipeline also passes
+expanded, rewritten and retained checking.
+
+The service loop instead learns a C-allocated typed-prefix witness at its back
+edge. Physical allocations and native object domains are unchanged. Compare
+lifetime-sensitive input metadata by persistent changes, excluding only those
+C access-knowledge rows and their index memberships. Native input changes,
+unknown index entries and allocation changes remain rejected. Two focused
+controls pass, including a deterministic changed-witness comparison with up to
+4,096 unrelated native inputs. A new full example audit is still required before
+claiming either regression closed or changing the 42/52 count.
+
+The complete normal example audit after both repairs passes **44/52** in
+105.27 seconds. Borrowed-slice and perpetual-service are restored, with no new
+failing project; the eight remaining failures are exactly those listed above.
+The service loop passes fresh, expanded, rewritten and retained verification,
+and its focused Markdown control passes on both master and the archive.
+All 22 native-input controls pass; the broader pointer selection remains 477
+passes, the same two known failures and 17 ignored controls. Documentation lint
+passes (Vale absent, advisory skipped). This remains a partial recovery verdict,
+not a full green gate or native-feature activation.
+
+The narrower cursor caller is also rejected on upstream-based `2c484f457`
+for missing borrowing-composite loan backing. Keep that baseline limitation
+separate from the restored original cursor project and from archive regressions.

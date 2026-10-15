@@ -7326,6 +7326,72 @@ impl CHeapMemory {
                 .eq_relative_to(&other.pending_reallocations, &base.pending_reallocations)
     }
 
+    /// C allocated-access prefixes record checked access knowledge, not a
+    /// native object promise. Learning one in a loop body does not construct
+    /// or retire an object. All other input kinds remain lifetime-sensitive.
+    fn is_c_access_knowledge(&self, identity: &CNativeInputIdentity) -> bool {
+        self.native_record_inputs
+            .get(identity)
+            .is_some_and(|input| {
+                matches!(
+                    input.kind,
+                    CNativeInputKind::TypedPrefix {
+                        policy: CTypedAccessPolicy::CAllocatedAccessAllowed,
+                        ..
+                    }
+                )
+            })
+    }
+
+    fn have_same_lifetime_inputs(&self, other: &Self) -> bool {
+        for change in self.native_record_inputs.diff(&other.native_record_inputs) {
+            let identity = change.key();
+            if (self.native_record_inputs.contains_key(identity)
+                && !self.is_c_access_knowledge(identity))
+                || (other.native_record_inputs.contains_key(identity)
+                    && !other.is_c_access_knowledge(identity))
+            {
+                return false;
+            }
+        }
+        // Keep the lifetime-sensitive parts of the retirement and read-alias
+        // indexes exact. Persistent diffs visit only changed paths and bucket
+        // memberships; unrelated input witnesses are never scanned.
+        self.have_same_lifetime_input_index(
+            other,
+            &self.native_record_input_origins,
+            &other.native_record_input_origins,
+        ) && self.have_same_lifetime_input_index(
+            other,
+            &self.native_record_input_reads,
+            &other.native_record_input_reads,
+        )
+    }
+
+    fn have_same_lifetime_input_index<K: Ord>(
+        &self,
+        other: &Self,
+        before: &SnapshotMap<K, SnapshotSet<CNativeInputIdentity>>,
+        after: &SnapshotMap<K, SnapshotSet<CNativeInputIdentity>>,
+    ) -> bool {
+        let empty = SnapshotSet::new();
+        before.diff(after).all(|change| {
+            let key = change.key();
+            let left = before.get(key).unwrap_or(&empty);
+            let right = after.get(key).unwrap_or(&empty);
+            left.symmetric_difference(right)
+                .into_iter()
+                .all(|identity| {
+                    // Unknown index entries fail closed too.
+                    (self.is_c_access_knowledge(identity) || other.is_c_access_knowledge(identity))
+                        && (!self.native_record_inputs.contains_key(identity)
+                            || self.is_c_access_knowledge(identity))
+                        && (!other.native_record_inputs.contains_key(identity)
+                            || other.is_c_access_knowledge(identity))
+                })
+        })
+    }
+
     /// Whether two heap states have the same allocation lifetime and shape.
     ///
     /// Typed initialization metadata is deliberately excluded: it describes
@@ -7341,9 +7407,7 @@ impl CHeapMemory {
             && self.uninitialized_objects == other.uninitialized_objects
             && self.object_input_domains == other.object_input_domains
             && self.scalar_input_domains == other.scalar_input_domains
-            && self.native_record_inputs == other.native_record_inputs
-            && self.native_record_input_origins == other.native_record_input_origins
-            && self.native_record_input_reads == other.native_record_input_reads
+            && self.have_same_lifetime_inputs(other)
             && self.zeroed_allocations == other.zeroed_allocations
             && self.zeroed_prefix_allocations == other.zeroed_prefix_allocations
             && self.zeroed_pending_allocations == other.zeroed_pending_allocations

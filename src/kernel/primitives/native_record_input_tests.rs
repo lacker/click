@@ -1282,3 +1282,108 @@ fn loaded_input_aliases_preserve_producer_coordinates_and_retirement() {
         );
     }
 }
+
+#[test]
+fn loop_lifetimes_distinguish_c_access_knowledge_from_native_object_inputs() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let identity = CNativeInputIdentity::Unresolved(Variable(995_001));
+    let origin = unresolved(995_001, Pointer::symbolic(Variable(995_002)));
+    let mut learned = CHeapMemory::default();
+    learned.native_record_inputs.insert(
+        identity.clone(),
+        CNativeRecordInput {
+            origin: origin.clone(),
+            kind: CNativeInputKind::TypedPrefix {
+                element_type: CType::Int32,
+                count: IntegerTerm::constant_i64(1).into(),
+                policy: CTypedAccessPolicy::CAllocatedAccessAllowed,
+            },
+        },
+    );
+    let members = [identity.clone()].into_iter().collect();
+    learned
+        .native_record_input_origins
+        .insert(origin.pointer().clone(), members);
+    learned.native_record_input_reads.insert(
+        PointerLoadId(995_003),
+        [identity.clone()].into_iter().collect(),
+    );
+    let empty = CHeapMemory::default();
+    assert!(empty.have_same_allocation_lifetimes(&learned));
+    assert!(learned.have_same_allocation_lifetimes(&empty));
+
+    let mut native = learned.clone();
+    native.native_record_inputs.insert(
+        identity.clone(),
+        CNativeRecordInput {
+            origin: origin.clone(),
+            kind: CNativeInputKind::Record { layout: layout() },
+        },
+    );
+    assert!(!empty.have_same_allocation_lifetimes(&native));
+    assert!(!learned.have_same_allocation_lifetimes(&native));
+    assert!(!native.have_same_allocation_lifetimes(&learned));
+    let mut broken_index = native.clone();
+    broken_index.native_record_input_reads.clear();
+    assert!(!native.have_same_allocation_lifetimes(&broken_index));
+    let mut allocated = learned.clone();
+    allocated
+        .live_allocations
+        .insert(origin.pointer().clone(), Bitvector32Term::Constant(4));
+    assert!(!learned.have_same_allocation_lifetimes(&allocated));
+}
+
+#[test]
+fn loop_lifetime_input_comparison_visits_changed_witnesses_not_unrelated_inputs() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let mut samples = Vec::new();
+    for count in [0, 16, 256, 4096] {
+        let mut before = CHeapMemory::default();
+        for index in 0..count {
+            let id = 996_000 + index;
+            let identity = CNativeInputIdentity::Unresolved(Variable(id));
+            let origin = unresolved(id, Pointer::symbolic(Variable(id)));
+            before.native_record_inputs.insert(
+                identity.clone(),
+                CNativeRecordInput {
+                    origin: origin.clone(),
+                    kind: CNativeInputKind::Record { layout: layout() },
+                },
+            );
+            before.native_record_input_origins.insert(
+                origin.pointer().clone(),
+                [identity.clone()].into_iter().collect(),
+            );
+            before
+                .native_record_input_reads
+                .insert(PointerLoadId(id), [identity].into_iter().collect());
+        }
+        let mut after = before.clone();
+        let identity = CNativeInputIdentity::Unresolved(Variable(2_000_000));
+        let origin = unresolved(2_000_000, Pointer::symbolic(Variable(2_000_000)));
+        after.native_record_inputs.insert(
+            identity.clone(),
+            CNativeRecordInput {
+                origin: origin.clone(),
+                kind: CNativeInputKind::TypedPrefix {
+                    element_type: CType::Int32,
+                    count: IntegerTerm::constant_i64(1).into(),
+                    policy: CTypedAccessPolicy::CAllocatedAccessAllowed,
+                },
+            },
+        );
+        after.native_record_input_origins.insert(
+            origin.pointer().clone(),
+            [identity.clone()].into_iter().collect(),
+        );
+        after
+            .native_record_input_reads
+            .insert(PointerLoadId(2_000_000), [identity].into_iter().collect());
+        let (equal, work) = crate::instrumentation::measure_deterministic_work(|| {
+            before.have_same_allocation_lifetimes(&after)
+        });
+        assert!(equal);
+        samples.push((count, work));
+    }
+    assert!(samples.iter().all(|(_, work)| *work <= 16), "{samples:?}");
+}

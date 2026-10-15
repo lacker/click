@@ -5779,6 +5779,7 @@ fn execute_verified_function_applications_with_suspension(
             application.pointer_store_effects,
             &effective_assumptions,
             pointer_observation_state.as_ref(),
+            &transfer.memory_effects,
         ) {
             paths.push(resource_call_failure(
                 "certified pointer cell effect requires caller write authority",

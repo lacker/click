@@ -694,7 +694,24 @@ pub(super) fn writes_authorized(
     effects: &[CPointerStoreEffect],
     assumptions: &PureFactContext,
     source_observations: Option<&CState>,
+    checked_writes: &[CMemoryRange],
 ) -> bool {
+    if effects.is_empty() {
+        return true;
+    }
+    // This is an address-coverage index over the call's checked mutable
+    // projection, not additional caller ownership. The application preparer
+    // checks its ownership, mutex, read-only and loan partition restrictions.
+    let coverage = if effects.iter().all(preserves_input_field) {
+        ResourceContext::new()
+    } else {
+        ResourceContext::new().unchecked_with_facts(
+            checked_writes
+                .iter()
+                .cloned()
+                .map(CResourceFact::view_memory),
+        )
+    };
     effects.iter().all(|effect| {
         let Some((destination, _)) = destination(state, interface, arguments, effect, assumptions)
         else {
@@ -710,17 +727,7 @@ pub(super) fn writes_authorized(
                 assumptions,
             );
         }
-        state
-            .resources()
-            .memory_write_range(destination.pointer(), bytes, assumptions)
-            .is_some()
-            && crate::kernel::eval::memory_write_permission_outcome(
-                state,
-                destination.pointer(),
-                bytes,
-                assumptions,
-            )
-            .is_none()
+        resource_context_has_read(&coverage, destination.pointer(), bytes, assumptions)
     })
 }
 
@@ -1107,8 +1114,38 @@ mod tests {
             &arguments,
             std::slice::from_ref(&effect),
             &facts,
-            None
+            None,
+            &[CMemoryRange::new_with_element_width(
+                field_address.clone(),
+                0.into(),
+                1.into(),
+                8
+            )]
         ));
+        assert!(
+            !writes_authorized(
+                &state,
+                &interface,
+                &arguments,
+                std::slice::from_ref(&effect),
+                &facts,
+                None,
+                &[]
+            ),
+            "caller-frame ownership is not the callee's transferred write authority"
+        );
+        assert!(
+            !writes_authorized(
+                &state,
+                &interface,
+                &arguments,
+                std::slice::from_ref(&effect),
+                &facts,
+                None,
+                &[CMemoryRange::new(field_address.clone(), 0.into(), 1.into())]
+            ),
+            "four writable bytes cannot authorize a complete pointer field"
+        );
         let memory = apply(
             &state,
             &state,
@@ -1204,7 +1241,8 @@ mod tests {
             &arguments,
             std::slice::from_ref(&effect),
             &facts,
-            None
+            None,
+            &[]
         ));
         let partial = state.clone().with_memory(
             CMemory::new()
@@ -1478,6 +1516,7 @@ mod tests {
             std::slice::from_ref(&effect),
             &PureFactContext::new(),
             None,
+            &[]
         ));
         let range = CMemoryRange::new_with_element_width(
             address.clone(),
@@ -1496,9 +1535,10 @@ mod tests {
             std::slice::from_ref(&effect),
             &PureFactContext::new(),
             None,
+            &[]
         ));
         let owned = state.clone().with_resource_context(
-            ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range)),
+            ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range.clone())),
         );
         assert!(writes_authorized(
             &owned,
@@ -1507,6 +1547,7 @@ mod tests {
             std::slice::from_ref(&effect),
             &PureFactContext::new(),
             None,
+            std::slice::from_ref(&range)
         ));
         let initialized = state.memory().clone().store(
             address.clone(),
