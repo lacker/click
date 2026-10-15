@@ -51,6 +51,34 @@ fn cover(bytes: &[u8]) -> usize {
                     bytes.len() % 4u64 <= bytes.len();
                 }
             }
+            have 4 + to_integer((bytes.len() - bytes.len() % 4u64) - iter_remaining) <= to_integer(bytes.len()) by {
+                apply(uint64_less_equal_to_integer(iter_remaining, bytes.len() - bytes.len() % 4u64)) using {
+                    iter_remaining <= bytes.len() - bytes.len() % 4u64;
+                }
+                apply(uint64_less_equal_to_integer(bytes.len() % 4u64, bytes.len())) using {
+                    bytes.len() % 4u64 <= bytes.len();
+                }
+                apply(uint64_subtract_to_integer(bytes.len() - bytes.len() % 4u64, iter_remaining)) using {
+                    to_integer(iter_remaining) <= to_integer(bytes.len() - bytes.len() % 4u64);
+                }
+                apply(uint64_subtract_to_integer(bytes.len(), bytes.len() % 4u64)) using {
+                    to_integer(bytes.len() % 4u64) <= to_integer(bytes.len());
+                }
+                apply(uint64_less_equal_to_integer(4u64, iter_remaining)) using { 4u64 <= iter_remaining; }
+                apply(uint64_to_integer_bounds(bytes.len() % 4u64));
+                arithmetic() using {
+                    to_integer((bytes.len() - bytes.len() % 4u64) - iter_remaining) == to_integer(bytes.len() - bytes.len() % 4u64) - to_integer(iter_remaining);
+                    to_integer(bytes.len() - bytes.len() % 4u64) == to_integer(bytes.len()) - to_integer(bytes.len() % 4u64);
+                    4 <= to_integer(iter_remaining);
+                    0 <= to_integer(bytes.len() % 4u64);
+                }
+            }
+            have 3 + to_integer((bytes.len() - bytes.len() % 4u64) - iter_remaining) <= to_integer(bytes.len()) by {
+                arithmetic() using { 4 + to_integer((bytes.len() - bytes.len() % 4u64) - iter_remaining) <= to_integer(bytes.len()); }
+            }
+            have 3 + to_integer((bytes.len() - bytes.len() % 4u64) - iter_remaining) < to_integer(bytes.len()) by {
+                arithmetic() using { 4 + to_integer((bytes.len() - bytes.len() % 4u64) - iter_remaining) <= to_integer(bytes.len()); }
+            }
             execute_until(read(1)); step();
             have iter_remaining == at(iteration, iter_remaining) - 4u64;
             have (at(iteration, iter_remaining) - 4u64) % 4u64 == at(iteration, iter_remaining % 4u64) by {

@@ -730,3 +730,11 @@ The migrated byte-sum sidecar in `design/charon-trial/loop-headers/sum-proof.cli
 now mirrors the explicit canonical proof as required by the parity inventory.
 The frozen `sum.click` and source remain unchanged. Both affected upstream Rust
 parity checks pass after syncing this migration copy; the fix is in PR #1144.
+
+[PR #1144](https://github.com/clicklang/click/pull/1144) merged; all four pushed
+commits are verified on upstream. Rust chunks-exact now verifies on the archive
+with explicit native-to-Integer conversions for the cursor position and the
+last byte's formation/read bounds. Original Rust, contracts and object-model
+representations are unchanged. Fresh, expanded, rewritten and retained checks
+pass, and the migrated proof copy is synchronized. The last complete audit
+remains **49/52** pending a rerun; arena and owned-vector are the other failures.
