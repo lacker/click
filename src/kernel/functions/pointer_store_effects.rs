@@ -181,7 +181,7 @@ fn field_source_in(
 
 /// Select declared storage through the source language's existing member
 /// operation. C allocated-access rules do not establish a native record domain.
-fn declared_field_address(
+pub(crate) fn declared_field_address(
     state: &CState,
     interface: &CFunctionContractInterface,
     arguments: &[CValue],

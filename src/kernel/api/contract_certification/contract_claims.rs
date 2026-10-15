@@ -2790,7 +2790,55 @@ fn infer_pointer_store_effects(
             let Some(arguments) = pointer_store_arguments(function, path) else {
                 continue;
             };
+            // Index complete opaque input identities once. A field's final
+            // checked value selects its candidate; do not try every field/input
+            // pair or infer a source from equal numeric addresses.
+            let opaque_inputs = if declared_fields.is_empty() {
+                BTreeMap::new()
+            } else {
+                arguments
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, value)| {
+                        let CValue::Pointer(pointer) = value else {
+                            return None;
+                        };
+                        let Some(PointerDesignation::Unresolved(identity)) = pointer.designation()
+                        else {
+                            return None;
+                        };
+                        Some((*identity, index))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
             for field in &declared_fields {
+                if let Some(destination) =
+                    crate::kernel::functions::pointer_store_effects::declared_field_address(
+                        &path.body_entry_state,
+                        function.contract_interface(),
+                        &arguments,
+                        field,
+                        &path.assumptions,
+                    )
+                    && destination.designation().is_none()
+                    && let Some(CValue::Pointer(stored)) =
+                        post_state.memory().known_value(destination.pointer())
+                    && let Some(PointerDesignation::Unresolved(identity)) = stored.designation()
+                    && let Some(source) = opaque_inputs.get(identity)
+                {
+                    let effect = CPointerStoreEffect {
+                        destination: CPointerEffectRoot::Parameter(field.parameter),
+                        destination_path: field.path.clone(),
+                        destination_field: Some(field.clone()),
+                        value_type: field.value_type,
+                        source: CPointerEffectRoot::Parameter(*source),
+                        source_path: Default::default(),
+                        source_field: None,
+                    };
+                    if pointer_store_effect_holds(function, &effect, path) {
+                        candidates.insert(effect);
+                    }
+                }
                 let Some(field) =
                     crate::kernel::functions::pointer_store_effects::observed_field_selector(
                         &path.body_entry_state,

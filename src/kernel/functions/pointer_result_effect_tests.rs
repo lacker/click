@@ -626,6 +626,12 @@ fn complete_body_certifies_a_full_pointer_member_store() {
     )
     .expect("independent input recipe");
     let rule = certify_in_state(entry.caller, function, entry.arguments);
+    assert!(
+        rule.pointer_store_effects
+            .iter()
+            .all(|effect| effect.destination_field.is_none()),
+        "native selections retain their existing effect route"
+    );
     assert!(rule.pointer_store_effects.contains(&CPointerStoreEffect {
         destination_field: None,
         destination: CPointerEffectRoot::Parameter(0),
@@ -635,6 +641,107 @@ fn complete_body_certifies_a_full_pointer_member_store() {
         source_path: Default::default(),
         source_field: None,
     }));
+}
+
+#[test]
+fn complete_c_body_certifies_opaque_field_copy_only_when_all_returns_agree() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let layout = Arc::new(CAggregateLayout::new(
+        8,
+        8,
+        vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+    ));
+    let target = CExpression::MemberAddress {
+        object: Box::new(c_variable("owner")),
+        selection: Arc::new(CAggregateMemberSelection {
+            layout,
+            path: vec!["data".into()].into(),
+            value_type: CType::Int32Pointer,
+        }),
+    };
+    let storage = CResourceSpec::owned_memory(CMemorySegment::new(
+        c_variable("owner"),
+        c_int32_literal(0),
+        c_int32_literal(2),
+    ))
+    .with_declared_storage_observation(Some((CType::Int32Pointer, 1)));
+    for conditional in [false, true] {
+        let store = |name| c_typed_store(target.clone(), c_variable(name), CType::Int32Pointer);
+        let body = if conditional {
+            c_if(c_variable("choose"), store("first"), store("second"))
+        } else {
+            store("first")
+        };
+        let function = c_function(
+            CType::Void,
+            "c_copy_value",
+            vec![
+                c_parameter("owner", CType::Int32Pointer),
+                c_parameter("first", CType::Int32Pointer),
+                c_parameter("second", CType::Int32Pointer),
+                c_parameter("choose", CType::Bool),
+            ],
+            c_seq(body, c_return(c_void_value())),
+        )
+        .with_resource_summary(vec![storage.clone()], vec![storage.clone()])
+        .with_contract(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![
+                CFunctionContractClaim::body_safety(),
+                CFunctionContractClaim::ensure_resource(0, 0),
+            ],
+            true,
+        );
+        let entry = independent_entry::construct(
+            &function,
+            &[
+                c_typed_pointer_value(Pointer::symbolic(Variable(9_898_401)), CType::Int32Pointer),
+                CExpression::Value(designated(9_898_402)),
+                CExpression::Value(designated(9_898_403)),
+                CExpression::Value(bool_value(Bitvector32Term::Variable(Variable(9_898_404)))),
+            ],
+            None,
+            false,
+        )
+        .expect("independent C storage and opaque values");
+        let CExpression::Value(CValue::Pointer(owner)) = &entry.arguments[0] else {
+            panic!("owner pointer")
+        };
+        assert!(owner.designation().is_none());
+        assert!(
+            entry
+                .caller
+                .memory()
+                .checked_native_record_pointer(owner)
+                .is_none()
+        );
+        assert!(
+            function
+                .parameters()
+                .iter()
+                .all(|p| !p.is_native_pointer_input())
+        );
+        let rule = certify_in_state(entry.caller, function, entry.arguments);
+        let copies = rule
+            .pointer_store_effects
+            .iter()
+            .filter(|effect| effect.source_field.is_none())
+            .collect::<Vec<_>>();
+        if conditional {
+            assert!(
+                copies.is_empty(),
+                "different complete values on the two return paths"
+            );
+        } else {
+            assert_eq!(copies.len(), 1);
+            assert_eq!(copies[0].source, CPointerEffectRoot::Parameter(1));
+            assert_eq!(copies[0].destination, CPointerEffectRoot::Parameter(0));
+            assert_eq!(copies[0].destination_path.as_ref(), ["data"]);
+            assert!(copies[0].destination_field.is_some());
+        }
+    }
 }
 
 #[test]

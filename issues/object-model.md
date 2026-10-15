@@ -490,3 +490,22 @@ The broader pointer selection has 475 passes, the same two known failures and
 17 ignored controls. This does not yet infer the C initializer's copy effect: complete
 independent body certification and modular output integration remain next.
 Keep the original cursor C and contracts; no full example audit has run.
+
+
+Complete independent C body certification can now discover direct pointer
+parameter copies into declared C fields. A fixed-size input-identity index
+selects each candidate from the final checked full value; the existing effect
+checker then validates every normal return and rejects intervening overlapping
+writes. It does not equate numeric addresses or infer native object geometry.
+Native destinations retain their existing inference route. The new positive
+control uses a legacy C destination and opaque value inputs with no native-input
+promise; its branch control rejects an unconditional effect when the two return
+paths store different inputs. All 28 result-effect controls pass. The broader
+pointer selection has 476 passes, the same two known failures and 17 ignored
+controls. No full example audit or completed cursor proof is claimed.
+
+Next connect this checked copy recipe to source input preparation and modular
+C output transfer. Preserve complete actual values, including null, legacy and
+native carriers, without allowing address equality to manufacture an origin or
+C allocated-access rules to admit a C++ object. Keep caller/source permissions
+and output initialization separate from the value-copy effect.
