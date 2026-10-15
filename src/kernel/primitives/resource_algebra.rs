@@ -5467,6 +5467,8 @@ impl ResourceContext {
             return self
                 .normalized_memory_suppliers(
                     &candidates.entries.iter().collect::<Vec<_>>(),
+                    &candidates,
+                    range.base(),
                     assumptions,
                 )
                 .is_some_and(|joined| {
@@ -5750,6 +5752,8 @@ impl ResourceContext {
         }
         let mut joined = selected.normalized_memory_suppliers(
             &candidates.entries.iter().collect::<Vec<_>>(),
+            &candidates,
+            range.base(),
             assumptions,
         )?;
         let support = joined.memory_fact_candidates(range, fact.is_own(), assumptions);
@@ -5786,6 +5790,8 @@ impl ResourceContext {
     fn normalized_memory_suppliers(
         &self,
         entries: &[ResourceEntryId],
+        candidates: &super::memory_equality_index::MemoryFactCandidates,
+        base: &Pointer,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
         if entries.len() < 2
@@ -5801,7 +5807,10 @@ impl ResourceContext {
         }
         let mut suppliers = Self::new_with_equalities(assumptions);
         for entry in entries {
-            suppliers.insert_fact(self.fact(*entry).clone());
+            let supplier = candidates
+                .supplier_at_base(*entry, base)
+                .unwrap_or_else(|| self.fact(*entry).clone());
+            suppliers.insert_fact(supplier);
         }
         Some(suppliers.normalized_with_byte_endpoints(assumptions, true))
     }

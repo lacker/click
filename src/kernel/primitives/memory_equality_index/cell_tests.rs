@@ -2512,3 +2512,104 @@ fn symbolic_owned_suffix_start_checks_bounds_and_retained_authority() {
         Some(&suffix)
     );
 }
+
+#[test]
+fn framed_pointer_fragments_rejoin_through_their_checked_read_endpoint() {
+    let mut work_samples = Vec::new();
+    for size in [16u64, 64, 256, 1024] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let field = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let read = |context: &PureFactContext, memory: &CMemory| {
+            let snapshot = crate::kernel::intern_c_memory_ref(memory);
+            let variable = crate::kernel::load_variable_for_cell_with_origin(
+                &snapshot,
+                &field,
+                LoadKind::Pointer,
+                C_POINTER_BYTE_WIDTH,
+                &snapshot,
+            );
+            let pointer =
+                Pointer::loaded(field.block.clone(), Bitvector32Term::Variable(variable), 4);
+            context.register_pointer_read(&pointer, &snapshot, &field);
+            pointer
+        };
+        let source = read(&PureFactContext::new(), &CMemory::new());
+        let before = CMemory::new().store(
+            field.clone(),
+            CValue::Pointer(CPointerValue::new(source.clone(), CType::Int32Pointer)),
+        );
+        let range = |base: Pointer, start: u32, end: u32| {
+            CMemoryRange::new_with_element_width(base, start.into(), end.into(), 4)
+        };
+        let separation = Proposition::CResourceSeparate {
+            left: Box::new(CResource::Memory(range(field.clone(), 0, 2))),
+            right: Box::new(CResource::Memory(range(source.clone(), 0, 8))),
+        };
+        let context = PureFactContext::new().assume_proposition(separation.clone());
+        let after = before.clone().with_call_memory_havoc(
+            Variable(9_910_001),
+            &[range(source.clone(), 0, 1)],
+            &context,
+            None,
+        );
+        let current = read(&context, &after);
+        assert_eq!(
+            crate::kernel::memory_provenance::checked_pointer_read_endpoint(&current, &context),
+            Some(source.clone())
+        );
+        let tail = CResourceFact::own_memory(range(source.clone(), 1, 8));
+        let mut resources = ResourceContext::new()
+            .unchecked_with_fact(tail.clone())
+            .unchecked_with_fact(CResourceFact::own_memory(range(current.clone(), 0, 1)));
+        for index in 0..size {
+            resources = resources.unchecked_with_fact(CResourceFact::own_memory(range(
+                Pointer::symbolic(Variable(9_911_000 + index)),
+                0,
+                8,
+            )));
+        }
+        resources.synchronize_memory_equalities(&context);
+        let required = CResourceFact::own_memory(range(current.clone(), 0, 8));
+        let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+            resources
+                .clone()
+                .without_fact_incrementally(&required, &context)
+        });
+        let remaining = remaining.expect("selected framed prefix and tail must rejoin");
+        assert_eq!(remaining.iter().count(), size as usize);
+        work_samples.push(work);
+        assert!(!context.equality_graph.are_equal(&source, &current));
+        let weakened = context.without_exact_fact(&separation);
+        assert!(
+            resources
+                .clone()
+                .without_fact_incrementally(&required, &weakened)
+                .is_none()
+        );
+        let withdrawn = resources
+            .clone()
+            .without_exact_representation(&tail)
+            .unwrap();
+        assert!(
+            withdrawn
+                .without_fact_incrementally(&required, &context)
+                .is_none()
+        );
+        let partial = after.store(field.offset_by_bytes(4), CValue::Int32(9u32.into()));
+        let changed = CResourceFact::own_memory(range(read(&context, &partial), 0, 8));
+        assert!(
+            resources
+                .without_fact_incrementally(&changed, &context)
+                .is_none()
+        );
+    }
+    assert!(
+        work_samples
+            .iter()
+            .all(|work| *work <= work_samples[0] + 128),
+        "unrelated owners changed selected two-fragment work: {work_samples:?}"
+    );
+}

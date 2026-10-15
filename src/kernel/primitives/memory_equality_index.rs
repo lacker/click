@@ -1044,6 +1044,32 @@ impl MemoryFactEntries {
     }
 }
 impl MemoryFactCandidates {
+    /// Restate one selected supplier in the query's checked byte coordinates.
+    /// This uses the same query-local graph as requirement alignment; it does
+    /// not publish an equality or change object designation/validity metadata.
+    pub(super) fn supplier_at_base(
+        &self,
+        entry: ResourceEntryId,
+        base: &Pointer,
+    ) -> Option<CResourceFact> {
+        let fact = self.index.resources.facts.get(&entry)?;
+        let available = fact.memory_range()?;
+        let mut range = available.clone();
+        range.base = if available.wide_bounds().is_some() {
+            self.index
+                .graph
+                .pointer_at_base_with_wide_index(available.base(), base)?
+        } else {
+            self.index.graph.pointer_at_base(available.base(), base)?
+        };
+        Some(match fact {
+            CResourceFact::Own(_, quantity) => {
+                CResourceFact::Own(CResource::Memory(range), quantity.clone())
+            }
+            CResourceFact::View(_) => CResourceFact::View(CResource::Memory(range)),
+        })
+    }
+
     pub(super) fn requirement(
         &self,
         entry: ResourceEntryId,
