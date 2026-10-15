@@ -2730,6 +2730,56 @@ fn resource_delta_pointer_equality(
         })
 }
 
+/// A selected loadability range may use another name for the same complete
+/// pointer-cell read. Retain the checked frame in this rewrite's existing
+/// capture; this proves address equality only, never a referent designation.
+fn resource_delta_has_checked_pointer_read_frame(
+    source: &Proposition,
+    goal: &Proposition,
+    facts: &PureFactContext,
+) -> bool {
+    let (Some((source, _, _)), Some((goal, _, _))) =
+        (resource_read_key(source), resource_read_key(goal))
+    else {
+        return false;
+    };
+    let (
+        crate::kernel::PointerOffsetTerm::Int32Scaled {
+            value: left,
+            byte_width: left_width,
+        },
+        crate::kernel::PointerOffsetTerm::Int32Scaled {
+            value: right,
+            byte_width: right_width,
+        },
+    ) = (&source.offset, &goal.offset)
+    else {
+        return false;
+    };
+    if left_width != right_width || *left_width <= 0 {
+        return false;
+    }
+    let read = |term: &Bitvector32Term| {
+        let Bitvector32Term::Variable(variable) = term else {
+            return None;
+        };
+        if crate::kernel::eval::registered_load_bytes_for_variable(variable) != Some(8) {
+            return None;
+        }
+        let load = crate::kernel::eval::registered_load_term_for_variable(variable)?;
+        matches!(
+            load,
+            Bitvector32Term::MemoryLoad(_, _, crate::kernel::LoadKind::Pointer)
+        )
+        .then_some(load)
+    };
+    let (Some(left), Some(right)) = (read(left), read(right)) else {
+        return false;
+    };
+    crate::kernel::CheckedLoadEquality::for_pointer_read_frame(&left, &right, facts)
+        .is_some_and(|evidence| evidence.check_and_retain(facts))
+}
+
 type ResourceContainmentKey = (
     CResource,
     Bitvector32Term,
@@ -2887,7 +2937,9 @@ impl ResourceDeltaPremises {
             None
         } else {
             let equality = resource_delta_pointer_equality(source, goal)?;
-            if !facts.proves_exact(&equality) {
+            if !facts.proves_exact(&equality)
+                && !resource_delta_has_checked_pointer_read_frame(source, goal, facts)
+            {
                 return None;
             }
             Some(equality)
@@ -13800,6 +13852,92 @@ mod tests {
                 .unwrap()
                 .matches_completed_goal(),
             "shared nonempty retirement metadata still permits writes to a surviving range"
+        );
+    }
+
+    #[test]
+    fn resource_read_alias_uses_only_a_checked_complete_pointer_cell_frame() {
+        let mut samples = Vec::new();
+        for size in [0, 16, 64, 256] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let cell = Pointer {
+                block: "descriptor".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let before = CMemory::new().with_block("descriptor", 24);
+            let after = before.clone().store(cell.offset_by_bytes(16), int32(7));
+            let range = |memory: &CMemory, kind, width| {
+                let name = crate::kernel::eval::load_variable_for_exact_cell(
+                    &crate::kernel::intern_c_memory_ref(memory),
+                    &cell,
+                    kind,
+                    width,
+                );
+                Proposition::CMemoryLoadable {
+                    memory: after.clone(),
+                    base: Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: PointerOffsetTerm::Int32Scaled {
+                            value: Box::new(Bitvector32Term::Variable(name)),
+                            byte_width: 4,
+                        },
+                    },
+                    bytes: Bitvector32Term::Constant(4),
+                    wide: false,
+                }
+            };
+            let source = range(&before, crate::kernel::LoadKind::Pointer, 8);
+            let goal = range(&after, crate::kernel::LoadKind::Pointer, 8);
+            let index = ResourceDeltaPremises::new(std::slice::from_ref(&source));
+            let mut facts = PureFactContext::new();
+            for i in 0..size {
+                facts = facts.assume_proposition(Proposition::ConditionIs(
+                    crate::kernel::ConditionTerm::Bitvector32Equal(
+                        Box::new(Bitvector32Term::Variable(Variable(991_000 + i))),
+                        Box::new(Bitvector32Term::Constant(i as u32)),
+                    ),
+                    true,
+                ));
+            }
+            let (proof, work) = crate::instrumentation::measure_deterministic_work(|| {
+                index.prove_with_facts(&goal, &facts)
+            });
+            assert!(proof.unwrap().matches_completed_goal());
+            samples.push(work);
+            let changed = before.clone().store(
+                cell.clone(),
+                CValue::pointer(Pointer {
+                    block: "replacement".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                }),
+            );
+            assert!(
+                index
+                    .prove_with_facts(
+                        &range(&changed, crate::kernel::LoadKind::Pointer, 8),
+                        &facts
+                    )
+                    .is_none()
+            );
+            let partial = before.clone().store(cell.clone(), int32(9));
+            assert!(
+                index
+                    .prove_with_facts(
+                        &range(&partial, crate::kernel::LoadKind::Pointer, 8),
+                        &facts
+                    )
+                    .is_none()
+            );
+            assert!(
+                index
+                    .prove_with_facts(&range(&after, crate::kernel::LoadKind::Bits32, 4), &facts)
+                    .is_none()
+            );
+        }
+        assert!(samples.iter().all(|work| *work > 0));
+        assert!(
+            samples.iter().all(|work| *work <= samples[0] + 16),
+            "selected read frame inspected unrelated facts: {samples:?}"
         );
     }
 
