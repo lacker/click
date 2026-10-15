@@ -445,8 +445,8 @@ struct ProofLocals {
     integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     algebraic_values: PersistentMap<String, crate::kernel::SpecAlgebraicExpression>,
     /// The written forms of facts a pure proof introduced by `have` or a
-    /// proof `if`, which have no execution frontier or outcome to carry
-    /// them. Like every recorded spelling it is an index, not authority: a
+    /// proof `if`, and checked transport/instantiation results within an
+    /// immutable fixed-state or outcome proposition proof. Like every recorded spelling it is an index, not authority: a
     /// lookup outside a C outcome lowers the form again and keeps it only
     /// when it still denotes the fact.
     surface_facts: SurfacePropositionMap,

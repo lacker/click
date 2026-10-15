@@ -14710,3 +14710,233 @@ fn wide_bound_direct_rewrite_ignores_connected_ambient_equalities() {
         "{costs:?}"
     );
 }
+
+#[test]
+fn fixed_state_transport_retains_checked_spellings_for_rewrite() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let state = CState::new();
+    let snapshots = RecordedSnapshots::new();
+    let names = SurfacePropositionMap::default();
+    let left = Bitvector32Term::Variable(Variable(9_104_000));
+    let right = Bitvector32Term::Variable(Variable(9_104_001));
+    let equality = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(left.clone()),
+            Box::new(Bitvector32Term::Constant(7)),
+        ),
+        true,
+    );
+    let surface = ClickProposition::Comparison {
+        left: ContractExpression::Binding("left".into()),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::Binding("right".into()),
+    };
+    let mut samples = Vec::new();
+    for size in [0_u32, 16, 64, 256] {
+        let parsed = syntax::parse_function("void noop(int32 left, int32 right) {}").unwrap();
+        let arguments = vec![
+            CExpression::Value(CValue::Int32(left.clone())),
+            CExpression::Value(CValue::Int32(right.clone())),
+        ];
+        let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+        facts.push(equality.clone());
+        let root = Proof::for_fixed_state_goal(
+            "nested transport spellings",
+            0,
+            &facts,
+            goal.clone(),
+            ParameterBinding::new(parsed.parameters(), &arguments),
+            &state,
+            &state,
+            &snapshots,
+            &names,
+            SpecDefinitions::new(&predicates, &functions),
+            &theorems,
+            &[],
+            &[],
+        );
+        let transported = root
+            .apply_step(ProofStep::TransportUsing {
+                source: surface.clone(),
+                target: surface.clone(),
+                premises: vec![surface.clone()],
+            })
+            .unwrap();
+        let mut forgotten_locals = transported.state().locals().clone();
+        forgotten_locals.surface_facts = SurfacePropositionMap::default();
+        let forgotten =
+            transported.with_kernel_state(transported.state.with_locals(forgotten_locals));
+        let (cached, cached_work) = crate::instrumentation::measure_deterministic_work(|| {
+            transported.apply_step(ProofStep::Rewrite(surface.clone()))
+        });
+        let (uncached, uncached_work) = crate::instrumentation::measure_deterministic_work(|| {
+            forgotten.apply_step(ProofStep::Rewrite(surface.clone()))
+        });
+        let cached = cached.unwrap();
+        let uncached = uncached.unwrap();
+        assert_eq!(cached.goal(), uncached.goal());
+        assert!(
+            cached_work < uncached_work,
+            "{size}: cached {cached_work}, uncached {uncached_work}"
+        );
+        assert!(
+            root.local_surface_facts()
+                .available_kernel_matching(&surface, |_| true)
+                .is_none()
+        );
+        samples.push(cached_work);
+        let absent = Proof::for_fixed_state_goal(
+            "spelling is not authority",
+            0,
+            &[],
+            goal.clone(),
+            ParameterBinding::new(parsed.parameters(), &arguments),
+            &state,
+            &state,
+            &snapshots,
+            &names,
+            SpecDefinitions::new(&predicates, &functions),
+            &theorems,
+            &[],
+            &[],
+        )
+        .with_local_surface_fact(&surface, &equality)
+        .unwrap();
+        assert!(
+            absent
+                .apply_step(ProofStep::Rewrite(surface.clone()))
+                .is_err()
+        );
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 64),
+        "{samples:?}"
+    );
+}
+
+#[test]
+fn fixed_state_instantiation_retains_checked_spellings_for_rewrite() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let state = CState::new();
+    let snapshots = RecordedSnapshots::new();
+    let names = SurfacePropositionMap::default();
+    let parsed = syntax::parse_function("void noop(int32 left, int32 right) {}").unwrap();
+    let left = Bitvector32Term::Variable(Variable(9_104_100));
+    let right = Bitvector32Term::Variable(Variable(9_104_101));
+    let arguments = vec![
+        CExpression::Value(CValue::Int32(left.clone())),
+        CExpression::Value(CValue::Int32(right.clone())),
+    ];
+    let binding = ParameterBinding::new(parsed.parameters(), &arguments);
+    let equal = |left: &str, right: &str| ClickProposition::Comparison {
+        left: ContractExpression::Binding(left.into()),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::Binding(right.into()),
+    };
+    let quantified = ClickProposition::ForAll {
+        click_type: ClickType::C(C0Type::Int32),
+        name: "item".into(),
+        written_name: None,
+        body: Box::new(ClickProposition::Implies(
+            Box::new(equal("item", "left")),
+            Box::new(equal("item", "right")),
+        )),
+    };
+    let kernel = lower_fixed_state_proposition_with_assumptions(
+        &quantified,
+        &PureFactContext::new(),
+        binding,
+        FixedStateFrame::new(&state, &state, None, &snapshots),
+        SpecDefinitions::new(&predicates, &functions),
+    )
+    .unwrap();
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(left.clone()),
+            Box::new(Bitvector32Term::Constant(7)),
+        ),
+        true,
+    );
+    let surface = equal("chosen", "right");
+    let mut samples = Vec::new();
+    for size in [0_u32, 16, 64, 256] {
+        let mut facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+        facts.push(kernel.clone());
+        let root = Proof::for_fixed_state_goal(
+            "instantiated spelling",
+            0,
+            &facts,
+            goal.clone(),
+            binding,
+            &state,
+            &state,
+            &snapshots,
+            &names,
+            SpecDefinitions::new(&predicates, &functions),
+            &theorems,
+            &[],
+            &[],
+        );
+        let mut locals = root.state().locals().clone();
+        locals.values = locals.values.with_inserted(
+            "chosen".into(),
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(left.clone()))),
+        );
+        let root = root.with_kernel_state(root.state.with_locals(locals));
+        let step = |argument| ProofStep::InstantiateUsing {
+            quantified: quantified.clone(),
+            argument,
+            premises: None,
+        };
+        assert!(
+            root.apply_step(step(ContractExpression::Binding("right".into())))
+                .is_err(),
+            "an unstated guard is not supplied by the index"
+        );
+        let instantiated = root
+            .apply_step(step(ContractExpression::Binding("chosen".into())))
+            .unwrap();
+        let mut locals = instantiated.state().locals().clone();
+        locals.surface_facts = SurfacePropositionMap::default();
+        let forgotten = instantiated.with_kernel_state(instantiated.state.with_locals(locals));
+        let (cached, cached_work) = crate::instrumentation::measure_deterministic_work(|| {
+            instantiated.apply_step(ProofStep::Rewrite(surface.clone()))
+        });
+        let (uncached, uncached_work) = crate::instrumentation::measure_deterministic_work(|| {
+            forgotten.apply_step(ProofStep::Rewrite(surface.clone()))
+        });
+        assert_eq!(cached.unwrap().goal(), uncached.unwrap().goal());
+        assert!(
+            cached_work < uncached_work,
+            "{size}: cached {cached_work}, uncached {uncached_work}"
+        );
+        samples.push(cached_work);
+        let mut changed_locals = instantiated.state().locals().clone();
+        changed_locals.values = changed_locals.values.with_inserted(
+            "chosen".into(),
+            ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Variable(Variable(9_104_102)),
+            ))),
+        );
+        let shadowed =
+            instantiated.with_kernel_state(instantiated.state.with_locals(changed_locals));
+        assert!(
+            shadowed
+                .apply_step(ProofStep::Rewrite(surface.clone()))
+                .is_err(),
+            "a rebound proof name must not reuse the old argument's spelling"
+        );
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[1] <= pair[0] + 64),
+        "{samples:?}"
+    );
+}

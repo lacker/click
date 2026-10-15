@@ -420,3 +420,17 @@ four proof modes. All 401 selected call-contract/C++/rewrite controls pass.
 The original vector still reaches the later grow-branch prefix obligation;
 its nested checked-fact spelling and repeated-lowering investigation remains
 separate. No full audit has run, so retain 42/52.
+
+The nested checked-spelling repair retains transport and instantiation
+conclusions in the existing persistent proof-local index, substitutes proof
+binders for rewrite lookup, and freezes evaluated instantiation arguments.
+Two multi-size work/rejection controls and 402 selected recovery controls pass.
+The independent upstream extraction is PR #1081; its two controls, 107 logical
+controls and full normal Markdown corpus (3,990 fixture records) pass.
+
+The original vector is still open. The explicit reduced proof gets past the
+previous rewrite-lowering failures but exhausts the enclosing budget. A debugger
+stack locates that exhaustion inside transport's preliminary cross-snapshot
+availability lookup, through typed range disjointness and memory resolution,
+not in closing/publication of the `have`. Continue that selected-frame path
+without changing the C, claims or budgets. No new full audit has run.

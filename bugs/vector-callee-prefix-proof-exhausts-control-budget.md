@@ -74,3 +74,26 @@ passes fresh, expanded, rewritten and retained checks using exact assumptions;
 prefix obligation is not closed by this repair. Its post-call descriptor-store
 frame checks individually, but reusing checked equalities in the nested proof
 still exposes repeated lowering. Keep this report open.
+
+## Nested spelling repair and precise budget stack
+
+The shared proof object now retains checked transport and instantiation
+spellings in nested fixed-state/outcome propositions. It validates fact
+availability on lookup and freezes evaluated arguments across `old`/`at`.
+Two 0/16/64/256 controls reject absent authority, missing guards and rebound
+proof names; all 402 selected recovery controls pass. The independent PR #1081
+passes its two controls, 107 logical controls and the full normal Markdown
+corpus on upstream.
+
+The reduced vector proof explicitly instantiates the push prefix guarantee,
+frames the post-call and pre-call reads separately, and rewrites the resulting
+equalities. It progresses past the previous rewrite-lowering failures, but
+still exhausts the unchanged enclosing control budget. The error points to
+the outer `have`; a full debugger stack corrects the apparent localization.
+At exhaustion, `apply_fixed_state_transport_using` is inside
+`ProofFacts::available_across_effects` / `exact_available_across_effects`, then
+`condition_bridged_fact_is_available`, origin-unchanged memory equivalence,
+typed store separation, and range membership. The snapshot-blind bucket is
+indexed, but trying its historical equality candidates is expensive before
+the requested frame is checked. This is not evidence that scope closing or
+publication caused the failure. No successful full vector proof is claimed.
