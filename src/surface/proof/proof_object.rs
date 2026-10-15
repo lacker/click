@@ -444,12 +444,13 @@ struct ProofLocals {
     values: PersistentMap<String, ContractExpression>,
     integer_values: PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     algebraic_values: PersistentMap<String, crate::kernel::SpecAlgebraicExpression>,
-    /// The written forms of facts a pure proof introduced by `have` or a
-    /// proof `if`, and checked transport/instantiation results within an
-    /// immutable fixed-state or outcome proposition proof. Like every recorded spelling it is an index, not authority: a
-    /// lookup outside a C outcome lowers the form again and keeps it only
-    /// when it still denotes the fact.
+    /// Authored spellings used for premise lookup and certificate printing.
+    /// A recorded form is an index, not authority; lookups still validate it.
     surface_facts: SurfacePropositionMap,
+    /// Normalized spellings of checked fixed-state/outcome conclusions.
+    /// These can contain captured values with no printable source form, so
+    /// they serve explicit fact lookup only, never certificate source choice.
+    checked_lowerings: SurfacePropositionMap,
     next_choice_variable: u64,
 }
 
@@ -460,6 +461,7 @@ impl Default for ProofLocals {
             integer_values: PersistentMap::default(),
             algebraic_values: PersistentMap::default(),
             surface_facts: SurfacePropositionMap::default(),
+            checked_lowerings: SurfacePropositionMap::default(),
             next_choice_variable: 3_000_000,
         }
     }

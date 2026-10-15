@@ -14768,8 +14768,14 @@ fn fixed_state_transport_retains_checked_spellings_for_rewrite() {
                 premises: vec![surface.clone()],
             })
             .unwrap();
+        assert!(
+            transported
+                .local_surface_facts()
+                .shares_persistent_storage_with(root.local_surface_facts()),
+            "normalized lookup entries must not become certificate-printing candidates"
+        );
         let mut forgotten_locals = transported.state().locals().clone();
-        forgotten_locals.surface_facts = SurfacePropositionMap::default();
+        forgotten_locals.checked_lowerings = SurfacePropositionMap::default();
         let forgotten =
             transported.with_kernel_state(transported.state.with_locals(forgotten_locals));
         let (cached, cached_work) = crate::instrumentation::measure_deterministic_work(|| {
@@ -14805,9 +14811,13 @@ fn fixed_state_transport_retains_checked_spellings_for_rewrite() {
             &theorems,
             &[],
             &[],
-        )
-        .with_local_surface_fact(&surface, &equality)
-        .unwrap();
+        );
+        let mut absent_locals = absent.state().locals().clone();
+        absent_locals
+            .checked_lowerings
+            .record_lowering(&surface, &equality)
+            .unwrap();
+        let absent = absent.with_kernel_state(absent.state.with_locals(absent_locals));
         assert!(
             absent
                 .apply_step(ProofStep::Rewrite(surface.clone()))
@@ -14904,8 +14914,14 @@ fn fixed_state_instantiation_retains_checked_spellings_for_rewrite() {
         let instantiated = root
             .apply_step(step(ContractExpression::Binding("chosen".into())))
             .unwrap();
+        assert!(
+            instantiated
+                .local_surface_facts()
+                .shares_persistent_storage_with(root.local_surface_facts()),
+            "captured instantiation values must not become certificate-printing candidates"
+        );
         let mut locals = instantiated.state().locals().clone();
-        locals.surface_facts = SurfacePropositionMap::default();
+        locals.checked_lowerings = SurfacePropositionMap::default();
         let forgotten = instantiated.with_kernel_state(instantiated.state.with_locals(locals));
         let (cached, cached_work) = crate::instrumentation::measure_deterministic_work(|| {
             instantiated.apply_step(ProofStep::Rewrite(surface.clone()))
@@ -14938,5 +14954,69 @@ fn fixed_state_instantiation_retains_checked_spellings_for_rewrite() {
     assert!(
         samples.windows(2).all(|pair| pair[1] <= pair[0] + 64),
         "{samples:?}"
+    );
+}
+
+#[test]
+fn fixed_state_rewrite_keeps_authored_goal_names_after_lookup_substitution() {
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let theorems = TheoremEnvironment::new(&[]);
+    let state = CState::new();
+    let snapshots = RecordedSnapshots::new();
+    let names = SurfacePropositionMap::default();
+    let parsed = syntax::parse_function("void noop(int32 left, int32 right) {}").unwrap();
+    let left = Bitvector32Term::Variable(Variable(9_104_200));
+    let right = Bitvector32Term::Variable(Variable(9_104_201));
+    let arguments = vec![
+        CExpression::Value(CValue::Int32(left.clone())),
+        CExpression::Value(CValue::Int32(right.clone())),
+    ];
+    let facts = vec![Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
+        true,
+    )];
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(Bitvector32Term::Constant(7))),
+        true,
+    );
+    let surface_goal = |name: &str| ClickProposition::Comparison {
+        left: ContractExpression::Binding(name.into()),
+        operator: ComparisonOperator::Equal,
+        right: ContractExpression::IntegerLiteral("7".into()),
+    };
+    let root = Proof::for_fixed_state_surface_goal(
+        "authored rewrite presentation",
+        0,
+        &facts,
+        goal,
+        surface_goal("left"),
+        ParameterBinding::new(parsed.parameters(), &arguments),
+        &state,
+        &state,
+        &snapshots,
+        &names,
+        SpecDefinitions::new(&predicates, &functions),
+        &theorems,
+        &[],
+        &[],
+    );
+    let mut locals = root.state().locals().clone();
+    locals.values = locals.values.with_inserted(
+        "chosen".into(),
+        ContractExpression::CFragment(CExpression::Value(CValue::Int32(right))),
+    );
+    let root = root.with_kernel_state(root.state.with_locals(locals));
+    let rewritten = root
+        .apply_step(ProofStep::Rewrite(ClickProposition::Comparison {
+            left: ContractExpression::Binding("left".into()),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::Binding("chosen".into()),
+        }))
+        .unwrap();
+    assert_eq!(
+        rewritten.surface_goal(),
+        Some(&surface_goal("chosen")),
+        "internal captured values must not replace authored proof names"
     );
 }

@@ -434,3 +434,13 @@ stack locates that exhaustion inside transport's preliminary cross-snapshot
 availability lookup, through typed range disjointness and memory resolution,
 not in closing/publication of the `have`. Continue that selected-frame path
 without changing the C, claims or budgets. No new full audit has run.
+
+CI on PR #1081 exposed an augmented-tree Integer-certificate rendering
+regression. Normalized lookup entries now live in a dedicated persistent
+`checked_lowerings` cache, separate from authored source forms. Rewrite
+presentation retains the original authored equality; binder normalization
+serves only lookup and fresh lowering. The three regressions pin that boundary,
+including preservation of an authored proof-local name. All 46 normal
+fixed-state recovery controls pass with the gate stack setting; 16 nightly
+tests remain skipped. The exact upstream sidecar that failed CI verifies
+unchanged. The broader upstream rerun and corrected PR checks are in progress.

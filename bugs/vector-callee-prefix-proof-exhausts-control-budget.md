@@ -97,3 +97,10 @@ typed store separation, and range membership. The snapshot-blind bucket is
 indexed, but trying its historical equality candidates is expensive before
 the requested frame is checked. This is not evidence that scope closing or
 publication caused the failure. No successful full vector proof is claimed.
+
+The spelling extraction's CI caught a separate augmented-tree certificate
+printing regression. Its fix isolates normalized lookup keys in a dedicated
+cache and preserves the authored equality for goal presentation. Three
+regressions and all 46 normal fixed-state recovery controls pass (16 nightly
+tests skipped); the original failing upstream sidecar verifies unchanged.
+This repair is not evidence of a completed vector proof or a new archive audit.
