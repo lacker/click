@@ -106,3 +106,17 @@ The split-field fold's final indexed-order variant passes all four modes.
 Its completed profile still finds an expensive first returned-resource
 assumption; track that independently in the
 [return-resource performance report](split-descriptor-return-resource-check-repeats-work.md).
+
+## Allocation-fold argument isolated
+
+On `02bb7ccb8`, private argument-local probes confirm that the original
+`allocated_vector_push` fold rejects its allocation token's pointer argument
+before comparing the byte count. Its two loaded pointer carriers have different
+snapshot identities. Numeric address equality is checked successfully, but full
+carrier equality is not. The existing inferred member effects certify final
+full-width writes selected through authenticated record roots; the push body
+leaves the pointer field unchanged. This identifies the missing evidence, not a
+justification to widen numeric equality or activate native semantics from C
+layout metadata. The smaller
+[checked-unfold mismatch](resource-unfold-after-call-rejects-checked-delta.md)
+is preserved separately and is not yet established as the same cause.
