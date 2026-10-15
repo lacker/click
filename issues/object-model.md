@@ -399,3 +399,14 @@ passes CLI tracing and all four proof modes. Trace rendering is unchanged.
 The original vector trace now reaches the same backing-element `transport`
 failure as ordinary verification; it stops at a descriptor-field store.
 Investigate its explicit frame premises before changing memory semantics.
+
+The modular C prefix control in
+`mdtests/c_pointer_field_prefix_postcondition_across_call.md` passes fresh,
+expanded, rewritten and retained checks on recovery checkpoint `1a74b09c5`
+plus this fixture. It preserves the original vector-push C and contract.
+The grow-then-push project remains incomplete: its direct transport crosses
+the callee's writable footprint, and an explicit callee-prefix `simp` exhausts
+the existing control budget. Track the reproduced failure and diagnostic-only
+timing evidence in `bugs/vector-callee-prefix-proof-exhausts-control-budget.md`.
+Private probes and rejected proof variations are removed. No new full archive
+audit has run; retain 42/52 and the same ten compatibility failures.
