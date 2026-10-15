@@ -20,8 +20,32 @@ use crate::kernel::equality_graph::{AffineOffset, EqualityGraph, PointerClassMer
 /// this query, so an index with its checked union cannot serve a weakened
 /// context that no longer proves the frame's authority.
 fn graph_for_memory_query(assumptions: &PureFactContext, pointer: &Pointer) -> EqualityGraph {
-    assumptions
-        .with_selected_pointer_read_frames(&[pointer], |context| context.equality_graph.clone())
+    let graph = assumptions
+        .with_selected_pointer_read_frames(&[pointer], |context| context.equality_graph.clone());
+    // Interior accesses retain their read as an additive prefix. Check only
+    // those explicit prefixes, using the same complete-cell endpoint evidence
+    // as footprint selection; do not publish equality into the caller.
+    let mut offsets = vec![&pointer.offset];
+    while let Some(offset) = offsets.pop() {
+        if let PointerOffsetTerm::Add(left, right) = offset {
+            offsets.push(right);
+            offsets.push(left);
+            continue;
+        }
+        let Some(selected) = crate::kernel::equality_graph::logical_pointer_read_for_offset(offset)
+        else {
+            continue;
+        };
+        if selected.block != pointer.block {
+            continue;
+        }
+        if let Some(endpoint) =
+            crate::kernel::memory_provenance::checked_pointer_read_endpoint(&selected, assumptions)
+        {
+            graph.add_checked_read_equality(&selected, &endpoint);
+        }
+    }
+    graph
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
