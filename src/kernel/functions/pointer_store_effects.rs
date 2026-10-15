@@ -145,33 +145,10 @@ fn field_source_in(
     {
         return None;
     }
-    let owner = root(
-        state,
-        interface,
-        arguments,
-        &CPointerEffectRoot::Parameter(source.parameter),
-    )?;
-    let selection = CAggregateMemberSelection {
-        layout: source.layout.clone(),
-        path: source.path.clone(),
-        value_type: source.value_type,
-    };
-    let (member, guards) =
-        state
-            .memory()
-            .guarded_native_record_selection(&owner, &selection, assumptions)?;
-    if !guards.iter().all(|guard| {
-        required_obligation_is_exactly_discharged(
-            assumptions,
-            &Proposition::ConditionIs(guard.clone(), true),
-        )
-    }) {
-        return None;
-    }
-    if selected_element_type(state, &member, assumptions)? != source.value_type
-        || !state
-            .memory()
-            .has_initialized_bytes_under(member.pointer(), 8, assumptions)
+    let member = declared_field_address(state, interface, arguments, source, assumptions)?;
+    if !state
+        .memory()
+        .has_initialized_bytes_under(member.pointer(), 8, assumptions)
     {
         return None;
     }
@@ -198,6 +175,61 @@ fn field_source_in(
     observe_field_pointer(
         state,
         &c_cast(CExpression::Value(CValue::Pointer(loaded)), output_type),
+        assumptions,
+    )
+}
+
+/// Select declared storage through the source language's existing member
+/// operation. C allocated-access rules do not establish a native record domain.
+fn declared_field_address(
+    state: &CState,
+    interface: &CFunctionContractInterface,
+    arguments: &[CValue],
+    source: &CPointerFieldSource,
+    assumptions: &PureFactContext,
+) -> Option<CPointerValue> {
+    let owner = root(
+        state,
+        interface,
+        arguments,
+        &CPointerEffectRoot::Parameter(source.parameter),
+    )?;
+    let selection = CAggregateMemberSelection {
+        layout: source.layout.clone(),
+        path: source.path.clone(),
+        value_type: source.value_type,
+    };
+    if let Some((member, guards)) =
+        state
+            .memory()
+            .guarded_native_record_selection(&owner, &selection, assumptions)
+    {
+        if selected_element_type(state, &member, assumptions)? != source.value_type
+            || !guards.iter().all(|guard| {
+                required_obligation_is_exactly_discharged(
+                    assumptions,
+                    &Proposition::ConditionIs(guard.clone(), true),
+                )
+            })
+        {
+            return None;
+        }
+        return Some(member);
+    }
+    if state.typed_access_policy() != CTypedAccessPolicy::CAllocatedAccessAllowed
+        || interface.typed_access_policy() != CTypedAccessPolicy::CAllocatedAccessAllowed
+        || owner.designation().is_some()
+    {
+        return None;
+    }
+    // The checked expression validates the declaration/path/type. It returns
+    // an ordinary C address; no input witness or child designation is admitted.
+    observe_field_pointer(
+        state,
+        &CExpression::MemberAddress {
+            object: Box::new(CExpression::Value(CValue::Pointer(owner))),
+            selection: selection.into(),
+        },
         assumptions,
     )
 }
@@ -415,6 +447,112 @@ pub(super) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c_field_observation_preserves_value_without_admitting_native_record() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            16,
+            8,
+            vec![
+                CAggregateField::new("length", 0, CType::Int32),
+                CAggregateField::new("data", 8, CType::Int32Pointer),
+            ],
+        ));
+        let address = CMemory::local_pointer("c_field_owner");
+        let backing = CMemory::local_pointer("c_field_backing");
+        let memory = CMemory::new()
+            .with_block(address.block.clone(), 16)
+            .with_declared_scalar_block(backing.block.clone(), 4, CType::Int32);
+        let value = memory
+            .declared_scalar_pointer(&backing, CType::Int32)
+            .unwrap();
+        let owner = CPointerValue::new(address.clone(), CType::Int32Pointer);
+        let field = address.offset_by_bytes(8);
+        let memory = memory.store(field.clone(), CValue::Pointer(value.clone()));
+        let state = CState::new().with_memory(memory).with_resource_context(
+            ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
+                CMemoryRange::new_with_element_width(field.clone(), 0.into(), 1.into(), 8),
+            )),
+        );
+        let interface = c_function(
+            CType::Int32Pointer,
+            "field",
+            vec![c_parameter("p", CType::Int32Pointer)],
+            c_skip(),
+        )
+        .contract_interface()
+        .clone();
+        let args = [CValue::Pointer(owner.clone())];
+        let selector = CPointerFieldSource {
+            parameter: 0,
+            layout,
+            path: vec!["data".into()].into(),
+            value_type: CType::Int32Pointer,
+            pointee_constant: false,
+            pointee_volatile: false,
+        };
+        let facts = PureFactContext::new();
+        let observe = |state: &CState, source: &CPointerFieldSource| {
+            field_source(
+                state,
+                &interface,
+                &args,
+                source,
+                CType::Int32Pointer,
+                &facts,
+            )
+        };
+        assert_eq!(observe(&state, &selector), Some(value));
+        assert!(
+            state
+                .memory()
+                .checked_native_record_pointer(&owner)
+                .is_none()
+        );
+        assert!(owner.designation().is_none());
+        assert!(
+            observe(
+                &state
+                    .clone()
+                    .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly),
+                &selector
+            )
+            .is_none()
+        );
+        let mut native_interface = interface.clone();
+        native_interface.typed_access_policy = CTypedAccessPolicy::NativeObjectOnly;
+        assert!(
+            field_source(
+                &state,
+                &native_interface,
+                &args,
+                &selector,
+                CType::Int32Pointer,
+                &facts
+            )
+            .is_none()
+        );
+        assert!(
+            observe(
+                &state.clone().with_resource_context(ResourceContext::new()),
+                &selector
+            )
+            .is_none()
+        );
+        let partial = state.clone().with_memory(
+            CMemory::new()
+                .with_block(address.block.clone(), 16)
+                .store(field, int32(0)),
+        );
+        assert!(observe(&partial, &selector).is_none());
+        let mut wrong = selector.clone();
+        wrong.path = vec!["length".into()].into();
+        assert!(observe(&state, &wrong).is_none());
+        wrong = selector.clone();
+        wrong.pointee_constant = true;
+        assert!(observe(&state, &wrong).is_none());
+    }
 
     #[test]
     fn pointer_field_source_requires_exact_full_initialized_typed_cell() {

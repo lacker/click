@@ -126,3 +126,24 @@ same ten failures (136.3s harness, exit 100). The string project still passes.
 The bounded fold repair is delivered upstream in PR #1051; the separate
 read-frame delta reduction passes all four modes. These do not close the vector
 allocation fold or the native-place check exposed by the two-call reduction.
+
+## C field-source prerequisite
+
+The recovery field reader now separates ordinary C member observation from
+native record authentication. Its C-allocated-access path evaluates the existing
+checked `MemberAddress`, then requires initialized complete pointer bytes and
+ordinary read authority. Both the state and callee interface must permit C
+allocated access. It does not create a native record witness, alter the stored
+pointer's origin, or make an address-only equation a complete value equation.
+Native-designated fields retain their existing authenticated selection checks.
+
+The new control preserves a full stored pointer while the descriptor remains
+without a native designation. It rejects missing read authority, partial
+initialization, a mismatched field/type, a wrong qualifier, and native-only
+state or interface policy. This is a prerequisite only: C field candidates and
+universal body-certified preservation still need to be connected to modular
+application. No new original-vector result or archive audit is claimed.
+
+All 33 selected field-source, pointer-result and independent-entry controls pass
+(0.38s harness); formatting and whitespace checks pass. The initial test setup
+had two compile errors, corrected before this accepted run.

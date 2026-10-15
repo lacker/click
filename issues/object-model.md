@@ -329,3 +329,11 @@ The original two-call reduction still fails its later allocation fold after
 body-certified preservation of an unchanged C pointer field next, without
 turning numeric postcondition equality or C layout metadata into native object
 authority. The last normal archive audit remains 42/52; no new audit is claimed.
+
+The field-source prerequisite now observes an ordinary C field through existing
+C member evaluation, with full-width initialization and read authority, without
+admitting a native record domain. Native-only policies retain authenticated
+selection. The next increment must connect checked C field candidates to
+universal body certification and modular full-value transfer; numeric equality
+alone remains insufficient. This prerequisite does not change the latest
+original-vector or normal-audit results.
