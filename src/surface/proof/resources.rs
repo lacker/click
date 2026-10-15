@@ -15,6 +15,33 @@ pub(super) enum ResourceBodyClosure {
     CloseOpen { preserve_exposed_body: bool },
 }
 
+/// Literal resource counts are signed int32 values. Classify them without
+/// asking whether unrelated assumptions imply a contradictory arithmetic fact.
+/// Symbolic counts still require the existing checked proof queries.
+fn fold_resource_quantity_activity(
+    quantity: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> (bool, bool) {
+    if let Some(value) = quantity.as_const() {
+        return (value == 0, (value as i32) > 0);
+    }
+    let zero = assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(quantity.clone()),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    ));
+    let positive = assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterThan(
+            Box::new(quantity.clone()),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    ));
+    (zero, positive)
+}
+
 /// The pure-fact surface needed by resource semantics.
 ///
 /// Checked resource operations consult the persistent Proof fact and
@@ -3771,27 +3798,8 @@ fn fold_composite_resources_on_outcome_with_facts(
                 }
             };
             let assumptions = pure_facts.assumptions();
-            let quantity_is_zero = quantity.as_const() == Some(0)
-                || assumptions.proves(&Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32Equal(
-                        Box::new(quantity.clone()),
-                        Box::new(Bitvector32Term::Constant(0)),
-                    ),
-                    true,
-                ));
-            // A resource quantity is a signed `int32`, and `as_const` answers
-            // `u32`, so `-1` read here as `4294967295` was both "positive"
-            // and the thing that made the body active. The symbolic arm
-            // beside it always asked the signed question; reading the
-            // constant signed is what makes the two agree.
-            let quantity_is_positive = quantity.as_const().is_some_and(|value| (value as i32) > 0)
-                || assumptions.proves(&Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedGreaterThan(
-                        Box::new(quantity.clone()),
-                        Box::new(Bitvector32Term::Constant(0)),
-                    ),
-                    true,
-                ));
+            let (quantity_is_zero, quantity_is_positive) =
+                fold_resource_quantity_activity(&quantity, assumptions);
             if !quantity_is_zero && !quantity_is_positive {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` path {path_index}: `fold({})` requires its quantity to be proved zero or positive",
@@ -5543,6 +5551,68 @@ resource cell(p: int32*) {
             if !active {
                 assert_eq!(after.memory(), before.memory());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fold_quantity_activity_tests {
+    use super::*;
+
+    #[test]
+    fn literal_counts_ignore_unrelated_assumptions_and_keep_signed_bounds() {
+        let _session = crate::kernel::VerificationSession::enter();
+        for size in [0, 16, 64, 256] {
+            let mut assumptions = PureFactContext::new();
+            for index in 0..size {
+                assumptions = assumptions.assume_condition(
+                    ConditionTerm::Bitvector32SignedLessEqual(
+                        Box::new(Bitvector32Term::Variable(Variable(9_810_000 + index))),
+                        Box::new(100u32.into()),
+                    ),
+                    true,
+                );
+            }
+            for (value, expected) in [
+                (0, (true, false)),
+                (1, (false, true)),
+                (i32::MAX as u32, (false, true)),
+                (i32::MIN as u32, (false, false)),
+                (u32::MAX, (false, false)),
+            ] {
+                let (activity, work) = crate::instrumentation::measure_deterministic_work(|| {
+                    fold_resource_quantity_activity(&value.into(), &assumptions)
+                });
+                assert_eq!(activity, expected);
+                assert_eq!(
+                    work, 0,
+                    "literal classification visited ambient facts: size={size}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn symbolic_counts_require_checked_zero_or_positive_facts() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let count = Bitvector32Term::Variable(Variable(9_820_001));
+        assert_eq!(
+            fold_resource_quantity_activity(&count, &PureFactContext::new()),
+            (false, false)
+        );
+        for (value, expected) in [
+            (0, (true, false)),
+            (1, (false, true)),
+            (u32::MAX, (false, false)),
+        ] {
+            let assumptions = PureFactContext::new().assume_condition(
+                ConditionTerm::Bitvector32Equal(Box::new(count.clone()), Box::new(value.into())),
+                true,
+            );
+            assert_eq!(
+                fold_resource_quantity_activity(&count, &assumptions),
+                expected
+            );
         }
     }
 }

@@ -4335,8 +4335,12 @@ fn one_element_gap_separates_bytes(
     // Only a known direction can separate them now. Ask for it in the order
     // that puts the narrower requirement first.
     let strictly_below = |low: &Bitvector32Term, high: &Bitvector32Term| {
-        assumptions.decide(&ConditionTerm::signed_less_than(low.clone(), high.clone()))
-            == Some(true)
+        let condition = ConditionTerm::signed_less_than(low.clone(), high.clone());
+        // This preliminary byte-gap check runs inside memory-history walks.
+        // General arithmetic reasoning may resolve these same load atoms and
+        // recursively start another history walk. Use recorded order evidence;
+        // unknown geometry is left to the complete range-separation checks.
+        assumptions.exact_condition_value(&condition) == Some(true)
     };
     let lower_access_bytes = if strictly_below(&left_index, &right_index) {
         left_bytes

@@ -57,3 +57,15 @@ not established. Preserve original split-field ownership when investigating.
   multiple unrelated-context sizes.
 - Remove temporary probes. Keep the separate vector allocation-fold failure
   open until its own original case verifies.
+
+## Checked repair candidate
+
+Restricting the preliminary directional byte-gap check to exact recorded order
+avoids general arithmetic reasoning recursively resolving the same memory
+histories. The original focused split-field proof passes fresh, expanded,
+rewritten and retained checks with a rebuilt probe-free CLI/library. All 227
+selected archive controls pass, including a multi-size gap-query regression.
+Wrong-value, wrong-terminator and missing-backing-ownership controls reject.
+The completed profile measures the fold at 0.40s; other simple steps remain
+expensive. Current-upstream extraction and validation are in progress. The
+separate vector allocation fold and later string-clear proof remain open.

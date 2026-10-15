@@ -3178,6 +3178,12 @@ impl ResourceContext {
         required: &CResourceFact,
         assumptions: &PureFactContext,
     ) -> Vec<ResourceOccurrenceId> {
+        // With no viewed facts there is no possible view occurrence. Avoid
+        // resolving the query's pointer history or pairing an ownership-only
+        // input with a memory index just to discover this empty result.
+        if self.storage.index.owned_count == self.storage.facts.len() {
+            return Vec::new();
+        }
         if let Some(range) = required.memory_view_range() {
             // Select the same indexed, alias-aligned frontier as memory
             // ownership. A loop cursor can name a subrange through a checked
@@ -3189,9 +3195,11 @@ impl ResourceContext {
                 .iter()
                 .filter_map(|entry| {
                     let candidate = self.fact(entry);
+                    if !candidate.is_view() {
+                        return None;
+                    }
                     let aligned = candidates.requirement(entry, required)?;
-
-                    (candidate.is_view() && resource_fact_entails(candidate, &aligned, assumptions))
+                    resource_fact_entails(candidate, &aligned, assumptions)
                         .then_some(self.occurrence(entry))
                 })
                 .collect();
@@ -10537,4 +10545,58 @@ fn symbolic_struct_coverage_uses_exact_element_indices() {
         &required(distant, 8u32.into()),
         &first
     ));
+}
+
+#[cfg(test)]
+#[test]
+fn absent_view_queries_ignore_owned_frames_and_track_view_lifecycle() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let assumptions = PureFactContext::new();
+    let pointer = Pointer {
+        block: "local:selected-view".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let required = CResourceFact::view_memory(CMemoryRange::new(pointer, 0u32.into(), 1u32.into()));
+    for size in [0, 16, 64, 256] {
+        let mut owned = ResourceContext::new();
+        for index in 0..size {
+            owned = owned.unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                Pointer {
+                    block: format!("local:unrelated-view-owner-{index}").into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                0u32.into(),
+                1u32.into(),
+            )));
+        }
+        let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
+            owned.view_occurrences_for_fact(&required, &assumptions)
+        });
+        assert!(found.is_empty());
+        assert_eq!(
+            work, 0,
+            "ownership-only input must not resolve memory: size={size}"
+        );
+        let view_entry = owned.storage.next_entry_id;
+        let mut with_view = owned.clone().unchecked_with_fact(required.clone());
+        let occurrence = with_view.occurrence(view_entry);
+        assert_eq!(
+            with_view.view_occurrences_for_fact(&required, &assumptions),
+            vec![occurrence],
+        );
+        assert!(
+            owned
+                .view_occurrences_for_fact(&required, &assumptions)
+                .is_empty()
+        );
+        assert_eq!(with_view.remove_entry(view_entry), required);
+        let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
+            with_view.view_occurrences_for_fact(&required, &assumptions)
+        });
+        assert!(found.is_empty());
+        assert_eq!(
+            work, 0,
+            "removing the last view restores empty lookup: size={size}"
+        );
+    }
 }
