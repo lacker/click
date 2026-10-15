@@ -27,7 +27,7 @@ use click::surface::{
     ClickError, ClickErrorKind, ClickProject, ProofSourceIndex, VerifiedCTheorem,
     accepted_proof_trace, c0_incremental_selection, project_selected_proof_names, project_summary,
     selected_c_target, tactic_line_has_multiple_starts, tactic_starts_on_line, verify_c0_project,
-    verify_project_at, verify_project_functions, verify_project_theorem,
+    verify_project_at, verify_project_function, verify_project_functions, verify_project_theorem,
     verify_project_with_summary, verifying_source_paths, with_proof_trace,
 };
 
@@ -1436,7 +1436,7 @@ fn verify_file_within_limits(
     let (verified, successful_trace) = {
         let run_traced = |unit: &TraceUnit| match unit {
             TraceUnit::Function(function) => {
-                verify_project_functions(&project, &inputs.program_inputs(), [function.clone()])
+                verify_project_function(&project, &inputs.program_inputs(), function)
             }
             TraceUnit::Theorem(theorem) => {
                 verify_project_theorem(&project, &inputs.program_inputs(), theorem)

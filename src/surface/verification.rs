@@ -1159,12 +1159,38 @@ pub fn verify_project_at(
     })
 }
 
+/// Verifies a named function proof unit, obtaining the same checked carrier
+/// dependencies as source-location verification.
+pub fn verify_project_function(
+    project: &ClickProject,
+    inputs: &ProgramInputs<'_>,
+    function: &str,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    verify_project_function_selection(
+        project,
+        inputs,
+        BTreeSet::from([function.to_owned()]),
+        VerificationTarget::Function(function.to_owned()),
+    )
+}
+
+/// Verifies exactly this function set under the other functions' contracts.
 pub fn verify_project_functions(
     project: &ClickProject,
     inputs: &ProgramInputs<'_>,
     functions: impl IntoIterator<Item = String>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let functions = functions.into_iter().collect::<BTreeSet<_>>();
+    let target = VerificationTarget::Functions(functions.clone());
+    verify_project_function_selection(project, inputs, functions, target)
+}
+
+fn verify_project_function_selection(
+    project: &ClickProject,
+    inputs: &ProgramInputs<'_>,
+    functions: BTreeSet<String>,
+    target: VerificationTarget,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     instrumentation::with_default_tactic_limits(|| {
         let sources = CSourceContext::of(inputs)?.with_click_project(project);
         let file = resolve_click_project_context(project, &sources)?;
@@ -1180,15 +1206,8 @@ pub fn verify_project_functions(
             }
         }
         let source = project.entry_source().expect("resolved entry source");
-        verify_c0_sources_with_context(
-            source,
-            &sources,
-            Some(VerificationTarget::Functions(functions)),
-            None,
-            None,
-            Some(file),
-        )
-        .map(|(verified, _)| verified)
+        verify_c0_sources_with_context(source, &sources, Some(target), None, None, Some(file))
+            .map(|(verified, _)| verified)
     })
 }
 

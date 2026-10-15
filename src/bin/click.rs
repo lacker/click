@@ -190,6 +190,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn traced_field_preservation_uses_checked_dependencies_and_skips_unrelated_failure() {
+        let original = fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("mdtests/c_pointer_field_preservation_across_calls.md"),
+        )
+        .unwrap();
+        let original_c = "void caller(struct box* owner) { renew(owner); advance(owner); }";
+        assert_eq!(original.matches(original_c).count(), 1);
+        let source = original.replace(
+            original_c,
+            &format!("{original_c}\nint32 unrelated() {{ return 0; }}"),
+        );
+        let closing = "\n```\n\n```expect";
+        assert_eq!(source.matches(closing).count(), 1);
+        let source = source.replace(closing,
+            "\nint32 unrelated() { ensures result == 1; } by { execute(); assumption(); }\n```\n\n```expect");
+        let directory = tempfile::tempdir().unwrap();
+        let fixture = directory.path().join("field-preservation.md");
+        fs::write(&fixture, source).unwrap();
+        entry([
+            "verify".to_owned(),
+            "--trace-proof".to_owned(),
+            "caller".to_owned(),
+            fixture.display().to_string(),
+        ])
+        .expect("tracing the selected caller must retain its checked field summary");
+        let full = entry(["verify".to_owned(), fixture.display().to_string()]).unwrap_err();
+        assert!(full.contains("unrelated.contract"), "{full}");
+    }
+
     /// Each clause kind numbers its claims separately, so an `owns` clause
     /// does not renumber the `ensures` after it, and `--claim` (expand and
     /// audit) and `--trace-proof` also select a claim by a line its clause or

@@ -386,7 +386,16 @@ preserved in `mdtests/c_pointer_field_preservation_across_calls.md`. All 401
 selected kernel, C++, field and dependency controls pass. The original full
 vector now reaches a later backing-element `transport` failure. CLI tracing
 still takes a contract-scoped function-set route and lacks the checked callee
-summary; the [trace-selection bug](../bugs/tracing-function-selection-drops-checked-carrier-dependencies.md)
+summary; the [trace-selection bug](https://github.com/lacker/click/blob/cd8a9e7df/bugs/tracing-function-selection-drops-checked-carrier-dependencies.md)
 records that separate mismatch. Fix that route before using its earlier
 allocation-fold failure to diagnose the full project. The normal archive audit
 remains 42/52; no new audit or activation is claimed.
+
+Tracing now uses named proof-unit verification, the same dependency boundary
+as source-location verification. The separate function-set API keeps its
+contract-scoped behavior. All 15 CLI trace controls pass, including a selected
+caller whose unrelated sibling proof deliberately fails. The reduced C project
+passes CLI tracing and all four proof modes. Trace rendering is unchanged.
+The original vector trace now reaches the same backing-element `transport`
+failure as ordinary verification; it stops at a descriptor-field store.
+Investigate its explicit frame premises before changing memory semantics.

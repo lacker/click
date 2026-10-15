@@ -178,8 +178,8 @@ pub use verification::{
     verify_c0_prepared_project, verify_c0_prepared_sources, verify_c0_prepared_sources_functions,
     verify_c0_project, verify_c0_sources, verify_c0_sources_at, verify_c0_sources_functions,
     verify_click_theorems, verify_program_prepared_project, verify_project_at,
-    verify_project_functions, verify_project_theorem, verify_project_with_summary,
-    verify_sources_at, verify_standard_library, with_allow_sorry,
+    verify_project_function, verify_project_functions, verify_project_theorem,
+    verify_project_with_summary, verify_sources_at, verify_standard_library, with_allow_sorry,
 };
 mod proof_trace;
 pub use proof_trace::with_proof_trace;

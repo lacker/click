@@ -58,6 +58,13 @@ hidden child modes, test-binary wrappers, stderr scraping, or shell redirect/mov
 recipes. OS process isolation is reserved for a narrow, owned crash-containment
 boundary.
 
+Named proof-unit checking uses `verify_project_function`, the equivalent of
+`verify_project_at` for a function name. It obtains checked carrier-producing
+callee proofs before checking the selected unit; tracing uses this route too.
+`verify_project_functions` is the separate exact-set API under scoped callee
+contracts, used by incremental selection. Do not substitute it for proof-unit
+checking when a unit needs a checked callee summary.
+
 After a timeout or interrupted bounded run, confirm its verifier process tree
 has exited before measuring another run. Profile a non-verifying target only
 when diagnosing unexpected slowness or a timeout, and label it as an incomplete
