@@ -477,3 +477,16 @@ independent-entry controls still pass. The final broader pointer selection has
 field/address-equality and modular declared-record identity-return failures
 remain in that selection. Formatting and documentation lint pass (Vale absent,
 advisory skipped). No full example audit has run; retain 42/52.
+
+
+The declared C field destination selector now also supports a certified write,
+checking its parameter, member path and pointer storage type exactly. It does
+not read the previous pointer field or create native object authority. Existing
+write permission and full-width initialization remain prerequisites. The new
+control starts with initialized integer bytes, transfers an opaque pointer
+value, and rejects partial storage, missing ownership, malformed selectors and
+NativeObjectOnly state/interface profiles. All six field-effect controls pass.
+The broader pointer selection has 475 passes, the same two known failures and
+17 ignored controls. This does not yet infer the C initializer's copy effect: complete
+independent body certification and modular output integration remain next.
+Keep the original cursor C and contracts; no full example audit has run.

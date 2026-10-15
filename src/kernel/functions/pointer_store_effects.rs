@@ -595,7 +595,14 @@ pub(crate) fn destination(
     assumptions: &PureFactContext,
 ) -> Option<(CPointerValue, CType)> {
     if let Some(field) = &effect.destination_field {
-        if !preserves_input_field(effect) {
+        // A write selects declared C storage without reading its old value.
+        // The independent body check certifies the complete source value;
+        // this selector supplies neither that evidence nor native authority.
+        if effect.destination != CPointerEffectRoot::Parameter(field.parameter)
+            || effect.destination_path.as_ref() != field.path.as_ref()
+            || effect.value_type != field.value_type
+            || !field.value_type.is_pointer()
+        {
             return None;
         }
         Some((
@@ -915,6 +922,141 @@ mod tests {
         wrong = selector.clone();
         wrong.pointee_constant = true;
         assert!(observe(&state, &wrong).is_none());
+    }
+
+    #[test]
+    fn c_field_copy_destination_requires_exact_selector_and_existing_storage_authority() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let layout = Arc::new(CAggregateLayout::new(
+            16,
+            8,
+            vec![
+                CAggregateField::new("length", 0, CType::Int32),
+                CAggregateField::new("data", 8, CType::Int32Pointer),
+            ],
+        ));
+        let address = CMemory::local_pointer("c_copy_owner");
+        let owner = CPointerValue::new(address.clone(), CType::Int32Pointer);
+        let field_address = address.offset_by_bytes(8);
+        let input = CPointerValue::new(Pointer::symbolic(Variable(9_899_501)), CType::Int32Pointer)
+            .with_designation(PointerDesignation::Unresolved(Variable(9_899_501)));
+        let memory = CMemory::new().with_block(address.block.clone(), 16).store(
+            field_address.clone(),
+            CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
+        );
+        let state = CState::new().with_memory(memory).with_resource_context(
+            ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
+                CMemoryRange::new_with_element_width(field_address.clone(), 0.into(), 1.into(), 8),
+            )),
+        );
+        let interface = c_function(
+            CType::Int32,
+            "copy_field",
+            vec![
+                c_parameter("owner", CType::Int32Pointer),
+                c_parameter("input", CType::Int32Pointer),
+            ],
+            c_skip(),
+        )
+        .contract_interface()
+        .clone();
+        let arguments = [
+            CValue::Pointer(owner.clone()),
+            CValue::Pointer(input.clone()),
+        ];
+        let field = CPointerFieldSource {
+            parameter: 0,
+            layout,
+            path: vec!["data".into()].into(),
+            value_type: CType::Int32Pointer,
+            pointee_constant: false,
+            pointee_volatile: false,
+        };
+        let effect = CPointerStoreEffect {
+            destination: CPointerEffectRoot::Parameter(0),
+            destination_path: field.path.clone(),
+            destination_field: Some(field),
+            value_type: CType::Int32Pointer,
+            source: CPointerEffectRoot::Parameter(1),
+            source_path: Default::default(),
+            source_field: None,
+        };
+        let facts = PureFactContext::new();
+        assert!(!preserves_input_field(&effect));
+        assert!(writes_authorized(
+            &state,
+            &interface,
+            &arguments,
+            std::slice::from_ref(&effect),
+            &facts,
+            None
+        ));
+        let memory = apply(
+            &state,
+            &state,
+            &interface,
+            &arguments,
+            std::slice::from_ref(&effect),
+            &facts,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            memory.known_value(&field_address),
+            Some(CValue::Pointer(input.clone()))
+        );
+        assert!(memory.checked_native_record_pointer(&owner).is_none());
+        assert!(memory.native_input_span(&input).is_none());
+        let no_resources = state.clone().with_resource_context(ResourceContext::new());
+        assert!(!writes_authorized(
+            &no_resources,
+            &interface,
+            &arguments,
+            std::slice::from_ref(&effect),
+            &facts,
+            None
+        ));
+        let partial = state.clone().with_memory(
+            CMemory::new()
+                .with_block(address.block.clone(), 16)
+                .store(field_address.clone(), int32(0)),
+        );
+        assert!(
+            apply(
+                &partial,
+                &state,
+                &interface,
+                &arguments,
+                std::slice::from_ref(&effect),
+                &facts,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            destination(
+                &state
+                    .clone()
+                    .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly),
+                &interface,
+                &arguments,
+                &effect,
+                &facts
+            )
+            .is_none()
+        );
+        let mut native_interface = interface.clone();
+        native_interface.typed_access_policy = CTypedAccessPolicy::NativeObjectOnly;
+        assert!(destination(&state, &native_interface, &arguments, &effect, &facts).is_none());
+        let mut wrong = effect.clone();
+        wrong.destination = CPointerEffectRoot::Parameter(1);
+        assert!(destination(&state, &interface, &arguments, &wrong, &facts).is_none());
+        wrong = effect.clone();
+        wrong.destination_path = vec!["length".into()].into();
+        assert!(destination(&state, &interface, &arguments, &wrong, &facts).is_none());
+        wrong = effect.clone();
+        wrong.value_type = CType::UInt64;
+        assert!(destination(&state, &interface, &arguments, &wrong, &facts).is_none());
     }
 
     #[test]
