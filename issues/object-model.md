@@ -738,3 +738,12 @@ last byte's formation/read bounds. Original Rust, contracts and object-model
 representations are unchanged. Fresh, expanded, rewritten and retained checks
 pass, and the migrated proof copy is synchronized. The last complete audit
 remains **49/52** pending a rerun; arena and owned-vector are the other failures.
+
+The complete normal audit of recovery checkpoint `a9635866d` is now **50/52**
+in 121.71 seconds, restoring rust-chunks-exact without a new failing project.
+Only arena (window fold) and owned-vector (post-store frame transport) remain.
+The attempted canonical-coordinate `take` change did not repair arena and was
+reverted. The next investigation reuses the already-landed upstream held-owner
+address-class selection repair (`a676ba284`), with its scope, width and scaling
+controls; it is not a new ownership rule. No full green gate or activation is
+claimed.
