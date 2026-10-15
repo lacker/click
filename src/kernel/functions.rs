@@ -5764,6 +5764,7 @@ fn execute_verified_function_applications_with_suspension(
             argument_values,
             entry_state,
             entry_contract_state,
+            pointer_observation_state,
             mut transfer,
             mut facts,
             obligations,
@@ -5777,6 +5778,7 @@ fn execute_verified_function_applications_with_suspension(
             &argument_values,
             application.pointer_store_effects,
             &effective_assumptions,
+            pointer_observation_state.as_ref(),
         ) {
             paths.push(resource_call_failure(
                 "certified pointer cell effect requires caller write authority",
@@ -7492,6 +7494,7 @@ fn execute_verified_function_applications_with_suspension(
                 &argument_values,
                 application.pointer_store_effects,
                 &ensured_assumptions,
+                pointer_observation_state.as_ref(),
             ) {
                 Ok(memory) => {
                     let Some(writes) = application
@@ -7684,6 +7687,9 @@ struct PreparedVerifiedFunctionCall<'a> {
     argument_values: Vec<CValue>,
     entry_state: CState,
     entry_contract_state: CState,
+    // The existing checked input opening used for preconditions, retained only
+    // when a preservation summary must observe a field under a folded input.
+    pointer_observation_state: Option<CState>,
     transfer: CFunctionResourceTransfer,
     facts: ExecutionFacts,
     obligations: Vec<ProofObligation>,
@@ -9047,6 +9053,11 @@ fn prepare_verified_function_call<'a>(
         argument_values,
         entry_state,
         entry_contract_state,
+        pointer_observation_state: application
+            .pointer_store_effects
+            .iter()
+            .any(pointer_store_effects::preserves_input_field)
+            .then_some(precondition_state),
         transfer,
         facts,
         obligations,

@@ -22,6 +22,9 @@ mod equality_graph;
 mod eval;
 mod fold_read_summary;
 mod functions;
+pub(crate) use functions::pointer_store_effects::{
+    c_body_has_pointer_field_candidates, c_body_has_pointer_field_candidates_for_formals,
+};
 mod owned_footprint_reach;
 mod population_access;
 // Population authority: checked anchor lifetimes, registrations and the C

@@ -359,23 +359,50 @@ pub(crate) fn take_c_field_declaration_visits() -> usize {
 
 /// Source selectors are candidates only. Complete independent body checking
 /// decides which final-cell equations become reusable effects.
-pub(crate) fn c_declared_fields(function: &CFunction) -> Vec<CPointerFieldSource> {
+pub(in crate::kernel) fn c_declared_fields(function: &CFunction) -> Vec<CPointerFieldSource> {
     if function.contract_interface().typed_access_policy()
         != CTypedAccessPolicy::CAllocatedAccessAllowed
     {
         return Vec::new();
     }
+    c_declared_fields_in_body(
+        function.parameters().iter().map(|parameter| {
+            (
+                parameter.name(),
+                parameter.c_type().is_pointer() && parameter.aggregate_layout().is_none(),
+            )
+        }),
+        function.body(),
+    )
+}
+
+pub(crate) fn c_body_has_pointer_field_candidates(function: &CFunction) -> bool {
+    !c_declared_fields(function).is_empty()
+}
+
+pub(crate) fn c_body_has_pointer_field_candidates_for_formals<'a>(
+    formals: impl IntoIterator<Item = (&'a str, bool)>,
+    body: &CStatement,
+) -> bool {
+    !c_declared_fields_in_body(formals, body).is_empty()
+}
+
+/// Declaration-only metadata over the selected body. It predicts dependencies;
+/// only complete independent body certification can establish an effect.
+fn c_declared_fields_in_body<'a>(
+    formals: impl IntoIterator<Item = (&'a str, bool)>,
+    body: &CStatement,
+) -> Vec<CPointerFieldSource> {
     enum Node<'a> {
         Statement(&'a CStatement),
         Expression(&'a CExpression),
     }
-    let parameters = function
-        .parameters()
-        .iter()
+    let parameters = formals
+        .into_iter()
         .enumerate()
-        .map(|(index, parameter)| (parameter.name(), index))
+        .filter_map(|(index, (name, eligible_pointer))| eligible_pointer.then_some((name, index)))
         .collect::<BTreeMap<_, _>>();
-    let mut pending = vec![Node::Statement(function.body())];
+    let mut pending = vec![Node::Statement(body)];
     let mut fields = BTreeSet::new();
     while let Some(node) = pending.pop() {
         crate::instrumentation::record_deterministic_work(1);
@@ -383,8 +410,12 @@ pub(crate) fn c_declared_fields(function: &CFunction) -> Vec<CPointerFieldSource
         C_FIELD_DECLARATION_VISITS.with(|visits| visits.set(visits.get() + 1));
         match node {
             Node::Statement(statement) => match statement {
-                CStatement::Scope { body } | CStatement::While { body, .. } => {
-                    pending.push(Node::Statement(body))
+                CStatement::Scope { body } => pending.push(Node::Statement(body)),
+                CStatement::While {
+                    condition, body, ..
+                } => {
+                    pending.push(Node::Expression(condition));
+                    pending.push(Node::Statement(body));
                 }
                 CStatement::Seq(left, right) => {
                     pending.push(Node::Statement(right));
@@ -445,10 +476,6 @@ pub(crate) fn c_declared_fields(function: &CFunction) -> Vec<CPointerFieldSource
                 CExpression::MemberAddress { object, selection } => {
                     if let CExpression::Variable(name) = object.as_ref()
                         && let Some(parameter) = parameters.get(name.as_str())
-                        && function.parameters()[*parameter].c_type().is_pointer()
-                        && function.parameters()[*parameter]
-                            .aggregate_layout()
-                            .is_none()
                         && selection.value_type.is_pointer()
                         && selection.value_type.byte_width() == C_POINTER_BYTE_WIDTH
                     {
@@ -593,6 +620,7 @@ pub(super) fn writes_authorized(
     arguments: &[CValue],
     effects: &[CPointerStoreEffect],
     assumptions: &PureFactContext,
+    source_observations: Option<&CState>,
 ) -> bool {
     effects.iter().all(|effect| {
         let Some((destination, _)) = destination(state, interface, arguments, effect, assumptions)
@@ -601,7 +629,9 @@ pub(super) fn writes_authorized(
         };
         let bytes = effect.value_type.byte_width();
         if preserves_input_field(effect) {
-            return state.resources().permits_memory_read(
+            let readable = source_observations.unwrap_or(state);
+            return resource_context_has_read(
+                readable.resources(),
                 destination.pointer(),
                 bytes,
                 assumptions,
@@ -628,6 +658,7 @@ pub(super) fn apply(
     arguments: &[CValue],
     effects: &[CPointerStoreEffect],
     assumptions: &PureFactContext,
+    source_observations: Option<&CState>,
 ) -> Result<CMemory, String> {
     let mut memory = state.memory().clone();
     for effect in effects {
@@ -647,8 +678,13 @@ pub(super) fn apply(
             );
         }
         let source = if let Some(field) = &effect.source_field {
+            let readable = if preserves_input_field(effect) {
+                source_observations.unwrap_or(source_state)
+            } else {
+                source_state
+            };
             field_source_in(
-                source_state,
+                readable,
                 interface,
                 arguments,
                 field,
@@ -681,6 +717,61 @@ pub(super) fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_field_dependency_reads_include_loop_tests_but_not_private_images() {
+        let layout = Arc::new(CAggregateLayout::new(
+            8,
+            8,
+            vec![CAggregateField::new("data", 0, CType::Int32Pointer)],
+        ));
+        let read = c_typed_load(
+            CExpression::MemberAddress {
+                object: Box::new(c_variable("owner")),
+                selection: Arc::new(CAggregateMemberSelection {
+                    layout: layout.clone(),
+                    path: vec!["data".into()].into(),
+                    value_type: CType::Int32Pointer,
+                }),
+            },
+            CType::Int32Pointer,
+        );
+        let body = c_while(
+            c_not_equal(read, CExpression::Value(CValue::pointer(Pointer::null()))),
+            vec![],
+            c_skip(),
+        );
+        assert!(c_body_has_pointer_field_candidates_for_formals(
+            [("owner", true)],
+            &body
+        ));
+        assert!(!c_body_has_pointer_field_candidates_for_formals(
+            [("owner", false)],
+            &body
+        ));
+        assert!(!c_body_has_pointer_field_candidates_for_formals(
+            [("other", true)],
+            &body
+        ));
+        let ordinary = c_function(
+            CType::Void,
+            "loop_test",
+            vec![c_parameter("owner", CType::Int32Pointer)],
+            body.clone(),
+        );
+        assert!(c_body_has_pointer_field_candidates(&ordinary));
+        let private = c_function(
+            CType::Void,
+            "private_test",
+            vec![crate::kernel::c_parameter_with_aggregate_layout(
+                "owner",
+                CType::Int32Pointer,
+                (*layout).clone(),
+            )],
+            body,
+        );
+        assert!(!c_body_has_pointer_field_candidates(&private));
+    }
 
     #[test]
     fn c_field_candidate_inventory_ignores_unread_record_members() {
@@ -1043,7 +1134,8 @@ mod tests {
                 &interface,
                 &args,
                 std::slice::from_ref(&effect),
-                &PureFactContext::new()
+                &PureFactContext::new(),
+                None,
             )
             .is_err()
         );
@@ -1052,7 +1144,8 @@ mod tests {
             &interface,
             &args,
             std::slice::from_ref(&effect),
-            &PureFactContext::new()
+            &PureFactContext::new(),
+            None,
         ));
         let range = CMemoryRange::new_with_element_width(
             address.clone(),
@@ -1069,7 +1162,8 @@ mod tests {
             &interface,
             &args,
             std::slice::from_ref(&effect),
-            &PureFactContext::new()
+            &PureFactContext::new(),
+            None,
         ));
         let owned = state.clone().with_resource_context(
             ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(range)),
@@ -1079,7 +1173,8 @@ mod tests {
             &interface,
             &args,
             std::slice::from_ref(&effect),
-            &PureFactContext::new()
+            &PureFactContext::new(),
+            None,
         ));
         let initialized = state.memory().clone().store(
             address.clone(),
@@ -1094,6 +1189,7 @@ mod tests {
             &args,
             &[effect],
             &PureFactContext::new(),
+            None,
         )
         .unwrap();
         assert_eq!(after.known_value(&address), Some(CValue::Pointer(source)));

@@ -3984,7 +3984,7 @@ pub(in crate::surface) fn tactic_expansion_checked_dependencies(
             .flatten()
             .collect::<BTreeSet<_>>();
         if let Some(kernel) = function.prelowered_kernel_function() {
-            callees.extend(retained_body_carrier_edges(kernel.body()).1);
+            callees.extend(retained_body_carrier_edges(kernel).1);
         }
         for callee in callees {
             if parsed.contains_key(&callee) {
@@ -4068,9 +4068,21 @@ fn expansion_dependency_can_produce_carrier(function: &syntax::C0Function) -> bo
                 .contract_interface()
                 .construction_parameter()
                 .is_some()
-                || retained_body_carrier_edges(kernel.body()).0
+                || retained_body_carrier_edges(kernel).0
         })
     {
+        return true;
+    }
+    let parameters = function.parameters().iter().map(|parameter| {
+        (
+            parameter.name(),
+            parameter.c_type().is_pointer() && !parameter.is_struct_value(),
+        )
+    });
+    if crate::kernel::c_body_has_pointer_field_candidates_for_formals(
+        parameters,
+        &function.body_kernel_statement(),
+    ) {
         return true;
     }
     let mut pending = vec![function.body()];
@@ -4116,8 +4128,9 @@ fn expansion_dependency_can_produce_carrier(function: &syntax::C0Function) -> bo
     false
 }
 
-fn retained_body_carrier_edges(body: &CStatement) -> (bool, BTreeSet<String>) {
-    let mut writes_pointer = false;
+fn retained_body_carrier_edges(function: &CFunction) -> (bool, BTreeSet<String>) {
+    let body = function.body();
+    let mut produces_carrier = crate::kernel::c_body_has_pointer_field_candidates(function);
     let mut calls = BTreeSet::new();
     let mut pending = vec![body];
     let mut visited = std::collections::HashSet::new();
@@ -4127,12 +4140,12 @@ fn retained_body_carrier_edges(body: &CStatement) -> (bool, BTreeSet<String>) {
         }
         match statement {
             CStatement::TypedStore { value_type, .. } if value_type.is_pointer() => {
-                writes_pointer = true
+                produces_carrier = true
             }
             CStatement::Store {
                 pointer: CExpression::MemberAddress { selection, .. },
                 ..
-            } if selection.value_type.is_pointer() => writes_pointer = true,
+            } if selection.value_type.is_pointer() => produces_carrier = true,
             CStatement::Call { function_name, .. }
             | CStatement::CallAssign { function_name, .. } => {
                 calls.insert(function_name.clone());
@@ -4154,7 +4167,7 @@ fn retained_body_carrier_edges(body: &CStatement) -> (bool, BTreeSet<String>) {
             _ => {}
         }
     }
-    (writes_pointer, calls)
+    (produces_carrier, calls)
 }
 
 pub(in crate::surface) fn verification_required_functions(
@@ -8994,7 +9007,7 @@ mod expansion_carrier_dependency_tests {
         assert!(matches!(interface.body(), syntax::C0Statement::Skip));
         assert!(expansion_dependency_can_produce_carrier(&interface));
         let (writes, calls) =
-            retained_body_carrier_edges(interface.prelowered_kernel_function().unwrap().body());
+            retained_body_carrier_edges(interface.prelowered_kernel_function().unwrap());
         assert!(writes);
         assert_eq!(calls, BTreeSet::from(["nested".to_string()]));
 

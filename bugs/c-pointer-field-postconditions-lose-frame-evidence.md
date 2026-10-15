@@ -184,3 +184,21 @@ infers the preservation effect, but stops while applying `advance`: the new
 permission check sees the folded input rather than the existing checked
 precondition observation state. Connect that state to preservation next. No
 full-project four-mode acceptance or new normal-audit count is claimed.
+
+Modular unchanged-field application now reuses the checked input opening
+already constructed for precondition reads. Only preservation effects use that
+read state; actual stores retain their original write-authority checks. The
+source dependency inventory includes pointer-field readers and loop tests,
+uses lightweight formal metadata and the selected body, and exports only a
+boolean candidate query. Body certification remains the authority.
+
+The original two-call reduction verifies all three proofs and passes fresh,
+expanded, rewritten and retained checking. Its unchanged C and contracts are
+preserved in `mdtests/c_pointer_field_preservation_across_calls.md`. All 401
+selected kernel, C++, field and dependency controls pass. The original full
+vector now reaches a later backing-element `transport` failure. CLI tracing
+still takes a contract-scoped function-set route and lacks the checked callee
+summary; the [trace-selection bug](tracing-function-selection-drops-checked-carrier-dependencies.md)
+records that separate mismatch. Fix that route before using its earlier
+allocation-fold failure to diagnose the full project. The normal archive audit
+remains 42/52; no new audit or activation is claimed.
