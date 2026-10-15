@@ -4494,18 +4494,6 @@ pub(in crate::surface) fn contract_segment_element_type(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
 ) -> CType {
-    #[cfg(debug_assertions)]
-    if std::env::var_os("CLICK_SELECTED_STORAGE_PROBE").is_some()
-        && let ContractSegmentSurface::Field {
-            name, element_type, ..
-        } = &segment.surface
-        && (name == "self" || name == "data")
-    {
-        eprintln!(
-            "selected-storage-type field={name} explicit={element_type:?} base={:?}",
-            segment.base
-        );
-    }
     segment
         .field_element_type()
         .or_else(|| contract_expression_element_type(parameters, &segment.base))

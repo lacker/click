@@ -299,7 +299,8 @@ repairs remains **42/52 passing**, with the same ten compatibility failures
 split-field fold-budget defect at unchanged limits. PR #1051 delivers the
 bounded byte-gap and graph-lock repairs upstream; its final pushed head
 `9d6ac45c2` is verified in upstream history. The discarded final-assumption trace
-fix is separately queued in PR #1054.
+fix is delivered in PR #1054; both pushed commits `7350af8a0` and `09c1cf285`
+are verified in upstream history.
 
 Continue with the separate vector allocation fold. Address equality is available
 there, but the full loaded pointer values differ across the modular push call.
