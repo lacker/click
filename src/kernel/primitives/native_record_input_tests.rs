@@ -1133,3 +1133,152 @@ fn pointer_result_selection_preserves_declared_member_array_extent() {
         .unwrap();
     assert!(!wrong_type.same_designation(&selected));
 }
+
+#[test]
+fn loaded_input_aliases_preserve_producer_coordinates_and_retirement() {
+    use crate::kernel::eval::pointer_domains::{
+        PointerDomainCheck, PointerDomainView, checked_pointer_access,
+    };
+    for storage in 0..3 {
+        let mut samples = Vec::new();
+        for size in [0u64, 16, 64, 256] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let owner_cell = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::Constant(64),
+            };
+            let block = match storage {
+                0 => PointerBlock::ExternalArgument,
+                1 => PointerBlock::Symbolic(Variable(991_180)),
+                _ => Pointer::loaded_value(&intern_c_memory(CMemory::new()), &owner_cell).block,
+            };
+            let field = Pointer {
+                block,
+                offset: PointerOffsetTerm::Constant(0),
+            };
+            let first = CMemory::new().store(field.offset_by_bytes(16), int32(1));
+            let second = first.clone().store(field.offset_by_bytes(20), int32(2));
+            let read = |memory: &CMemory, address: &Pointer| {
+                let memory = intern_c_memory_ref(memory);
+                let variable = crate::kernel::eval::load_variable_for_exact_cell(
+                    &memory,
+                    address,
+                    LoadKind::Pointer,
+                    8,
+                );
+                CPointerValue::new(
+                    Pointer::loaded(
+                        address.block.clone(),
+                        Bitvector32Term::Variable(variable),
+                        4,
+                    ),
+                    CType::Int32Pointer,
+                )
+                .with_designation(PointerDesignation::Loaded(
+                    PointerLoadIdentity::new(memory, address.clone()),
+                ))
+            };
+            let source = read(&first, &field);
+            let current = read(&second, &field);
+            let input = source
+                .clone()
+                .with_pointer(source.pointer().offset_by_bytes(4));
+            let query = current
+                .clone()
+                .with_pointer(current.pointer().offset_by_bytes(8))
+                .with_pointee_constant(true);
+            let facts = PureFactContext::new();
+            let mut memory = second
+                .clone()
+                .with_heap_allocation_claim(source.pointer().clone(), 16u32)
+                .unwrap()
+                .with_native_input_span(
+                    input.clone(),
+                    CType::Int32,
+                    IntegerTerm::constant_i64(3).into(),
+                )
+                .unwrap();
+            for i in 0..size {
+                let unrelated = CPointerValue::new(
+                    Pointer::symbolic(Variable(992_000 + i)),
+                    CType::Int32Pointer,
+                )
+                .with_designation(PointerDesignation::Unresolved(Variable(992_000 + i)));
+                memory = memory
+                    .with_native_input_span(
+                        unrelated,
+                        CType::Int32,
+                        IntegerTerm::constant_i64(3).into(),
+                    )
+                    .unwrap();
+            }
+            let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                memory.loaded_input_coordinate_carrier(&query, &facts)
+            });
+            let resolved =
+                resolved.expect("the selected complete read retains its witnessed value");
+            assert_eq!(resolved.pointer(), &source.pointer().offset_by_bytes(8));
+            assert!(resolved.same_designation(&source));
+            assert!(resolved.pointee_constant());
+            samples.push(work);
+            let state = CState::new()
+                .with_memory(memory.clone())
+                .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+            let valid = |pointer: &CPointerValue, ty: CType| matches!(checked_pointer_access(&state, pointer, ty, 4, PointerDomainView::Typed, &facts), Ok(PointerDomainCheck::Checked(guards)) if guards.iter().all(|guard| facts.decide(guard) == Some(true)));
+            assert!(valid(&query, CType::Int32));
+            let outside = current
+                .clone()
+                .with_pointer(current.pointer().offset_by_bytes(16));
+            assert!(!valid(&outside, CType::Int32));
+            assert!(!valid(
+                &query.clone().with_type(CType::Int64Pointer),
+                CType::Int64
+            ));
+            let other = read(&second, &field.offset_by_bytes(40));
+            let numeric = facts.clone().assume_condition(
+                ConditionTerm::pointer_equal(query.pointer().clone(), other.pointer().clone()),
+                true,
+            );
+            assert!(
+                memory
+                    .loaded_input_coordinate_carrier(&other, &numeric)
+                    .is_none()
+            );
+            let partial = second.clone().store(field.offset_by_bytes(4), int32(7));
+            assert!(
+                memory
+                    .loaded_input_coordinate_carrier(&read(&partial, &field), &facts)
+                    .is_none()
+            );
+            let retired = memory
+                .clone()
+                .free_heap_block(source.pointer(), &facts)
+                .unwrap();
+            assert!(
+                retired
+                    .loaded_input_coordinate_carrier(&query, &facts)
+                    .is_none()
+            );
+            assert!(retired.heap.native_record_input_reads.is_empty());
+            let ambiguous = memory
+                .with_native_input_span(
+                    current.clone(),
+                    CType::Int32,
+                    IntegerTerm::constant_i64(3).into(),
+                )
+                .unwrap();
+            let third = second.clone().store(field.offset_by_bytes(24), int32(3));
+            assert!(
+                ambiguous
+                    .loaded_input_coordinate_carrier(&read(&third, &field), &facts)
+                    .is_none()
+            );
+        }
+        assert!(
+            samples
+                .iter()
+                .all(|work| *work > 0 && *work <= samples[0] + 16),
+            "unrelated input witnesses changed selected work for storage {storage}: {samples:?}"
+        );
+    }
+}

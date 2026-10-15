@@ -428,6 +428,11 @@ fn resolved_carrier<'a>(
                     .then(|| pointer.clone())
                 })
                 .or_else(|| {
+                    state
+                        .memory()
+                        .loaded_input_coordinate_carrier(pointer, assumptions)
+                })
+                .or_else(|| {
                     let canonical =
                         crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
                             pointer,

@@ -54,3 +54,25 @@ checking with a rebuilt library. The original two-call case gets past `unfold`
 and next rejects its `fold(storage(owner))` native-place carrier check. Keep
 that separate from this repaired producer/checker mismatch and from the
 original vector token comparison. Upstream extraction remains pending.
+
+## Native input coordinate follow-up
+
+The [refold-and-return reduction](resource-unfold-after-call-rejects-checked-delta/refold-and-return.md)
+previously lost its admitted native prefix: normalization skipped the stored
+witness at an intermediate snapshot. The repair indexes exact and unconditional
+read identities, selects one live witness, and transports the queried complete
+pointer read into that witness's original coordinates through retained full-cell
+frame evidence. It preserves displacement and access qualifiers; numeric address
+equality alone supplies no native input. Stored witness addresses do not change.
+
+The reduction verifies all three proofs and passes fresh, expanded, rewritten
+and retained checks. All 220 selected native-input, span, pointer-domain, memory
+provenance, substitution and resource-delta controls pass. The new deterministic
+regression covers unrelated row counts 0/16/64/256, three storage-address forms,
+offsets, type/qualifier checks, partial overwrites, ambiguous inputs and retirement.
+
+The [refold-and-free reduction](resource-unfold-after-call-rejects-checked-delta/refold-and-free.md)
+still rejects `free`: allocation discovery requires an exact raw pointer spelling.
+Keep this failure separate from the repaired prefix and checked-unfold failures.
+The original vector and the ten-failure archive audit remain unresolved; no
+new green archive verdict or upstream native-model activation is claimed.

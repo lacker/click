@@ -3317,6 +3317,68 @@ pub(in crate::kernel) fn resolve_loaded_pointer_carrier(
     resolve_pointer_read_carrier(pointer, assumptions, false, false)
 }
 
+/// Transport one complete read into an existing input carrier's original
+/// coordinates. The full-width frame relates the values; an address equation
+/// cannot supply this association or a referent designation.
+pub(in crate::kernel) fn loaded_pointer_in_input_coordinates(
+    pointer: &CPointerValue,
+    input: &CPointerValue,
+    assumptions: &PureFactContext,
+) -> Option<CPointerValue> {
+    let (Some(PointerDesignation::Loaded(current)), Some(PointerDesignation::Loaded(source))) =
+        (pointer.designation(), input.designation())
+    else {
+        return None;
+    };
+    let displacement = paired_pointer_load_displacement(pointer, current)?;
+    paired_pointer_load_displacement(input, source)?;
+    let read = |origin: &PointerLoadIdentity| {
+        Bitvector32Term::MemoryLoad(
+            origin.memory().clone(),
+            Box::new(origin.address().clone()),
+            LoadKind::Pointer,
+        )
+    };
+    let evidence =
+        CheckedLoadEquality::for_pointer_read_frame(&read(current), &read(source), assumptions)?;
+    if !evidence.check_and_retain(assumptions) {
+        return None;
+    }
+    let mut base = input.pointer().clone();
+    let direct_read = match &base.block {
+        PointerBlock::LoadedPointer(identity) => *identity == source.id(),
+        PointerBlock::Symbolic(variable) => matches!(
+            crate::kernel::eval::registered_load_term_for_variable(variable),
+            Some(Bitvector32Term::MemoryLoad(memory, address, LoadKind::Pointer))
+                if memory.arena_id() == source.memory().arena_id() && address.as_ref() == source.address()
+        ),
+        _ => false,
+    };
+    if direct_read {
+        base.offset = PointerOffsetTerm::Constant(0);
+    } else {
+        let variable = crate::kernel::eval::load_variable_for_exact_cell(
+            source.memory(),
+            source.address(),
+            LoadKind::Pointer,
+            C_POINTER_BYTE_WIDTH,
+        );
+        base.offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(variable)),
+            byte_width: i64::from(input.c_type().pointee_type()?.byte_width()),
+        };
+    }
+    base.offset = exact_pointer_offset_sum(base.offset, displacement);
+    Some(
+        input
+            .clone()
+            .with_pointer(base)
+            .with_type(pointer.c_type())
+            .with_pointee_constant(pointer.pointee_constant())
+            .with_pointee_volatile(pointer.pointee_volatile()),
+    )
+}
+
 /// Recover a concrete full pointer value, including a stored legacy carrier.
 /// Unknown reads remain unknown; this helper grants no native object domain.
 pub(in crate::kernel) fn resolve_loaded_pointer_value(

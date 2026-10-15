@@ -7109,6 +7109,10 @@ pub(super) struct CHeapMemory {
     /// row; the separate origin index supports bounded lifetime retirement.
     pub(super) native_record_inputs: SnapshotMap<CNativeInputIdentity, CNativeRecordInput>,
     pub(super) native_record_input_origins: SnapshotMap<Pointer, SnapshotSet<CNativeInputIdentity>>,
+    /// Candidate aliases for opaque loaded inputs. Selection never proves a
+    /// carrier relationship; consumers recheck the complete read frame.
+    pub(super) native_record_input_reads:
+        SnapshotMap<PointerLoadId, SnapshotSet<CNativeInputIdentity>>,
     /// Scalar native-interface requirements. Lookup is usable only with the
     /// matching complete pointer designation, never an address alone.
     pub(super) scalar_input_domains: SnapshotMap<Pointer, CType>,
@@ -7168,6 +7172,7 @@ impl std::hash::Hash for CHeapMemory {
             "native_record_inputs".hash(state);
             self.native_record_inputs.hash(state);
             self.native_record_input_origins.hash(state);
+            self.native_record_input_reads.hash(state);
         }
     }
 }
@@ -7205,6 +7210,10 @@ impl CHeapMemory {
                 &other.native_record_input_origins,
                 &base.native_record_input_origins,
             )
+            && self.native_record_input_reads.eq_relative_to(
+                &other.native_record_input_reads,
+                &base.native_record_input_reads,
+            )
             && self
                 .initialized
                 .eq_relative_to(&other.initialized, &base.initialized)
@@ -7241,6 +7250,7 @@ impl CHeapMemory {
             && self.scalar_input_domains == other.scalar_input_domains
             && self.native_record_inputs == other.native_record_inputs
             && self.native_record_input_origins == other.native_record_input_origins
+            && self.native_record_input_reads == other.native_record_input_reads
             && self.zeroed_allocations == other.zeroed_allocations
             && self.zeroed_prefix_allocations == other.zeroed_prefix_allocations
             && self.zeroed_pending_allocations == other.zeroed_pending_allocations

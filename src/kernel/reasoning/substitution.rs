@@ -5648,19 +5648,20 @@ fn substitute_bitvector_variable_in_memory_contents(
         },
         |run| run_slot_named_by_load_variable(run, from),
     ));
-    let (native_record_inputs, native_record_input_origins) = memory.map_native_record_inputs(
-        |pointer| {
-            let CValue::Pointer(pointer) = substitute_bitvector_variable_in_c_value(
-                &CValue::Pointer(pointer.clone()),
-                from,
-                to,
-            ) else {
-                unreachable!("pointer substitution preserves the carrier")
-            };
-            pointer
-        },
-        |count| substitute_bitvector_variable_in_integer(count.as_ref(), from, to).into(),
-    );
+    let (native_record_inputs, native_record_input_origins, native_record_input_reads) = memory
+        .map_native_record_inputs(
+            |pointer| {
+                let CValue::Pointer(pointer) = substitute_bitvector_variable_in_c_value(
+                    &CValue::Pointer(pointer.clone()),
+                    from,
+                    to,
+                ) else {
+                    unreachable!("pointer substitution preserves the carrier")
+                };
+                pointer
+            },
+            |count| substitute_bitvector_variable_in_integer(count.as_ref(), from, to).into(),
+        );
     let mut result = CMemory {
         construction: None,
         blocks: std::sync::Arc::new(
@@ -5700,6 +5701,7 @@ fn substitute_bitvector_variable_in_memory_contents(
         heap: std::sync::Arc::new(CHeapMemory {
             native_record_inputs,
             native_record_input_origins,
+            native_record_input_reads,
             live_allocations: memory
                 .heap
                 .live_allocations
@@ -6386,25 +6388,28 @@ pub(crate) fn substitute_pointer_variable_in_memory(
     from: Variable,
     to: &Pointer,
 ) -> CMemory {
-    let (native_record_inputs, native_record_input_origins) = memory.map_native_record_inputs(
-        |pointer| {
-            let CValue::Pointer(pointer) =
-                substitute_pointer_variable_in_c_value(&CValue::Pointer(pointer.clone()), from, to)
-            else {
-                unreachable!("pointer substitution preserves the carrier")
-            };
-            pointer
-        },
-        |count| {
-            let Term::Integer(count) =
-                crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
-                    .term(&Term::Integer(count.as_ref().clone()))
-            else {
-                unreachable!("integer rewriting preserves its carrier")
-            };
-            count.into()
-        },
-    );
+    let (native_record_inputs, native_record_input_origins, native_record_input_reads) = memory
+        .map_native_record_inputs(
+            |pointer| {
+                let CValue::Pointer(pointer) = substitute_pointer_variable_in_c_value(
+                    &CValue::Pointer(pointer.clone()),
+                    from,
+                    to,
+                ) else {
+                    unreachable!("pointer substitution preserves the carrier")
+                };
+                pointer
+            },
+            |count| {
+                let Term::Integer(count) =
+                    crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_variable(from, to)
+                        .term(&Term::Integer(count.as_ref().clone()))
+                else {
+                    unreachable!("integer rewriting preserves its carrier")
+                };
+                count.into()
+            },
+        );
     let mut result = CMemory {
         construction: None,
         blocks: std::sync::Arc::new(
@@ -6466,6 +6471,7 @@ pub(crate) fn substitute_pointer_variable_in_memory(
         heap: std::sync::Arc::new(CHeapMemory {
             native_record_inputs,
             native_record_input_origins,
+            native_record_input_reads,
             live_allocations: memory
                 .heap
                 .live_allocations

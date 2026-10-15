@@ -3497,6 +3497,12 @@ impl CMemory {
         identities.insert(identity.clone());
         heap.native_record_input_origins
             .insert(origin.pointer().clone(), identities);
+        Self::update_native_input_read_index(
+            &mut heap.native_record_input_reads,
+            &identity,
+            &row.origin,
+            true,
+        );
         heap.native_record_inputs.insert(identity.clone(), row);
         // A typed validity premise changes no stored bytes. Keep the exact
         // existing no-write memory edge for pointer/scalar read identities.
@@ -3655,6 +3661,12 @@ impl CMemory {
         identities.insert(identity.clone());
         heap.native_record_input_origins
             .insert(origin.pointer().clone(), identities);
+        Self::update_native_input_read_index(
+            &mut heap.native_record_input_reads,
+            &identity,
+            &row.origin,
+            true,
+        );
         heap.native_record_inputs.insert(identity, row);
         record_c_memory_derivation(&mut self, CMemoryDerivation::CellsForgotten { base });
         self.record_diagnostic_transform(
@@ -3820,6 +3832,12 @@ impl CMemory {
         identities.insert(identity.clone());
         heap.native_record_input_origins
             .insert(origin.pointer().clone(), identities);
+        Self::update_native_input_read_index(
+            &mut heap.native_record_input_reads,
+            &identity,
+            &row.origin,
+            true,
+        );
         heap.native_record_inputs.insert(identity, row);
         record_c_memory_derivation(&mut self, CMemoryDerivation::CellsForgotten { base });
         self.record_diagnostic_transform(
@@ -4095,6 +4113,74 @@ impl CMemory {
         Some((selected, guards))
     }
 
+    fn update_native_input_read_index(
+        index: &mut SnapshotMap<PointerLoadId, SnapshotSet<CNativeInputIdentity>>,
+        identity: &CNativeInputIdentity,
+        pointer: &CPointerValue,
+        insert: bool,
+    ) {
+        let Some(PointerDesignation::Loaded(origin)) = pointer.designation() else {
+            return;
+        };
+        let mut keys = BTreeSet::from([origin.id()]);
+        // These unconditional keys select candidates only. A lookup checks
+        // its own complete frame under its actual retained assumptions.
+        let read_base = pointer
+            .clone()
+            .with_pointer(Pointer::loaded_value(origin.memory(), origin.address()));
+        if let Some(canonical) = crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+            &read_base,
+            &PureFactContext::new(),
+        ) && let Some(PointerDesignation::Loaded(origin)) = canonical.designation()
+        {
+            keys.insert(origin.id());
+        }
+        for key in keys {
+            crate::instrumentation::record_deterministic_work(1);
+            let mut values = index.get(&key).cloned().unwrap_or_default();
+            if insert {
+                values.insert(identity.clone());
+            } else {
+                values.remove(identity);
+            }
+            if values.len() == 0 {
+                index.remove(&key);
+            } else {
+                index.insert(key, values);
+            }
+        }
+    }
+
+    pub(in crate::kernel) fn loaded_input_coordinate_carrier(
+        &self,
+        pointer: &CPointerValue,
+        assumptions: &PureFactContext,
+    ) -> Option<CPointerValue> {
+        let canonical = crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+            pointer,
+            assumptions,
+        )?;
+        let Some(PointerDesignation::Loaded(origin)) = canonical.designation() else {
+            return None;
+        };
+        crate::instrumentation::record_deterministic_work(1);
+        let candidates = self.heap.native_record_input_reads.get(&origin.id())?;
+        if candidates.len() != 1 {
+            return None;
+        }
+        let input = &self
+            .heap
+            .native_record_inputs
+            .get(candidates.iter().next()?)?
+            .origin;
+        self.native_input_witness(input)?;
+        crate::kernel::memory_provenance::loaded_pointer_in_input_coordinates(
+            pointer,
+            input,
+            assumptions,
+        )
+    }
+
     fn native_input_witness(&self, pointer: &CPointerValue) -> Option<&CNativeRecordInput> {
         let identity = match pointer.designation()? {
             PointerDesignation::Unresolved(identity) => CNativeInputIdentity::Unresolved(*identity),
@@ -4225,6 +4311,7 @@ impl CMemory {
     ) -> (
         SnapshotMap<CNativeInputIdentity, CNativeRecordInput>,
         SnapshotMap<Pointer, SnapshotSet<CNativeInputIdentity>>,
+        SnapshotMap<PointerLoadId, SnapshotSet<CNativeInputIdentity>>,
     ) {
         let mut mapped = SnapshotMap::default();
         let mut conflicts = BTreeSet::new();
@@ -4282,7 +4369,9 @@ impl CMemory {
             }
         }
         let mut origins = SnapshotMap::<Pointer, SnapshotSet<CNativeInputIdentity>>::default();
+        let mut reads = SnapshotMap::default();
         for (identity, row) in mapped.iter() {
+            Self::update_native_input_read_index(&mut reads, identity, &row.origin, true);
             let mut identities = origins
                 .get(row.origin.pointer())
                 .cloned()
@@ -4290,7 +4379,7 @@ impl CMemory {
             identities.insert(identity.clone());
             origins.insert(row.origin.pointer().clone(), identities);
         }
-        (mapped, origins)
+        (mapped, origins, reads)
     }
 
     pub(in crate::kernel) fn map_scalar_input_domains(
@@ -4599,6 +4688,7 @@ impl CMemory {
             let CHeapMemory {
                 native_record_inputs,
                 native_record_input_origins,
+                native_record_input_reads,
                 object_input_domains,
                 scalar_input_domains,
                 ..
@@ -4618,7 +4708,14 @@ impl CMemory {
                 }
                 for identity in identities.iter() {
                     crate::instrumentation::record_deterministic_work(1);
-                    native_record_inputs.remove(identity);
+                    if let Some(row) = native_record_inputs.remove(identity) {
+                        Self::update_native_input_read_index(
+                            native_record_input_reads,
+                            identity,
+                            &row.origin,
+                            false,
+                        );
+                    }
                 }
                 false
             });
@@ -4760,7 +4857,14 @@ impl CMemory {
                         || width.is_some_and(|width| separate(&root, width))
                 });
                 if !keep {
-                    heap.native_record_inputs.remove(identity);
+                    if let Some(row) = heap.native_record_inputs.remove(identity) {
+                        Self::update_native_input_read_index(
+                            &mut heap.native_record_input_reads,
+                            identity,
+                            &row.origin,
+                            false,
+                        );
+                    }
                     kept.remove(identity);
                 }
             }
@@ -5789,9 +5893,11 @@ impl CMemory {
 
         let native_record_inputs = first.heap.native_record_inputs.clone();
         let native_record_input_origins = first.heap.native_record_input_origins.clone();
+        let native_record_input_reads = first.heap.native_record_input_reads.clone();
         if others.iter().any(|memory| {
             memory.heap.native_record_inputs != native_record_inputs
                 || memory.heap.native_record_input_origins != native_record_input_origins
+                || memory.heap.native_record_input_reads != native_record_input_reads
         }) {
             return Err("interface arms disagree on native record input identities".into());
         }
@@ -6011,6 +6117,7 @@ impl CMemory {
             scalar_input_domains,
             native_record_inputs,
             native_record_input_origins,
+            native_record_input_reads,
             initialized,
             zeroed_allocations,
             zeroed_prefix_allocations,

@@ -308,3 +308,13 @@ The selected read-frame repair closes a separate checked-unfold delta mismatch;
 its focused reduction passes all four modes and 337 selected controls pass.
 Neither that reduction nor the passing upstream C examples establish archive
 activation. Keep original C, contracts, split-field resources and budgets intact.
+
+PRs #1055 and #1058 deliver the selected full-read bridge for loadability and
+contained-range deltas upstream; final heads `61c6ae286` and `19b3739ea` are
+verified in upstream history. The archive's next native-prefix repair preserves
+a uniquely indexed live input witness's original coordinates through checked
+complete-read frames. Its refold-and-return reduction passes all three proofs
+and all four proof modes; 220 related controls pass, including deterministic
+multi-size lookup and rejection controls. This is an archive checkpoint, not an
+upstream activation. The adjacent refold-and-free reduction still rejects exact
+allocation-spelling lookup, and the original vector comparison remains open.
