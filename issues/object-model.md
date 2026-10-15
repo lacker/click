@@ -718,3 +718,10 @@ the equivalent whole holding, while changed element widths and guard addresses
 reject. The seven archive controls and nine upstream controls pass (one/four
 ignored respectively); range-size work remains flat. The original arena fold
 still fails, so this is a shared matching repair, not an arena restoration.
+
+The complete normal archive audit now passes **49/52** in 131.48 seconds,
+restoring rust-byte-sum with no new failing project. Remaining failures are
+arena (window fold after the repaired take), owned-vector (post-store frame
+transport) and rust-chunks-exact (iterator cursor formation). Concurrent local
+compilation affected elapsed time; this is compatibility evidence, not a
+performance claim, full green gate or native-feature activation.
