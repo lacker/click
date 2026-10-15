@@ -1,68 +1,19 @@
-# Original string clear
-
-```c filename=owned_string_clear.c
-struct owned_string {
-    int32 len;
-    int32 cap;
-    int32* data;
-};
-
-int32 owned_string_clear(struct owned_string* owner) {
-    owner->len = 0;
-    owner->data[0] = 0;
-    return 0;
-}
-
+# Final failed assumption trace
+```c filename=f.c
+void f(int32 *cell, int32 value) { *cell = value; }
 ```
-
 ```click
-verifying "owned_string_clear.c";
-predicate terminated_at(data: int32[], length: int32) {
-    data[length] == 0
-}
-
-resource owned_string(owner: struct owned_string*) {
-    owns owner->len;
-    owns owner->cap;
-    owns owner->data;
-    owns owner->data[0..owner->cap];
-    fact 0 <= owner->len;
-    fact owner->len < owner->cap;
-    fact terminated_at(owner->data, owner->len);
-    fact separate(
-        memory(*owner),
-        memory(owner->data[0..owner->cap])
-    );
-}
-
-int32 owned_string_clear(struct owned_string* owner) {
-    owns owned_string(owner);
-    ensures result == 0;
-    ensures owner->len == 0;
-    ensures owner->data[0] == 0;
+verifying "f.c";
+void f(int32 *cell, int32 value) {
+    owns cell[0..1];
+    ensures cell[0] == value;
+    ensures cell[0] == value + 1;
 } by {
-    unfold(owned_string(owner));
-    step();
-    step();
-    step();
-    have terminated_at(owner->data, owner->len) by auto;
-    have 0 <= owner->len;
-    have separate(
-        memory(*owner),
-        memory(owner->data[0..owner->cap])
-    ) by {
-        simp();
-    }
-    fold(owned_string(owner));
-    assumption();
-    assumption();
-    assumption();
-    assumption();
+    step(); step();
+    have cell[0] == value by { simp(); }
+    assumption(); assumption(); assumption();
 }
-
-
 ```
-
 ```expect
-pass
+fail: found no available fact
 ```

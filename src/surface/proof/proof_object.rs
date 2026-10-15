@@ -2352,7 +2352,7 @@ impl<'a> Proof<'a> {
         // checked inputs while making the kernel-certified, goal-indexed
         // projection an exact fact for the ordinary `Assumption` step.
         let facts = self.facts().with_selected_resource_separation(&goal);
-        Ok(Self {
+        let focused = Self {
             site: self.site.clone(),
             context: self.context.clone(),
             state: KernelProofObject::root(self.state().locals().clone(), {
@@ -2388,7 +2388,13 @@ impl<'a> Proof<'a> {
                 depth: 0,
                 split_branches: Vec::new(),
             }),
-        })
+        };
+        // Focusing changes the semantic root, but the checked trace prefix
+        // still belongs to the context from which this goal was selected.
+        if let Some(lineage) = self.trace_lineage(self.claim_label()) {
+            focused.register_trace_scope_under(lineage);
+        }
+        Ok(focused)
     }
 
     /// Lowers and selects one externally owned Surface Click obligation from

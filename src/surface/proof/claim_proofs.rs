@@ -3008,6 +3008,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     ) => None,
                                 };
                                 let mut retained_certificate = None;
+                                let mut failed_assumption = None;
                                 for (claim_index, claim) in claims.iter().enumerate() {
                                     if closures[claim_index].is_closed() {
                                         continue;
@@ -3166,7 +3167,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                             break;
                                         }
                                         None => {
-                                            drop(last_error);
+                                            // Keep one selected failed goal's checked context.
+                                            // A fresh summary alone loses its opt-in trace.
+                                            failed_assumption = last_error;
                                             check_verification_deadline()?;
                                         }
                                     }
@@ -3187,9 +3190,20 @@ pub(super) fn finish_ordered_proof<'a>(
                                         })
                                         .collect::<Vec<_>>()
                                         .join(", ");
-                                    return Err(ClickError::new(format!(
+                                    let error = ClickError::new(format!(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` found no available fact or held instance for any open claim: {open}"
-                                    )));
+                                    ));
+                                    return Err(
+                                        match failed_assumption
+                                            .and_then(|failure| failure.diagnostic().cloned())
+                                        {
+                                            Some(mut diagnostic) => {
+                                                diagnostic.reason = error.raw_summary().to_owned();
+                                                error.with_diagnostic_if_missing(diagnostic)
+                                            }
+                                            None => error,
+                                        },
+                                    );
                                 }
                                 let tactics = retained_certificate
                                     .as_ref()

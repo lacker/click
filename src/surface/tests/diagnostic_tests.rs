@@ -3077,3 +3077,44 @@ fn native_view_simp_distinguishes_a_rejected_kernel_query() {
     assert!(!report.contains("accepted by the kernel"), "{report}");
     assert!(!report.contains("valid 32-bit byte extent"), "{report}");
 }
+
+#[test]
+fn failed_final_assumption_preserves_its_checked_trace_context() {
+    let source = r#"verifying "f.c";
+        void f(int32 *cell, int32 value) {
+            owns cell[0..1];
+            ensures cell[0] == value;
+            ensures cell[0] == value + 1;
+        } by {
+            step(); step();
+            have cell[0] == value by { simp(); }
+            assumption();
+            assumption();
+            assumption();
+        }
+    "#;
+    with_proof_trace("f", || {
+        let error = verify_c0_sources(
+            source,
+            &[("f.c", "void f(int32 *cell, int32 value) { *cell = value; }")],
+        )
+        .expect_err("the false remaining claim must reject");
+        assert!(
+            error.message().contains("found no available fact"),
+            "{}",
+            error.message()
+        );
+        assert!(
+            error
+                .concise_report_parts()
+                .0
+                .contains("found no available fact")
+        );
+        let trace = error
+            .trace_context_report()
+            .expect("retain the failed focused goal's existing context");
+        assert!(trace.contains("steps through: *cell = value"), "{trace}");
+        assert!(trace.contains("have cell[0] == value"), "{trace}");
+        assert!(!trace.contains("adds: cell[0] == value + 1"), "{trace}");
+    });
+}
