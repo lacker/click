@@ -381,6 +381,11 @@ pub(crate) fn construct(
                 .construction_parameter()
                 .filter(|(parameter_index, _)| *parameter_index == index)
                 .map(|(_, layout)| layout);
+            // An opaque full input value is not a native object promise.
+            // Preserve only the declaration's canonical binder, never a
+            // caller's object geometry or an unrelated unresolved identity.
+            let opaque_value_input = matches!(pointer.designation(),
+                Some(PointerDesignation::Unresolved(identity)) if *identity == variable);
             let mut pointer = if construction_layout.is_some() {
                 crate::kernel::c_construction_contract_input_pointer(
                     function,
@@ -392,7 +397,9 @@ pub(crate) fn construct(
                     .with_pointee_volatile(pointer.pointee_volatile())
             };
             if construction_layout.is_none()
-                && (parameter.is_native_pointer_input() || span_formals.contains(&index))
+                && (opaque_value_input
+                    || parameter.is_native_pointer_input()
+                    || span_formals.contains(&index))
             {
                 pointer = pointer.with_designation(PointerDesignation::Unresolved(variable));
             }
@@ -911,6 +918,95 @@ mod tests {
         .with_resource_summary(vec![input.clone()], vec![input])
         .with_composite_resource_definitions(vec![definition]);
         (function, vec![CExpression::Value(value)], pointer, head)
+    }
+
+    #[test]
+    fn canonical_opaque_c_pointer_values_are_independent_without_object_authority() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (function, arguments, pointer, legacy_head) = opaque_input();
+        let CExpression::Value(CValue::Pointer(input)) = &arguments[0] else {
+            panic!()
+        };
+        let variable = binder(&CValue::Pointer(input.clone()), input.c_type()).unwrap();
+        let opaque = input
+            .clone()
+            .with_designation(PointerDesignation::Unresolved(variable));
+        let arguments = vec![CExpression::Value(CValue::Pointer(opaque.clone()))];
+        let mut samples = Vec::new();
+        for size in [0_u64, 16, 64, 256] {
+            let mut actual = CState::new();
+            for index in 0..size {
+                actual.set_memory(actual.memory().clone().store(
+                    Pointer::symbolic(Variable(9_896_000 + index)),
+                    int32(index as u32),
+                ));
+            }
+            let (entry, work) = crate::instrumentation::measure_deterministic_work(|| {
+                c_independent_function_input_state(&actual, &function, &arguments)
+            });
+            let (state, normalized) = entry.expect("a canonical opaque C value is parametric");
+            assert_eq!(normalized, arguments);
+            assert_eq!(state.memory(), &CMemory::new());
+            assert!(
+                state
+                    .memory()
+                    .checked_native_record_pointer(&opaque)
+                    .is_none()
+            );
+            assert!(state.memory().native_input_span(&opaque).is_none());
+            assert!(state.memory().allocated_scalar_extent(&opaque).is_none());
+            assert_eq!(state.memory().known_value(&pointer), None);
+            let premises = crate::kernel::c_function_contract_entry(&state, &function, &arguments)
+                .unwrap()
+                .into_assumptions();
+            assert!(matches(&function, &arguments, &state, &premises, None));
+            let wrong = state.clone().with_resource_context(
+                ResourceContext::new().unchecked_with_fact(legacy_head.clone()),
+            );
+            assert!(
+                !matches(&function, &arguments, &wrong, &premises, None),
+                "address equality cannot erase the opaque input identity"
+            );
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[1] <= pair[0] + 64),
+            "{samples:?}"
+        );
+    }
+
+    #[test]
+    fn opaque_c_input_normalization_rejects_other_identities_and_object_hints() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let (function, arguments, pointer, _) = opaque_input();
+        let CExpression::Value(CValue::Pointer(input)) = &arguments[0] else {
+            panic!()
+        };
+        let cases = [
+            input
+                .clone()
+                .with_designation(PointerDesignation::Unresolved(Variable(9_898_402))),
+            input.clone().with_designation(PointerDesignation::Object {
+                root: pointer.clone(),
+                path: Arc::from([]),
+                base: pointer,
+                element_type: CType::Int32,
+                stride: 4,
+                count: crate::kernel::IntegerTerm::constant_i64(8).into(),
+            }),
+        ];
+        for supplied in cases {
+            let arguments = vec![CExpression::Value(CValue::Pointer(supplied))];
+            assert!(
+                c_independent_function_input_state(&CState::new(), &function, &arguments).is_none(),
+                "caller geometry and unrelated identities are not canonical input values"
+            );
+            let rebuilt = construct(&function, &arguments, None, false).unwrap();
+            let CExpression::Value(CValue::Pointer(rebuilt)) = &rebuilt.arguments[0] else {
+                panic!()
+            };
+            assert!(rebuilt.designation().is_none());
+        }
     }
 
     #[test]

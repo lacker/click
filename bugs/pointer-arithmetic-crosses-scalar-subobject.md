@@ -115,3 +115,15 @@ The current verifier refuses the native `return h->value[0];` with
 `pointer arithmetic left the pointed-to object`. The separate unchanged
 `c0_const_pointer_fields_store_proof_expands_and_reverifies` regression retains
 positive coverage for storing and reloading the actual pointer carrier.
+
+
+Recovery audit: the negative pointer-field control above still fails on archive
+checkpoint `2cab205db`: the proof is accepted rather than rejected. The same
+failure reproduces with the canonical opaque C value-input prerequisite. This
+remains a recovery activation blocker; the last paragraph's rejection result
+is not evidence that the archive satisfies it. Reproduce with the gate stack:
+
+```sh
+RUST_MIN_STACK=8388608 cargo test --lib \
+  c0_const_pointer_field_address_equality_does_not_authenticate_loaded_domain
+```

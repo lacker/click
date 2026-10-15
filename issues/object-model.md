@@ -444,3 +444,19 @@ including preservation of an authored proof-local name. All 46 normal
 fixed-state recovery controls pass with the gate stack setting; 16 nightly
 tests remain skipped. The exact upstream sidecar that failed CI verifies
 unchanged. The broader upstream rerun and corrected PR checks are in progress.
+
+
+The opaque C value-input prerequisite now retains only an unresolved identity
+matching the declaration's canonical binder. It imports no caller cells, object
+geometry, native type, initialization or access permission. Five independent
+entry controls pass, including unrelated-state sizes 0/16/64/256 and rejection
+of caller geometry, a different unresolved identity, and a same-address resource
+head with a different full value. This is a prerequisite, not a cursor fix.
+
+The broader normal `pointer_` selection reports 472 passes, three failures and
+17 ignored tests. The same selection on the preceding checkpoint `2cab205db`
+reports 471 passes and the exact same three failures: untyped-pointer error
+classification, the pointer-field address-equality rejection control, and
+modular record-pointer identity return. The extra pass is the new identity
+normalization control. These pre-existing failures remain activation blockers;
+the last full example audit is still 42/52.
