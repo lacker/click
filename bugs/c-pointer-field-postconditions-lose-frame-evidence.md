@@ -89,3 +89,20 @@ its deterministic work budget. The
 [reduced fold defect](split-descriptor-fold-exhausts-simple-budget.md) preserves
 this next blocker and the profile. No claim that the full archive project
 passes, and no new full-audit count, follows from this reduction.
+
+## Archive string project recovered
+
+At `e5305eeba` plus explicit `unfold(terminated_at)` in clear, the full original
+owned-string project verifies all 15 proofs. The full project with the push
+expansion, and focused original pop and clear reductions, pass fresh, expanded,
+rewritten and retained checking with a freshly rebuilt library. The normal
+52-project archive audit now passes 42 and fails 10 (176.3s harness, exit 100);
+string is no longer among its failures. The separate vector allocation fold
+remains, alongside arena, binary-tree, input-cursor, multifile-registry,
+rbtree-augmented, refcount, ring-buffer, rust-byte-sum and rust-chunks-exact.
+This is a partial audit, not a green archive verdict.
+
+The split-field fold's final indexed-order variant passes all four modes.
+Its completed profile still finds an expensive first returned-resource
+assumption; track that independently in the
+[return-resource performance report](split-descriptor-return-resource-check-repeats-work.md).

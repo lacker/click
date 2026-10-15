@@ -355,6 +355,7 @@ int32 owned_string_clear(struct owned_string* owner) {
         simp();
     }
     fold(owned_string(owner));
+    unfold(terminated_at);
     assumption();
     assumption();
     assumption();
