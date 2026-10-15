@@ -8173,7 +8173,7 @@ pub(in crate::kernel) fn iterated_memories_proven_equal(
             )) == Some(true)
     };
     let pointer_equal = |a: &Pointer, b: &Pointer| {
-        a == b || assumptions.pointers_proven_equal_ignoring_memory_separation(a, b)
+        crate::kernel::prelude::pointers_proven_equal_for_memory_resolution(a, b, assumptions)
     };
     left.element_width == right.element_width
         && left.stride == right.stride

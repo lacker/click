@@ -711,3 +711,10 @@ control remains ignored), including unchanged reads across an unrelated store,
 wrong-address/changed-slot refusals and flat work at four range sizes. Original
 arena now passes `take` and fails later at the window fold; arena remains
 unresolved and the complete audit count remains **48/52**.
+
+Complete iterated-fact equivalence now uses that same checked pointer-read
+comparison for both element and guard bases. A focused regression also consumes
+the equivalent whole holding, while changed element widths and guard addresses
+reject. The seven archive controls and nine upstream controls pass (one/four
+ignored respectively); range-size work remains flat. The original arena fold
+still fails, so this is a shared matching repair, not an arena restoration.

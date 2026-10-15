@@ -420,7 +420,7 @@ fn iterated_element_selection_checks_pointer_reads_across_snapshots() {
         .with_resource_context(
             ResourceContext::new()
                 .unchecked_with_fact(CResourceFact::own_memory(range(OCCUPIED, 0, 1)))
-                .unchecked_with_fact(CResourceFact::own(CResource::iterated(iterated))),
+                .unchecked_with_fact(CResourceFact::own(CResource::iterated(iterated.clone()))),
         );
     let take_at = |base| {
         crate::kernel::apply_iterated_step(
@@ -431,6 +431,36 @@ fn iterated_element_selection_checks_pointer_reads_across_snapshots() {
             &PureFactContext::new(),
         )
     };
+    let mut equivalent = iterated.clone();
+    equivalent.element_base = current_base.clone();
+    assert!(crate::kernel::primitives::iterated_memories_proven_equal(
+        &iterated,
+        &equivalent,
+        &PureFactContext::new(),
+    ));
+    assert!(
+        state
+            .resources()
+            .clone()
+            .without_fact_incrementally(
+                &CResourceFact::own(CResource::iterated(equivalent.clone())),
+                &PureFactContext::new(),
+            )
+            .is_some()
+    );
+    equivalent.element_width = 8;
+    assert!(!crate::kernel::primitives::iterated_memories_proven_equal(
+        &iterated,
+        &equivalent,
+        &PureFactContext::new(),
+    ));
+    equivalent = iterated.clone();
+    equivalent.guard.base = equivalent.guard.base.offset_by_bytes(4);
+    assert!(!crate::kernel::primitives::iterated_memories_proven_equal(
+        &iterated,
+        &equivalent,
+        &PureFactContext::new(),
+    ));
     assert!(
         take_at(current_base).is_ok(),
         "an unrelated store preserves the selected pointer read"
