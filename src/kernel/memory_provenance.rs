@@ -2975,7 +2975,15 @@ pub(in crate::kernel) fn checked_pointer_read_endpoint(
     assumptions: &PureFactContext,
 ) -> Option<Pointer> {
     let Bitvector32Term::MemoryLoad(memory, address, kind) =
-        crate::kernel::equality_graph::logical_pointer_read_term(read)?
+        crate::kernel::equality_graph::logical_pointer_read_term(read).or_else(|| {
+            let application = assumptions.retained_pointer_read_application(read)?;
+            let definition = application.as_loaded_value()?;
+            Some(Bitvector32Term::MemoryLoad(
+                definition.defining_memory,
+                Box::new(definition.defining_address),
+                LoadKind::Pointer,
+            ))
+        })?
     else {
         return None;
     };

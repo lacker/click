@@ -3019,7 +3019,10 @@ impl PureFactContext {
         else {
             return self;
         };
-        if !generated_load_binding_matches_proposition(binding, fact.proposition())
+        if *kind != LoadKind::Pointer
+            || crate::kernel::registered_load_bytes_for_variable(variable)
+                != Some(C_POINTER_BYTE_WIDTH)
+            || !generated_load_binding_matches_proposition(binding, fact.proposition())
             || crate::kernel::eval::typed_pointer_read_variable(value) != Some(*variable)
         {
             return self;
@@ -3037,6 +3040,22 @@ impl PureFactContext {
         }
         self.file_typed_pointer_read(*variable, memory, address, value);
         self
+    }
+
+    /// Select one unambiguous certified program read retained in this
+    /// context. Its immutable pair comes from the retained binding, not the
+    /// live naming registry. No definition is published to sibling contexts.
+    pub(in crate::kernel) fn retained_pointer_read_application(
+        &self,
+        value: &Pointer,
+    ) -> Option<Pointer> {
+        let variable = crate::kernel::eval::typed_pointer_read_variable(value)?;
+        let definitions = self.typed_pointer_read_definitions.get(&variable)?;
+        if definitions.len() != 1 {
+            return None;
+        }
+        let ((_, address), (retained, source)) = definitions.iter().next()?;
+        (retained == value).then(|| Pointer::loaded_value(source, address))
     }
 
     /// Publish a typed read's definition and locally checked source equality.

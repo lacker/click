@@ -32,15 +32,20 @@ fn graph_for_memory_query(assumptions: &PureFactContext, pointer: &Pointer) -> E
             offsets.push(left);
             continue;
         }
-        let Some(selected) = crate::kernel::equality_graph::logical_pointer_read_for_offset(offset)
-        else {
-            continue;
+        let selected = Pointer {
+            block: pointer.block.clone(),
+            offset: offset.clone(),
         };
-        if selected.block != pointer.block {
-            continue;
-        }
-        if let Some(endpoint) =
-            crate::kernel::memory_provenance::checked_pointer_read_endpoint(&selected, assumptions)
+        let retained = assumptions
+            .retained_pointer_read_application(&selected)
+            .is_some();
+        let registered = crate::kernel::equality_graph::logical_pointer_read_for_offset(offset)
+            .is_some_and(|read| read.block == pointer.block);
+        if (retained || registered)
+            && let Some(endpoint) = crate::kernel::memory_provenance::checked_pointer_read_endpoint(
+                &selected,
+                assumptions,
+            )
         {
             graph.add_checked_read_equality(&selected, &endpoint);
         }

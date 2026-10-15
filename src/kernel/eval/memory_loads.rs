@@ -4704,6 +4704,96 @@ mod tests {
     }
 
     #[test]
+    fn program_pointer_facts_retain_their_scoped_read_producer() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let empty = PureFactContext::new();
+        let registry_before = capture_load_variable_registry();
+        let memory = CMemory::new();
+        let address = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let paths = evaluate_c_memory_load_paths(
+            &memory,
+            address,
+            CType::Int32Pointer,
+            ExecutionFacts::new(),
+            Vec::new(),
+            &empty,
+            true,
+            false,
+            None,
+            None,
+        );
+        let [path] = paths.as_slice() else {
+            panic!("one program read")
+        };
+        let CExpressionOutcome::Value(CValue::Pointer(pointer)) = &path.outcome else {
+            panic!("pointer value")
+        };
+        assert!(
+            crate::kernel::equality_graph::logical_pointer_read_for_offset(&pointer.offset)
+                .is_none()
+        );
+        let ordinary: ExecutionFacts = path
+            .facts
+            .iter()
+            .map(|fact| ExecutionPureFact::new(fact.proposition().clone()))
+            .collect::<Vec<_>>()
+            .into();
+        let _ordinary_context = assumptions_with_path_context(&empty, &ordinary, &path.obligations);
+        assert!(
+            crate::kernel::equality_graph::logical_pointer_read_for_offset(&pointer.offset)
+                .is_none()
+        );
+        let context = assumptions_with_path_context(&empty, &path.facts, &path.obligations);
+        assert!(
+            empty
+                .retained_pointer_read_application(pointer.pointer())
+                .is_none()
+        );
+        assert!(
+            _ordinary_context
+                .retained_pointer_read_application(pointer.pointer())
+                .is_none()
+        );
+        assert!(
+            context
+                .retained_pointer_read_application(pointer.pointer())
+                .is_some()
+        );
+        assert!(
+            crate::kernel::memory_provenance::checked_pointer_read_endpoint(
+                pointer.pointer(),
+                &context
+            )
+            .is_some()
+        );
+        assert!(
+            crate::kernel::equality_graph::logical_pointer_read_for_offset(&pointer.offset)
+                .is_none()
+        );
+        assert!(
+            ResourceContext::new()
+                .memory_write_range(pointer.pointer(), 4, &context)
+                .is_none()
+        );
+        restore_load_variable_registry(&registry_before);
+        assert!(
+            context
+                .retained_pointer_read_application(pointer.pointer())
+                .is_some()
+        );
+        assert!(
+            crate::kernel::memory_provenance::checked_pointer_read_endpoint(
+                pointer.pointer(),
+                &context
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
     fn logical_cached_pointer_read_carries_its_current_cell_equation() {
         let _session = crate::kernel::VerificationSession::enter();
         let empty = PureFactContext::new();
