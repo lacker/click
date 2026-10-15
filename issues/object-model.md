@@ -701,3 +701,13 @@ then arithmetic over explicit relevant premises. Original Rust and contracts
 are unchanged. The result proof passes fresh, expansion, rewritten and retained
 checking on the archive. The last complete normal audit remains **48/52**;
 byte-sum is individually restored pending the next complete audit.
+
+Arena's `take` selected its guarded ownership by pure pointer equality only.
+The trace retains the iterated fact after unfolding; a focused probe finds
+same-width bases that the existing checked memory-read comparison proves equal,
+while the pure comparison misses them. Use that shared comparison for this
+address-selection question. Seven iterated-ownership controls pass (one nightly
+control remains ignored), including unchanged reads across an unrelated store,
+wrong-address/changed-slot refusals and flat work at four range sizes. Original
+arena now passes `take` and fails later at the window fold; arena remains
+unresolved and the complete audit count remains **48/52**.

@@ -65,7 +65,9 @@ fn terms_distinct(
 }
 
 fn pointers_equal(assumptions: &PureFactContext, left: &Pointer, right: &Pointer) -> bool {
-    left == right || assumptions.pointers_proven_equal_ignoring_memory_separation(left, right)
+    // Resource selection asks whether these reads name the same address;
+    // use the shared checked snapshot/read comparison, not just pure facts.
+    crate::kernel::prelude::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
 /// Whether `index` lies in the fact's range, by the fact context.

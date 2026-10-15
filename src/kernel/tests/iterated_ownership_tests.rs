@@ -379,3 +379,72 @@ fn unfolding_the_declaring_resource_is_constant_in_the_range_size() {
     }
     assert_constant_plus_log("unfolding the declaring resource", &samples, 4.0);
 }
+#[test]
+fn iterated_element_selection_checks_pointer_reads_across_snapshots() {
+    let source = Pointer {
+        block: "iterated-pointer-slot".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let before = CMemory::new()
+        .with_block("iterated-pointer-slot", 8)
+        .store(cell(OCCUPIED, 0), int32(0));
+    let after = before.clone().store(cell(UNRELATED, 0), int32(1));
+    let read = |memory: &CMemory, address: &Pointer| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory.clone()),
+                Box::new(address.clone()),
+                LoadKind::of_type(CType::Int32Pointer).unwrap(),
+            )),
+            byte_width: 4,
+        },
+    };
+    let held_base = read(&before, &source);
+    let current_base = read(&after, &source);
+    assert_ne!(held_base, current_base);
+    let iterated = CIteratedMemory::new(
+        "snapshot-cells",
+        held_base,
+        4,
+        1,
+        0,
+        1,
+        0u32.into(),
+        1u32.into(),
+        CIteratedGuard::new(heap_base(OCCUPIED), CType::Int32, 4, true, 0u32.into()),
+    )
+    .unwrap();
+    let state = CState::new()
+        .with_memory(after.clone())
+        .with_resource_context(
+            ResourceContext::new()
+                .unchecked_with_fact(CResourceFact::own_memory(range(OCCUPIED, 0, 1)))
+                .unchecked_with_fact(CResourceFact::own(CResource::iterated(iterated))),
+        );
+    let take_at = |base| {
+        crate::kernel::apply_iterated_step(
+            &state,
+            &crate::kernel::IteratedStep::Take {
+                element: CMemoryRange::new(base, 0u32.into(), 1u32.into()),
+            },
+            &PureFactContext::new(),
+        )
+    };
+    assert!(
+        take_at(current_base).is_ok(),
+        "an unrelated store preserves the selected pointer read"
+    );
+    assert!(
+        take_at(read(&after, &source.offset_by_bytes(8))).is_err(),
+        "a different read address is not the held base"
+    );
+    let changed = after.clone().store(
+        source.clone(),
+        CValue::typed_pointer(heap_base(DATA + 100), CType::Int32Pointer),
+    );
+    assert!(
+        take_at(read(&changed, &source)).is_err(),
+        "a changed pointer slot is not the original read"
+    );
+}
