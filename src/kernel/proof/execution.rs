@@ -13919,6 +13919,15 @@ mod tests {
                     )
                     .is_none()
             );
+            let upper_partial = before.clone().store(cell.offset_by_bytes(4), int32(9));
+            assert!(
+                index
+                    .prove_with_facts(
+                        &range(&upper_partial, crate::kernel::LoadKind::Pointer, 8),
+                        &facts
+                    )
+                    .is_none()
+            );
             let partial = before.clone().store(cell.clone(), int32(9));
             assert!(
                 index
