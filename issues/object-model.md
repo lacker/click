@@ -796,3 +796,18 @@ session construction repeats that whole-project failure before a retained
 recheck starts; this is not evidence of a fresh/retained disagreement for the
 selected allocation proof. Keep the complete checkpoint at **51/52** until the
 original whole arena project passes.
+
+
+The carrier refusal reduces to a four-line C program preserving a held region
+resource whose unrelated backing range uses a nested descriptor read. The
+identified upstream baseline passes it; recovery `03abdc37d` fails while eagerly
+evaluating the second body clause for an already-readable record carrier.
+The repair first checks the same native promises in the selected scratch
+evaluation and projects the immediate body only if a carrier needs that
+authority. It skips no native check and changes no C compatibility boundary.
+All eight native-record controls and the new
+`held_record_input_preserves_opaque_body` fixture pass. Whole arena checking
+now reaches `arena_free.contract` tactic 29 (`give` cannot find the owned
+element), with a focused trace captured. The original allocation proof's fresh,
+expanded and rewritten checks pass; retained session construction still awaits
+the complete project. Keep the full-audit count at **51/52**.

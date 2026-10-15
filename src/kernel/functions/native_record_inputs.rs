@@ -725,6 +725,13 @@ fn assume_selected_held_native_record_places(
             evaluation = evaluation.with_resource_context(expanded);
         }
         if instance.is_some() {
+            // A held checked head already supplies its native promises. Pure
+            // carriers can be observed without reopening unrelated body ranges.
+            // Project the immediate body only when a carrier read needs it.
+            if let Ok(assumed) = assume_native_record_specs(&evaluation, specs, assumptions) {
+                next.set_memory(assumed.memory().clone());
+                continue;
+            }
             // The selected held instance carries only this immediate body.
             // Keep the projection in scratch state so field carriers can be
             // read without publishing any body ownership to native execution.
