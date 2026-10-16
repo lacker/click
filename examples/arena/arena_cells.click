@@ -2418,9 +2418,52 @@ void arena_free(struct region* region) {
             k < arena->capacity;
         }
     }
+    transport(
+        old(region->arena->data) == old(region->arena->data),
+        arena->data == old(region->arena->data)
+    ) using { }
+    transport(
+        old(region->arena->occupied) == old(region->arena->occupied),
+        arena->occupied == old(region->arena->occupied)
+    ) using { }
+    transport(
+        old(region->arena->capacity) == old(region->arena->capacity),
+        arena->capacity == old(region->arena->capacity)
+    ) using { }
     fold(arena_cells(arena->data, arena->occupied, arena->capacity));
+    have separate(memory(arena->occupied[0..arena->capacity]), memory(arena->data[0..arena->capacity])) by {
+        rewrite(arena->data == old(region->arena->data));
+        rewrite(arena->occupied == old(region->arena->occupied));
+        rewrite(arena->capacity == old(region->arena->capacity));
+        assumption();
+    }
+    have separate(memory(*arena), memory(arena->data[0..arena->capacity])) by {
+        rewrite(arena->data == old(region->arena->data));
+        rewrite(arena->capacity == old(region->arena->capacity));
+        assumption();
+    }
+    have separate(memory(*arena), memory(arena->occupied[0..arena->capacity])) by {
+        rewrite(arena->occupied == old(region->arena->occupied));
+        rewrite(arena->capacity == old(region->arena->capacity));
+        assumption();
+    }
     let after = fold(arena_state(arena), { live: n - 1, capacity: c });
     execute();
+    transport(
+        forall (k: int32) {
+            region->end <= k and k < arena->capacity implies
+                region->arena->occupied[k] == old(region->arena->occupied[k])
+        },
+        forall (k: int32) {
+            region->end <= k and k < region->arena->capacity implies
+                region->arena->occupied[k] == old(region->arena->occupied[k])
+        }
+    ) using {
+        forall (k: int32) {
+            region->end <= k and k < arena->capacity implies
+                region->arena->occupied[k] == old(region->arena->occupied[k])
+        };
+    }
     simp();
 }
 

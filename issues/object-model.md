@@ -856,3 +856,19 @@ Those unsuccessful final-fold experiments were removed; the nine-line loop
 window proof is retained. The next investigation should use the existing
 `cleared` mark and the specific final store, without raising search limits.
 The whole-project audit has not been rerun and remains last measured at 51/52.
+
+
+Arena-free recovery now passes selected verification, expansion and rewritten
+verification. Explicit transport of unchanged descriptor reads replaces the
+exhausted automatic search; explicit rewrites transfer the three separation
+premises, and a quantified transport closes the final postcondition through
+the region descriptor. C, contracts and budgets remain unchanged.
+
+A complete normal example audit still passes **51/52**, in 134.89 seconds
+while a separate proof-mode check was running. Arena now advances past
+allocation and free to `arena_write.contract` tactic 12: indexing the stored
+data pointer rejects as leaving its pointed-to object. Its trace shows the
+subrange authority and scalar index bounds are available; the retained storage
+allocation is still inside `arena_initialized_storage`. Investigate that
+allocation/domain boundary next. Retained-session construction requires this
+whole project to pass, so no retained-mode success is claimed for arena-free.
