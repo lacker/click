@@ -2774,7 +2774,7 @@ impl PureFactContext {
 
     /// Guided instantiation candidates for one universal int32 body against a
     /// target condition: bound-variable subterm matches inside the body's
-    /// conclusion plus the variables of the target condition itself.
+    /// conclusion. Unrelated target variables are not instantiation evidence.
     pub(crate) fn guided_forall_condition_candidates(
         var: Variable,
         body: &Proposition,
@@ -2989,9 +2989,15 @@ impl PureFactContext {
             }
         }
         let mut candidates = BTreeSet::new();
-        let mut variables = BTreeSet::new();
-        collect_condition_bitvector_variables(condition, &mut variables);
-        candidates.extend(variables.into_iter().map(Bitvector32Term::Variable));
+        // Order reasoning also uses intermediate bounds whose other endpoint
+        // need not match the requested condition. Keep its scalar candidates;
+        // equality transport must match a bound occurrence instead of trying
+        // every unrelated scalar as an array index.
+        if !matches!(condition, ConditionTerm::Bitvector32Equal(..)) {
+            let mut variables = BTreeSet::new();
+            collect_condition_bitvector_variables(condition, &mut variables);
+            candidates.extend(variables.into_iter().map(Bitvector32Term::Variable));
+        }
         let conclusion = match body {
             Proposition::Implies(_, conclusion) => conclusion.as_ref(),
             conclusion => conclusion,
@@ -4280,5 +4286,78 @@ mod constant_prefix_certificate_tests {
         ));
         let withdrawn = context.without_exact_fact(&Proposition::ConditionIs(premise, true));
         assert!(!withdrawn.checks_exact_signed_order_path(&path, &1u32.into(), &upper, true));
+    }
+}
+
+#[cfg(test)]
+mod guided_condition_instantiation_tests {
+    use super::*;
+
+    fn variable(id: u64) -> Bitvector32Term {
+        Bitvector32Term::Variable(Variable(id))
+    }
+
+    fn array_read(index: Bitvector32Term, kind: LoadKind) -> Bitvector32Term {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(CMemory::new()),
+            Box::new(Pointer {
+                block: "quantified-cells".into(),
+                offset: PointerOffsetTerm::scale_int32(index, 4),
+            }),
+            kind,
+        )
+    }
+
+    fn body() -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::equal(array_read(variable(998_100), LoadKind::Bits32), 0u32.into()),
+            true,
+        )
+    }
+
+    #[test]
+    fn guided_condition_instantiation_keeps_matching_cell_index() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let target =
+            ConditionTerm::equal(array_read(variable(998_101), LoadKind::Bits32), 0u32.into());
+        assert_eq!(
+            PureFactContext::guided_forall_condition_candidates(
+                Variable(998_100),
+                &body(),
+                &target
+            ),
+            BTreeSet::from([variable(998_101)])
+        );
+        let wrong_kind =
+            ConditionTerm::equal(array_read(variable(998_101), LoadKind::UInt8), 0u32.into());
+        assert!(
+            PureFactContext::guided_forall_condition_candidates(
+                Variable(998_100),
+                &body(),
+                &wrong_kind
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn guided_condition_instantiation_skips_unrelated_target_variables_scaling() {
+        let _session = crate::kernel::VerificationSession::enter();
+        for count in [16, 128, 1024] {
+            let target_term = (0..count).fold(0u32.into(), |sum, i| {
+                Bitvector32Term::add(sum, variable(998_200 + i))
+            });
+            let target = ConditionTerm::equal(target_term, variable(999_500));
+            // These scalars do not match any bound occurrence in the array
+            // fact. None may trigger a speculative memory equality query.
+            assert!(
+                PureFactContext::guided_forall_condition_candidates(
+                    Variable(998_100),
+                    &body(),
+                    &target
+                )
+                .is_empty()
+            );
+        }
     }
 }

@@ -903,3 +903,16 @@ frames and separation transfers have been checked in the isolated proof,
 with the final unchanged-occupancy postcondition still under investigation.
 The last full example audit remains 51/52; no activation or full green verdict
 is claimed. All temporary diagnostic probes have been removed.
+
+
+The final occupancy transport exposed a separate simple-checker defect:
+quantified equality matching tried every unrelated target scalar as an array
+index and exhausted 750,000 work units. A candidate limits equality
+instantiation to matching bound occurrences, retaining scalar candidates for
+intermediate order proofs. All 91 selected quantifier, frame, transport and
+expansion controls pass, including the existing same-named-binder order case
+and new matching-cell/read-kind and three-size unrelated-scalar controls.
+The isolated transport now reports a bounded missing-frame refusal instead of
+exhausting work. This is not a completed arena proof; the resource-held
+occupancy read still needs its entry/store frame justified. No full-audit count
+or activation status changes.
