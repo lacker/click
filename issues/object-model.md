@@ -990,3 +990,24 @@ address equality, which alone does not establish full pointer identity. The
 original arena-write proof passes fresh, expansion and rewritten checking;
 whole-project retained construction stops at that pipeline mismatch. Do not
 claim full arena retained success, foundation activation or a full green gate.
+
+
+PR #1231 merged as `962429a54`; both pushed commits `b7c864aa9` and `bc74e9c8e`
+are verified upstream ancestors. Its CI failure was the retired-terminology
+documentation check, corrected without changing proof behavior. The failing
+CI shard's 968 library tests pass locally; its importer controls also pass
+with the pinned exporter and LLVM environment.
+
+The recovery checkpoint's unchanged pinned decoder passes its exact word,
+span and backing claims, helper/decoder expansion, rewritten checks and retained
+outer-probe checks in 20.985 seconds under the normal limit. An earlier run
+timed out at 30 seconds while other proof/import work was running; the idle
+recheck used the same limits and no implementation changes.
+
+Explicit checked resource-body transfer gets the pipeline past its first free,
+but the reverse transfer exposes a
+[reproduced simple-checker budget defect](../bugs/post-call-range-separation-exhausts-simple-checker.md).
+The profiler attributes the exhausted work to indexed goal equality rewriting
+and selected premise reduction for the separation goal. Stop local proof
+variations and reduce that comparison. The failed experimental proof is not
+installed in the original example. The full audit remains **51/52**.
