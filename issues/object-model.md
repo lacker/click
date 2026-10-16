@@ -962,3 +962,31 @@ and binary-tree fails folding the swapped child resources. The tree failure
 also reproduces at `48a09a658`, before the observation and return-fold repairs.
 Both compatibility failures remain prerequisites to foundation activation;
 this checkpoint is not a full green gate or completed shared object model.
+
+
+PR #1231 extracts the return-proof repairs against upstream `60c97316a`, with
+auto-merge requested. Its 1,048 selected unit controls (including the whole
+scaling suite) and complete original-source Markdown fixture pass.
+
+The next recovery checkpoint repairs two compatibility cases without changing
+C or contracts. Proven null pointer values have no referent designation, so
+resource matching can exchange their read spellings; numeric equality of
+non-null pointers still cannot supply a designation. Binary-tree passes its
+original proof and fresh, expansion, rewritten and retained checking.
+
+Storage retirement now compares the selected checked byte footprints rather
+than requiring identical element widths. A stated element range must be
+forward and nonwrapping before it can preserve a separate input object across
+retirement. The original arena-destroy proof passes, with missing-bound and
+shorter-range rejection controls. All 376 selected pointer, lifetime, heap,
+native-place and output-initialization controls pass, including three-size null
+matching with unrelated pointer equations. Temporary private probes are removed.
+
+The complete normal example audit is now **51/52**. Arena advances through
+write, read and destroy to its pipeline caller: matching `arena_state(arena)`
+against `arena_state(first->arena)` fails at the first `arena_free(first)` call
+on the allocation-failure branch for the second region. The trace proves
+address equality, which alone does not establish full pointer identity. The
+original arena-write proof passes fresh, expansion and rewritten checking;
+whole-project retained construction stops at that pipeline mismatch. Do not
+claim full arena retained success, foundation activation or a full green gate.

@@ -693,3 +693,61 @@ fn cross_block_composition_queries_are_indexed_and_bound_rejected_pairs() {
     }
     assert!(costs.windows(2).all(|pair| pair[0] == pair[1]), "{costs:?}");
 }
+
+#[test]
+fn symbolic_retirement_accepts_equivalent_element_and_byte_footprints() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let freed = Pointer::symbolic(Variable(943_030));
+    let root = Pointer::symbolic(Variable(943_031));
+    let count = Bitvector32Term::Variable(Variable(943_032));
+    let bytes = Bitvector32Term::Multiply(Box::new(count.clone()), Box::new(4u32.into()));
+    for aggregate in [false, true] {
+        let (memory, pointer, function) = lifetime_input(&root, aggregate, false);
+        let memory = memory
+            .with_heap_allocation_claim(freed.clone(), bytes.clone())
+            .unwrap();
+        let width: u32 = if aggregate { 16 } else { 4 };
+        for (held_end, bounded, accepted) in [
+            (count.clone(), true, true),
+            (count.clone(), false, false),
+            (
+                Bitvector32Term::Subtract(Box::new(count.clone()), Box::new(1u32.into())),
+                true,
+                false,
+            ),
+        ] {
+            let mut facts =
+                PureFactContext::new().assume_proposition(Proposition::CResourceSeparate {
+                    left: Box::new(CResource::Memory(CMemoryRange::new_with_element_width(
+                        freed.clone(),
+                        0u32.into(),
+                        held_end,
+                        4,
+                    ))),
+                    right: Box::new(CResource::Memory(CMemoryRange::new_with_element_width(
+                        root.clone(),
+                        0u32.into(),
+                        (width / 4).into(),
+                        4,
+                    ))),
+                });
+            if bounded {
+                facts = facts
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(0u32.into(), count.clone()),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(count.clone(), 1000u32.into()),
+                        true,
+                    );
+            }
+            let after_free = memory.clone().free_heap_block(&freed, &facts).unwrap();
+            assert_input_binding(after_free, &pointer, &function, accepted);
+            let after_contract = memory
+                .clone()
+                .retire_contract_heap_allocation_claim(&freed, &bytes, &facts);
+            assert_input_binding(after_contract, &pointer, &function, accepted);
+        }
+    }
+}

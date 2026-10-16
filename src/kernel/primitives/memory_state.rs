@@ -4792,10 +4792,27 @@ impl CMemory {
             );
             let selected =
                 CMemoryRange::new_with_element_width(root.clone(), 0u32.into(), 1u32.into(), width);
-            // Keep symbolic extents exact: the general resource-containment
-            // prover can search unrelated containment facts on a miss. This
-            // bounded retirement rule conservatively drops other shapes.
-            let covers = |held: &CMemoryRange, requested: &CMemoryRange| held == requested;
+            // Compare only the two selected footprints. The requested range
+            // is the kernel's allocation byte extent or fixed object extent;
+            // the stated range must have a forward, nonwrapping conversion.
+            // Logical widths may differ (n int32 cells versus n*4 bytes).
+            // Do not invoke general containment or unrelated range facts.
+            let covers = |held: &CMemoryRange, requested: &CMemoryRange| {
+                if held == requested {
+                    return true;
+                }
+                held.int32_bounds().is_some()
+                    && requested.int32_bounds().is_some()
+                    && held.byte_footprint() == requested.byte_footprint()
+                    && super::contracts::memory_range_extent_guards(held)
+                        .into_iter()
+                        .all(|guard| match guard {
+                            Proposition::ConditionIs(condition, expected) => {
+                                assumptions.decide(&condition) == Some(expected)
+                            }
+                            _ => false,
+                        })
+            };
             if let Some((proposition, _, _)) = assumptions
                 .memory_separation_candidates(&allocation.block, &root.block)
                 .find(|(_, left, right)| {

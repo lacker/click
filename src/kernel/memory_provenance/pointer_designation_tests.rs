@@ -645,3 +645,70 @@ fn resource_read_index_withdraws_original_keys_after_late_frame_edges() {
             .is_none()
     );
 }
+
+#[test]
+fn null_pointer_resources_do_not_require_a_referent_designation() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let memory = CMemory::new().with_block(slot().block.clone(), 32);
+    let left = loaded(&memory, &slot()).with_pointer(Pointer::symbolic(Variable(986_900)));
+    let right = loaded(&memory, &slot().offset_by_bytes(8))
+        .with_pointer(Pointer::symbolic(Variable(986_901)));
+    let null = CPointerValue::new(Pointer::null(), CType::Int32Pointer);
+    let context = PureFactContext::new();
+    assert!(!equal(&left, &right, &context));
+    let one_null = context.assume_condition(
+        crate::kernel::eval::pointer_is_null_condition(left.pointer().clone()),
+        true,
+    );
+    assert!(equal(&left, &null, &one_null));
+    assert!(!equal(&left, &right, &one_null));
+    let both_null = one_null.assume_condition(
+        crate::kernel::eval::pointer_is_null_condition(right.pointer().clone()),
+        true,
+    );
+    assert!(equal(&left, &right, &both_null));
+    assert!(c_values_proven_equal_for_memory_resolution(
+        &CValue::Pointer(left.clone()),
+        &CValue::Pointer(right.clone()),
+        &both_null,
+    ));
+    assert!(resolve_loaded_pointer_carrier(&left, &both_null).is_none());
+    assert!(resolve_loaded_pointer_carrier(&right, &both_null).is_none());
+    let numeric_only = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(left.pointer().clone(), right.pointer().clone()),
+        true,
+    );
+    assert!(!equal(&left, &right, &numeric_only));
+}
+
+#[test]
+fn null_designation_matching_ignores_unrelated_pointer_equations() {
+    for size in [16u64, 256, 4096] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let memory = CMemory::new();
+        let left = loaded(&memory, &slot()).with_pointer(Pointer::symbolic(Variable(987_000)));
+        let null = CPointerValue::new(Pointer::null(), CType::Int32Pointer);
+        let mut context = PureFactContext::new();
+        for index in 0..size {
+            context = context.assume_condition(
+                ConditionTerm::pointer_equal(
+                    Pointer::symbolic(Variable(1_100_000 + index * 2)),
+                    Pointer::symbolic(Variable(1_100_001 + index * 2)),
+                ),
+                true,
+            );
+        }
+        context = context.assume_condition(
+            crate::kernel::eval::pointer_is_null_condition(left.pointer().clone()),
+            true,
+        );
+        let _scope = context.enter_id_scope();
+        let (answer, work) =
+            crate::instrumentation::measure_deterministic_work(|| equal(&left, &null, &context));
+        assert!(answer);
+        assert!(
+            work <= 256,
+            "{size} unrelated pointer equations caused {work} work"
+        );
+    }
+}

@@ -2154,6 +2154,18 @@ pub(in crate::kernel) fn pointer_designations_proven_equal(
     if left.same_designation(right) {
         return true;
     }
+    // Null has no designated object. Proving both complete pointer values
+    // null permits exchanging their spellings, without granting a native
+    // designation to an address-equivalent non-null value.
+    let is_null = |value: &CPointerValue| {
+        value.is_null()
+            || assumptions.decide(&crate::kernel::eval::pointer_is_null_condition(
+                value.pointer().clone(),
+            )) == Some(true)
+    };
+    if is_null(left) && is_null(right) {
+        return true;
+    }
     if !matches!(left.designation(), Some(PointerDesignation::Loaded(_)))
         && !matches!(right.designation(), Some(PointerDesignation::Loaded(_)))
     {
