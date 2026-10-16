@@ -845,3 +845,14 @@ fresh, expanded, rewritten and retained checking. Its later fold uses explicit
 unchanged-descriptor and separation facts, just as the allocation proof does.
 The original `arena_free` now passes `give` and reaches tactic 35's window fold;
 that whole-project work remains open, so retain **51/52**.
+
+
+The original arena-free loop window fold now succeeds with explicit unchanged
+descriptor fields and separation transfer. The remaining final arena-state
+fold needs its separation premises carried across the final live-count store.
+An automatic attempt to recover the unchanged data field, both before and
+after closing the cell resource, exhausts the existing bounded smart budget.
+Those unsuccessful final-fold experiments were removed; the nine-line loop
+window proof is retained. The next investigation should use the existing
+`cleared` mark and the specific final store, without raising search limits.
+The whole-project audit has not been rerun and remains last measured at 51/52.

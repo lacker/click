@@ -2176,6 +2176,15 @@ void arena_free(struct region* region) {
                     k < arena->capacity;
                 }
             }
+            have arena->data == old(region->arena->data) by auto;
+            have arena->occupied == old(region->arena->occupied) by auto;
+            have arena->capacity == old(region->arena->capacity) by auto;
+            have separate(memory(arena->occupied[0..arena->capacity]), memory(arena->data[0..arena->capacity])) by {
+                rewrite(arena->data == old(region->arena->data));
+                rewrite(arena->occupied == old(region->arena->occupied));
+                rewrite(arena->capacity == old(region->arena->capacity));
+                assumption();
+            }
             let w = fold(arena_clear_window(arena->data, arena->occupied, arena->capacity, region->start, region->end), {
                 next: at(opened, i) + 1
             });
