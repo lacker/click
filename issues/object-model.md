@@ -811,3 +811,11 @@ now reaches `arena_free.contract` tactic 29 (`give` cannot find the owned
 element), with a focused trace captured. The original allocation proof's fresh,
 expanded and rewritten checks pass; retained session construction still awaits
 the complete project. Keep the full-audit count at **51/52**.
+
+
+The `give` investigation confirms that replacing its legacy memory consumption
+with `without_fact_incrementally` does not repair the original arena-free
+obligation. That candidate was reverted. The recovery source is clean at
+`b5e26dcf6`; its complete-audit checkpoint remains **51/52**. Continue from the
+focused `arena_free.contract` tactic-29 trace rather than inferring that an API
+substitution solves the missing ownership match.
