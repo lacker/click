@@ -3,6 +3,15 @@ use super::*;
 use crate::kernel::CTypedAccessPolicy;
 
 fn source_output(body: &str, initialized: bool, native_profile: bool) -> Result<(), String> {
+    source_output_with_place_claim(body, initialized, native_profile, false)
+}
+
+fn source_output_with_place_claim(
+    body: &str,
+    initialized: bool,
+    native_profile: bool,
+    place_claim: bool,
+) -> Result<(), String> {
     let c_source = format!(
         "struct byte_span {{ unsigned char* data; unsigned int count; }}; void fill_span(struct byte_span out) {{ {body} }} unsigned int span_word(void) {{ unsigned int value; struct byte_span out; out.data = (unsigned char*)(void*)&value; out.count = 4; fill_span(out); return value; }}"
     );
@@ -11,8 +20,13 @@ fn source_output(body: &str, initialized: bool, native_profile: bool) -> Result<
     } else {
         ""
     };
+    let geometry = if place_claim {
+        "ensures valid_place(out.data[0..4]);"
+    } else {
+        ""
+    };
     let click = format!(
-        "verifying \"span_output.c\"; void fill_span(struct byte_span out) {{ owns out.data[0..4]; {guarantee} }} by {{ execute(); simp(); }} uint32 span_word() {{ ensures result == result; }} by {{ execute(); simp(); }}"
+        "verifying \"span_output.c\"; void fill_span(struct byte_span out) {{ owns out.data[0..4]; {guarantee} {geometry} }} by {{ execute(); simp(); }} uint32 span_word() {{ ensures result == result; }} by {{ execute(); simp(); }}"
     );
     if !native_profile {
         return verify_c0_sources(&click, &[("span_output.c", c_source.as_str())])
@@ -72,12 +86,11 @@ fn reassigned_descriptor_cannot_initialize_its_frozen_original_target() {
 }
 #[test]
 fn plain_c_byte_ownership_does_not_supply_native_output_geometry() {
-    assert!(
-        source_output(
-            "out.data[0]=1; out.data[1]=2; out.data[2]=3; out.data[3]=4;",
-            true,
-            false
-        )
-        .is_err()
-    );
+    let body = "out.data[0]=1; out.data[1]=2; out.data[2]=3; out.data[3]=4;";
+    // C's allocated-byte access route can initialize the caller's word.
+    // It does not establish the independent native typed-place predicate.
+    source_output(body, true, false).expect("ordinary C byte writes remain supported");
+    let error = source_output_with_place_claim(body, true, false, true)
+        .expect_err("C byte ownership must not prove native valid_place");
+    assert!(error.contains("valid_place"), "{error}");
 }

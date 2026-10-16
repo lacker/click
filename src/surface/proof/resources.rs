@@ -5007,18 +5007,17 @@ fn materialize_composite_resource_cells_from_snapshot(
                     if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
                         return memory;
                     }
-                    let load = crate::kernel::canonical_form_of_typed_load(
-                        crate::kernel::intern_c_memory(naming_memory.clone()),
-                        pointer.clone(),
+                    // Use the same observation producer as input ranges:
+                    // caching an existing field is not a program write.
+                    memory.with_proof_entry_cells_under(
+                        pointer,
+                        element_type.byte_width(),
                         element_type,
+                        0,
+                        1,
+                        crate::kernel::intern_c_memory_ref(naming_memory),
+                        &PureFactContext::new(),
                     )
-                    .expect("a struct field has a scalar load type");
-                    let value = crate::surface::lowering::symbolic_value_from_load(
-                        &pointer,
-                        element_type,
-                        load,
-                    );
-                    memory.materialize_named_cell(pointer, value)
                 },
             );
         }

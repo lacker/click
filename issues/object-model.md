@@ -916,3 +916,30 @@ The isolated transport now reports a bounded missing-frame refusal instead of
 exhausting work. This is not a completed arena proof; the resource-held
 occupancy read still needs its entry/store frame justified. No full-audit count
 or activation status changes.
+
+
+PR #1227 merged as `a536608ec`; its sole pushed commit `25e111dc3` is verified
+as an upstream ancestor. The recovery observation repair now names fields of an
+unfolded complete-object resource through the existing input-cell producer.
+Previously it recorded scalar input naming as a program store at `region->start`.
+The checked history also recognizes byte-preserving full-pointer observations
+from a byte-identical source; actual partial writes, changed sources and Boolean
+normalization remain rejection controls. This pointer-specific law depends on
+the archive's full-width pointer-read representation and belongs with that
+foundation, rather than being activated independently on the older upstream
+pointer representation.
+
+Two focused recovery selections pass: 170 observation/quantifier/byte/pointer
+controls and 213 initialization/read/store/native-place controls. The latter
+exposed an outdated negative expectation already failing at `48a09a658`:
+ordinary C byte-span writes verify through the C allocated-access route.
+The corrected control verifies that program and rejects an added `valid_place`
+postcondition; it preserves the independent native-geometry boundary.
+
+The complete staged arena-write reduction now checks its occupancy transport.
+An explicit rewrite of the already-proved capacity equality closes the final
+quantified goal, but checked return-fold certification rejects an unjustified
+path fact. The identical complete proof passes baseline `64f0f0d46`. Stop proof
+variations and identify that rejected fact next. The original arena-write proof
+remains unchanged; the last full audit is still **51/52**, with no activation
+or full green gate claimed. Temporary probes are removed from this checkpoint.

@@ -786,7 +786,8 @@ pub(in crate::kernel) fn seeded_cell_effect(
 
 /// Loading each scalar from a byte-identical predecessor and caching that same
 /// value does not modify memory. Restrict this rule to byte-preserving scalar
-/// carriers: bool normalization and pointer representation have separate rules.
+/// carriers. A full typed pointer observation retains that same pointer
+/// representation; bool normalization can change the observed byte pattern.
 /// The producer-maintained read identity also covers successive materializations
 /// from one source. Its comparison and run metadata do not depend on run size.
 pub(in crate::kernel) fn seeded_loads_preserve_base(step: &CMemoryDerivation) -> bool {
@@ -797,7 +798,6 @@ pub(in crate::kernel) fn seeded_loads_preserve_base(step: &CMemoryDerivation) ->
     matches!(run.value_mode(), RunValueMode::Load)
         && run.source().read_identity() == base.read_identity()
         && run.element_type() != CType::Bool
-        && !run.element_type().is_pointer()
         && run.element_width() == run.value_width()
 }
 
@@ -1182,5 +1182,115 @@ fn footprint_effect(step: &CMemoryDerivation, ranges: Option<&[CMemoryRange]>) -
         | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
         | CMemoryDerivation::ObjectInitializationRecorded { .. }
         | CMemoryDerivation::CellsForgotten { .. } => separate(FootprintSeparation::WritesNothing),
+    }
+}
+
+#[cfg(test)]
+mod input_pointer_observation_tests {
+    use super::*;
+
+    fn symbolic(id: u64) -> Pointer {
+        Pointer::symbolic(Variable(id))
+    }
+
+    fn observe(memory: CMemory, source: SharedCMemory, count: u32, c_type: CType) -> CMemory {
+        memory.with_proof_entry_cells_under(
+            symbolic(998_600),
+            c_type.byte_width(),
+            c_type,
+            0,
+            count,
+            source,
+            &PureFactContext::new(),
+        )
+    }
+
+    fn equal_reads(before: &CMemory, after: &CMemory, pointer: Pointer, kind: LoadKind) -> bool {
+        let load = |memory: &CMemory| {
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(memory),
+                Box::new(pointer.clone()),
+                kind,
+            )
+        };
+        crate::kernel::explicit_atomic_equality_from_memory_derivations(
+            &load(before),
+            &load(after),
+            &PureFactContext::new(),
+        )
+    }
+
+    #[test]
+    fn input_pointer_observation_preserves_possibly_aliasing_reads() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let before = CMemory::new();
+        let after = observe(
+            before.clone(),
+            crate::kernel::intern_c_memory_ref(&before),
+            1,
+            CType::Int32Pointer,
+        );
+        // No separation is available: naming an existing pointer must not
+        // require that an arbitrary observed byte is outside its cell.
+        for kind in [LoadKind::UInt8, LoadKind::Bits32, LoadKind::Bits64] {
+            assert!(equal_reads(&before, &after, symbolic(998_601), kind));
+        }
+        let overwritten = after
+            .clone()
+            .store(symbolic(998_600), CValue::UInt32(7u32.into()));
+        assert!(!equal_reads(
+            &after,
+            &overwritten,
+            symbolic(998_600),
+            LoadKind::Pointer
+        ));
+    }
+
+    #[test]
+    fn input_pointer_observation_does_not_hide_changed_source_or_bool_normalization() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let before = CMemory::new();
+        let source = crate::kernel::intern_c_memory_ref(&before);
+        let changed = before
+            .clone()
+            .store(symbolic(998_601), CValue::Int32(7u32.into()));
+        let after = observe(changed, source.clone(), 1, CType::Int32Pointer);
+        assert!(!equal_reads(
+            &before,
+            &after,
+            symbolic(998_601),
+            LoadKind::Bits32
+        ));
+        let boolean = observe(before.clone(), source, 1, CType::Bool);
+        assert!(!equal_reads(
+            &before,
+            &boolean,
+            symbolic(998_600),
+            LoadKind::UInt8
+        ));
+    }
+
+    #[test]
+    fn input_pointer_observation_work_is_independent_of_run_length() {
+        let mut samples = Vec::new();
+        for count in [1, 16, 256, 4096] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let before = CMemory::new();
+            let after = observe(
+                before.clone(),
+                crate::kernel::intern_c_memory_ref(&before),
+                count,
+                CType::Int32Pointer,
+            );
+            let (equal, work) = crate::instrumentation::measure_deterministic_work(|| {
+                equal_reads(&before, &after, symbolic(998_601), LoadKind::Bits32)
+            });
+            assert!(equal);
+            samples.push(work);
+        }
+        assert!(
+            samples.windows(2).all(|pair| pair[0] == pair[1]),
+            "{samples:?}"
+        );
     }
 }

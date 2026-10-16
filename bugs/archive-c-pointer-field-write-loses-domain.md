@@ -234,3 +234,14 @@ complete staged reduction, including the child resource.
 
 The full recovery audit remains last measured at 51/52. These candidate repairs
 do not establish original-arena, retained-session or shared-model completion.
+
+
+The next checked reduction locates the stopped history edge at the input cache
+of `region->start`, recorded as a store rather than an observation. Naming
+complete-object fields with the existing input producer and preserving exact
+full-pointer observation bytes gets quantified occupancy transport through.
+A guard rewrite using the established capacity equality closes the last goal.
+Return-fold certification then rejects an unjustified path fact; the same
+complete staged proof passes baseline `64f0f0d46`. This is the current blocker,
+not a completed arena proof. Recovery's focused observation and native-control
+selections pass (170 and 213 tests respectively).
