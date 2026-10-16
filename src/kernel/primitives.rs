@@ -6862,6 +6862,13 @@ impl CMemory {
     }
 
     pub(crate) fn is_initial_diagnostic_memory(&self) -> bool {
+        self.is_symbolic_input_memory()
+    }
+
+    /// The unconstrained input root, rather than a forgotten or overwritten
+    /// cell, declared object, or allocated block. Empty persistent roots make
+    /// this a constant-work query; absence of a history edge is insufficient.
+    pub(in crate::kernel) fn is_symbolic_input_memory(&self) -> bool {
         self.blocks.is_empty()
             && self.cells.len() == 0
             && self.union_cells.is_empty()

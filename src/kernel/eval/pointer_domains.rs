@@ -391,6 +391,15 @@ fn resolved_carrier<'a>(
     pointer: &'a CPointerValue,
     assumptions: &PureFactContext,
 ) -> Result<std::borrow::Cow<'a, CPointerValue>, PointerDomainRefusal> {
+    resolved_carrier_kind(state, pointer, assumptions)?
+        .ok_or(PointerDomainRefusal::UnresolvedDesignation)
+}
+
+fn resolved_carrier_kind<'a>(
+    state: &CState,
+    pointer: &'a CPointerValue,
+    assumptions: &PureFactContext,
+) -> Result<Option<std::borrow::Cow<'a, CPointerValue>>, PointerDomainRefusal> {
     if matches!(pointer.designation(), Some(PointerDesignation::Loaded(_))) {
         // A checked call can preserve the full read identity while giving its
         // result a fresh numeric name. Align that name to the existing read;
@@ -410,51 +419,64 @@ fn resolved_carrier<'a>(
                 )
                 .is_some()
                 {
-                    return resolved_carrier(state, &aligned, assumptions)
-                        .map(|carrier| std::borrow::Cow::Owned(carrier.into_owned()));
+                    return resolved_carrier_kind(state, &aligned, assumptions).map(|carrier| {
+                        carrier.map(|value| std::borrow::Cow::Owned(value.into_owned()))
+                    });
                 }
             }
         }
-        let resolved =
-            crate::kernel::memory_provenance::resolve_loaded_pointer_carrier(pointer, assumptions)
+        let mut opaque_c_input = false;
+        let resolved = crate::kernel::memory_provenance::resolve_loaded_pointer_carrier(
+            pointer,
+            assumptions,
+        )
+        .or_else(|| {
+            // Keep the producer's spelling when its exact read pair
+            // already names a retained input. Changing only the raw
+            // spelling here would leave the prefix's retained base
+            // in a different address coordinate system.
+            (state.memory().native_input_span(pointer).is_some()
+                || state.memory().allocated_scalar_extent(pointer).is_some()
+                || state.memory().native_record_prefix(pointer).is_some())
+            .then(|| pointer.clone())
+        })
+        .or_else(|| {
+            state
+                .memory()
+                .loaded_input_coordinate_carrier(pointer, assumptions)
+        })
+        .or_else(|| {
+            let canonical = crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
+                pointer,
+                assumptions,
+            )?;
+            opaque_c_input = state.typed_access_policy()
+                == CTypedAccessPolicy::CAllocatedAccessAllowed
+                && matches!(canonical.designation(), Some(PointerDesignation::Loaded(origin))
+                    if origin.memory().is_symbolic_input_memory());
+            state
+                .memory()
+                .checked_native_record_pointer(&canonical)
                 .or_else(|| {
-                    // Keep the producer's spelling when its exact read pair
-                    // already names a retained input. Changing only the raw
-                    // spelling here would leave the prefix's retained base
-                    // in a different address coordinate system.
-                    (state.memory().native_input_span(pointer).is_some()
-                        || state.memory().allocated_scalar_extent(pointer).is_some()
-                        || state.memory().native_record_prefix(pointer).is_some())
-                    .then(|| pointer.clone())
+                    (state.memory().native_input_span(&canonical).is_some()
+                        || state.memory().allocated_scalar_extent(&canonical).is_some()
+                        || state.memory().native_record_prefix(&canonical).is_some())
+                    .then_some(canonical)
                 })
-                .or_else(|| {
-                    state
-                        .memory()
-                        .loaded_input_coordinate_carrier(pointer, assumptions)
-                })
-                .or_else(|| {
-                    let canonical =
-                        crate::kernel::memory_provenance::canonical_loaded_pointer_carrier(
-                            pointer,
-                            assumptions,
-                        )?;
-                    state
-                        .memory()
-                        .checked_native_record_pointer(&canonical)
-                        .or_else(|| {
-                            (state.memory().native_input_span(&canonical).is_some()
-                                || state.memory().allocated_scalar_extent(&canonical).is_some()
-                                || state.memory().native_record_prefix(&canonical).is_some())
-                            .then_some(canonical)
-                        })
-                })
-                .or_else(|| state.memory().checked_native_record_pointer(pointer));
+        })
+        .or_else(|| state.memory().checked_native_record_pointer(pointer));
         let Some(resolved) = resolved else {
             return if state.memory().native_input_span(pointer).is_some()
                 || state.memory().allocated_scalar_extent(pointer).is_some()
                 || state.memory().native_record_prefix(pointer).is_some()
             {
-                Ok(std::borrow::Cow::Borrowed(pointer))
+                Ok(Some(std::borrow::Cow::Borrowed(pointer)))
+            } else if opaque_c_input {
+                // This exact complete read ends at the original symbolic C
+                // input, not a partial write or havoc. Preserve its full value
+                // and origin; only the geometry query takes the C legacy route.
+                // No native place, extent, or access authority is established.
+                Ok(None)
             } else {
                 Err(PointerDomainRefusal::UnresolvedDesignation)
             };
@@ -470,21 +492,23 @@ fn resolved_carrier<'a>(
         } else {
             resolved
         };
-        Ok(std::borrow::Cow::Owned(resolved))
+        Ok(Some(std::borrow::Cow::Owned(resolved)))
     } else if matches!(
         pointer.designation(),
         Some(PointerDesignation::Unresolved(_))
     ) {
         if state.memory().native_record_prefix(pointer).is_some() {
-            return Ok(std::borrow::Cow::Borrowed(pointer));
+            return Ok(Some(std::borrow::Cow::Borrowed(pointer)));
         }
-        Ok(state
-            .memory()
-            .checked_native_record_pointer(pointer)
-            .map(std::borrow::Cow::Owned)
-            .unwrap_or(std::borrow::Cow::Borrowed(pointer)))
+        Ok(Some(
+            state
+                .memory()
+                .checked_native_record_pointer(pointer)
+                .map(std::borrow::Cow::Owned)
+                .unwrap_or(std::borrow::Cow::Borrowed(pointer)),
+        ))
     } else {
-        Ok(std::borrow::Cow::Borrowed(pointer))
+        Ok(Some(std::borrow::Cow::Borrowed(pointer)))
     }
 }
 
@@ -1035,7 +1059,9 @@ pub(in crate::kernel) fn checked_pointer_formation(
     view: PointerDomainView,
     assumptions: &PureFactContext,
 ) -> Result<PointerDomainCheck, PointerDomainRefusal> {
-    let resolved_origin = resolved_carrier(state, origin, assumptions)?;
+    let Some(resolved_origin) = resolved_carrier_kind(state, origin, assumptions)? else {
+        return Ok(PointerDomainCheck::Legacy);
+    };
     let Some(domain) = authenticated_domain(state, &resolved_origin, assumptions)? else {
         return Ok(PointerDomainCheck::Legacy);
     };
@@ -1079,7 +1105,9 @@ pub(in crate::kernel) fn checked_pointer_access(
     view: PointerDomainView,
     assumptions: &PureFactContext,
 ) -> Result<PointerDomainCheck, PointerDomainRefusal> {
-    let pointer = resolved_carrier(state, pointer, assumptions)?;
+    let Some(pointer) = resolved_carrier_kind(state, pointer, assumptions)? else {
+        return Ok(PointerDomainCheck::Legacy);
+    };
     let Some(domain) = authenticated_domain(state, &pointer, assumptions)? else {
         return Ok(PointerDomainCheck::Legacy);
     };
@@ -1373,7 +1401,9 @@ fn checked_pointer_span_with_type(
     requested_type: Option<CType>,
     assumptions: &PureFactContext,
 ) -> Result<PointerDomainCheck, PointerDomainRefusal> {
-    let pointer = resolved_carrier(state, pointer, assumptions)?;
+    let Some(pointer) = resolved_carrier_kind(state, pointer, assumptions)? else {
+        return Ok(PointerDomainCheck::Legacy);
+    };
     let Some(domain) = authenticated_domain(state, &pointer, assumptions)? else {
         return Ok(PointerDomainCheck::Legacy);
     };
@@ -2822,6 +2852,201 @@ mod tests {
                 snapshot,
                 cell.clone(),
             )))
+    }
+
+    #[test]
+    fn full_pointer_read_identity_precedes_native_cell_enrollment() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let memory = CMemory::new();
+        let address = Pointer::symbolic(Variable(989_810));
+        let cell = CPointerValue::new(address.clone(), CType::Int32PointerPointer);
+        let mut value = paired_read(&memory, &address);
+        let raw = value.pointer().clone();
+        value = CPointerValue::new(raw.clone(), CType::Int32Pointer);
+        crate::kernel::eval::retain_full_pointer_read_carrier(&memory, &cell, &mut value);
+        assert_eq!(value.pointer(), &raw);
+        assert!(
+            matches!(value.designation(), Some(PointerDesignation::Loaded(origin))
+            if origin.address() == &address && origin.memory().is_symbolic_input_memory())
+        );
+        let mut known =
+            CPointerValue::new(Pointer::symbolic(Variable(989_809)), CType::Int32Pointer);
+        let before = known.clone();
+        crate::kernel::eval::retain_full_pointer_read_carrier(&memory, &cell, &mut known);
+        assert_eq!(
+            known, before,
+            "a known stored value is not relabeled as a read"
+        );
+    }
+
+    #[test]
+    fn original_c_pointer_reads_keep_legacy_geometry_without_native_place() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let memory = CMemory::new();
+        let cell = Pointer::symbolic(Variable(989_811));
+        let pointer = paired_read(&memory, &cell);
+        let state = CState::new().with_memory(memory.clone());
+        let context = PureFactContext::new();
+        assert_eq!(
+            checked_pointer_formation(
+                &state,
+                &pointer,
+                &pointer.offset_by_bytes(4),
+                4,
+                PointerDomainView::Typed,
+                &context
+            ),
+            Ok(PointerDomainCheck::Legacy)
+        );
+        assert_eq!(
+            checked_pointer_access(
+                &state,
+                &pointer,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &context
+            ),
+            Ok(PointerDomainCheck::Legacy)
+        );
+        assert!(
+            checked_typed_pointer_span(
+                &state,
+                &pointer,
+                0.into(),
+                1.into(),
+                CType::Int32,
+                &context
+            )
+            .is_err(),
+            "C compatibility does not establish a native place"
+        );
+        let native = state
+            .clone()
+            .with_typed_access_policy(CTypedAccessPolicy::NativeObjectOnly);
+        assert!(
+            checked_pointer_access(
+                &native,
+                &pointer,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &context
+            )
+            .is_err()
+        );
+        assert!(
+            state.resources().is_empty(),
+            "geometry classification grants no authority"
+        );
+        assert!(
+            matches!(pointer.designation(), Some(PointerDesignation::Loaded(_))),
+            "the original full-pointer identity remains intact"
+        );
+        for value in [
+            CValue::UInt8(0u32.into()),
+            CValue::UInt64(Bitvector32Term::UInt64Constant(0)),
+        ] {
+            let changed = memory.clone().store(cell.clone(), value);
+            let changed_state = state.clone().with_memory(changed.clone());
+            assert!(
+                checked_pointer_access(
+                    &changed_state,
+                    &paired_read(&changed, &cell),
+                    CType::Int32,
+                    4,
+                    PointerDomainView::Typed,
+                    &context
+                )
+                .is_err()
+            );
+        }
+        let changed = memory.with_storage_memory_havoc(
+            Variable(989_812),
+            &[CMemoryRange::new(cell.clone(), 0u32.into(), 8u32.into())],
+            &context,
+        );
+        assert!(
+            checked_pointer_access(
+                &state.with_memory(changed.clone()),
+                &paired_read(&changed, &cell),
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &context
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn original_c_pointer_read_geometry_does_not_make_retired_values_usable() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let source = CMemory::new();
+        let pointer = paired_read(&source, &Pointer::symbolic(Variable(989_813)));
+        let allocation = pointer.pointer().clone();
+        let context = PureFactContext::new();
+        let memory = source
+            .with_heap_allocation_claim(allocation.clone(), 8)
+            .unwrap();
+        let retired = memory.free_heap_block(&allocation, &context).unwrap();
+        let state = CState::new().with_memory(retired);
+        assert_eq!(
+            checked_pointer_access(
+                &state,
+                &pointer,
+                CType::Int32,
+                4,
+                PointerDomainView::Typed,
+                &context
+            ),
+            Ok(PointerDomainCheck::Legacy)
+        );
+        for value in [pointer.clone(), pointer.with_pointee_constant(true)] {
+            assert!(
+                crate::kernel::eval::freed_pointer_use(&state, &CValue::Pointer(value), &context)
+                    .is_some(),
+                "C value validity remains separate from legacy geometry"
+            );
+        }
+    }
+
+    #[test]
+    fn original_c_pointer_geometry_ignores_unrelated_retired_allocations() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let source = CMemory::new();
+        let pointer = paired_read(&source, &Pointer::symbolic(Variable(989_815)));
+        let context = PureFactContext::new();
+        let mut samples = Vec::new();
+        for size in [0u32, 16, 64, 256] {
+            let mut memory = source.clone();
+            for index in 0..size {
+                let allocation = Pointer {
+                    block: PointerBlock::Heap(990_000 + u64::from(index)),
+                    offset: PointerOffsetTerm::Constant(0),
+                };
+                memory = memory
+                    .with_heap_allocation_claim(allocation.clone(), 8)
+                    .unwrap()
+                    .free_heap_block(&allocation, &context)
+                    .unwrap();
+            }
+            let state = CState::new().with_memory(memory);
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                checked_pointer_access(
+                    &state,
+                    &pointer,
+                    CType::Int32,
+                    4,
+                    PointerDomainView::Typed,
+                    &context,
+                )
+            });
+            assert_eq!(result, Ok(PointerDomainCheck::Legacy));
+            samples.push((size, work));
+        }
+        eprintln!("opaque C input geometry work: {samples:?}");
+        assert!(samples.iter().all(|(_, work)| *work <= samples[0].1 + 8));
     }
 
     #[test]

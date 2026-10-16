@@ -2645,7 +2645,7 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
     Ok(paths)
 }
 
-/// Keep an enrolled pointer-cell read's address and exact complete read
+/// Keep a full pointer-cell read's address and exact complete read
 /// identity together across native and specification observers. This creates
 /// no object validity or access permission for the unknown referent.
 pub(in crate::kernel) fn retain_full_pointer_read_carrier(
@@ -2653,10 +2653,7 @@ pub(in crate::kernel) fn retain_full_pointer_read_carrier(
     cell: &CPointerValue,
     pointer: &mut CPointerValue,
 ) {
-    if cell.designation().is_none()
-        || !pointer.c_type().is_object_pointer()
-        || pointer.designation().is_some()
-        || pointer.is_null()
+    if !pointer.c_type().is_object_pointer() || pointer.designation().is_some() || pointer.is_null()
     {
         return;
     }
@@ -2697,9 +2694,15 @@ pub(in crate::kernel) fn retain_full_pointer_read_carrier(
                 .is_some()
         })
         .unwrap_or(origin);
-    *pointer = pointer
-        .clone()
-        .with_designation(PointerDesignation::Loaded(defining_origin));
+    // A known stored legacy pointer is already a complete value. Only an
+    // actual paired read gains a read identity; arbitrary numeric names do not.
+    if crate::kernel::memory_provenance::paired_pointer_load_displacement(pointer, &defining_origin)
+        .is_some()
+    {
+        *pointer = pointer
+            .clone()
+            .with_designation(PointerDesignation::Loaded(defining_origin));
+    }
 }
 
 /// Reads an lvalue, filing the type range of each narrow integer value the
@@ -2756,9 +2759,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
             storage: CLValueStorage::Memory { pointer },
             value_type,
             ..
-        }) if pointer.designation().is_some() && value_type.is_object_pointer() => {
-            Some(pointer.clone())
-        }
+        }) if value_type.is_object_pointer() => Some(pointer.clone()),
         _ => None,
     };
     let mut paths = read_c_lvalue_paths_without_ranges(

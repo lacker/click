@@ -882,3 +882,24 @@ does not repair it; that experiment was removed. Arena-free passes fresh,
 expanded and rewritten checks; retained-session creation stops at this later
 arena-write failure, consistent with the whole-project audit. No proof-mode
 disagreement or new design decision is claimed.
+
+
+The next recovery increment separates an exact original symbolic C pointer
+read from a native referent designation. Its C geometry route preserves the
+complete read identity but grants no native place, extent, initialization or
+access authority; NativeObjectOnly inputs and native-place queries remain
+strict. Full typed pointer reads retain their immutable defining read before
+cell enrollment, while already-known stored values are not relabeled as reads.
+C pointer-value lifetime checks remain at the existing value-use boundary,
+not duplicated in geometry classification.
+
+All 34 pointer-domain controls pass, including partial/integer writes, havoc,
+native refusal, exact retired-value rejection at value use and four-size
+unrelated-retirement scaling (25 work units at every size). A broader selected
+set of 160 read, store, designation, native-span and record controls passes.
+This advances the complete isolated arena-write proof past its C store. The
+original example remains unchanged at this checkpoint; explicit descriptor
+frames and separation transfers have been checked in the isolated proof,
+with the final unchanged-occupancy postcondition still under investigation.
+The last full example audit remains 51/52; no activation or full green verdict
+is claimed. All temporary diagnostic probes have been removed.
