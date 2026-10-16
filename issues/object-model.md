@@ -1011,3 +1011,13 @@ The profiler attributes the exhausted work to indexed goal equality rewriting
 and selected premise reduction for the separation goal. Stop local proof
 variations and reduce that comparison. The failed experimental proof is not
 installed in the original example. The full audit remains **51/52**.
+
+
+A direct kernel control confirms that full-width pointer-address reads survive
+a numeric storage alias, input observation and a recorded read projection.
+`pointer_address_reads_survive_observation_through_a_numeric_storage_alias`
+passes, so those ingredients alone do not reduce the pipeline failure. The
+smaller two-call C experiment stops at an earlier native-span fold and is not
+a reproduction. Keep the complete original-source pipeline and its profile
+as the defect witness while inspecting the exact read endpoints. No new
+semantic law or broader alias permission has been introduced.

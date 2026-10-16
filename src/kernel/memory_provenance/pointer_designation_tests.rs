@@ -712,3 +712,57 @@ fn null_designation_matching_ignores_unrelated_pointer_equations() {
         );
     }
 }
+
+#[test]
+fn pointer_address_reads_survive_observation_through_a_numeric_storage_alias() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let address = |index| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(index))),
+            byte_width: 4,
+        },
+    };
+    let base = address(986_950);
+    let alias = address(986_951);
+    let context = PureFactContext::new().assume_condition(
+        ConditionTerm::pointer_equal(base.clone(), alias.clone()),
+        true,
+    );
+    let before = CMemory::new().with_storage_memory_havoc(
+        Variable(986_952),
+        &[CMemoryRange::new_with_element_width(
+            base.clone(),
+            0u32.into(),
+            24u32.into(),
+            1,
+        )],
+        &context,
+    );
+    let source = intern_c_memory_ref(&before);
+    let first = crate::kernel::eval::canonical_form_of_typed_load(
+        source.clone(),
+        base.clone(),
+        CType::Int32Pointer,
+    )
+    .unwrap();
+    let observed = before.with_proof_entry_cells_under(
+        alias.clone(),
+        8,
+        CType::Int32Pointer,
+        0,
+        1,
+        source,
+        &context,
+    );
+    let original = intern_c_memory_ref(&observed);
+    let projected = crate::kernel::reasoning::canonical_memory_for_pointer_load(&observed, &alias);
+    let projected = intern_c_memory_ref(&projected);
+    crate::kernel::reasoning::record_canonical_load_projection(&original, &projected, &alias);
+    let after = Bitvector32Term::MemoryLoad(projected, Box::new(base), LoadKind::Pointer);
+    let left = Pointer::loaded(PointerBlock::ExternalArgument, first, 4);
+    let right = Pointer::loaded(PointerBlock::ExternalArgument, after, 4);
+    assert!(pointers_proven_equal_for_memory_resolution(
+        &left, &right, &context
+    ));
+}
