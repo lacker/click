@@ -209,3 +209,28 @@ void arena_write(struct region* region, int32 index, int32 value) {
 - Check fresh, expanded, rewritten and retained proofs. Rerun the normal
   example audit after the original project is restored; do not claim that the
   selected free proof alone restores arena.
+
+
+## Recovery after the C input-read producer repair
+
+Recovery `48a09a658` retains the exact full-pointer read at symbolic C input
+without requiring native object enrollment. Its 34 pointer-domain controls and
+160 selected read/store/native controls pass. The unchanged C store in this
+reproduction now executes. Explicit descriptor-read and separation transport
+gets both final resource folds through; the unchanged-occupancy postcondition
+remains open. The original example's proof has not been replaced with an
+incomplete isolated experiment.
+
+A staged quantified occupancy transport also exposed speculative equality
+instantiation costing more than the simple work allowance. Recovery
+`85584a62c` restricts equality candidates to matching bound occurrences while
+preserving intermediate order candidates; all 91 selected quantifier/transport
+controls pass. The staged transport now reports a bounded missing-frame
+refusal. Its reads agree in address and width, but the checked cell-history
+walk does not yet justify the occupancy frame. Direct ownership of the
+occupancy range verifies the reduced control; keeping the range inside the
+child resource reproduces the refusal. Baseline `64f0f0d46` verifies the
+complete staged reduction, including the child resource.
+
+The full recovery audit remains last measured at 51/52. These candidate repairs
+do not establish original-arena, retained-session or shared-model completion.

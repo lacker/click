@@ -2774,7 +2774,7 @@ impl PureFactContext {
 
     /// Guided instantiation candidates for one universal int32 body against a
     /// target condition: bound-variable subterm matches inside the body's
-    /// conclusion. Unrelated target variables are not instantiation evidence.
+    /// conclusion, with scalar candidates retained for intermediate order bounds.
     pub(crate) fn guided_forall_condition_candidates(
         var: Variable,
         body: &Proposition,
