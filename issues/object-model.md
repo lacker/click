@@ -872,3 +872,13 @@ subrange authority and scalar index bounds are available; the retained storage
 allocation is still inside `arena_initialized_storage`. Investigate that
 allocation/domain boundary next. Retained-session construction requires this
 whole project to pass, so no retained-mode success is claimed for arena-free.
+
+
+The next failure is preserved as a
+[complete isolated pointer-field write reproduction](../bugs/archive-c-pointer-field-write-loses-domain.md).
+Its unchanged C and 146-line resource/proof file pass baseline `64f0f0d46` and
+fail recovery at the same pointer arithmetic. Explicitly exposing the allocation
+does not repair it; that experiment was removed. Arena-free passes fresh,
+expanded and rewritten checks; retained-session creation stops at this later
+arena-write failure, consistent with the whole-project audit. No proof-mode
+disagreement or new design decision is claimed.
