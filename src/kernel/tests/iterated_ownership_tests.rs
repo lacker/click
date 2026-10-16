@@ -461,6 +461,53 @@ fn iterated_element_selection_checks_pointer_reads_across_snapshots() {
         &equivalent,
         &PureFactContext::new(),
     ));
+    let held_element = iterated.element_range(&0u32.into());
+    let taken = crate::kernel::apply_iterated_step(
+        &state,
+        &crate::kernel::IteratedStep::Take {
+            element: held_element.clone(),
+        },
+        &PureFactContext::new(),
+    )
+    .unwrap();
+    let extra = CResourceFact::own_memory(CMemoryRange::new(
+        iterated.element_base.clone(),
+        1u32.into(),
+        2u32.into(),
+    ));
+    let taken_resources = taken
+        .resources()
+        .clone()
+        .try_compose_with_facts([extra], &PureFactContext::new())
+        .unwrap();
+    let taken = taken.with_resource_context(taken_resources);
+    let give = crate::kernel::IteratedStep::Give {
+        element: CMemoryRange::new(current_base.clone(), 0u32.into(), 1u32.into()),
+    };
+    let returned = crate::kernel::apply_iterated_step(&taken, &give, &PureFactContext::new())
+        .expect("giving the same pointer read back must consume the held element");
+    assert!(
+        returned
+            .resources()
+            .clone()
+            .without_fact_incrementally(
+                &CResourceFact::own(CResource::iterated(iterated.clone())),
+                &PureFactContext::new(),
+            )
+            .is_some()
+    );
+    assert!(
+        returned
+            .resources()
+            .clone()
+            .without_fact_incrementally(
+                &CResourceFact::own_memory(held_element),
+                &PureFactContext::new(),
+            )
+            .is_none(),
+        "giving must not leave a second copy of the element"
+    );
+    assert!(crate::kernel::apply_iterated_step(&returned, &give, &PureFactContext::new()).is_err());
     assert!(
         take_at(current_base).is_ok(),
         "an unrelated store preserves the selected pointer read"

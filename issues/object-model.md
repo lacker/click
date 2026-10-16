@@ -828,3 +828,20 @@ control without a loop passes recovery. The reduction is preserved in
 publishes it alongside the opaque-carrier compatibility fixture; auto-merge
 is enabled. The fixture passes fresh current upstream `ea081fe39` using a
 build without debug information. No full-audit count changes.
+
+
+The `give` coverage probe finds a real held range with equal base, proved lower
+and upper bounds, and successful direct coverage; consumption nevertheless
+misses it. The repair consumes the element in the already-selected iterated
+clause's coordinates after selection has established the query's base and
+exact shape, using the indexed resource operation. Guard, hole, width and
+quantity checks remain intact; no ambient alias is published.
+
+All seven active iterated-ownership controls pass (one ignored), including
+existing four-size flat-work checks. Round-trip controls also check consumption
+of the separate element and rejection of a repeated give. The complete
+`iterated_give_preserves_descriptor_loop_ownership` fixture passes, including
+fresh, expanded, rewritten and retained checking. Its later fold uses explicit
+unchanged-descriptor and separation facts, just as the allocation proof does.
+The original `arena_free` now passes `give` and reaches tactic 35's window fold;
+that whole-project work remains open, so retain **51/52**.

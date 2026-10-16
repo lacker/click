@@ -430,10 +430,14 @@ pub(crate) fn apply_iterated_step(
                 );
             };
             let next = iterated.without_hole_at(position);
+            // Selection checked the base and exact element shape. Consume in
+            // that clause's coordinates instead of rediscovering its held
+            // supplier through a later pointer-read spelling.
+            let owned_element = iterated.element_range(index);
             let resources = state
                 .resources()
                 .clone()
-                .without_fact(&CResourceFact::own_memory(element.clone()), assumptions)
+                .without_fact_incrementally(&CResourceFact::own_memory(owned_element), assumptions)
                 .ok_or_else(|| "the element is not owned here".to_string())?;
             let resources = replace_iterated(resources, current, next)?;
             Ok(state.clone().with_resource_context(resources))
