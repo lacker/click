@@ -819,3 +819,12 @@ obligation. That candidate was reverted. The recovery source is clean at
 `b5e26dcf6`; its complete-audit checkpoint remains **51/52**. Continue from the
 focused `arena_free.contract` tactic-29 trace rather than inferring that an API
 substitution solves the missing ownership match.
+
+
+The complete `release_run` loop reduction now passes upstream baseline
+`64f0f0d46` and fails recovery at tactic 14 (`give`), while the single-store
+control without a loop passes recovery. The reduction is preserved in
+`bugs/archive-iterated-give-loses-loop-descriptor-ownership.md`. PR #1205
+publishes it alongside the opaque-carrier compatibility fixture; auto-merge
+is enabled. The fixture passes fresh current upstream `ea081fe39` using a
+build without debug information. No full-audit count changes.
