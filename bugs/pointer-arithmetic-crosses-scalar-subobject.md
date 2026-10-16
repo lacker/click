@@ -1,5 +1,13 @@
 # A one-past scalar-member pointer can read its sibling
 
+Priority: P1.
+
+Soundness: unsound. The recovery verifier accepts a modular caller that stores
+a scalar member's one-past pointer in a field, then calls a helper which
+dereferences it at an owned sibling's equal address. The complete caller below
+verifies despite its undefined dereference. Address equality and ownership of
+the sibling do not supply the missing pointer designation.
+
 The shared evaluator accepts a C++ and C program that dereferences the pointer
 one past a scalar record member to read the following member. Both probes
 verified locally during the object-model audit at `8153b3ac0`.
@@ -127,3 +135,50 @@ is not evidence that the archive satisfies it. Reproduce with the gate stack:
 RUST_MIN_STACK=8388608 cargo test --lib \
   c0_const_pointer_field_address_equality_does_not_authenticate_loaded_domain
 ```
+
+
+## Complete modular counterexample on the recovery checkpoint
+
+The broad pointer audit at `1ce8dc913` (production kernel unchanged from
+`7dde92bfe`) confirms the original negative control still accepts. The complete
+caller below also verifies, so this is not merely a stale diagnostic assertion
+or a missing hypothetical caller precondition. Unlike the earlier local-object
+experiment, the caller explicitly owns its input fields and reaches the call.
+
+```c filename=fields.c
+struct Pair { int first; int second; };
+struct holder { const int *value; };
+int update(struct holder *h, int *p) {
+    *p = 7;
+    return h->value[0];
+}
+int caller(struct Pair *pair, struct holder *h) {
+    h->value = &pair->first + 1;
+    return update(h, &pair->second);
+}
+```
+
+```click
+verifying "fields.c";
+int32 update(struct holder *h, int32 *p) {
+    views h->value;
+    owns p[0..1];
+    requires h->value == p;
+    ensures result == 7 by auto;
+}
+int32 caller(struct Pair *pair, struct holder *h) {
+    owns pair->first;
+    owns pair->second;
+    owns h->value;
+    ensures result == 7 by auto;
+}
+```
+
+Both C field-domain and branch-interface address-only rejection controls fail
+on the restored recovery checkpoint. A broader constructor-unification
+experiment also failed these controls and eleven others; it was discarded.
+Do not infer that adding a typed read-graph entry repairs this boundary. The
+remaining C compatibility work must retain full origin requirements while
+allowing directly authorized C allocated-storage operations. Neither a new
+native place from numeric equality nor blanket refusal of valid C pointer-field
+programs satisfies the accepted model.

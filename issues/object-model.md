@@ -1021,3 +1021,25 @@ smaller two-call C experiment stops at an earlier native-span fold and is not
 a reproduction. Keep the complete original-source pipeline and its profile
 as the defect witness while inspecting the exact read endpoints. No new
 semantic law or broader alias permission has been introduced.
+
+
+The broader restored-baseline audit passes **1,360/1,364** selected pointer,
+load, scope, native and scaling controls. Two failures are known origin
+rejection gaps: the const pointer-field countermodel and the branch-interface
+address-only child. A complete caller now confirms the
+[P1 scalar-subobject origin defect](../bugs/pointer-arithmetic-crosses-scalar-subobject.md):
+it stores `&pair->first + 1` and verifies a helper dereference at the sibling's
+equal address. This defect was already recorded on earlier recovery
+checkpoints; it is not attributed to the discarded constructor experiment.
+The other failures are the existing modular record-identity return and an
+indexed-load expansion expectation. The 51/52 example result is therefore
+insufficient for activation, even after the arena pipeline is repaired.
+
+The attempted ordinary/cached pointer-constructor unification passed its new
+producer check but failed 15 broad controls and regressed three additional
+example projects. It is fully reverted and its extra test removed; the
+restored tree has no private probes or candidate source changes. A typed
+read-graph entry must not turn an address observation into origin evidence.
+The next priority is the demonstrated origin defect, followed by the pending
+resource-transfer/checker-budget repair. The decoder and three selected pinned
+profile boundary controls passed on the committed recovery model.
