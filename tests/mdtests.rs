@@ -213,6 +213,7 @@ const NIGHTLY: &[&str] = &[
     "resource_unfold_names_unmatched_body_cells.md",                           // 0.8s
     "result_parameter_false_array_postcondition.md",                           // 0.6s
     "return_fold_retains_readable_ranges_after_store.md",                      // 8.0s
+    "return_fold_retains_transported_facts.md",                                // 30.6s
     "rotation_model_preserved.md",                                             // 1.0s
     "rotation_model_rejects_swapped_order.md",                                 // 0.7s
     "search_terminates_by_unmarked_count.md",                                  // 1.2s

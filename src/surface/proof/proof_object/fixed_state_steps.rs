@@ -3464,10 +3464,42 @@ impl<'a> Proof<'a> {
                 .record_lowering(&target, &checked_facts[1])?;
             updated.data = Arc::new(data);
             let branch_state = &self.focused_branch().expect("focused branch exists").state;
+            // The transport above already established this exact target.
+            // Retain its proposition judgment under the pre-transport facts,
+            // as a completed `have` does, so subsequent return folds consume
+            // the derivation rather than treating its conclusion as a new
+            // ambient assumption. This closes the checked operation directly;
+            // it does not replay transport or re-prove the target.
+            let transport_root = KernelProofObject::root(
+                self.state().locals().clone(),
+                OpenBranch::surface_proposition_at_outcome(
+                    branch_state.clone(),
+                    goal.data.clone(),
+                    checked_facts[1].clone(),
+                    target.clone(),
+                ),
+            );
+            let completion = transport_root
+                .publish_checked_result(self.state().locals().clone(), None, Vec::new(), Vec::new())
+                .map_err(|_| self.step_error("checked transport lost its proposition judgment"))?
+                .completed_proposition()
+                .ok_or_else(|| {
+                    self.step_error("checked transport did not close its proposition")
+                })?;
+            let mut execution = branch_state
+                .execution
+                .as_ref()
+                .ok_or_else(|| self.step_error("return transport lost its execution evidence"))?
+                .as_ref()
+                .clone();
+            execution
+                .core
+                .record_return_proposition(goal.path_index, completion, self.facts())
+                .map_err(|message| self.step_error(message))?;
             let state = BranchState {
                 facts,
                 unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                execution: branch_state.execution.clone(),
+                execution: Some(Arc::new(execution)),
             };
             return Ok(CheckedFocusedTransition::replacing(
                 self.state().locals().clone(),

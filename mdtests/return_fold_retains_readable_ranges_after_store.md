@@ -141,17 +141,7 @@ void arena_write(struct region* region, int32 index, int32 value) {
             s + index < e;
         }
     }
-    have region->start == s by {
-        assumption();
-    }
-    have defined(region->start + index) by {
-        rewrite(region->start == s);
-        assumption();
-    }
-    have region->start <= region->start + index by {
-        rewrite(region->start == s);
-        assumption();
-    }
+    have region->start == s by auto;
     have region->start + index + 1 <= e by {
         rewrite(region->start == s);
         assumption();
@@ -163,34 +153,83 @@ void arena_write(struct region* region, int32 index, int32 value) {
             s <= s + index;
         }
     }
-    have s + index < c by {
-        apply(int32_less_than_less_equal_transitive(s + index, e, c)) using {
-            s + index < e;
-            e <= c;
-        }
-    }
     have region->arena->capacity == c by {
         simp();
     }
-    have region->start + index < region->arena->capacity by {
-        rewrite(region->start == s);
-        rewrite(region->arena->capacity == c);
-        assumption();
+    have region->start + index < region->arena->capacity by auto;
+    have separate(memory(*region), memory(region->arena->data[s..e])) by auto;
+    have forall (k: int32) {
+        0 <= k and k < old(region->arena->capacity) implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    } by {
+        intro(); intro();
+        extract(0 <= k); extract(k < old(region->arena->capacity));
+        transport(old(region->arena->occupied[k]) == old(region->arena->occupied[k]),
+            region->arena->occupied[k] == old(region->arena->occupied[k])) using {
+            0 <= k; k < old(region->arena->capacity);
+        }
     }
     mark w;
     execute();
-    have forall (k: int32) {
-        0 <= k and k < at(w, region->arena->capacity) implies
-            at(w, region->arena->occupied[k]) == region->arena->occupied[k]
-    } by {
-        intro();
-        intro();
-        extract(0 <= k);
-        extract(k < at(w, region->arena->capacity));
-        simp();
+    transport(
+        old(region->arena) == old(region->arena),
+        region->arena == old(region->arena)
+    ) using {
+        at(w, separate(memory(*region), memory(region->arena->data[s..e])));
+        s <= s + index;
+        s + index + 1 <= e;
     }
     let r = fold(arena_region(region), { start: s, end: e });
+    transport(old(region->arena->data) == old(region->arena->data),
+        region->arena->data == old(region->arena->data)) using { }
+    transport(old(region->arena->occupied) == old(region->arena->occupied),
+        region->arena->occupied == old(region->arena->occupied)) using { }
+    transport(old(region->arena->capacity) == old(region->arena->capacity),
+        region->arena->capacity == old(region->arena->capacity)) using { }
+    have separate(memory(region->arena->occupied[0..region->arena->capacity]), memory(region->arena->data[0..region->arena->capacity])) by {
+        rewrite(region->arena->data == old(region->arena->data));
+        rewrite(region->arena->occupied == old(region->arena->occupied));
+        rewrite(region->arena->capacity == old(region->arena->capacity));
+        assumption();
+    }
+    have separate(memory(*region->arena), memory(region->arena->data[0..region->arena->capacity])) by {
+        rewrite(region->arena->data == old(region->arena->data));
+        rewrite(region->arena->capacity == old(region->arena->capacity));
+        rewrite(region->arena == old(region->arena));
+        assumption();
+    }
+    have separate(memory(*region->arena), memory(region->arena->occupied[0..region->arena->capacity])) by {
+        rewrite(region->arena->occupied == old(region->arena->occupied));
+        rewrite(region->arena->capacity == old(region->arena->capacity));
+        rewrite(region->arena == old(region->arena));
+        assumption();
+    }
     let st = fold(arena_state(region->arena), { live: n, capacity: c });
+    transport(at(w, forall (k: int32) {
+        0 <= k and k < old(region->arena->capacity) implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    }), forall (k: int32) {
+        0 <= k and k < old(region->arena->capacity) implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    }) using {
+        at(w, forall (k: int32) {
+        0 <= k and k < old(region->arena->capacity) implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    });
+        at(w, separate(memory(region->arena->occupied[0..region->arena->capacity]), memory(region->arena->data[0..region->arena->capacity])));
+        at(w, separate(memory(*region), memory(region->arena->data[s..e])));
+        at(w, separate(memory(*region->arena), memory(region->arena->data[0..region->arena->capacity])));
+        at(w, 0 <= region->start + index);
+        at(w, region->start + index < region->arena->capacity);
+        s <= s + index; s + index + 1 <= e;
+    }
+    have forall (k: int32) {
+        0 <= k and k < region->arena->capacity implies
+            region->arena->occupied[k] == old(region->arena->occupied[k])
+    } by {
+        rewrite(region->arena->capacity == old(region->arena->capacity));
+        assumption();
+    }
     simp();
 }
 

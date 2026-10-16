@@ -943,3 +943,22 @@ path fact. The identical complete proof passes baseline `64f0f0d46`. Stop proof
 variations and identify that rejected fact next. The original arena-write proof
 remains unchanged; the last full audit is still **51/52**, with no activation
 or full green gate claimed. Temporary probes are removed from this checkpoint.
+
+
+The checked return-fold defect is repaired at its two producers. A checked
+post-return transport now records its exact completed proposition in the
+execution certificate. A post-return `have` scope starts from the facts that
+preceded selected materialization, retaining newly derived facts as checked
+successors rather than assuming them in its root. No arbitrary return facts
+are authorized. The complete original arena-write C, resources and contracts
+are preserved; its proof now states the relevant descriptor frames explicitly.
+
+The isolated complete arena-write proof passes fresh, expansion, rewritten and
+retained checking. The quantified and reduced return-fold Markdown fixtures
+pass, along with 368 selected outcome, scope, transport, initialization and
+native-place controls. The complete normal example audit is **50/52**, not the
+previous checkpoint's 51/52: arena advances to destroy after its first free,
+and binary-tree fails folding the swapped child resources. The tree failure
+also reproduces at `48a09a658`, before the observation and return-fold repairs.
+Both compatibility failures remain prerequisites to foundation activation;
+this checkpoint is not a full green gate or completed shared object model.
