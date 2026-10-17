@@ -266,34 +266,33 @@ rotation directions now check two writable callbacks in sequence. Together
 with the single rotations, all four three-node root rotation shapes are
 covered with recursively valid cached sizes.
 
-
-`rbtree_size_insert_color_flip.click` and
+ `rbtree_size_insert_color_flip.click` and
 `rbtree_size_insert_mirrored_color_flip.click` check the four-node color-flip
-path in both orientations, including `__rb_insert` and both augmented wrappers.
-The red parent and uncle become black, the focus moves to the grandparent,
-and the loop continues before blackening that new root. The owned
+path in both orientations, including `__rb_insert` and both augmented
+wrappers. The red parent and uncle become black, the focus moves to the
+grandparent, and the loop continues before blackening that new root. The owned
 `sized_context_at` chain has two ancestor frames before the flip and none
 afterwards; its actual `sized_context_depth` supplies the decreasing measure.
 All cached sizes and links are preserved, and the returned resource describes
 the exact recolored sized tree. This path invokes no callback and accepts any
-correctly typed rotation pointer. These are root-reaching flips; continuing
-through arbitrary ancestors and writable erase integration remain unfinished.
+correctly typed rotation pointer. These are root-reaching flips; the
+repeated-flip chain proof below handles arbitrary ancestor chains. Writable
+erase integration remains unfinished.
 
-
-`rbtree_size_insert_context_color_flip.click` and its mirrored counterpart
+ `rbtree_size_insert_context_color_flip.click` and its mirrored counterpart
 prove a flip beneath a nonnull black parent with arbitrary owned children of
 the red focus, symbolic cached sizes at the focus, parent, and grandparent,
 and an arbitrary owned outer ancestor context with arbitrary sibling trees.
-The parent's other child and both uncle children are arbitrary owned sized subtrees.
-Cached parent and grandparent sizes remain symbolic, and count obligations use
-shared equality closure without model-spelling rewrites. The loop moves past
-the two inner frames, stops at the black parent, and uses the previously
-proved `restore_sized_context` to return the whole root tree. The postcondition
-states its exact model as the unchanged outer context filled with the recolored
-subtree; cached counts and links are preserved throughout. The ranking measure
-is the actual context depth, reduced by two on the continuing path. This covers
-a single flip followed by a black-parent exit. Repeated flips through red
-ancestors remain unfinished.
+The parent's other child and both uncle children are arbitrary owned sized
+subtrees. Cached parent and grandparent sizes remain symbolic, and count
+obligations use shared equality closure without model-spelling rewrites. The
+loop moves past the two inner frames, stops at the black parent, and uses the
+previously proved `restore_sized_context` to return the whole root tree. The
+postcondition states its exact model as the unchanged outer context filled
+with the recolored subtree; cached counts and links are preserved throughout.
+The ranking measure is the actual context depth, reduced by two on the
+continuing path. This covers a single flip followed by a black-parent exit.
+The repeated-flip chain proof below handles red outer ancestors.
 
 
 `rbtree_size_change_child.click` now checks the insertion translation unit's
@@ -339,16 +338,15 @@ augmented insertion wrappers check the mirrored writable callback. The two
 context cases share the packed black-parent-word lemma in the parent-update
 helper, and each has a retained expansion regression.
 
-
-`rbtree_size_insert_context_double_rotation.click` and its mirrored counterpart
-check the left-right and right-left three-node insertion rotations under an
-arbitrary owned ancestor context. Each composes two writable size callbacks,
-identifies the intermediate repaired model by uniqueness, updates the incoming
-link, and restores ownership of the whole root tree. The postcondition relates
-that model to `sized_plug` of the original context and repaired subtree. Both
-augmented insertion wrappers preserve the same result. Repeated color flips
-through red ancestors, general insertion subtrees, and writable erase integration
-remain unfinished.
+ `rbtree_size_insert_context_double_rotation.click` and its mirrored
+counterpart check the left-right and right-left three-node insertion rotations
+under an arbitrary owned ancestor context. Each composes two writable size
+callbacks, identifies the intermediate repaired model by uniqueness, updates
+the incoming link, and restores ownership of the whole root tree. The
+postcondition relates that model to `sized_plug` of the original context and
+repaired subtree. Both augmented insertion wrappers preserve the same result.
+The repeated-flip chain proof below covers red outer ancestors; general
+rotation subtrees and writable erase integration remain unfinished.
 
 
 `rbtree_size_recolor.click` supplies shared model operations for root recoloring
@@ -365,12 +363,11 @@ parent orientation returns the root link and ownership of the whole root tree,
 whose exact model is the original context filled with the original subtree.
 Both augmented insertion wrappers preserve that result.
 
-
-`rbtree_size_insert_flips_model.click` defines a chain of pending insertion
+ `rbtree_size_insert_flips_model.click` defines a chain of pending insertion
 color flips in all four ancestor orientations, ending at the root or an owned
 black-parent boundary. It defines the resulting recolored tree and proves the
-chain-depth bound and the context-parent relation. This is the model foundation
-for repeated propagation; the full repeated-flip C loop proof remains unfinished.
+chain-depth bound and the context-parent relation. These definitions supply
+the invariant and ranking measure for the repeated-flip C loop proof below.
 
 `rbtree_size_insert_flips.click` bundles the current owned subtree and ancestor
 path in `sized_flip_state`. Its checked `restore_sized_flip_state` tactic
@@ -383,4 +380,21 @@ that cursor: a root focus is colored black, and a focus beneath a black parent
 returns without writes. Both ancestor orientations and the two augmented
 insertion wrappers preserve the exact `sized_flip_result` model and cached
 subtree sizes. These proofs accept arbitrary owned subtrees and outer contexts;
-they do not yet check the four continuing flip cases.
+the chain proof below also checks the four continuing flip cases.
+
+
+`rbtree_size_insert_flip_chain.click` checks arbitrarily many color-flip
+iterations in the unchanged insertion C. Its chain may mix LL, LR, RL, and RR
+ancestor orientations and ends at the root or a black-parent boundary. Focus,
+sibling, and uncle subtrees and all valid cached counts remain symbolic. Each
+iteration recolors the parent and uncle black, moves the red focus to the
+grandparent, and decreases the chain depth. The entry and both augmented
+wrappers return ownership of the whole root tree with the exact
+`sized_flip_result` model and null root parent. No rotation callback is invoked
+on these paths. This completes repeated flips; a general insertion contract
+still needs arbitrary rotation subtrees and chains ending in a rotation.
+
+`rbtree_size_insert_flips_order.click` proves that `sized_flip_result` preserves
+the complete in-order sequence of the original plugged tree. Its induction
+uses the checked recoloring and context-transport lemmas, so it covers every
+chain length and orientation without a separate C execution proof.

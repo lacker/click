@@ -1760,4 +1760,13 @@ boundary bug: named output arguments were evaluated before sibling produced
 memory clauses supplied their read authority. The fix constructs those primitive
 outputs once and carries the same facts into the return transition. A reduced
 regression covers user tactics and C calls, including reversed output order.
-The continuing LL/LR/RL/RR flip cases in the general C loop remain unfinished.
+The general chain sidecar now verifies all continuing LL/LR/RL/RR cases,
+arbitrarily repeated and mixed, followed by either stopping boundary. Both
+augmented wrappers return whole-root ownership, the exact chain-result model,
+and recursively valid cached sizes. A separate induction proves preservation
+of the complete in-order sequence. The proof uses pre-write color facts and
+explicit transport across recoloring stores. The loaded-uncle comparison now
+uses shared numeric address classes for its scoped separation evidence;
+regressions cover checked aliases, scope, withdrawal, and scalable lookup.
+General rotation subtrees, chains ending in a rotation, and writable erase
+integration remain unfinished.
