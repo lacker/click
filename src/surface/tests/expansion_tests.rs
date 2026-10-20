@@ -19351,3 +19351,23 @@ fn arithmetic_in_each_both_arm_is_selected_at_its_location() {
         error.message()
     );
 }
+
+#[test]
+fn signed_loop_certificate_keeps_its_native_type_in_integer_default_source() {
+    let (source, inputs) =
+        mdtest_sources("mdtests/signed_loop_certificate_keeps_its_native_type.md");
+    let sources = inputs
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect::<Vec<_>>();
+    let verified = verify_c0_sources(&source, &sources).unwrap();
+    let expanded = expand_checked_grouped_claim(&source, &verified, "f").unwrap();
+    without_implicit_auto(|| verify_c0_sources(&expanded, &sources))
+        .expect("generated sums retain their native int32 type after parsing");
+    let false_claim = source.replace("ensures result == n;", "ensures result != n;");
+    assert_ne!(false_claim, source);
+    let error = verify_c0_sources(&false_claim, &sources)
+        .expect_err("a native cast must not prove a false loop result");
+    assert_eq!(error.kind(), ClickErrorKind::Proof, "{error}");
+    assert!(!error.message().contains("budget exhausted"), "{error}");
+}
