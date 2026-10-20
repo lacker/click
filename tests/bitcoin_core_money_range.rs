@@ -329,9 +329,12 @@ fn check_upstream_cpp_rounding_phase(
         click::languages::cpp::lower_import(&import).unwrap();
         for (premises, diagnostic) in [
             ("", "assumed library contract"),
-            ("requires d > 0;", "division by zero"),
+            // A positive divisor already rules out division by zero.
+            ("requires d > 0;", "signed overflow"),
+            // The quotient fits int64, but rounding it upward does not:
+            // (2^64 - 1) / 2 rounds up from int64::MAX to 2^63.
             (
-                "requires d > 0; requires to_integer(n) == 0; requires to_integer(d) != 0; requires to_integer(d) != -1;",
+                "requires d == 2; requires n == 18446744073709551615i128; requires round_down == 0;",
                 "signed overflow",
             ),
         ] {
@@ -346,6 +349,18 @@ fn check_upstream_cpp_rounding_phase(
                 assert!(error.message().contains("literal constructor"));
             }
         }
+        // Zero divided by a positive divisor is zero with either rounding mode.
+        // The type and divisor facts suffice; it needs no extra wide guards.
+        let zero_proof = r#"verifying "bitcoin-src/src/util/feefrac.h";
+static int64 FeeFrac::Div(int128 n, int32 d, bool round_down) {
+    requires d > 0;
+    requires to_integer(n) == 0;
+    ensures result == 0i64;
+} by { execute(); simp(); }
+"#;
+        let parsed = read_click_project(&sidecar, zero_proof).unwrap();
+        verify_program_prepared_project(&parsed, &import)
+            .expect("zero numerator is safe for every positive divisor and rounding mode");
         // Derive the wide observer guards from the real narrow divisor
         // precondition. Execution must advance to the still-unproved narrow
         // correction; no wide guard is assumed in the contract.
