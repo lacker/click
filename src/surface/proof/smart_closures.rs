@@ -1672,6 +1672,36 @@ impl<'a> Proof<'a> {
             };
             surfaces.push(value);
         }
+        // Preserve native typing at the output boundary. Keep the planning
+        // surfaces unchanged so transitive chains still match their endpoints.
+        let native_result = |value: ClickProposition, claim: &SignedArithmeticClaim| match value {
+            ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } if !claim.terms.is_empty()
+                && claim.terms.keys().all(|atom| !atom.is_sign_bit_flip()) =>
+            {
+                let native = |operand| ContractExpression::CUnary {
+                    operand: Box::new(operand),
+                    lowered: CExpression::Cast {
+                        expression: Box::new(CExpression::Value(crate::kernel::int32(0))),
+                        target_type: crate::kernel::CType::Int32,
+                        integer_mode: crate::kernel::CIntegerCastMode::CConversion,
+                        pointee_struct: None,
+                        pointee_volatile: false,
+                        pointee_constant: false,
+                        explicit_qualification: false,
+                    },
+                };
+                ClickProposition::Comparison {
+                    left: native(left),
+                    operator,
+                    right: native(right),
+                }
+            }
+            value => value,
+        };
         for (node_index, node) in plan.nodes.iter().enumerate() {
             let r = |index: usize| mapped[index];
             let result = || surfaces.get(node_index)?.as_ref().cloned();
@@ -1680,24 +1710,31 @@ impl<'a> Proof<'a> {
                 SignedArithmeticNode::Scale {
                     source,
                     coefficient,
-                    ..
+                    result: claim,
                 } => SignedArithmeticStep::Scale {
                     source: r(*source),
                     coefficient: surface_signed_integer_literal(coefficient),
-                    result: result()?,
+                    result: native_result(result()?, claim),
                 },
-                SignedArithmeticNode::Add { left, right, .. } => SignedArithmeticStep::Add {
+                SignedArithmeticNode::Add {
+                    left,
+                    right,
+                    result: claim,
+                } => SignedArithmeticStep::Add {
                     left: r(*left),
                     right: r(*right),
                     // The final sum is already checked against the goal's
                     // affine claim. Reuse that source spelling instead of
                     // printing another composite expression whose machine
                     // additions may lower to different atoms.
-                    result: if node_index == plan.conclusion && weakening_source.is_some() {
-                        surface_goal.clone()
-                    } else {
-                        result()?
-                    },
+                    result: native_result(
+                        if node_index == plan.conclusion && weakening_source.is_some() {
+                            surface_goal.clone()
+                        } else {
+                            result()?
+                        },
+                        claim,
+                    ),
                 },
                 SignedArithmeticNode::EqualityToLessEqual {
                     source, reverse, ..
