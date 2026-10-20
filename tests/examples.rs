@@ -1814,7 +1814,7 @@ fn rbtree_erase_color_general_red_left_requires_sibling_recoloring() {
         "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
         "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
         2,
-        "`have` failed for `sid->__rb_parent_color == ((uint64)id)`",
+        "`have` failed for `sid->__rb_parent_color == address(id)`",
     );
 }
 
@@ -1825,7 +1825,7 @@ fn rbtree_erase_color_general_red_left_requires_the_sibling_parent() {
         "rb_set_parent_color(sibling, parent,\n\t\t\t\t\t\t\t    RB_RED);",
         "rb_set_parent_color(sibling, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
         2,
-        "`have` failed for `sid->__rb_parent_color == ((uint64)id)`",
+        "`have` failed for `sid->__rb_parent_color == address(id)`",
     );
 }
 
@@ -1880,7 +1880,7 @@ fn rbtree_erase_color_general_flips_outer_requires_far_child_blackening() {
         "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
         "rb_set_parent_color(tmp1, sibling, RB_RED);",
         2,
-        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+        "`have` failed for `tmp1->__rb_parent_color == (address(sibling) | 1)`",
     );
 }
 
@@ -1924,7 +1924,7 @@ fn rbtree_erase_color_general_flips_rotations_requires_first_grandchild_parent()
         "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_BLACK);",
         "rb_set_parent_color(tmp1, parent,\n\t\t\t\t\t\t\t    RB_BLACK);",
         2,
-        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+        "`have` failed for `tmp1->__rb_parent_color == (address(sibling) | 1)`",
     );
 }
 
@@ -1935,7 +1935,7 @@ fn rbtree_erase_color_general_flips_rotations_requires_first_grandchild_blackeni
         "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_BLACK);",
         "rb_set_parent_color(tmp1, sibling,\n\t\t\t\t\t\t\t    RB_RED);",
         2,
-        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+        "`have` failed for `tmp1->__rb_parent_color == (address(sibling) | 1)`",
     );
 }
 
@@ -2133,7 +2133,7 @@ fn rbtree_erase_color_general_inner_left_requires_old_sibling_parent() {
         "rb_set_parent_color(tmp1, sibling, RB_BLACK);",
         "rb_set_parent_color(tmp1, parent, RB_BLACK);",
         2,
-        "`have` failed for `tmp1->__rb_parent_color == (((uint64)sibling) | 1)`",
+        "`have` failed for `tmp1->__rb_parent_color == (address(sibling) | 1)`",
     );
 }
 

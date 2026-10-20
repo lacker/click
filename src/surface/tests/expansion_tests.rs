@@ -15765,7 +15765,7 @@ fn expansion_names_a_resource_witness_through_the_checked_return_pointer() {
     .expect("the checked return pointer should name the witness");
     assert!(!expanded.contains('…'), "{expanded}");
     verify_c0_sources(&expanded, &sources).expect("the named expansion must independently verify");
-    let changed_pointer = expanded.replace("((uint64)result)", "((uint64)node)");
+    let changed_pointer = expanded.replace("address(result)", "address(node)");
     assert_ne!(changed_pointer, expanded);
     verify_c0_sources(&changed_pointer, &sources)
         .expect_err("a different pointer cannot establish the witness premises");
