@@ -12902,9 +12902,24 @@ impl Parser {
             }
             self.expect(Token::RParen)?;
             let operand = self.parse_contract_unary_at_depth(depth + 1)?;
-            if crate::surface::validation::contains_old_expression(&operand)
-                || crate::surface::validation::contains_at_expression(&operand)
-            {
+            let historical = crate::surface::validation::contains_old_expression(&operand)
+                || crate::surface::validation::contains_at_expression(&operand);
+            // Integer casts consume the value observed by their operand.
+            // Other cast families retain their current-expression validation.
+            let integer_target = matches!(
+                target_type,
+                CType::Int8
+                    | CType::Int16
+                    | CType::Int32
+                    | CType::UInt8
+                    | CType::UInt16
+                    | CType::UInt32
+                    | CType::Int64
+                    | CType::UInt64
+                    | CType::Int128
+                    | CType::UInt128
+            );
+            if historical && !integer_target {
                 return Err(self.error("scalar cast expects a current expression; put old(...) around the whole cast for an entry-state value"));
             }
             let expression =
