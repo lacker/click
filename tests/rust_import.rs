@@ -3828,7 +3828,7 @@ fn rust_usize_arithmetic_casts_and_expansion_verify() {
     );
     assert_ne!(general_mul, sidecar);
     C0VerificationSession::new_program_prepared(&general_mul, &prepared).unwrap();
-    for changed in [
+    for (index, changed) in [
         sidecar.replace("requires index == 0u64;", "requires index == 1u64;"),
         sidecar.replace(
             "requires index == 0u64;",
@@ -3838,8 +3838,10 @@ fn rust_usize_arithmetic_casts_and_expansion_verify() {
             "requires bytes.len() <= 18446744073709551614u64;",
             "requires bytes.len() == 18446744073709551615u64;",
         ),
-    ] {
-        assert!(C0VerificationSession::new_program_prepared(&changed, &prepared).is_err());
+    ].into_iter().enumerate() {
+        let rejected = C0VerificationSession::new_program_prepared(&changed, &prepared).is_err();
+        eprintln!("usize negative control {index}: rejected={rejected}");
+        assert!(rejected, "usize mutation {index}: {changed}");
     }
     assert!(
         C0VerificationSession::new_program_prepared(
