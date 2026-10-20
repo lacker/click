@@ -1702,6 +1702,12 @@ impl<'a> Proof<'a> {
             }
             value => value,
         };
+        let native_conclusion = |value, proposition| {
+            match crate::kernel::proof::signed_arithmetic::signed_arithmetic_claim(proposition) {
+                Some(claim) => native_result(value, &claim),
+                None => value,
+            }
+        };
         for (node_index, node) in plan.nodes.iter().enumerate() {
             let r = |index: usize| mapped[index];
             let result = || surfaces.get(node_index)?.as_ref().cloned();
@@ -1953,22 +1959,24 @@ impl<'a> Proof<'a> {
                     result: result()?,
                 },
                 SignedArithmeticNode::AffineConclusion {
-                    source, evidence, ..
+                    source,
+                    evidence,
+                    result: claim,
                 } => SignedArithmeticStep::AffineConclusion {
                     source: r(*source),
                     evidence: r(*evidence),
-                    result: surface_goal.clone(),
+                    result: native_conclusion(surface_goal.clone(), claim),
                 },
                 SignedArithmeticNode::AffineConclusionWithEvidence {
                     source,
                     left_evidence,
                     right_evidence,
-                    ..
+                    result: claim,
                 } => SignedArithmeticStep::AffineConclusionWithEvidence {
                     source: r(*source),
                     left_evidence: r(*left_evidence),
                     right_evidence: r(*right_evidence),
-                    result: surface_goal.clone(),
+                    result: native_conclusion(surface_goal.clone(), claim),
                 },
             };
             generated.push(surface_node);
