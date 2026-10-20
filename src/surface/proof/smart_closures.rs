@@ -1973,6 +1973,15 @@ impl<'a> Proof<'a> {
             };
             generated.push(surface_node);
         }
+        if std::env::var_os("CLICK_SIGNED_CERTIFICATE_DIAGNOSTIC").is_some() {
+            eprintln!("SIGNED_DIAGNOSTIC_GOAL {surface_goal:?}");
+            for (index, node) in plan.nodes.iter().enumerate() {
+                eprintln!("SIGNED_DIAGNOSTIC_PLAN {index} {node:?}");
+            }
+            for (index, node) in generated.iter().enumerate() {
+                eprintln!("SIGNED_DIAGNOSTIC_SURFACE {index} {node:?}");
+            }
+        }
         Some(SignedInt32Certificate {
             nodes: generated,
             conclusion: *mapped.get(plan.conclusion)?,
