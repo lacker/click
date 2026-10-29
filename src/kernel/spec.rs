@@ -27,6 +27,7 @@ fn with_integer_comparisons_preserved<T>(preserve: bool, operation: impl FnOnce(
 }
 
 mod existential;
+mod quantifier_polarity;
 pub(in crate::kernel) mod predicate_dependencies;
 pub(in crate::kernel) mod walk;
 
@@ -856,6 +857,9 @@ fn lower_spec_proposition_at_state_with_algebraic_bindings_in(
     assumptions: &PureFactContext,
     budget: &mut SpecEvaluation<'_>,
 ) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    if let Some(paths) = quantifier_polarity::lower_prefix(scope, proposition, assumptions, budget)? {
+        return Ok(paths);
+    }
     if let Some(paths) = lower_spec_negation_chain_in(scope, proposition, assumptions, budget)? {
         return Ok(paths);
     }

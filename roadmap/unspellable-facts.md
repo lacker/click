@@ -1,5 +1,87 @@
 # Unspellable facts: make every proof-state fact round-trip
 
+## Recovery checkpoint: approved quantifier semantics
+
+This branch is an **untested recovery checkpoint**, not a merge-ready change.
+The execution environment became unavailable after the prototype was written.
+The baseline build/audit had started but no exit status was obtained. No build,
+tests, expansion checks, scaling tests, or gate have validated this prototype.
+The recovery source was reconstructed from the recorded edits through GitHub
+after filesystem access failed; run formatting and inspect it before building.
+
+The user explicitly approved these rules; no further semantic confirmation is
+needed for them:
+
+| Claim | Required evidence |
+| --- | --- |
+| exists x. P(x) | One chosen witness where P is defined and true |
+| not exists x. P(x) | Every candidate has P defined and false |
+| forall x. P(x) | Every candidate has P defined and true |
+| not forall x. P(x) | One counterexample where P is defined and false |
+
+Undefinedness supplies neither a witness nor a counterexample. It prevents
+proving the affected truth value; it does not itself mean false. Definedness
+must become a proof obligation separate from structural lowered terms.
+
+PR #2136 merged as 66d95016311053b0c0dfa8164779ce353469209a. Its full head
+93b4c770b313b2392c48f4cbe3ab9b4f548bdbd4 was verified upstream before starting.
+This prototype is based on master 5375340280f924e48091c5c6b51014030f410234,
+which also includes #2137's machine-integer operator representation migration.
+Do not apply old Add/Subtract enum patterns blindly; helpers and Binary/Unary
+nodes now carry the operator format.
+
+The two source edits add quantifier_polarity::lower_prefix before the existing
+negation lowering. The prototype iterates a prefix of quantifiers and Not nodes,
+selects universal versus existential evidence by polarity, and then uses the
+existing universal wrapper and scoped existential compatibility adapter.
+It avoids repeated deep cloning of quantifier bodies. It is only a starting
+point, with known unfinished areas:
+
+- Negation through arbitrary connectives is not handled by this prefix walk.
+  Do not claim nested And/Or/Implies semantics are fixed or publish this as a
+  complete solution. Design and test polarity propagation without letting
+  undefinedness become a false premise under negation.
+- Existing universal path-fact guards and the existential compatibility
+  adapter still embed definedness. In particular, an arithmetic requirement
+  must not be made vacuous by guarding it with the same domain fact.
+- Proof presentation and tactics need integration. Existing intro() proofs of
+  not-forall, including a_step_after_instantiate_refutes_an_introduced_universal.md,
+  must keep working where sound. A defined counterexample must be selectable
+  without requiring every candidate to be defined.
+- Preserve the selected witness's requirements through refinement and facts.
+  Never discharge an independent existential domain with a different witness.
+- Add positive and negative tests for all four cases, safe and undefined
+  witnesses/counterexamples, double negation, nested/mixed binders and
+  connectives, and expansion with implicit solving disabled.
+- Add deterministic scaling for prefix length and ambient facts. Run the
+  required scripts/check.sh gate and fresh fact-stability/spellability audit
+  against this master; older audit counts predate #2137 and are not this base's
+  measured baseline. No nightly run.
+
+Before the environment failed, worktrees were:
+- /workspace/click-quantifier-polarity, branch codex/quantifier-definedness-polarity
+- /workspace/click-quantifier-baseline, detached at the same master
+
+The baseline job was unified exec session 15828, writing
+/workspace/free-alias-investigation/quantifier-polarity-baseline-*.
+On recovery check whether its process exited before starting competing builds.
+The saved earlier signed-add prototype was local commit 255d5ba3b, with combined
+WIP 434f88ff3 and nested round-trip regression af0bb8f6d. They were not published;
+recover from the existing workspace/session if available, and adapt to #2137.
+The local integration handoff in /workspace/click-pointer-current had additional
+history not present in upstream; preserve it if that workspace returns.
+
+The previous concrete negation reproduction was
+not (exists (k: int32) { k == -1 and
+to_uint8(to_integer(k)) == to_uint8(to_integer(k)) }).
+Under the old guards, intro/obtain supplied conversion-domain k >= 0 and the
+body's k == -1, allowing a contradiction. The user has now chosen the stricter
+separate-definedness semantics, so undefined candidates cannot justify that
+refutation. Bare k + 1 in pure theorem syntax may be mathematical Integer
+arithmetic; use explicit checked conversions or typed signed arithmetic in tests.
+
+The historical notes below predate this decision.
+
 Priority: P1.
 
 Soundness: incomplete. Every cited spelling is lowered again and checked, so
