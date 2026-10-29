@@ -19677,3 +19677,33 @@ fn explicit_store_byte_gap_expands_without_search() {
         expand_c0_claim_source_by_label(&source, &sources, "wide_after.contract").unwrap();
     without_implicit_auto(|| verify_c0_sources(&expanded, &sources)).unwrap();
 }
+
+#[test]
+#[ignore = "nightly: explicit store geometry expansion"]
+fn explicit_store_geometry_expands_without_search() {
+    let (source, sources) =
+        mdtest_sources("mdtests/store_geometry_uses_explicit_order_and_transport.md");
+    let sources = sources
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect::<Vec<_>>();
+    let mut expanded = source;
+    for claim in ["wide_after.contract", "keep_first.contract"] {
+        expanded = expand_c0_claim_source_by_label(&expanded, &sources, claim).unwrap();
+    }
+    without_implicit_auto(|| verify_c0_sources(&expanded, &sources)).unwrap();
+}
+
+#[test]
+#[ignore = "nightly: original fork/join store-frame expansion"]
+fn fork_join_store_frame_expands_without_search() {
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/concurrency-fork-join");
+    let sidecar = std::fs::read_to_string(directory.join("fork_join.click")).unwrap();
+    let source = sidecar.split("int fill_parallel(").next().unwrap();
+    let c = std::fs::read_to_string(directory.join("fork_join.c")).unwrap();
+    let sources = [("fork_join.c", c.as_str())];
+    let expanded =
+        expand_c0_claim_source_by_label(source, &sources, "fill_range.contract").unwrap();
+    without_implicit_auto(|| verify_c0_sources(&expanded, &sources)).unwrap();
+}

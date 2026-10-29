@@ -1449,7 +1449,11 @@ fn a_store_through_a_wrapping_index_sum_is_placed_by_the_word_itself() {
         4,
         &bounded(&wrapping, 0),
     );
-    assert_eq!(kept, SlotSet::AskWithin(0, 8), "no slot is kept unasked");
+    assert_eq!(
+        kept,
+        SlotSet::Except(0, 8),
+        "all possibly written slots are forgotten"
+    );
 
     let neighbour = binary_node!(
         Int32,
@@ -1465,7 +1469,7 @@ fn a_store_through_a_wrapping_index_sum_is_placed_by_the_word_itself() {
     );
     assert_eq!(
         kept,
-        SlotSet::AskWithin(1, 8),
+        SlotSet::Except(1, 8),
         "element 0 is kept by the bound"
     );
 }

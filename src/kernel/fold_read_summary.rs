@@ -983,6 +983,10 @@ fn step_misses_interval(
         return Ok(());
     }
     match step {
+        // This edge changes only cached knowledge, not any byte or lifetime.
+        // Its producer records it only for unconditional forgetting, never
+        // for havoc or assumption-dependent pruning.
+        CMemoryDerivation::CellsForgotten { .. } => Ok(()),
         CMemoryDerivation::Store { pointer, value, .. } => {
             if empty || access_misses_interval(pointer, value.byte_width(), interval, assumptions) {
                 Ok(())
@@ -1025,7 +1029,7 @@ fn step_misses_interval(
         }
         other => Err((
             other.kind_name(),
-            "only stores and calls with a checked write set are framed; allocation, free, lifetime, loop and forgetting steps keep the conservative whole-block rule",
+            "only stores and calls with a checked write set are framed; allocation, free, lifetime and loop steps keep the conservative whole-block rule",
         )),
     }
 }

@@ -106,16 +106,23 @@ impl Boundary<'_> {
             self.errors.push(format!("{}: {}: store preservation must not retry general composition or range search ({name}); supply separation and transport explicitly", self.path, self.function));
         }
         if self.path == "src/kernel/reasoning/memory_resolution.rs"
-            && self.function == "one_element_gap_separates_bytes"
-            && matches!(
-                name,
-                "proves_recorded_signed_order" | "decide" | "signed_order_bound_entries"
-            )
+            && ((self.function == "one_element_gap_separates_bytes"
+                && matches!(
+                    name,
+                    "proves_recorded_signed_order" | "decide" | "signed_order_bound_entries"
+                ))
+                || (matches!(
+                    self.function.as_str(),
+                    "run_slots_kept_by_store" | "run_has_direct_store_separation"
+                ) && matches!(
+                    name,
+                    "typed_ranges_disjoint_from_pointer_evidence"
+                        | "typed_range_disjoint_from_pointer_evidence"
+                        | "PerSlot"
+                        | "AskWithin"
+                )))
         {
-            self.errors.push(format!(
-                "{}: {}: automatic store byte gaps require direct order facts ({name})",
-                self.path, self.function
-            ));
+            self.errors.push(format!("{}: {}: automatic store geometry requires direct facts and compact interval decisions ({name})", self.path, self.function));
         }
         if self.path == "src/kernel/reasoning/memory_resolution.rs"
             && self.function == "pointers_directly_distinct_for_store"

@@ -30,7 +30,10 @@ void update(struct node* p, const struct callbacks* cb) {
     unfold(node_layer_1(p));
     observe(callback_layer_1(cb));
     unfold(node_cell(p));
-    open(callback_table(cb)) { step_until(function.exit); }
+    open(callback_table(cb)) {
+        have separate(memory(cb->invoke), memory(p->value));
+        step_until(function.exit);
+    }
     fold(node_cell(p));
     fold(node_layer_1(p));
     fold(node_layer_2(p));

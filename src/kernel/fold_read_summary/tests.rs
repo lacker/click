@@ -1086,3 +1086,35 @@ fn wide_ranges_refuse_signed_fold_framing_rules() {
 mod scaling_tests {
     include!("../../scaling_tests/kernel/fold_read_summary/tests.rs");
 }
+
+#[test]
+fn fold_transport_crosses_unconditional_cache_forgetting_but_not_an_overlapping_store() {
+    let _session = VerificationSession::enter();
+    register_unmarked();
+    let v = parameter_base(V);
+    let before = CMemory::new().with_seeded_cells(
+        v.clone(),
+        4,
+        CType::Int32,
+        0,
+        8,
+        crate::kernel::intern_c_memory(CMemory::new()),
+    );
+    let forgotten =
+        before.without_possible_aliasing_cells(&parameter_base(W), 4, &PureFactContext::new());
+    assert!(matches!(
+        crate::kernel::intern_c_memory_ref(&forgotten)
+            .derivation()
+            .as_deref(),
+        Some(CMemoryDerivation::CellsForgotten { .. })
+    ));
+    let old = application(&before, &v, 0u32.into(), 4u32.into());
+    let new = application(&forgotten, &v, 0u32.into(), 4u32.into());
+    assert_eq!(frame(&old, &new, &[]), Ok(1));
+    let written = forgotten.store(v.clone(), one());
+    assert!(is_store_refusal(&frame(
+        &old,
+        &application(&written, &v, 0u32.into(), 4u32.into()),
+        &[]
+    )));
+}

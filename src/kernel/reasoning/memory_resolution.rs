@@ -3922,6 +3922,52 @@ fn run_slots_kept_by_load_reduction_set(
     }
 }
 
+/// Whole-run separation through the bounded ownership selector or one stated
+/// fact at the two address anchors. Two fact candidates already mean ambiguity:
+/// never walk a member, composition, or separation bucket.
+fn run_has_direct_store_separation(
+    run: &CellRun,
+    pointer: &Pointer,
+    bytes: u32,
+    assumptions: &PureFactContext,
+) -> bool {
+    use crate::kernel::resource_tracker::cell_source::AccessInRangeEvidence;
+    let Some((run_pointer, run_bytes)) = run.live_byte_footprint() else {
+        return false;
+    };
+    let footprint = assumptions.owned_store_footprint(pointer, bytes);
+    if assumptions.access_owned_apart_from_store(&footprint, pointer, &run_pointer, run_bytes) {
+        return true;
+    }
+    let mut candidates = assumptions.anchored_memory_separation_candidates(&run_pointer, pointer);
+    crate::instrumentation::record_deterministic_work(1);
+    let Some(fact) = candidates.next() else {
+        return false;
+    };
+    if candidates.next().is_some() {
+        return false;
+    }
+    let Some((left, right)) = fact.memory_separation() else {
+        return false;
+    };
+    if assumptions.memory_ranges_overlap_after_base_equality(left, right)
+        || assumptions.numeric_access_byte_overlap(&run_pointer, run_bytes, pointer, bytes)
+            == Some(AccessByteOverlap::Overlaps)
+    {
+        return false;
+    }
+    let fits = |range, access| {
+        AccessInRangeEvidence::for_access(&run_pointer, run_bytes, range, assumptions).is_some()
+            && AccessInRangeEvidence::for_access(pointer, bytes, access, assumptions).is_some()
+    };
+    if fits(left, right) || fits(right, left) {
+        crate::kernel::record_implicit_reasoning_provenance(assumptions, fact);
+        true
+    } else {
+        false
+    }
+}
+
 /// Which of `run`'s live slots a store of `bytes` bytes at `pointer` leaves
 /// in place, and whether dropping the others forgot anything the store does
 /// not itself replace ([`CMemory::without_possible_aliasing_cells`]).
@@ -3930,21 +3976,18 @@ fn run_slots_kept_by_load_reduction_set(
 /// slot they meet is dropped, and forgotten unless the store covers all of
 /// it, and every other slot keeps its value, being a different address whose
 /// bytes the gap clears. A store the facts place outside the run's whole
-/// extent leaves every slot. For a constant-value run, a bounded symbolic
-/// store forgets its possible window at once; an unplaced store forgets the
-/// whole run. Runs carrying symbolic loads retain their per-slot separation
-/// search, which lets proofs transport individual source loads. Keeping a
-/// slot needs a proof its bytes are missed; dropping one only forgets.
+/// extent leaves every slot. A bounded symbolic store forgets its possible
+/// window at once; an unplaced store forgets the whole run, regardless of its
+/// value mode. One stated separation at the exact anchors may keep the whole
+/// run. No range-fact search or per-slot query participates. Explicit
+/// transport can recover required source loads from the recorded history.
+/// Keeping a slot needs a proof its bytes are missed; dropping one only forgets.
 pub(in crate::kernel) fn run_slots_kept_by_store(
     run: &CellRun,
     pointer: &Pointer,
     bytes: u32,
     assumptions: &PureFactContext,
 ) -> (SlotSet, bool) {
-    let constant_run = matches!(
-        run.value_mode(),
-        crate::kernel::primitives::RunValueMode::Constant(_)
-    );
     match run_access(run, pointer) {
         RunAccess::DistinctBlock => (SlotSet::All, false),
         RunAccess::Shift(shift) => {
@@ -3970,16 +4013,10 @@ pub(in crate::kernel) fn run_slots_kept_by_store(
             (SlotSet::Except(low, high), forgot)
         }
         RunAccess::Scaled { .. } | RunAccess::ScaledWide { .. } | RunAccess::Other => {
-            if crate::kernel::memory_provenance::typed_ranges_disjoint_from_pointer_evidence(
-                &[run.range()],
-                pointer,
-                bytes,
-                assumptions,
-            )
-            .is_some()
-            {
+            if run_has_direct_store_separation(run, pointer, bytes, assumptions) {
                 return (SlotSet::All, false);
             }
+
             // The facts bound a scaled index: the store's bytes lie within
             // what the index's extremes reach, and every slot outside those
             // keeps its value. Forget the possible window as one interval,
@@ -4003,20 +4040,15 @@ pub(in crate::kernel) fn run_slots_kept_by_store(
                 if low >= high {
                     return (SlotSet::All, false);
                 }
-                return if constant_run {
-                    (
-                        SlotSet::Except(low, high),
-                        !run.holes().covers_range(low, high),
-                    )
-                } else {
-                    (SlotSet::AskWithin(low, high), false)
-                };
+                return (
+                    SlotSet::Except(low, high),
+                    !run.holes().covers_range(low, high),
+                );
             }
-            if constant_run {
-                (SlotSet::Nothing, !run.holes().covers_range(0, run.count()))
-            } else {
-                (SlotSet::PerSlot, false)
-            }
+            // Unknown values are no reason to enumerate a compact run.
+            // Forget its cached contents together; initialization and the
+            // recorded store history remain available to explicit proofs.
+            (SlotSet::Nothing, !run.holes().covers_range(0, run.count()))
         }
     }
 }

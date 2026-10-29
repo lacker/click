@@ -2413,3 +2413,285 @@ fn store_byte_gap_bounds_recorded_order_walks() {
         );
     }
 }
+
+#[test]
+fn symbolic_store_into_loaded_run_bounds_logical_slot_work() {
+    for bounded in [false, true] {
+        let mut samples = Vec::new();
+        for count in [4u32, 1024, 1_000_000] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let base = scaling_cell("local:loaded-run", 0);
+            let source = crate::kernel::intern_c_memory(CMemory::new());
+            let memory = CMemory::new()
+                .with_block(base.block.clone(), count * 4)
+                .with_seeded_cells(base.clone(), 4, CType::Int32, 0, count, source);
+            assert_eq!(memory.cells.runs_in_block(&base.block).count(), 1);
+            let index = Bitvector32Term::Variable(Variable(999_900));
+            let facts = if bounded {
+                PureFactContext::new()
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(1u32.into(), index.clone()),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_than(index.clone(), (count - 1).into()),
+                        true,
+                    )
+            } else {
+                PureFactContext::new()
+            };
+            let write = base.offset_by_elements(index, 4);
+            let mut work = Vec::new();
+            for _ in 0..3 {
+                let (after, units) = crate::instrumentation::measure_deterministic_work(|| {
+                    memory.without_possible_aliasing_cells(&write, 4, &facts)
+                });
+                let (forgotten_start, forgotten_count) =
+                    if bounded { (4, count - 2) } else { (0, count) };
+                assert!(after.has_initialized_bytes_at(
+                    &base.offset_by_bytes(forgotten_start),
+                    forgotten_count * 4
+                ));
+                assert!(!after.has_known_cell_at(&base.offset_by_bytes(4)));
+                assert_eq!(after.has_known_cell_at(&base), bounded);
+                assert_eq!(
+                    after.has_known_cell_at(&base.offset_by_bytes((count - 1) * 4)),
+                    bounded
+                );
+                assert!(
+                    memory.has_known_cell_at(&base.offset_by_bytes(4)),
+                    "the parent snapshot stays intact"
+                );
+                work.push(units);
+            }
+            samples.push((count, work));
+        }
+        eprintln!("loaded run bounded={bounded}: {samples:?}");
+        assert!(
+            samples.windows(2).all(|pair| pair[0].1 == pair[1].1),
+            "{samples:?}"
+        );
+    }
+}
+
+#[test]
+fn compact_run_store_does_not_scan_separation_candidates() {
+    let mut samples = Vec::new();
+    for size in [4u64, 16, 64] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = |i| Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Variable(Variable(999_950 + i)),
+        };
+        let base = pointer(0);
+        let memory = CMemory::new().with_seeded_cells(
+            base.clone(),
+            4,
+            CType::Int32,
+            0,
+            4,
+            crate::kernel::intern_c_memory(CMemory::new()),
+        );
+        assert_eq!(memory.cells.runs_in_block(&base.block).count(), 1);
+        let mut facts = PureFactContext::new();
+        for i in 0..size {
+            facts = facts.assume_proposition(Proposition::CResourceSeparate {
+                left: Box::new(CResource::Memory(CMemoryRange::new(
+                    pointer(10 + 2 * i),
+                    0u32.into(),
+                    4u32.into(),
+                ))),
+                right: Box::new(CResource::Memory(CMemoryRange::new(
+                    pointer(11 + 2 * i),
+                    0u32.into(),
+                    4u32.into(),
+                ))),
+            });
+        }
+        let mut work = Vec::new();
+        for _ in 0..3 {
+            let (_, units) = crate::instrumentation::measure_deterministic_work(|| {
+                memory.without_possible_aliasing_cells(&pointer(1), 4, &facts)
+            });
+            work.push(units);
+        }
+        samples.push((size, work));
+    }
+    eprintln!("compact-run separation misses: {samples:?}");
+    assert!(
+        samples.windows(2).all(|pair| pair[0].1 == pair[1].1),
+        "{samples:?}"
+    );
+}
+
+#[test]
+fn compact_run_store_declines_crowded_anchor_buckets() {
+    let mut samples = Vec::new();
+    for size in [4u32, 16, 64] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let base = Pointer::symbolic(Variable(999_930));
+        let write = Pointer::symbolic(Variable(999_931));
+        let memory = CMemory::new().with_seeded_cells(
+            base.clone(),
+            4,
+            CType::Int32,
+            0,
+            4,
+            crate::kernel::intern_c_memory(CMemory::new()),
+        );
+        let separate = |count| Proposition::CResourceSeparate {
+            left: Box::new(CResource::Memory(CMemoryRange::new(
+                base.clone(),
+                0u32.into(),
+                count,
+            ))),
+            right: Box::new(CResource::Memory(CMemoryRange::new(
+                write.clone(),
+                0u32.into(),
+                1u32.into(),
+            ))),
+        };
+        let mut facts = PureFactContext::new();
+        for i in 0..size {
+            facts = facts.assume_proposition(separate((4 + i).into()));
+        }
+        let mut work = Vec::new();
+        for _ in 0..3 {
+            let (after, units) = crate::instrumentation::measure_deterministic_work(|| {
+                memory.without_possible_aliasing_cells(&write, 4, &facts)
+            });
+            assert!(!after.has_known_cell_at(&base));
+            work.push(units);
+        }
+        samples.push((size, work));
+        let selected = PureFactContext::new().assume_proposition(separate(4u32.into()));
+        assert!(
+            memory
+                .without_possible_aliasing_cells(&write, 4, &selected)
+                .has_known_cell_at(&base)
+        );
+        assert!(
+            !memory
+                .without_possible_aliasing_cells(&write, 8, &selected)
+                .has_known_cell_at(&base),
+            "stated write member must cover every written byte"
+        );
+        let partial = PureFactContext::new().assume_proposition(separate(1u32.into()));
+        assert!(
+            !memory
+                .without_possible_aliasing_cells(&write, 4, &partial)
+                .has_known_cell_at(&base),
+            "stated run member must cover the complete run"
+        );
+        let aliased = selected.assume_condition(
+            ConditionTerm::pointer_equal(base.clone(), write.clone()),
+            true,
+        );
+        assert!(
+            !memory
+                .without_possible_aliasing_cells(&write, 4, &aliased)
+                .has_known_cell_at(&base),
+            "later aliasing must not preserve stale values"
+        );
+    }
+    eprintln!("compact-run crowded anchors: {samples:?}");
+    assert!(
+        samples.windows(2).all(|pair| pair[0].1 == pair[1].1),
+        "{samples:?}"
+    );
+}
+
+#[test]
+fn compact_run_store_bounds_ownership_member_selection() {
+    for explicit_owner in [false, true] {
+        let mut samples = Vec::new();
+        for size in [4u32, 16, 64] {
+            let _session = crate::kernel::VerificationSession::enter();
+            let base = Pointer::symbolic(Variable(999_940));
+            let write = Pointer::symbolic(Variable(999_941));
+            let memory = CMemory::new().with_seeded_cells(
+                base.clone(),
+                4,
+                CType::Int32,
+                0,
+                4,
+                crate::kernel::intern_c_memory(CMemory::new()),
+            );
+            let own = |base: Pointer, low: u32, high: u32| {
+                CResourceFact::own_memory(CMemoryRange::new(base, low.into(), high.into()))
+            };
+            let mut owner = ResourceContext::new().unchecked_with_fact(own(write.clone(), 0, 1));
+            for i in 0..size {
+                owner = owner.unchecked_with_fact(own(base.clone(), i * 4, (i + 1) * 4));
+            }
+            let mut facts = PureFactContext::new()
+                .assume_proposition(Proposition::CResourceComposition(owner.clone()));
+            if explicit_owner {
+                facts = facts.with_store_owner(Some(owner));
+            }
+            let mut work = Vec::new();
+            for _ in 0..3 {
+                let (after, units) = crate::instrumentation::measure_deterministic_work(|| {
+                    memory.without_possible_aliasing_cells(&write, 4, &facts)
+                });
+                assert!(!after.has_known_cell_at(&base));
+                work.push(units);
+            }
+            samples.push((size, work));
+            let singleton = ResourceContext::new()
+                .unchecked_with_fact(own(base.clone(), 0, 4))
+                .unchecked_with_fact(own(write.clone(), 0, 1));
+            let facts = PureFactContext::new().with_store_owner(Some(singleton));
+            assert!(
+                memory
+                    .without_possible_aliasing_cells(&write, 4, &facts)
+                    .has_known_cell_at(&base)
+            );
+            assert!(
+                !memory
+                    .without_possible_aliasing_cells(&write, 8, &facts)
+                    .has_known_cell_at(&base)
+            );
+        }
+        eprintln!("compact-run owners explicit={explicit_owner}: {samples:?}");
+        assert!(
+            samples.windows(2).all(|pair| pair[0].1 == pair[1].1),
+            "{samples:?}"
+        );
+    }
+}
+
+#[test]
+fn compact_run_live_footprint_bounds_prefix_and_hole_work() {
+    use crate::kernel::{CellRun, IndexIntervals};
+    let mut samples = Vec::new();
+    for size in [4u32, 16, 64] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let base = Pointer::symbolic(Variable(999_960));
+        let mut holes = IndexIntervals::default();
+        holes.insert_range(0, size);
+        for i in 0..size {
+            holes.insert_range(size + 2 * i + 1, size + 2 * i + 2);
+        }
+        holes.insert_range(3 * size, 4 * size);
+        let run = CellRun::new(
+            base.clone(),
+            4,
+            CType::Int32,
+            4 * size,
+            crate::kernel::intern_c_memory(CMemory::new()),
+            holes,
+        );
+        let (footprint, work) =
+            crate::instrumentation::measure_deterministic_work(|| run.live_byte_footprint());
+        assert_eq!(
+            footprint,
+            Some((base.offset_by_bytes(size * 4), (2 * size - 1) * 4))
+        );
+        samples.push(work);
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[0] == pair[1]),
+        "{samples:?}"
+    );
+}

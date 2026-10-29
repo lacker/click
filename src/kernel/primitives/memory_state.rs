@@ -5692,32 +5692,6 @@ impl CMemory {
             ));
         }
         if !fresh {
-            // Compact writes must not fall back to visiting every logical
-            // slot of a possibly aliasing run. Require a whole-footprint
-            // decision (including ownership separation), or refuse promptly.
-            for run in self
-                .cells
-                .candidate_runs(&AliasCandidates::of_block(&base.block))
-            {
-                crate::instrumentation::record_deterministic_work(1);
-                let (kept, _) =
-                    crate::kernel::reasoning::memory_resolution::run_slots_kept_by_store(
-                        run,
-                        base,
-                        bytes,
-                        assumptions,
-                    );
-                if matches!(
-                    kept,
-                    crate::kernel::primitives::SlotSet::PerSlot
-                        | crate::kernel::primitives::SlotSet::AskWithin(_, _)
-                ) {
-                    return Err(CRuntimeError::FunctionContract(
-                        "scalar-array snapshot requires a compact decision for possibly aliasing storage".into()));
-                }
-            }
-        }
-        if !fresh {
             self = self.without_possible_aliasing_cells(base, bytes, assumptions);
         }
         for run in captured_runs {

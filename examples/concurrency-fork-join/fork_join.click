@@ -45,8 +45,27 @@ void *fill_range(void *argument) {
             }
         }
         preserve by {
+            have separate(memory(*job), memory(job->output[job->begin..job->end]));
             mark iteration;
+            have job->begin <= index;
             step();
+            have job->output == at(iteration, job->output) and
+                 job->begin == at(iteration, job->begin) and
+                 job->end == at(iteration, job->end) and
+                 job->value == at(iteration, job->value) by {
+                transport(at(iteration, job->output) == at(iteration, job->output) and
+                          at(iteration, job->begin) == at(iteration, job->begin) and
+                          at(iteration, job->end) == at(iteration, job->end) and
+                          at(iteration, job->value) == at(iteration, job->value),
+                          job->output == at(iteration, job->output) and
+                          job->begin == at(iteration, job->begin) and
+                          job->end == at(iteration, job->end) and
+                          job->value == at(iteration, job->value)) using {
+                    at(iteration, separate(memory(*job), memory(job->output[job->begin..job->end])));
+                    at(iteration, job->begin) <= index;
+                    index < at(iteration, job->end);
+                };
+            }
             have forall (k: int32) {
                 job->begin <= k and k <= index implies job->output[k] == job->value
             } by {
@@ -56,7 +75,7 @@ void *fill_range(void *argument) {
                     extract(job->begin <= k);
                     instantiate(at(region(5).entry, forall (k: int32) {
                         job->begin <= k and k < index implies job->output[k] == job->value
-                    }), k) using { job->begin <= k; k < index; };
+                    }), k) using { job->begin <= k; k < index; job->begin == at(iteration, job->begin); };
                     solve();
                 } else {
                     extract(k <= index);
@@ -87,7 +106,7 @@ void *fill_range(void *argument) {
                 have k <= at(iteration, index);
                 instantiate(at(region(6).entry, forall (k: int32) {
                     job->begin <= k and k <= index implies job->output[k] == job->value
-                }), k) using { job->begin <= k; k <= at(iteration, index); };
+                }), k) using { job->begin <= k; k <= at(iteration, index); job->begin == at(iteration, job->begin); };
                 solve();
             }
             solve();

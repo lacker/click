@@ -391,6 +391,23 @@ impl CellRun {
         IndexIntervals::full(self.count).difference(&self.holes)
     }
 
+    /// Bound all live slots with two hole-index lookups. Internal holes stay
+    /// inside this conservative footprint; neither holes nor slots are walked.
+    pub(crate) fn live_byte_footprint(&self) -> Option<(Pointer, u32)> {
+        let last = self.count.checked_sub(1)?;
+        crate::instrumentation::record_deterministic_work(2);
+        let first = self.holes.interval_of(0).map_or(0, |(_, end)| end);
+        let end = self
+            .holes
+            .interval_of(last)
+            .map_or(self.count, |(start, _)| start);
+        let slots = end.checked_sub(first)?.checked_sub(1)?;
+        let bytes = slots
+            .checked_mul(self.element_width)?
+            .checked_add(self.value_width())?;
+        Some((self.slot_pointer(first), bytes))
+    }
+
     pub(crate) fn base(&self) -> &Pointer {
         &self.base
     }
@@ -824,9 +841,6 @@ pub(crate) enum SlotSet {
     Elements(u32, u32),
     /// Every live slot except those of elements `low..high`.
     Except(u32, u32),
-    /// Every live slot outside elements `low..high`; the rule of each live
-    /// slot inside them is asked.
-    AskWithin(u32, u32),
     /// Undecided for the run as a whole: ask the rule of every live slot.
     PerSlot,
 }
@@ -859,7 +873,6 @@ impl SlotSet {
             Self::Nothing => Some(false),
             Self::Elements(low, high) => Some(*low <= index && index < *high),
             Self::Except(low, high) => Some(!(*low <= index && index < *high)),
-            Self::AskWithin(low, high) => (!(*low <= index && index < *high)).then_some(true),
             Self::PerSlot => None,
         }
     }
@@ -883,7 +896,7 @@ impl SlotSet {
                 *visited += indexes.len();
                 indexes
             }
-            Self::All | Self::AskWithin(..) | Self::PerSlot => {
+            Self::All | Self::PerSlot => {
                 let indexes = run.live_indexes().collect::<Vec<_>>();
                 *visited += indexes.len();
                 indexes
@@ -931,21 +944,6 @@ impl CellRun {
             SlotSet::Except(low, high) => {
                 self.holes
                     .insert_range(low.min(self.count), high.min(self.count));
-            }
-            SlotSet::AskWithin(low, high) => {
-                let high = high.min(self.count);
-                let dropped = (low..high.max(low))
-                    .filter(|index| !self.holes.contains(*index))
-                    .filter(|index| {
-                        *visited += 1;
-                        let pointer = self.slot_pointer(*index);
-                        let value = self.value(*index);
-                        !keep(&pointer, &value)
-                    })
-                    .collect::<Vec<_>>();
-                for index in dropped {
-                    self.holes.insert(index);
-                }
             }
             SlotSet::PerSlot => {
                 let dropped = self

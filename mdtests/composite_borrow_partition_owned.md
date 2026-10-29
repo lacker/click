@@ -23,6 +23,7 @@ void update(struct node* p, const struct callbacks* cb) {
     ensures p->value == 1;
 } by {
     unfold(node_cell(p));
+    have separate(memory(cb->invoke), memory(p->value));
 }
 ```
 ```expect

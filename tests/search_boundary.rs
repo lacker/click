@@ -534,22 +534,48 @@ fn store_ownership_selection_rejects_member_and_composition_walks() {
 }
 
 #[test]
-fn automatic_store_byte_gaps_reject_order_search() {
-    for name in [
-        "proves_recorded_signed_order",
-        "decide",
-        "signed_order_bound_entries",
+fn automatic_store_geometry_rejects_order_and_slot_search() {
+    for (function, names) in [
+        (
+            "one_element_gap_separates_bytes",
+            &[
+                "proves_recorded_signed_order",
+                "decide",
+                "signed_order_bound_entries",
+            ][..],
+        ),
+        (
+            "run_slots_kept_by_store",
+            &[
+                "typed_ranges_disjoint_from_pointer_evidence",
+                "typed_range_disjoint_from_pointer_evidence",
+                "PerSlot",
+                "AskWithin",
+            ][..],
+        ),
+        (
+            "run_has_direct_store_separation",
+            &[
+                "typed_ranges_disjoint_from_pointer_evidence",
+                "typed_range_disjoint_from_pointer_evidence",
+                "PerSlot",
+                "AskWithin",
+            ][..],
+        ),
     ] {
-        let source = format!("fn one_element_gap_separates_bytes(c: C) {{ c.{name}(); }}");
-        assert!(
-            boundary::check_source("src/kernel/reasoning/memory_resolution.rs", &source).is_err(),
-            "accepted {source}"
-        );
+        for name in names {
+            let source = format!("fn {function}(c: C) {{ c.{name}(); }}");
+            assert!(
+                boundary::check_source("src/kernel/reasoning/memory_resolution.rs", &source)
+                    .is_err(),
+                "accepted {source}"
+            );
+        }
     }
     assert!(
         boundary::check_source(
             "src/kernel/reasoning/memory_resolution.rs",
-            "fn one_element_gap_separates_bytes(c: C) { c.exact_condition_value(); }"
+            "fn run_slots_kept_by_store(c: C) { c.signed_interval(); SlotSet::Except(0, 8); }"
         )
         .is_ok()
     );

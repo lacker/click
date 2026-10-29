@@ -137,7 +137,7 @@ fn external_array_source_selection_skips_unrelated_parameter_cells() {
 }
 
 #[test]
-fn external_array_ambiguous_run_aliasing_refuses_without_extent_work() {
+fn external_array_ambiguous_run_aliasing_forgets_without_extent_work() {
     let mut samples = Vec::new();
     for count in [8, 1024, 1_000_000] {
         let _session = crate::kernel::VerificationSession::enter();
@@ -145,21 +145,27 @@ fn external_array_ambiguous_run_aliasing_refuses_without_extent_work() {
         let target = external(939_001);
         let other = external(939_002);
         let memory = copy(CMemory::new(), &target, &source, count);
+        let before = memory.clone();
         let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
             memory.write_scalar_array_region(
                 &other,
                 CType::UInt32,
                 count,
-                CValue::pointer(target),
+                CValue::pointer(target.clone()),
                 true,
                 false,
                 &PureFactContext::new(),
             )
         });
-        assert!(
-            matches!(result, Err(CRuntimeError::FunctionContract(message))
-            if message.contains("compact decision for possibly aliasing storage"))
-        );
+        let copied = result.expect("ambiguous cache contents can be forgotten compactly");
+        assert!(!copied.has_known_cell_at(&target));
+        assert_eq!(copied.cells.runs().count(), 1);
+        for index in [0, count - 1] {
+            assert_eq!(
+                typed_load(&copied, &other.offset_by_bytes(index * 4)),
+                typed_load(&before, &target.offset_by_bytes(index * 4))
+            );
+        }
         samples.push((count, work));
     }
     assert!(

@@ -37,12 +37,8 @@ facts do not establish flat cost as the queried class or bucket grows.
    Complete the conservative-forgetting experiment, retaining deterministic
    growth tests for logical run sizes and separation/ownership buckets.
    Repair affected proofs with explicit separation and transport while
-   preserving C and contracts. Resolve the pre-existing field-separation
-   spelling/matching blocker exposed by
-   `function_pointer_read_uses_checked_table_alias`: under `cb == &table`,
-   an explicit `assumption()` refuses an apparently available separation;
-   removing the alias makes that step succeed. Validate the remaining
-   descriptor/range proofs and expansion before landing compact-run changes.
+   preserving C and contracts. Validate the remaining descriptor/range proofs
+   and expansion before landing compact-run changes.
    Keep actual changed-cell work separate from candidate discovery; add
    bounded automation only for demonstrated proof friction.
 2. **Direct resource support selection.**
