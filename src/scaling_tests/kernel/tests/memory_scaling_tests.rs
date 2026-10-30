@@ -2721,7 +2721,9 @@ fn pointer_frame_through_seeded_cells_ignores_run_length() {
                 source.clone(),
             );
         let context = PureFactContext::new();
-        let forgotten = seeded.without_field_cells(&field, 0, CType::Int32Pointer);
+        // Prepare a partial write: discard the cached whole pointer, but
+        // do not perform the write yet. This records cache-only forgetting.
+        let forgotten = seeded.without_possible_aliasing_cells(&field, 4, &context);
         assert!(!forgotten.has_known_cell_at(&field));
         let before = Pointer::loaded_value(&source, &field);
         let after_memory = crate::kernel::intern_c_memory(forgotten.clone());
