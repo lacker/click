@@ -41,7 +41,15 @@ void mark_all(struct arena* arena) {
         invariant 0 <= i and i <= arena->capacity;
         initialize by solve();
         preserve by {
+            have separate(memory(*arena), memory(arena->data[0..arena->capacity])) by solve();
+            mark write;
             step();
+            transport(at(write, arena->capacity) == at(write, arena->capacity),
+                arena->capacity == at(write, arena->capacity)) using {
+                at(write, separate(memory(*arena), memory(arena->data[0..arena->capacity])));
+                0 <= i;
+                i < at(write, arena->capacity);
+            };
             step();
             solve();
         }

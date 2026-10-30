@@ -154,10 +154,31 @@ void arena_write(struct region* region, int32 index, int32 value) {
         memory(*region),
         memory(*(region->arena->data + (region->start + index)))
     ) by { solve(); }
+    have 0 <= region->start + index;
+    have region->start + index < region->arena->capacity;
     mark w;
     step_until(function.exit);
     have region->arena == old(region->arena) by { solve(); }
     have region->arena->data == old(region->arena->data) by { solve(); }
+
+    transport(at(w, region->arena->capacity) == at(w, region->arena->capacity),
+        region->arena->capacity == at(w, region->arena->capacity)) using {
+        at(w, separate(memory(*region->arena), memory(region->arena->data[0..region->arena->capacity])));
+        0 <= at(w, region->start + index);
+        at(w, region->start + index) < at(w, region->arena->capacity);
+    };
+    transport(at(w, region->arena->live_regions) == at(w, region->arena->live_regions),
+        region->arena->live_regions == at(w, region->arena->live_regions)) using {
+        at(w, separate(memory(*region->arena), memory(region->arena->data[0..region->arena->capacity])));
+        0 <= at(w, region->start + index);
+        at(w, region->start + index) < at(w, region->arena->capacity);
+    };
+    transport(at(w, region->arena->occupied) == at(w, region->arena->occupied),
+        region->arena->occupied == at(w, region->arena->occupied)) using {
+        at(w, separate(memory(*region->arena), memory(region->arena->data[0..region->arena->capacity])));
+        0 <= at(w, region->start + index);
+        at(w, region->start + index) < at(w, region->arena->capacity);
+    };
 
     have forall (k: int32) {
         0 <= k and k < at(w, region->arena->capacity) implies
@@ -173,9 +194,29 @@ void arena_write(struct region* region, int32 index, int32 value) {
         ) using {
             0 <= k;
             k < at(w, region->arena->capacity);
-            separate(memory(region->arena->occupied[0..region->arena->capacity]),
-                memory(region->arena->data[0..region->arena->capacity]));
+            at(w, separate(memory(region->arena->occupied[0..region->arena->capacity]),
+                memory(region->arena->data[0..region->arena->capacity])));
+            region->arena == at(w, region->arena);
+            region->arena->occupied == at(w, region->arena->occupied);
+            region->arena->data == at(w, region->arena->data);
+            region->arena->capacity == at(w, region->arena->capacity);
         };
+        assumption();
+    }
+    have separate(memory(region->arena->occupied[0..region->arena->capacity]), memory(region->arena->data[0..region->arena->capacity])) by {
+        rewrite(region->arena->occupied == at(w, region->arena->occupied));
+        rewrite(region->arena->data == at(w, region->arena->data));
+        rewrite(region->arena->capacity == at(w, region->arena->capacity));
+        assumption();
+    }
+    have separate(memory(*region->arena), memory(region->arena->data[0..region->arena->capacity])) by {
+        rewrite(region->arena->data == at(w, region->arena->data));
+        rewrite(region->arena->capacity == at(w, region->arena->capacity));
+        assumption();
+    }
+    have separate(memory(*region->arena), memory(region->arena->occupied[0..region->arena->capacity])) by {
+        rewrite(region->arena->occupied == at(w, region->arena->occupied));
+        rewrite(region->arena->capacity == at(w, region->arena->capacity));
         assumption();
     }
     let r = fold(arena_region(region), { start: s, end: e });

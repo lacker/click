@@ -56,8 +56,23 @@ int32 copy3(int32 dst[3], int32 src[3]) {
             }
         }
         preserve by {
+            have 0 <= i;
+            mark iteration;
             step();
             step();
+            have forall (k: int32) { 0 <= k and k < 3 implies src[k] == old(src[k]) } by {
+                intro(); intro();
+                extract(0 <= k); extract(k < 3);
+                instantiate(at(iteration, forall (j: int32) {
+                    0 <= j and j < 3 implies src[j] == old(src[j])
+                }), k) using { 0 <= k; k < 3; };
+                transport(at(iteration, src[k]) == old(src[k]), src[k] == old(src[k])) using {
+                    at(iteration, src[k]) == old(src[k]);
+                    separate(memory(dst[0..3]), memory(src[0..3]));
+                    0 <= k; k < 3;
+                    0 <= at(iteration, i); at(iteration, i) < 3;
+                };
+            }
             have forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) } by {
                 intro();
                 intro();
@@ -221,7 +236,7 @@ int32 copy3(int32 dst[3], int32 src[3]) {
                 } and {
                     both {
                         intro();
-                        enumerate();
+                        assumption();
                     } and {
                         both {
                             intro();

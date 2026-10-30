@@ -38,6 +38,17 @@ void *worker(void *argument) {
     owns (argument as (struct job *))->output[0..1];
     requires separate(memory(*(argument as (struct job *))), memory((argument as (struct job *))->output[0..1]));
     ensures (argument as (struct job *))->output[0] == (argument as (struct job *))->value;
+} by {
+    step();
+    step();
+    mark write;
+    step();
+    transport(at(write, (argument as (struct job *))->output) == at(write, (argument as (struct job *))->output),
+        (argument as (struct job *))->output == at(write, (argument as (struct job *))->output)) using {
+        at(write, separate(memory(*(argument as (struct job *))), memory((argument as (struct job *))->output[0..1])));
+    };
+    step_until(function.exit);
+    solve();
 }
 
 int run(int output[1]) {
