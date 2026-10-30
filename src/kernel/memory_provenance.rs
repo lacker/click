@@ -2932,13 +2932,44 @@ pub(in crate::kernel) fn complete_pointer_reads_equal_across_frame(
     }
     let a_memory = complete_pointer_read_source(&a);
     let b_memory = complete_pointer_read_source(&b);
-    typed_reads_share_memory_source(
+    if typed_reads_share_memory_source(
         &a_memory,
         &b_memory,
         &a.defining_address,
         crate::kernel::C_POINTER_BYTE_WIDTH,
         assumptions,
-    )
+    ) {
+        return true;
+    }
+    // A seeded pointer cell can name a read from an earlier source rather
+    // than the seed edge's immediate parent. Follow the existing typed cell
+    // source evidence for the two explicitly compared reads; cached values
+    // alone do not establish agreement across writes.
+    let _scope = ExplicitReadScope(EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true)));
+    with_extended_dag_bridging(|| {
+        let left = memory_dag_cell_source(
+            &a_memory,
+            &a.defining_address,
+            crate::kernel::C_POINTER_BYTE_WIDTH,
+            assumptions,
+            true,
+        );
+        let right = memory_dag_cell_source(
+            &b_memory,
+            &a.defining_address,
+            crate::kernel::C_POINTER_BYTE_WIDTH,
+            assumptions,
+            true,
+        );
+        let (Some(left), Some(right)) = (left, right) else {
+            return false;
+        };
+        let stores_read = |cell: &MemoryDagCell, read: &LoadedPointerView| {
+            matches!(cell, MemoryDagCell::Stored { value: CValue::Pointer(value), .. }
+                if value.pointer() == &Pointer::loaded_value(&read.defining_memory, &read.defining_address))
+        };
+        left.node() == right.node() || stores_read(&left, &b) || stores_read(&right, &a)
+    })
 }
 
 pub(in crate::kernel) fn pointer_read_designations_equal(

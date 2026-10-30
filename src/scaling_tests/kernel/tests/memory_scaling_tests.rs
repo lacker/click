@@ -2695,3 +2695,85 @@ fn compact_run_live_footprint_bounds_prefix_and_hole_work() {
         "{samples:?}"
     );
 }
+
+#[test]
+fn pointer_frame_through_seeded_cells_ignores_run_length() {
+    let mut samples = Vec::new();
+    for count in [1u32, 128, 65_536] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let field = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(128),
+        };
+        let source = crate::kernel::intern_c_memory(CMemory::new());
+        // The seed reads the original source, not its immediate parent.
+        let seeded = CMemory::new()
+            .store(
+                field.offset_by_bytes(count * 8 + 16),
+                CValue::Int32(7u32.into()),
+            )
+            .with_seeded_cells(
+                field.clone(),
+                8,
+                CType::Int32Pointer,
+                0,
+                count,
+                source.clone(),
+            );
+        let context = PureFactContext::new();
+        let forgotten = seeded.without_field_cells(&field, 0, CType::Int32Pointer);
+        assert!(!forgotten.has_known_cell_at(&field));
+        let before = Pointer::loaded_value(&source, &field);
+        let after_memory = crate::kernel::intern_c_memory(forgotten.clone());
+        let after = Pointer::loaded_value(&after_memory, &field);
+        let mut work = Vec::new();
+        for _ in 0..3 {
+            let (equal, units) = crate::instrumentation::measure_deterministic_work(|| {
+                crate::kernel::memory_provenance::complete_pointer_reads_equal_across_frame(
+                    &before, &after, &context,
+                )
+            });
+            assert!(
+                equal,
+                "a seeded complete pointer still names its original read"
+            );
+            work.push(units);
+        }
+        samples.push((count, work));
+        for address in [field.clone(), field.offset_by_bytes(4)] {
+            let changed = crate::kernel::intern_c_memory(
+                forgotten.clone().store(address, CValue::Int32(9u32.into())),
+            );
+            assert!(
+                !crate::kernel::memory_provenance::complete_pointer_reads_equal_across_frame(
+                    &before,
+                    &Pointer::loaded_value(&changed, &field),
+                    &context,
+                ),
+                "overwriting either pointer half invalidates the frame"
+            );
+        }
+        let changed = crate::kernel::intern_c_memory(forgotten.store(
+            field.clone(),
+            CValue::typed_pointer(Pointer::symbolic(Variable(998_902)), CType::Int32Pointer),
+        ));
+        assert!(
+            !crate::kernel::memory_provenance::complete_pointer_reads_equal_across_frame(
+                &before,
+                &Pointer::loaded_value(&changed, &field),
+                &context,
+            )
+        );
+        assert!(
+            !crate::kernel::memory_provenance::complete_pointer_reads_equal_across_frame(
+                &before,
+                &after.offset_by_bytes(4),
+                &context,
+            )
+        );
+    }
+    assert!(
+        samples.windows(2).all(|pair| pair[0].1 == pair[1].1),
+        "{samples:?}"
+    );
+}
