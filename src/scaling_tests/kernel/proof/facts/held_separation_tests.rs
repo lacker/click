@@ -178,3 +178,62 @@ fn partition_spatial_lookup_ignores_unrelated_owners() {
         "{samples:?}"
     );
 }
+
+#[test]
+fn byte_partition_keys_ignore_related_views_and_unrelated_members() {
+    let mut samples = Vec::new();
+    for size in [4u64, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let left = cell(0);
+        let right = cell(1);
+        let mut input = vec![ResourceFact::own(left.clone())];
+        for index in 0..size {
+            let Resource::Memory(mut viewed) = right.clone() else {
+                unreachable!()
+            };
+            let Resource::Memory(origin) = cell(10_000 + index) else {
+                unreachable!()
+            };
+            viewed = viewed
+                .with_designation(Arc::new(origin.base().clone()))
+                .with_opaque_extent(Some(Arc::new(origin.base().clone())), false)
+                .with_typed_carrier();
+            input.push(ResourceFact::View(Resource::Memory(viewed)));
+            input.push(ResourceFact::own(cell(100_000 + index)));
+        }
+        let resources = ResourceContext::new().unchecked_with_facts(input);
+        let byte_spelling = |resource: &Resource| {
+            let Resource::Memory(range) = resource else {
+                unreachable!()
+            };
+            Resource::Memory(MemoryRange::new_with_element_width(
+                range.base().clone(),
+                MachineTerm::constant(0),
+                MachineTerm::constant(4),
+                1,
+            ))
+        };
+        let a = byte_spelling(&left);
+        let b = byte_spelling(&right);
+        let ((hit, same, missing), work) =
+            crate::instrumentation::measure_deterministic_work(|| {
+                (
+                    resources.proves_exact_partition_separation(&a, &b),
+                    resources.proves_exact_partition_separation(&a, &left),
+                    resources.proves_exact_partition_separation(&a, &cell(999_999)),
+                )
+            });
+        assert!(hit && !same && !missing);
+        let withdrawn = resources
+            .clone()
+            .without_exact_representation(&ResourceFact::own(left))
+            .unwrap();
+        assert!(!withdrawn.proves_exact_partition_separation(&a, &b));
+        assert!(resources.proves_exact_partition_separation(&a, &b));
+        samples.push(work);
+    }
+    assert!(
+        samples[0] > 0 && samples.iter().all(|work| *work <= samples[0] + 64),
+        "{samples:?}"
+    );
+}

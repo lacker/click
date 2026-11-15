@@ -2291,7 +2291,51 @@ impl MemoryRange {
     /// Physical identity for separation only. This does not carry permission
     /// to access the bytes and must not be used for ownership or containment.
     pub(crate) fn spatial_key(&self) -> Self {
+        crate::instrumentation::record_deterministic_work(1);
+        // Separation names physical bytes. A complete constant span, or a
+        // single symbolic element, has one key across casts and element units.
+        // This key carries no access/ownership authority.
         let (start, end) = self.bound_terms();
+        let constant = if self.wide_bounds().is_some() {
+            start
+                .uint64_as_const()
+                .zip(end.uint64_as_const())
+                .and_then(|(start, end)| end.checked_sub(start).map(|count| (start, count)))
+        } else {
+            self.signed_constant_start()
+                .zip(self.signed_constant_end())
+                .filter(|(start, end)| 0 <= *start && *start <= *end)
+                .map(|(start, end)| (start as u64, (end - start) as u64))
+        };
+        let both_constant = if self.wide_bounds().is_some() {
+            start.uint64_as_const().is_some() && end.uint64_as_const().is_some()
+        } else {
+            start.as_const().is_some() && end.as_const().is_some()
+        };
+        let count = constant.map(|(_, count)| count).or_else(|| {
+            if both_constant {
+                return None;
+            }
+            let difference = if self.wide_bounds().is_some() {
+                MachineTerm::uint64_subtract(end.clone(), start.clone()).uint64_as_const()
+            } else {
+                MachineTerm::subtract(end.clone(), start.clone())
+                    .as_const()
+                    .map(u64::from)
+            };
+            (difference == Some(1)).then_some(1)
+        });
+        if let Some(bytes) = count
+            .and_then(|count| count.checked_mul(u64::from(self.element_width())))
+            .and_then(|bytes| u32::try_from(bytes).ok())
+        {
+            return Self::new_with_element_width(
+                self.start_pointer(),
+                MachineTerm::constant(0),
+                MachineTerm::constant(bytes),
+                1,
+            );
+        }
         let constructor = if self.wide_bounds().is_some() {
             Self::new_wide
         } else {

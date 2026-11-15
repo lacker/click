@@ -7567,6 +7567,118 @@ impl Memory {
                 || self.access_in_bounds(pointer, value.byte_width()))
     }
 
+    /// Literal bounds at the selected allocation, without alias or history
+    /// queries. An uncertain heap lifetime refuses instead of searching.
+    pub(in crate::kernel) fn intrinsic_access_in_bounds(
+        &self,
+        pointer: &Pointer,
+        bytes: u32,
+    ) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        if self.is_ended_local_address(pointer) {
+            return false;
+        }
+        if !matches!(
+            &pointer.block,
+            PointerBlock::Concrete(_)
+                | PointerBlock::Temporary(_)
+                | PointerBlock::StringLiteral { .. }
+        ) && !self.heap.deallocated_allocations.is_empty()
+        {
+            return false;
+        }
+        let Some(offset) = pointer.offset.as_const().filter(|offset| *offset >= 0) else {
+            return false;
+        };
+        let Some(block) = self.blocks.get(&pointer.block) else {
+            return false;
+        };
+        let Some(size) = block
+            .size()
+            .as_const()
+            .map(u64::from)
+            .or_else(|| block.size().uint64_as_const())
+        else {
+            return false;
+        };
+        u128::from(offset as u64) + u128::from(bytes) <= u128::from(size)
+    }
+
+    /// A selected, already initialized cell, or initialized integer bytes in
+    /// its own concrete allocation. No alias resolution or history is read.
+    pub(in crate::kernel) fn directly_defined_read(
+        &self,
+        pointer: &Pointer,
+        value_type: ProgramType,
+    ) -> bool {
+        crate::instrumentation::record_deterministic_work(1);
+        if self.is_ended_local_address(pointer) {
+            return false;
+        }
+        let intrinsic_block = matches!(
+            &pointer.block,
+            PointerBlock::Concrete(_)
+                | PointerBlock::Temporary(_)
+                | PointerBlock::StringLiteral { .. }
+        );
+        if !intrinsic_block
+            && (!self.heap.deallocated_allocations.is_empty()
+                || self.heap.uninitialized_allocations.len() != 0
+                || !self.heap.zeroed_prefix_allocations.is_empty())
+        {
+            return false;
+        }
+        if let Some(stored) = self.cells.value_type_at(pointer) {
+            if stored == value_type
+                || matches!(
+                    (stored, value_type),
+                    (ProgramType::Int8, ProgramType::UInt8)
+                        | (ProgramType::UInt8, ProgramType::Int8)
+                        | (ProgramType::Int16, ProgramType::UInt16)
+                        | (ProgramType::UInt16, ProgramType::Int16)
+                        | (ProgramType::Int32, ProgramType::UInt32)
+                        | (ProgramType::UInt32, ProgramType::Int32)
+                        | (ProgramType::Int64, ProgramType::UInt64)
+                        | (ProgramType::UInt64, ProgramType::Int64)
+                )
+            {
+                return true;
+            }
+        }
+        if !matches!(
+            value_type,
+            ProgramType::Int8
+                | ProgramType::UInt8
+                | ProgramType::Int16
+                | ProgramType::UInt16
+                | ProgramType::Int32
+                | ProgramType::UInt32
+                | ProgramType::Int64
+                | ProgramType::UInt64
+                | ProgramType::Int128
+                | ProgramType::UInt128
+        ) || !self.intrinsic_access_in_bounds(pointer, value_type.byte_width())
+        {
+            return false;
+        }
+        let width = value_type.byte_width();
+        if self.has_initialized_bytes_at(pointer, width) {
+            return true;
+        }
+        let mut covered = 0;
+        while covered < width {
+            crate::instrumentation::record_deterministic_work(1);
+            let Some(bytes) = self.cells.value_width_at(&pointer.offset_by_bytes(covered)) else {
+                return false;
+            };
+            if bytes == 0 {
+                return false;
+            }
+            covered += bytes.min(width - covered);
+        }
+        true
+    }
+
     pub(in crate::kernel) fn access_in_bounds(&self, pointer: &Pointer, byte_width: u32) -> bool {
         let Some(offset) = pointer.offset.as_const() else {
             return false;

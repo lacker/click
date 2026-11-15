@@ -2916,9 +2916,6 @@ pub(super) fn plan_recorded_pointer_word(
     surface_goal: &ClickProposition,
 ) -> Option<Vec<ProofTactic>> {
     let premises = derivation.pointer_word_premises()?;
-    if premises.is_empty() {
-        return plan_context_free_closer(goal).map(|closer| vec![closer]);
-    }
     let surfaces = premises
         .iter()
         .map(|premise| {
@@ -2945,33 +2942,38 @@ pub(super) fn plan_recorded_pointer_word(
 }
 
 /// A pointer-alignment decision is certified by a checked special certificate
-/// naming the retained base fact, or as `normalize` when the base is a heap
-/// allocation and the alignment is intrinsic.
+/// naming its retained base fact, or with no premise for intrinsic heap
+/// alignment. Both cases use the explicit alignment certificate rule.
 pub(super) fn plan_recorded_pointer_alignment(
     goal: &Proposition,
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
     surface_goal: &ClickProposition,
 ) -> Option<Vec<ProofTactic>> {
-    match derivation.pointer_alignment_premise()? {
-        None => plan_context_free_closer(goal).map(|closer| vec![closer]),
-        Some(premise) => {
-            let (_, surface) = premise_pairs.iter().find(|(kernel, _)| kernel == premise)?;
-            let plan = crate::surface::checking::plan_arithmetic(
-                crate::surface::checking::ArithmeticEngine::Special,
-                goal,
-                std::slice::from_ref(premise),
-            )
-            .and_then(crate::surface::checking::ArithmeticPlan::special)?;
-            Some(vec![ProofTactic::ArithmeticCertificate(
-                crate::surface::checking::special_plan_to_surface_certificate(
-                    &plan,
-                    std::slice::from_ref(surface),
-                    surface_goal,
-                ),
-            )])
-        }
-    }
+    let premise = derivation.pointer_alignment_premise()?;
+    let kernels = premise.into_iter().cloned().collect::<Vec<_>>();
+    let surfaces = premise
+        .into_iter()
+        .map(|premise| {
+            premise_pairs
+                .iter()
+                .find(|(kernel, _)| kernel == premise)
+                .map(|(_, surface)| surface.clone())
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let plan = crate::surface::checking::plan_arithmetic(
+        crate::surface::checking::ArithmeticEngine::Special,
+        goal,
+        &kernels,
+    )
+    .and_then(crate::surface::checking::ArithmeticPlan::special)?;
+    Some(vec![ProofTactic::ArithmeticCertificate(
+        crate::surface::checking::special_plan_to_surface_certificate(
+            &plan,
+            &surfaces,
+            surface_goal,
+        ),
+    )])
 }
 
 /// Expand registered-load address congruence into the ordinary exact

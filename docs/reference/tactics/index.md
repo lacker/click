@@ -1488,10 +1488,12 @@ described below.
 goal that is already available or true by direct computation, without search,
 typically after a `rewrite`. It closes the goal or refuses; it adds no fact.
 
-Smart closure prefers `known()` for computational leaves, including residuals
-after a rewrite or unfold and leaves inside logical proofs. Expansion retains
-`normalize()` only where its broader rules are still needed; it does not
-replace an explicitly written `normalize()` with another tactic.
+Smart closure uses `known()` for computational leaves, including residuals
+after a rewrite or unfold and leaves inside logical proofs. Pure proofs and
+returning paths expand to `known()` or explicit derivations, with no generated
+plain `normalize()`. Selected-premise `normalize() using { ... }` and the
+divergent-path vacuity closer remain. Explicitly written `normalize()` is
+preserved.
 
 **Accepts** a goal that is available, where an atomic proposition is
 available when one of these holds:
@@ -1527,6 +1529,15 @@ and symbolic matches are opaque operands; their identical occurrences may
 cancel, but this check never unfolds a call or resolves a read. It does not
 invoke the general atomic prover.
 
+Goal-local interval checks also use native type bounds, conditional branch
+hulls, casts, and supported arithmetic when the resulting interval decides
+the comparison; wrapping operations conservatively lose their tighter bounds.
+Negated computational conjunctions and disjunctions are evaluated structurally.
+Direct snapshot metadata can establish allocation bounds and initialized
+integer reads, including a fixed-width read covered by cached bytes. This
+never resolves the read value, follows aliases, or walks store history;
+uncertain lifetime or initialization metadata causes a refusal.
+
 A conjunction goal closes when every conjunct does, and a disjunction goal
 when one disjunct does, using available facts or these computations recursively.
 Computational truths inside an implication or quantifier still require the
@@ -1557,8 +1568,10 @@ live partition rule: an owned unit is separate from another owned unit or a
 view. Two views alone do not establish separation. The rule uses exact resource
 lookups; it does not enumerate aliases or compositions, and supported cached
 projections do not count as independent entries. It also applies to separation
-leaves in a conjunction. Constant disjoint intervals of the same base can
-instead be proved by `normalize()`.
+leaves in a conjunction. Constant byte spans with a common symbolic address
+can also establish disjointness or containment directly. The partition index
+identifies complete constant spans and single symbolic elements by their
+physical bytes across differing element units; it grants no access authority.
 
 An explicit `have separate(...)` can use the live ownership partition
 immediately after `unfold`, including fixed-size fields fully contained in
@@ -3159,7 +3172,7 @@ described in [mathematical integers](../../internals/mathematical-integers.md#in
 When its other strategies miss, `solve` searches chains of at most three
 `rewrite` steps by the equalities connected to `P`, machine, `Integer` and
 algebraic alike, each in either direction, and closes the rewritten goal by
-`known`, `normalize`, the direct logical closer or, a few times per search,
+`known`, the direct logical closer or, a few times per search,
 `solve`.
 
 Each rewrite is a checked step, and the search offers at most 64 equalities,

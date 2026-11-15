@@ -12,14 +12,11 @@ pub(in crate::surface) fn computes_with_known(goal: &Proposition) -> bool {
     }
 }
 
-/// Choose a goal-local closer without enlarging `known`'s checking rules.
-/// The broad legacy normalization fallback remains explicit when computation
-/// alone cannot close the goal.
+/// Choose a computational closer. Other goals need an explicit derivation;
+/// search must never retain the broad plain-normalization fallback.
 pub(in crate::surface) fn plan_context_free_closer(goal: &Proposition) -> Option<ProofTactic> {
     if computes_with_known(goal) {
         Some(ProofTactic::Known)
-    } else if normalizes_context_free(goal) {
-        Some(ProofTactic::Normalize)
     } else {
         None
     }
@@ -221,8 +218,8 @@ pub(in crate::surface) fn plan_explicit_equality_rewrites_from(
 /// vocabulary cannot write is a search failure, not a lowering error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::surface) enum SolveEvidence {
-    /// The goal normalizes to true without consulting any context.
-    Normalize,
+    /// The goal closes by the fact-free computational rules of `known`.
+    Known,
     /// A kernel derivation of the goal from its context premises.
     Derivation(PropositionDerivation),
 }
@@ -231,11 +228,8 @@ pub(in crate::surface) fn plan_solve_certificate(
     proposition: &Proposition,
     assumptions: &PureFactContext,
 ) -> Option<SolveEvidence> {
-    if matches!(
-        normalize_proposition(proposition),
-        NormalizedProposition::True
-    ) {
-        Some(SolveEvidence::Normalize)
+    if computes_with_known(proposition) {
+        Some(SolveEvidence::Known)
     } else {
         Some(SolveEvidence::Derivation(
             crate::kernel::search::ProofSearch::derive_solve_proposition(assumptions, proposition)?,

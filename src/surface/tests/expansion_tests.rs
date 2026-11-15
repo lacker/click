@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn residual_plain_normalization_expands_to_explicit_proofs() {
+    for source in [
+        "theorem conditional(x: int32) { ensures bound: 0 <= if x == 0 { 1 } else { 0 } by solve(); }",
+        "theorem negative_sequence() { ensures bound: not (2 in [0, 1]) by solve(); }",
+        "spec enum Boxed { Value(Integer) } theorem congruence(x: Integer) { ensures bound: Boxed::Value(x + 1) == Boxed::Value(1 + x) by solve(); }",
+        "theorem signed_cast() { ensures bound: (-1 as uint32) == 4294967295u32 by solve(); }",
+    ] {
+        let name = if source.contains("theorem congruence") {
+            "congruence"
+        } else if source.contains("theorem conditional") {
+            "conditional"
+        } else if source.contains("theorem negative_sequence") {
+            "negative_sequence"
+        } else {
+            "signed_cast"
+        };
+        let expanded = expand_c_claim_source_by_label(source, &[], &format!("{name}.bound"))
+            .unwrap_or_else(|error| panic!("{source}: {}", error.report()));
+        assert!(
+            !expanded.contains("normalize();") && !expanded.contains("solve("),
+            "{expanded}"
+        );
+        without_implicit_solve(|| verify_click_theorems(&expanded))
+            .unwrap_or_else(|error| panic!("{expanded}: {}", error.report()));
+    }
+    let false_wrap =
+        "theorem wrapping(x: uint32) { ensures (x + 1u32) as uint32 > x by { known(); } }";
+    assert!(without_implicit_solve(|| verify_click_theorems(false_wrap)).is_err());
+}
+
+#[test]
 fn computational_solve_expansions_use_known_without_implicit_search() {
     for (parameters, requirement, goal, tactic) in [
         ("x: Integer", "", "x + 1 > x", "solve()"),
@@ -12978,7 +13009,7 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
         expanded.contains("have permutation::permutation(p, old(p), 0, 3) by {"),
         "{expanded}"
     );
-    assert!(expanded.contains("normalize();"), "{expanded}");
+    assert!(!expanded.contains("normalize();"), "{expanded}");
     assert!(
         expanded.contains("unfold(permutation::permutation);"),
         "{expanded}"
@@ -13795,7 +13826,7 @@ fn smart_have_expansion_plans_against_the_ordinary_surface_goal() {
     )
     .expect("the smart have should expand against its ordinary lowered goal");
     assert!(
-        expanded.contains("have owner->head == old(owner->head) by {\n        normalize();\n    }"),
+        expanded.contains("have owner->head == old(owner->head) by {\n        known();\n    }"),
         "the expansion used a different internal goal:\n{expanded}"
     );
     verify_c_sources(&expanded, &c_sources)
@@ -14113,7 +14144,7 @@ fn outcome_solve_retains_checked_unchanged_old_equality_on_the_proof() {
     )
     .expect("the retained old equality should expand");
     assert!(
-        expanded.contains("have p[0] == old(p[0]) by {\n                normalize();"),
+        expanded.contains("have p[0] == old(p[0]) by {") && !expanded.contains("normalize();"),
         "{expanded}"
     );
     verify_c_sources(&expanded, &sources)
@@ -15376,7 +15407,7 @@ fn grouped_residual_normalization_expansion_checks_original_claims() {
     for source in [source, repeated_rewrite.as_str()] {
         verify_c_sources(source, &sources).unwrap();
         let expanded = expand_function_proof_source(source, &sources, "current").unwrap();
-        assert!(expanded.contains("    normalize();"));
+        assert!(!expanded.contains("    normalize();"), "{expanded}");
         assert!(expanded.contains("    known();"));
         verify_c_sources(&expanded, &sources)
             .unwrap_or_else(|error| panic!("{error:?}\n{expanded}"));

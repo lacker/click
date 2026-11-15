@@ -2076,9 +2076,17 @@ impl CellStore {
         self.concrete.contains_key(pointer) || self.live_run_slot(pointer).is_some()
     }
 
-    /// How many bytes the cell at `pointer` holds, read from a run slot's
-    /// element type without naming the slot's value: [`Self::get`]'s
-    /// `byte_width`, at the cost of the lookup alone.
+    /// The selected cell's type without materializing its value or a run.
+    pub(crate) fn value_type_at(&self, pointer: &Pointer) -> Option<ProgramType> {
+        if let Some(value) = self.concrete.get(pointer) {
+            return Some(value.program_type());
+        }
+        self.live_run_slot(pointer)
+            .map(|slot| slot.run.element_type())
+    }
+
+    /// How many bytes the cell at `pointer` holds, without materializing
+    /// the selected value or run.
     pub(crate) fn value_width_at(&self, pointer: &Pointer) -> Option<u32> {
         if let Some(value) = self.concrete.get(pointer) {
             return Some(value.byte_width());

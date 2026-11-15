@@ -10,9 +10,8 @@ enum SurfaceSpellingPurpose {
 }
 
 impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
-    /// Retain a computational `known` leaf when possible, otherwise the exact
-    /// legacy normalizer requested by this search route. Premise-restricted
-    /// routes use only goal-local computation to make this choice.
+    /// Retain computational `known` or a genuinely selected normalization.
+    /// A goal outside those rules must continue to explicit derivation search.
     pub(in crate::surface::proof) fn apply_normalization_closure(
         search_input: &Proof<'a>,
         premises: Option<Vec<ClickProposition>>,
@@ -27,7 +26,10 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         } else {
             match premises {
                 Some(premises) => ProofStep::NormalizeUsing(premises),
-                None => ProofStep::Normalize,
+                None => {
+                    return Err(search_input
+                        .step_error("this goal requires an explicit checked derivation"));
+                }
             }
         };
         search_input.driver().apply_step(step)
@@ -7698,7 +7700,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
         match plan_solve_certificate(&goal, &assumptions_from_propositions(&restricted))? {
-            SolveEvidence::Normalize => {
+            SolveEvidence::Known => {
                 crate::kernel::search::ProofSearch::apply_normalization_closure(search_input, None)
                     .ok()
                     .filter(Proof::is_complete)

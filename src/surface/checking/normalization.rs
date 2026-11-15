@@ -109,12 +109,7 @@ fn check_solve_certificate(
     certificate: &SolveEvidence,
 ) -> bool {
     match certificate {
-        SolveEvidence::Normalize => {
-            matches!(
-                normalize_proposition(proposition),
-                NormalizedProposition::True
-            )
-        }
+        SolveEvidence::Known => crate::surface::planning::solve::computes_with_known(proposition),
         SolveEvidence::Derivation(derivation) => {
             derivation.conclusion() == proposition && derivation.check(assumptions)
         }

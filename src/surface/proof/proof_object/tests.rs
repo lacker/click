@@ -14985,18 +14985,18 @@ fn proposed_goal_spelling_retains_unproved_domains_for_the_driver() {
 
 #[test]
 fn partition_known_uses_the_fixed_state_not_its_entry_partition() {
-    let cell = |name: &str| {
+    let cell = |variable| {
         Resource::Memory(MemoryRange::new(
             Pointer {
-                block: name.into(),
+                block: PointerBlock::Symbolic(Variable(variable)),
                 offset: PointerOffsetTerm::Constant(0),
             },
             MachineTerm::constant(0),
             MachineTerm::constant(1),
         ))
     };
-    let left = cell("partition-left");
-    let right = cell("partition-right");
+    let left = cell(812_000);
+    let right = cell(812_001);
     let entry =
         ExecutionState::new().with_resource_context(ResourceContext::new().unchecked_with_facts([
             ResourceFact::own(left.clone()),

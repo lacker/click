@@ -263,9 +263,9 @@ src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_close_af
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_close_after_rewrite	try_typed_atomic_solve_from_selected_premises	1
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_connected_equality_chain_closure	available_rewrite_equality	1
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_connected_equality_chain_closure	rewrite_search	1
-src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_constructor_join_closure	driver	1
+src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_constructor_join_closure	driver	4
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_constructor_join_closure	resolve_solve_premises	1
-src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_constructor_join_closure	try_solve_closure	1
+src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_constructor_join_closure	try_solve_closure	2
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_definedness_by_bounds	prove_stated_fact	3
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_definedness_by_bounds	try_direct_logical_closure	1
 src/surface/proof/selected_arithmetic/search.rs	search	ProofSearch::try_definition_condition_closure	definition_condition_plan	1

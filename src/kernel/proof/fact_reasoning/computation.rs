@@ -10,19 +10,72 @@ use crate::kernel::{
     constant_i64, constant_u32, constant_u64, int32_constant, int64_constant, uint64_constant,
 };
 
-/// Whether this atomic goal is true by direct computation alone. Connective
-/// goals belong to the caller's structural walk; implications and quantifiers
-/// require their ordinary proof steps even when their bodies are trivial.
+/// Whether this leaf is true by direct computation or snapshot metadata.
+/// Positive connectives belong to the caller's structural walk. Negated
+/// connective trees may compute, but implications and quantifiers always
+/// require their ordinary introduction steps.
 pub(crate) fn computes_leaf(goal: &Proposition) -> bool {
-    let mut goal = goal;
-    let mut expected = true;
-    while let Proposition::Not(body) = goal {
-        crate::instrumentation::record_deterministic_work(1);
-        expected = !expected;
-        goal = body;
-    }
+    // The caller walks positive connectives once, mixing facts and computed
+    // leaves. Rewalking each positive subtree here would be quadratic on a
+    // nested conjunction with one noncomputational leaf. Negated connectives
+    // are atomic inputs to that caller, and compute structurally below.
+    !matches!(goal, Proposition::And(..) | Proposition::Or(..))
+        && proposition_value(goal) == Some(true)
+}
+
+fn proposition_value(goal: &Proposition) -> Option<bool> {
     crate::instrumentation::record_deterministic_work(1);
-    let value = match goal {
+    match goal {
+        Proposition::Not(body) => proposition_value(body).map(|value| !value),
+        Proposition::And(left, right) => {
+            match (proposition_value(left), proposition_value(right)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            }
+        }
+        Proposition::Or(left, right) => match (proposition_value(left), proposition_value(right)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+        Proposition::MemoryCanStore {
+            memory,
+            pointer,
+            byte_width,
+        } => memory
+            .intrinsic_access_in_bounds(pointer, *byte_width)
+            .then_some(true),
+        Proposition::MemoryLoadable {
+            memory,
+            base,
+            bytes,
+            wide,
+        } => {
+            let format = if *wide {
+                MachineIntegerType::UInt64
+            } else {
+                MachineIntegerType::UInt32
+            };
+            let (low, high) = bounds::machine_bounds(bytes, format)?;
+            use num_traits::ToPrimitive;
+            (low == high).then_some(())?;
+            let bytes = low.to_u32()?;
+            (bytes == 0 || memory.intrinsic_access_in_bounds(base, bytes)).then_some(true)
+        }
+        Proposition::MemoryReadDefined {
+            memory,
+            pointer,
+            value_type,
+        } => memory
+            .directly_defined_read(pointer, *value_type)
+            .then_some(true),
+        Proposition::ResourceSeparate { left, right } => {
+            intrinsic_separation(left, right).then_some(true)
+        }
+        Proposition::ResourceContains { parent, child } => {
+            intrinsic_containment(parent, child).then_some(true)
+        }
         Proposition::ConditionIs(condition, truth) => {
             condition_value(condition).map(|value| value == *truth)
         }
@@ -45,8 +98,7 @@ pub(crate) fn computes_leaf(goal: &Proposition) -> bool {
             Some(true)
         }
         _ => None,
-    };
-    value == Some(expected)
+    }
 }
 
 fn condition_value(condition: &ConditionTerm) -> Option<bool> {
@@ -77,6 +129,7 @@ fn condition_value(condition: &ConditionTerm) -> Option<bool> {
             }
             super::super::integer_arithmetic::literal_integer_comparison_value(condition)
                 .or_else(|| integer_affine_comparison(condition))
+                .or_else(|| bounds::comparison(condition))
         }
         ConditionTerm::Compare {
             format,
@@ -108,6 +161,7 @@ fn condition_value(condition: &ConditionTerm) -> Option<bool> {
             // Raw goal atoms retain their exact typed snapshot identities.
             // In particular, this key must never canonicalize a memory read.
             machine_affine_equality(condition, Clone::clone)
+                .or_else(|| bounds::comparison(condition))
         }
         ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
         ConditionTerm::PointerValueEqual(left, right) if left == right => Some(true),
@@ -118,6 +172,85 @@ fn condition_value(condition: &ConditionTerm) -> Option<bool> {
         // compare unequal even when both operands have the same identity.
         _ => None,
     }
+}
+
+mod bounds;
+
+fn byte_interval(range: &MemoryRange) -> Option<(i128, i128)> {
+    let (start, end) = if let Some((start, end)) = range.wide_bounds() {
+        (
+            i128::from(start.uint64_as_const()?),
+            i128::from(end.uint64_as_const()?),
+        )
+    } else {
+        (
+            i128::from(range.signed_constant_start()?),
+            i128::from(range.signed_constant_end()?),
+        )
+    };
+    if end < start {
+        return None;
+    }
+    let width = i128::from(range.element_width());
+    Some((start * width, end * width))
+}
+
+/// Remove only literal displacements from the explicit pointer syntax. The
+/// symbolic address stays opaque: no aliases or memory reads are resolved.
+fn offset_root(offset: &PointerOffsetTerm) -> (Option<&PointerOffsetTerm>, i128) {
+    crate::instrumentation::record_deterministic_work(1);
+    match offset {
+        PointerOffsetTerm::Constant(value) => (None, i128::from(*value)),
+        PointerOffsetTerm::Add(a, b) => {
+            let a = offset_root(a);
+            let b = offset_root(b);
+            match (a.0, b.0) {
+                (None, root) | (root, None) => (root, a.1 + b.1),
+                _ => (Some(offset), 0),
+            }
+        }
+        _ => (Some(offset), 0),
+    }
+}
+fn pointer_delta(left: &Pointer, right: &Pointer) -> Option<i128> {
+    if left.block != right.block {
+        return None;
+    }
+    let left = offset_root(&left.offset);
+    let right = offset_root(&right.offset);
+    (left.0 == right.0).then_some(left.1 - right.1)
+}
+
+fn intrinsic_separation(left: &Resource, right: &Resource) -> bool {
+    let (Resource::Memory(left), Resource::Memory(right)) = (left, right) else {
+        return false;
+    };
+    if left.base().blocks_proven_distinct(right.base()) {
+        return true;
+    }
+    let (Some((ls, le)), Some((rs, re))) = (byte_interval(left), byte_interval(right)) else {
+        return false;
+    };
+    if ls == le || rs == re {
+        return true;
+    }
+    pointer_delta(left.base(), right.base())
+        .is_some_and(|delta| le + delta <= rs || re <= ls + delta)
+}
+
+fn intrinsic_containment(parent: &Resource, child: &Resource) -> bool {
+    if parent == child {
+        return true;
+    }
+    let (Resource::Memory(parent), Resource::Memory(child)) = (parent, child) else {
+        return false;
+    };
+    let (Some((ps, pe)), Some((cs, ce))) = (byte_interval(parent), byte_interval(child)) else {
+        return false;
+    };
+    cs == ce
+        || pointer_delta(child.base(), parent.base())
+            .is_some_and(|delta| ps <= cs + delta && ce + delta <= pe)
 }
 
 fn algebraic_equality(left: &AlgebraicTerm, right: &AlgebraicTerm) -> Option<bool> {

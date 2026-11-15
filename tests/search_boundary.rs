@@ -1497,3 +1497,94 @@ fn join_must_keep_its_discovery_guard() {
         "{errors:?}"
     );
 }
+
+#[test]
+fn smart_proof_producers_cannot_construct_plain_normalize() {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct PlainNormalize(bool);
+    fn test_only(attrs: &[syn::Attribute]) -> bool {
+        attrs.iter().any(|attr| attr.path().is_ident("test") ||
+            attr.path().is_ident("cfg") && matches!(&attr.meta, syn::Meta::List(meta) if meta.tokens.to_string() == "test"))
+    }
+    impl PlainNormalize {
+        fn tokens(&mut self, stream: proc_macro2::TokenStream) {
+            let tokens = stream.into_iter().collect::<Vec<_>>();
+            for token in &tokens {
+                if let proc_macro2::TokenTree::Group(group) = token {
+                    self.tokens(group.stream());
+                }
+            }
+            for window in tokens.windows(4) {
+                if matches!(&window[0], proc_macro2::TokenTree::Ident(id) if id == "ProofStep" || id == "ProofTactic")
+                    && matches!(&window[1], proc_macro2::TokenTree::Punct(p) if p.as_char() == ':')
+                    && matches!(&window[2], proc_macro2::TokenTree::Punct(p) if p.as_char() == ':')
+                    && matches!(&window[3], proc_macro2::TokenTree::Ident(id) if id == "Normalize")
+                {
+                    self.0 = true;
+                }
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for PlainNormalize {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            let attrs = match item {
+                syn::Item::Fn(item) => &item.attrs,
+                syn::Item::Mod(item) => &item.attrs,
+                syn::Item::Impl(item) => &item.attrs,
+                _ => return syn::visit::visit_item(self, item),
+            };
+            if !test_only(attrs) {
+                syn::visit::visit_item(self, item);
+            }
+        }
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            if !test_only(&item.attrs) {
+                syn::visit::visit_impl_item_fn(self, item);
+            }
+        }
+        fn visit_expr_path(&mut self, expr: &'ast syn::ExprPath) {
+            let names = expr
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>();
+            if names.windows(2).any(|pair| {
+                matches!(pair[0].as_str(), "ProofStep" | "ProofTactic") && pair[1] == "Normalize"
+            }) {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_path(self, expr);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.tokens(mac.tokens.clone());
+        }
+    }
+    let rejects = |source: &str| {
+        let mut check = PlainNormalize::default();
+        check.visit_file(&syn::parse_file(source).unwrap());
+        check.0
+    };
+    assert!(rejects("fn search() { vec![ProofStep::Normalize]; }"));
+    assert!(rejects("fn search() { use_it(ProofTactic::Normalize); }"));
+    assert!(!rejects(
+        "fn search() { vec![ProofStep::Known, ProofStep::NormalizeUsing(premises)]; } #[cfg(test)] mod tests { fn explicit() { vec![ProofStep::Normalize]; } }"
+    ));
+    for relative in [
+        "src/surface/planning/solve.rs",
+        "src/surface/proof/smart_closures.rs",
+        "src/surface/proof/smart_closures/search.rs",
+        "src/surface/proof/selected_arithmetic/search.rs",
+        "src/surface/proof/surface_certificates.rs",
+    ] {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative),
+        )
+        .unwrap();
+        assert!(
+            !rejects(&source),
+            "{relative} constructs a plain normalize certificate"
+        );
+    }
+}

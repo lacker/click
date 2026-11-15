@@ -884,6 +884,46 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
     ) -> Result<Option<Proof<'a>>, ClickError> {
         #[cfg(test)]
         crate::kernel::search::record_discovery("try_constructor_join_closure");
+        // Constructor congruence is made explicit: prove the selected
+        // fields, then let `known` use its equality closure. No normalization
+        // of a constructor's hidden fields is retained in the certificate.
+        if let Some(ClickProposition::Comparison {
+            left:
+                ContractExpression::AlgebraicConstructor {
+                    algebraic_type: lt,
+                    variant: lv,
+                    arguments: left,
+                },
+            operator: ComparisonOperator::Equal,
+            right:
+                ContractExpression::AlgebraicConstructor {
+                    algebraic_type: rt,
+                    variant: rv,
+                    arguments: right,
+                },
+        }) = search_input.surface_goal()
+            && lt == rt
+            && lv == rv
+            && left.len() == right.len()
+        {
+            let mut proof = search_input.clone();
+            for (left, right) in left.iter().zip(right) {
+                if left == right {
+                    continue;
+                }
+                check_verification_deadline()?;
+                let scope = proof.driver().open_have(ClickProposition::Comparison {
+                    left: left.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: right.clone(),
+                })?;
+                let Some(closed) = scope.driver().try_solve_closure()? else {
+                    return Ok(None);
+                };
+                proof = closed.join()?;
+            }
+            return attempt::candidate_outcome(proof.driver().apply_step(ProofStep::Known));
+        }
         let Some(goal) = search_input.goal() else {
             return Ok(None);
         };

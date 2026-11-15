@@ -20,6 +20,12 @@ parsing, and round-trip validation must agree on the resulting proof. An expansi
 failure, a rewrite that doesn't verify, or disagreement with profile or audit
 is a tooling defect to investigate.
 
+Pure proofs and returning execution paths generate `known()` for direct
+computation or an explicit derivation for the remaining work. They do not
+generate plain `normalize()`. Selected-premise `normalize() using { ... }`
+and divergent-path vacuity still use the legacy normalization forms; an
+explicitly written normalization step is preserved.
+
 Generated C branch conditions retain the C operation's meaning. In particular,
 a comparison of two data pointers compares their addresses; it does not become
 a contract equality of pointer values. When one execution step produces terminal
