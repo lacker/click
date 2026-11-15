@@ -20,6 +20,32 @@ write* of the cell they observe: every read between one write and the next
 maps to the same term, and a new term appears only when the cell actually
 gets a new value.
 
+## Exact read descriptors and comparison identities
+
+Read construction and comparison identity selection have separate APIs:
+
+- `MachineTerm::memory_read(memory, pointer, kind)` constructs the exact
+  descriptor. It retains the supplied memory state and performs no version
+  selection, stored-value lookup, or observation publication.
+- `ScalarReadDescriptor` borrows that exact descriptor. The memory-load
+  module's `select_comparison_identity` selects a
+  `ScalarReadComparisonIdentity` by the existing assumption-free rules,
+  without replacing the input descriptor.
+- `record_comparison_observation` publishes the selected identity's access
+  width and live origin. `scalar_read_for_exact_cell` instead publishes a
+  typed observation for the exact descriptor it constructs.
+- `canonical_scalar_read` is the compatibility adapter. It keeps the
+  existing identity cache and observation order, then explicitly converts
+  the selected identity into the legacy retained read. `canonical_form_of_load`
+  and `canonical_cell_load` still use this policy.
+
+This separation prepares exact-state logical reads; it does not yet change
+`at(point, expression)` lowering or introduce a new exact-state retention
+policy for proof states. Current callers still retain version-selected reads. The cold
+identity-selection helper still contains the legacy memory/version work; it
+is not a new constant-time equality lookup and must not be added to checking
+hot paths without the indexed-cost migration.
+
 ## Two proof authorities
 
 Every claim that two terms denote one value rests on exactly one of two

@@ -2436,8 +2436,8 @@ thread_local! {
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     // The flag retains whether version selection used an observed width.
     // Such hits need no second metadata lookup; widening clears this cache.
-    static SCALAR_READ_CACHE: std::cell::RefCell<
-        std::collections::HashMap<MachineTerm, (MachineTerm, bool)>,
+    static SCALAR_READ_IDENTITY_CACHE: std::cell::RefCell<
+        std::collections::HashMap<MachineTerm, (ScalarReadComparisonIdentity, bool)>,
     > = Default::default();
     static TERM_CACHE: std::cell::RefCell<
         std::collections::HashMap<MachineTerm, MachineTerm>,
@@ -2462,7 +2462,7 @@ pub(crate) fn clear_load_canonicalization_caches() {
     STORED_POINTER_BLOCKS.with(|cache| cache.borrow_mut().clear());
     MEMORY_SHOWN_CELLS.with(|cache| cache.borrow_mut().clear());
     LOAD_VARIABLE_CACHE.with(|cache| cache.borrow_mut().clear());
-    SCALAR_READ_CACHE.with(|cache| cache.borrow_mut().clear());
+    SCALAR_READ_IDENTITY_CACHE.with(|cache| cache.borrow_mut().clear());
     TERM_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
@@ -2990,6 +2990,9 @@ pub(crate) struct ScalarReadObservation {
 }
 
 mod read_observations;
+mod scalar_reads;
+
+use scalar_reads::{ScalarReadComparisonIdentity, ScalarReadDescriptor};
 
 pub(crate) fn scalar_read_observation(
     operand: crate::kernel::MachineOperandView<'_>,
@@ -2997,8 +3000,9 @@ pub(crate) fn scalar_read_observation(
     read_observations::for_operand(operand)
 }
 
-/// Build a typed read at an already selected state, without version
-/// selection or a reserved name. Derived checking reads retain their width.
+/// Build an exact read and publish its typed observation. This does not
+/// select a comparison identity or change the supplied memory state. Use
+/// `MachineTerm::memory_read` when no observation needs to be published.
 pub(crate) fn scalar_read_for_exact_cell(
     memory: &SharedMemory,
     pointer: &Pointer,
@@ -3007,7 +3011,7 @@ pub(crate) fn scalar_read_for_exact_cell(
 ) -> MachineTerm {
     let id = read_observations::record(memory, pointer, kind, memory, bytes);
     read_observations::select(id);
-    MachineTerm::MemoryLoad(memory.clone(), Box::new(pointer.clone()), kind)
+    MachineTerm::memory_read(memory.clone(), pointer.clone(), kind)
 }
 
 pub(crate) fn is_selected_scalar_read(
@@ -3218,7 +3222,7 @@ pub(in crate::kernel) fn record_load_access_width(memory: &Memory, pointer: &Poi
     });
     if widened {
         LOAD_VARIABLE_CACHE.with(|cache| cache.borrow_mut().clear());
-        SCALAR_READ_CACHE.with(|cache| cache.borrow_mut().clear());
+        SCALAR_READ_IDENTITY_CACHE.with(|cache| cache.borrow_mut().clear());
     }
 }
 
@@ -3566,14 +3570,16 @@ pub(crate) fn canonicalized_offset_index_term(
     index.structural_value().clone()
 }
 
-/// Structural read identity shared by execution, resource materialization,
-/// and contract evaluation. No reserved variable or defining fact is needed.
+/// Legacy selected-version read policy shared by execution, resource
+/// materialization, and contract evaluation. Exact descriptor construction is
+/// `MachineTerm::memory_read`; this adapter still retains the comparison
+/// identity as the read term until those callers migrate to exact states.
 pub(crate) fn canonical_form_of_load(
     memory: SharedMemory,
     pointer: Pointer,
     kind: LoadKind,
 ) -> MachineTerm {
-    canonical_scalar_read(&MachineTerm::MemoryLoad(memory, Box::new(pointer), kind))
+    canonical_scalar_read(&MachineTerm::memory_read(memory, pointer, kind))
 }
 
 /// Resource cells retain structural descriptors for integers and pointers.
@@ -3583,7 +3589,7 @@ pub(crate) fn canonical_cell_load(
     ty: ProgramType,
 ) -> MachineTerm {
     let kind = LoadKind::of_type(ty).expect("scalar cell read kind");
-    let read = MachineTerm::MemoryLoad(memory, Box::new(pointer), kind);
+    let read = MachineTerm::memory_read(memory, pointer, kind);
     canonical_scalar_read(&read)
 }
 
@@ -4597,87 +4603,42 @@ pub(crate) fn latest_wide_load_observation(variable: &Variable) -> Option<Machin
     })
 }
 
-/// Select the structural identity of an ordinary scalar read. Selection uses
-/// only memory structure; stored literals never replace the read expression.
+/// Compatibility adapter for the existing selected-version read policy.
+/// Exact construction, comparison identity selection, and observation
+/// publication are separate operations. Until exact-state lowering migrates,
+/// callers still retain the selected identity as their read term.
 pub(in crate::kernel) fn canonical_scalar_read(bits: &MachineTerm) -> MachineTerm {
-    let MachineTerm::MemoryLoad(origin, original_pointer, original_kind) = bits else {
+    let Some(descriptor) = ScalarReadDescriptor::from_term(bits) else {
         return bits.clone();
     };
-    if let Some((read, typed)) = SCALAR_READ_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
-        let MachineTerm::MemoryLoad(memory, pointer, kind) = &read else {
-            unreachable!("cached scalar read")
+    if let Some((identity, typed)) =
+        SCALAR_READ_IDENTITY_CACHE.with(|cache| cache.borrow().get(bits).cloned())
+    {
+        let MachineTerm::MemoryLoad(memory, pointer, kind) = identity.as_legacy_read() else {
+            unreachable!("cached scalar read identity");
         };
         // A conservative, untyped selection is not an observed access width.
         // Once a producer supplies the width, select its version with that
         // width instead of treating the earlier guess as an eight-byte load.
         if typed
             || existing_read_access_width(memory, pointer, *kind).is_some()
-            || recorded_load_access_width(origin, original_pointer).is_none()
+            || recorded_load_access_width(descriptor.memory(), descriptor.pointer()).is_none()
         {
-            read_observations::produced(&read, bits);
-            return read;
+            read_observations::produced(identity.as_legacy_read(), bits);
+            return identity.into_legacy_read();
         }
     }
-    let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
-    let candidate = match &canonical {
-        MachineTerm::Variable(variable) => registered_load_term_for_variable(variable)
-            .filter(
-                |read| matches!(read, MachineTerm::MemoryLoad(_, address, kind) if address == original_pointer && kind == original_kind),
-            )
-            .unwrap_or_else(|| bits.clone()),
-        MachineTerm::MemoryLoad(memory, pointer, kind) if pointer == original_pointer && kind == original_kind => {
-            let held = memory
-                .memory()
-                .known_value(pointer)
-                .and_then(|value| crate::kernel::spec::program_value_bitvector_term(&value))
-                .and_then(|held| match held {
-                    MachineTerm::Variable(variable) => registered_load_term_for_variable(&variable),
-                    read @ MachineTerm::MemoryLoad(..) => Some(read),
-                    _ => None,
-                })
-                .filter(|held| {
-                    matches!(held, MachineTerm::MemoryLoad(_, at, held_kind)
-                    if at == pointer && held_kind == kind)
-                });
-            held.unwrap_or(canonical)
-        }
-        _ => bits.clone(),
-    };
-    let MachineTerm::MemoryLoad(memory, pointer, kind) = candidate else {
-        unreachable!("selected scalar read")
-    };
-    let recorded_bytes = recorded_load_access_width(origin, original_pointer)
-        .or_else(|| recorded_load_access_width(&memory, &pointer))
-        .or_else(|| {
-            existing_read_access_width(origin, original_pointer, *original_kind)
-                .max(existing_read_access_width(&memory, &pointer, kind))
-        });
-    let bytes = recorded_bytes.unwrap_or_else(|| kind.unrecorded_access_byte_width());
-    let version = crate::kernel::resource_tracker::last_same_version_point(
-        crate::kernel::resource_tracker::TrackedResource::Cell {
-            pointer: &pointer,
-            bytes,
-        },
-        &crate::kernel::resource_tracker::VersionPoint::at(&memory),
-    )
-    .map(|point| point.shared_memory().clone())
-    .unwrap_or(memory);
-    let id = if recorded_bytes.is_some() {
-        read_observations::record(&version, &pointer, kind, origin, bytes)
-    } else {
-        read_observations::record_untyped(&version, &pointer, kind, origin)
-    };
-    read_observations::select(id);
-    let read = MachineTerm::MemoryLoad(version, pointer, kind);
-    read_observations::produced(&read, bits);
-    SCALAR_READ_CACHE.with(|cache| {
+    let (identity, observed_bytes) = scalar_reads::select_comparison_identity(descriptor);
+    scalar_reads::record_comparison_observation(&identity, descriptor.memory(), observed_bytes);
+    read_observations::produced(identity.as_legacy_read(), bits);
+    SCALAR_READ_IDENTITY_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= 100_000 {
             cache.clear();
         }
-        cache.insert(bits.clone(), (read.clone(), recorded_bytes.is_some()));
+        cache.insert(bits.clone(), (identity.clone(), observed_bytes.is_some()));
     });
-    read
+    identity.into_legacy_read()
 }
 
 pub(crate) fn latest_scalar_read_observation(read: &MachineTerm) -> Option<MachineTerm> {
@@ -5036,8 +4997,8 @@ pub(in crate::kernel) fn cached_symbolic_storage_cell_value(
                 Box::new(pointer.clone()),
                 LoadKind::Int32,
             );
-            return SCALAR_READ_CACHE.with(|cache| {
-                let read = cache.borrow().get(&load)?.0.clone();
+            return SCALAR_READ_IDENTITY_CACHE.with(|cache| {
+                let read = cache.borrow().get(&load)?.0.as_legacy_read().clone();
                 Some(ProgramValue::Pointer(PointerValue::from_read(
                     Pointer::loaded(&read).expect("cached pointer read descriptor"),
                     program_type,
@@ -5054,9 +5015,9 @@ pub(in crate::kernel) fn cached_symbolic_storage_cell_value(
         kind,
     );
     crate::instrumentation::record_deterministic_work(1);
-    SCALAR_READ_CACHE
+    SCALAR_READ_IDENTITY_CACHE
         .with(|cache| cache.borrow().get(&load).cloned())
-        .map(|(read, _)| wrap(read))
+        .map(|(identity, _)| wrap(identity.into_legacy_read()))
 }
 
 pub(in crate::kernel) fn symbolic_storage_cell_value(
@@ -5105,6 +5066,97 @@ pub(in crate::kernel) fn symbolic_storage_cell_value(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exact_read_descriptors_and_comparison_identities_keep_distinct_roles() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = Pointer {
+            block: "read-api-target".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let other = Pointer {
+            block: "read-api-other".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = Memory::new()
+            .with_block("read-api-target", 4)
+            .with_block("read-api-other", 4)
+            .store(pointer.clone(), int32(7));
+        let before = intern_memory_ref(&memory);
+        let after = crate::kernel::intern_memory(memory.store(other, int32(9)));
+        record_load_access_width(before.memory(), &pointer, 4);
+        record_load_access_width(after.memory(), &pointer, 4);
+        let first = MachineTerm::memory_read(before.clone(), pointer.clone(), LoadKind::Int32);
+        let second = MachineTerm::memory_read(after.clone(), pointer.clone(), LoadKind::Int32);
+        assert_ne!(
+            first, second,
+            "exact descriptors retain their selected memory"
+        );
+        assert!(read_observations::existing(&before, &pointer, LoadKind::Int32).is_none());
+        assert!(read_observations::existing(&after, &pointer, LoadKind::Int32).is_none());
+        let (first_identity, _) = scalar_reads::select_comparison_identity(
+            ScalarReadDescriptor::from_term(&first).unwrap(),
+        );
+        let (second_identity, width) = scalar_reads::select_comparison_identity(
+            ScalarReadDescriptor::from_term(&second).unwrap(),
+        );
+        assert_eq!(
+            first_identity, second_identity,
+            "the other store leaves this cell unchanged"
+        );
+        assert_eq!(width, Some(4));
+        assert_eq!(
+            ScalarReadDescriptor::from_term(&second).unwrap().memory(),
+            &after
+        );
+        assert_eq!(load_variable_registry_len(), 0);
+
+        // Existing callers deliberately retain the comparison identity until
+        // the exact-state lowering migration. Its observation keeps the live
+        // origin and access width, rather than treating that origin as identity.
+        let legacy = canonical_scalar_read(&second);
+        assert_eq!(&legacy, second_identity.as_legacy_read());
+        let observation =
+            scalar_read_observation(crate::kernel::MachineOperandView::Legacy(&legacy)).unwrap();
+        assert_eq!(observation.origin, Some(after));
+        assert_eq!(observation.bytes, 4);
+        assert_eq!(
+            canonical_scalar_read(&second),
+            legacy,
+            "warm compatibility path"
+        );
+    }
+
+    #[test]
+    fn scalar_read_comparison_identities_distinguish_writes_and_kinds() {
+        let _session = crate::kernel::VerificationSession::enter();
+        let pointer = Pointer {
+            block: "read-api-written".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let memory = Memory::new()
+            .with_block("read-api-written", 4)
+            .store(pointer.clone(), int32(7));
+        let before = intern_memory_ref(&memory);
+        let after = crate::kernel::intern_memory(memory.store(pointer.clone(), int32(9)));
+        let identity = |memory: SharedMemory, kind| {
+            let read = MachineTerm::memory_read(memory, pointer.clone(), kind);
+            scalar_reads::select_comparison_identity(
+                ScalarReadDescriptor::from_term(&read).unwrap(),
+            )
+            .0
+        };
+        assert_ne!(
+            identity(before.clone(), LoadKind::Int32),
+            identity(after, LoadKind::Int32),
+            "a changed cell must not share the preceding comparison identity"
+        );
+        assert_ne!(
+            identity(before.clone(), LoadKind::Int8),
+            identity(before, LoadKind::UInt8),
+            "signed and unsigned byte observations have distinct read kinds"
+        );
+    }
+
     #[test]
     fn pointer_producers_do_not_allocate_scalar_names() {
         let _session = crate::kernel::VerificationSession::enter();

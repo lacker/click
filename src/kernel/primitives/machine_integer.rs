@@ -507,8 +507,11 @@ impl MachineIntegerType {
 }
 
 impl MachineTerm {
-    /// The term a read of `kind` at `pointer` in `memory` denotes. This is
-    /// the one place a symbolic read term is formed from a kind.
+    /// Construct the exact read of `kind` at `pointer` in `memory`. The
+    /// supplied memory is retained unchanged: this does not select a version
+    /// point, publish an observation, or look up a stored value. Comparison
+    /// identity selection and legacy selected-version retention live in
+    /// `eval::memory_loads`, separately from this descriptor constructor.
     ///
     /// Every read is its own load at its own type (maintainer direction,
     /// 2026-10-30): the `int8` and `uint8` reads of one byte are two loads,
