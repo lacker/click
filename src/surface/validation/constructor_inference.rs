@@ -232,6 +232,18 @@ impl ConstructorTypes {
             | ContractExpression::At {
                 expression: inner, ..
             } => self.known_type(inner),
+            ContractExpression::Let {
+                name,
+                click_type,
+                value,
+                body,
+            } => {
+                let bound_type = click_type.clone().or_else(|| self.known_type(value));
+                let scope = self.bind(name, bound_type);
+                let result = self.known_type(body);
+                self.restore(scope);
+                result
+            }
             ContractExpression::If {
                 then_branch,
                 else_branch,

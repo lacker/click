@@ -1,5 +1,30 @@
 use super::*;
+
+#[test]
+fn typed_expression_binding_retains_generic_method_types_without_leaking() {
+    let source = r#"
+        import click::rust::slice;
+        theorem retained(s: Slice<uint8>, x: Integer) {
+            ensures slice::len((let x: Slice<uint8> = s; x)) == s.len()
+                and x == x by { known(); }
+        }
+    "#;
+    without_implicit_solve(|| verify_click_theorems(source)).unwrap();
+}
+
 use crate::kernel::{CompareRelation, MachineIntegerType};
+
+#[test]
+fn saved_memory_bounds_resolve_typed_methods() {
+    let source = r#"
+        import click::rust::slice;
+        theorem saved(p: uint8*, s: Slice<uint8>) {
+            ensures contains(memory(old(p)[s.len()]), memory(old(p)[s.len()]))
+                by { known(); }
+        }
+    "#;
+    without_implicit_solve(|| verify_click_theorems(source)).unwrap();
+}
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by surface_syntax_batch_00")]

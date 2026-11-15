@@ -706,6 +706,16 @@ pub(super) fn syntactic_expression_type(
         | ContractExpression::At {
             expression: inner, ..
         } => syntactic_expression_type(inner, variables),
+        ContractExpression::Let {
+            name,
+            click_type,
+            value,
+            body,
+        } if matches!(body.as_ref(), ContractExpression::Binding(bound) if bound == name) => {
+            click_type
+                .clone()
+                .or_else(|| syntactic_expression_type(value, variables))
+        }
         ContractExpression::Let { body, .. } => syntactic_expression_type(body, variables),
         _ => None,
     }

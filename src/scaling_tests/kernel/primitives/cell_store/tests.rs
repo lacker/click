@@ -44,3 +44,44 @@ fn retained_run_reads_refresh_load_origins_without_scanning_the_run() {
         "repeated seeded reads must use the epoch cache without scanning the run: {samples:?}"
     );
 }
+
+#[test]
+fn selected_cell_metadata_refuses_growing_cover_buckets_without_scanning() {
+    let mut samples = Vec::new();
+    for size in [4u32, 16, 64, 256] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let source = source(99);
+        let block = PointerBlock::Concrete("metadata-cover".into());
+        let stride = size * 4;
+        let target = constant(&block, i64::from(stride));
+        let mut single = CellStore::new();
+        single.add_run(run(constant(&block, 0), stride, 2, &source));
+        let mut ambiguous = single.clone();
+        for index in 1..size {
+            // Disjoint strided slots, but all spans cover the target. A live
+            // slot search would have to inspect the whole candidate bucket.
+            ambiguous.add_run(run(
+                constant(&block, i64::from(index * 4)),
+                stride,
+                2,
+                &source,
+            ));
+            single.add_run(run(
+                constant(&PointerBlock::Concrete(format!("other-{index}")), 0),
+                4,
+                1,
+                &source,
+            ));
+        }
+        let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
+            assert_eq!(single.value_type_at(&target), Some(ProgramType::Int32));
+            assert_eq!(ambiguous.value_type_at(&target), None);
+            assert_eq!(single.value_type_at(&constant(&block, 1)), None);
+        });
+        samples.push(work);
+    }
+    assert!(
+        samples[0] > 0 && samples.iter().all(|work| *work == samples[0]),
+        "{samples:?}"
+    );
+}

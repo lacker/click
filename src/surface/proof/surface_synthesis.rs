@@ -6395,12 +6395,19 @@ fn synthesize_surface_algebraic(
                 state,
                 |value| matches!(value, ProgramValue::Parameter(held) if held.as_ref() == term),
             ) {
-                return Some(result);
+                return if matches!(result, ContractExpression::RegionResult(_)) {
+                    typed_algebraic_result(&term.algebraic_type, result)
+                } else {
+                    Some(result)
+                };
             }
             if let Some(region) = SYNTHESIS_RECORDED_POINTS
                 .with(|slot| slot.borrow().as_ref()?.call_result_naming_algebraic(term))
             {
-                return Some(ContractExpression::RegionResult(region));
+                return typed_algebraic_result(
+                    &term.algebraic_type,
+                    ContractExpression::RegionResult(region),
+                );
             }
             // A value a local holds, a Rust local of an enum, a `Vec` or a
             // library iterator, is spelled by that local: now, or at the
@@ -6594,6 +6601,22 @@ fn synthesize_surface_algebraic(
         }
         _ => None,
     }
+}
+
+/// A recorded call result has a type in the kernel, but no lexical binding
+/// from which Surface's generic/method resolution can recover it. Keep that
+/// type in a local expression binder. Its body is only the new binding, so
+/// its name cannot capture any source expression.
+fn typed_algebraic_result(
+    ty: &crate::kernel::AlgebraicType,
+    value: ContractExpression,
+) -> Option<ContractExpression> {
+    Some(ContractExpression::Let {
+        name: "__click_result".into(),
+        click_type: Some(ClickType::Algebraic(surface_algebraic_type(ty)?)),
+        value: Box::new(value),
+        body: Box::new(ContractExpression::Binding("__click_result".into())),
+    })
 }
 
 /// The Surface application of a kernel datatype at its type arguments.

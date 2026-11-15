@@ -3211,3 +3211,42 @@ fn call_completion_repairs_expand_and_replay() {
         replay_cell_source_example(example, sidecar, claim);
     }
 }
+
+#[test]
+#[ignore = "nightly: Rust iterator expansion and cold replay"]
+fn rust_iterator_expands_without_plain_normalize() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/rust-iterators");
+    let path = root.join("sum.click");
+    let source = fs::read_to_string(&path).unwrap();
+    let project = read_click_project_at_root(&path, &source, &root).unwrap();
+    let prepared = read_verification_inputs_for_project(&path, &source, &project).unwrap();
+    let inputs = prepared.program_inputs();
+    click::surface::with_proof_trace("sum", || {
+        let expanded =
+            click::surface::expand_project_claim_source_by_label(&project, &inputs, "sum.contract")
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "{}\n{}",
+                        error.report(),
+                        error.trace_context_report().unwrap_or_default()
+                    )
+                });
+        assert!(!expanded.contains("normalize();"), "{expanded}");
+        click::surface::without_implicit_solve_for_claim("sum.contract", || {
+            click::surface::verify_project_functions(
+                &project.with_entry_source(expanded),
+                &inputs,
+                ["sum".to_string()],
+            )
+            .map(|_| ())
+            .map_err(|error| {
+                format!(
+                    "{}\n{}",
+                    error.report(),
+                    error.trace_context_report().unwrap_or_default()
+                )
+            })
+        })
+        .unwrap();
+    });
+}

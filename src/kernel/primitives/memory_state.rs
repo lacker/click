@@ -7668,7 +7668,11 @@ impl Memory {
         let mut covered = 0;
         while covered < width {
             crate::instrumentation::record_deterministic_work(1);
-            let Some(bytes) = self.cells.value_width_at(&pointer.offset_by_bytes(covered)) else {
+            let Some(bytes) = self
+                .cells
+                .value_type_at(&pointer.offset_by_bytes(covered))
+                .map(|ty| ty.byte_width())
+            else {
                 return false;
             };
             if bytes == 0 {

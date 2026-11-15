@@ -3069,6 +3069,13 @@ fn expand_declared_resource_subject(
                 resource_definitions,
             )?),
         )),
+        ResourceSubject::SavedMemory { base, start, end } => Ok(ResourceSubject::SavedMemory {
+            base: expand_declared_resource_expression(base, resource_definitions)?,
+            start: expand_declared_resource_expression(start, resource_definitions)?,
+            end: end
+                .map(|end| expand_declared_resource_expression(end, resource_definitions))
+                .transpose()?,
+        }),
         ResourceSubject::Declared {
             kind: _,
             name,

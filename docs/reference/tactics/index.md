@@ -1536,7 +1536,8 @@ Negated computational conjunctions and disjunctions are evaluated structurally.
 Direct snapshot metadata can establish allocation bounds and initialized
 integer reads, including a fixed-width read covered by cached bytes. This
 never resolves the read value, follows aliases, or walks store history;
-uncertain lifetime or initialization metadata causes a refusal.
+uncertain lifetime or initialization metadata, or an ambiguous cached-run
+bucket, causes a refusal.
 
 A conjunction goal closes when every conjunct does, and a disjunction goal
 when one disjunct does, using available facts or these computations recursively.

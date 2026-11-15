@@ -2077,12 +2077,27 @@ impl CellStore {
     }
 
     /// The selected cell's type without materializing its value or a run.
+    /// Ambiguous covering runs refuse; this query never enumerates a bucket.
     pub(crate) fn value_type_at(&self, pointer: &Pointer) -> Option<ProgramType> {
+        crate::instrumentation::record_deterministic_work(1);
         if let Some(value) = self.concrete.get(pointer) {
             return Some(value.program_type());
         }
-        self.live_run_slot(pointer)
-            .map(|slot| slot.run.element_type())
+        let (stem, offset) = offset_stem_and_constant(&pointer.offset);
+        let line = CoverLine {
+            block: pointer.block.clone(),
+            stem: stem.cloned(),
+        };
+        let ((found_line, _), segment) = self
+            .span_cover
+            .range(..=(line.clone(), offset))
+            .next_back()?;
+        if found_line != &line || segment.end <= offset || segment.runs.len() != 1 {
+            return None;
+        }
+        let run = self.runs.get(&segment.runs[0])?;
+        let index = run.slot_index(pointer)?;
+        (!run.holes.contains(index)).then_some(run.element_type())
     }
 
     /// How many bytes the cell at `pointer` holds, without materializing
