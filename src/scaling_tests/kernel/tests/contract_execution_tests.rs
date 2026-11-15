@@ -11,7 +11,7 @@ fn certification_of_algebraic_witness_ignores_unrelated_quantifiers() {
         let _session = crate::kernel::VerificationSession::enter();
         let ty = AlgebraicType::parameter("Path".into());
         let memory = Memory::new().with_block("graph", 4);
-        let mut facts = PureFactContext::new().assume_proposition(path_exists_at_snapshot(
+        let mut facts = PureFactContext::new().assume_proposition(path_exists_at_program_point(
             &ty,
             100,
             100,
@@ -19,7 +19,7 @@ fn certification_of_algebraic_witness_ignores_unrelated_quantifiers() {
             0,
         ));
         for i in 1..=size {
-            facts = facts.assume_proposition(path_exists_at_snapshot(
+            facts = facts.assume_proposition(path_exists_at_program_point(
                 &ty,
                 1_000 + u64::from(i),
                 1_000 + u64::from(i),
@@ -28,8 +28,8 @@ fn certification_of_algebraic_witness_ignores_unrelated_quantifiers() {
             ));
         }
         facts.build_stated_proposition_index();
-        let goal = path_exists_at_snapshot(&ty, 200, 200, memory.clone(), 0);
-        let missing = path_exists_at_snapshot(&ty, 200, 200, memory, 1_000);
+        let goal = path_exists_at_program_point(&ty, 200, 200, memory.clone(), 0);
+        let missing = path_exists_at_program_point(&ty, 200, 200, memory, 1_000);
         let (verdicts, work) = crate::instrumentation::measure_deterministic_work(|| {
             (
                 crate::kernel::PureFactContext::settles_exactly(&facts, &goal),

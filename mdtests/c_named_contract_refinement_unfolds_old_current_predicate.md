@@ -1,6 +1,6 @@
 # Contract refinement unfolds a predicate over entry and current memory
 
-Predicate arguments retain the shared function-entry and post-call snapshots
+Predicate arguments retain the shared function-entry and post-call states
 used by callback refinement. Opening the predicate therefore exposes the same
 `old` and current cell values as the concrete callback guarantee.
 

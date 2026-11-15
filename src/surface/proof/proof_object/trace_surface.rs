@@ -4,7 +4,7 @@
 use super::*;
 
 const MAX_TRACE_FACT_DEPTH: usize = 24;
-const MAX_TRACE_SNAPSHOTS: usize = 32;
+const MAX_TRACE_STATES: usize = 32;
 
 impl Proof<'_> {
     pub(super) fn trace_pointer_pair(
@@ -53,10 +53,7 @@ impl Proof<'_> {
             Some(ClickProposition::Comparison { left, right, .. }) => vec![left, right],
             _ => vec![],
         };
-        let recent = view
-            .fixed_state
-            .recorded_snapshots
-            .recent(MAX_TRACE_SNAPSHOTS);
+        let recent = view.fixed_state.recorded_states.recent(MAX_TRACE_STATES);
         let function = match self.context.as_ref() {
             ProofContext::Execution(context) => Some(context.parsed_function),
             _ => None,
@@ -66,7 +63,7 @@ impl Proof<'_> {
             if pointer == &Pointer::null() {
                 return Some(PointerTraceView {
                     text: "0".into(),
-                    snapshot: None,
+                    retained_state: None,
                 });
             }
             // Proof-local values are immutable, unlike C locals. A direct
@@ -82,7 +79,7 @@ impl Proof<'_> {
             if let Some(text) = immutable_name {
                 return Some(PointerTraceView {
                     text,
-                    snapshot: None,
+                    retained_state: None,
                 });
             }
             let Some(MachineTerm::MemoryLoad(memory, address, _)) = pointer_definition(pointer)
@@ -91,16 +88,16 @@ impl Proof<'_> {
             };
             let states = recent
                 .iter()
-                .filter(|(selector, _)| matches!(selector, SnapshotSelector::Mark(_)))
+                .filter(|(selector, _)| matches!(selector, ProgramPointSelector::Mark(_)))
                 .chain(
                     recent
                         .iter()
-                        .filter(|(selector, _)| !matches!(selector, SnapshotSelector::Mark(_))),
+                        .filter(|(selector, _)| !matches!(selector, ProgramPointSelector::Mark(_))),
                 )
                 .filter(|(_, state)| state.memory().same_storage_roots(memory.memory()));
             let matching: Vec<_> = states.collect();
             let point = matching.first().map(|(selector, _)| {
-                crate::surface::diagnostics::describe_snapshot_selector(selector)
+                crate::surface::diagnostics::describe_program_point_selector(selector)
             });
             // A checked field spelling through an immutable proof local is
             // usable even when the defining state has no retained C locals.
@@ -109,7 +106,7 @@ impl Proof<'_> {
                 if let Some(text) = immutable_field_hint(hint, &address, &locals) {
                     return Some(PointerTraceView {
                         text,
-                        snapshot: Some((memory, point)),
+                        retained_state: Some((memory, point)),
                     });
                 }
             }
@@ -123,11 +120,13 @@ impl Proof<'_> {
                 ) {
                     return Some(PointerTraceView {
                         text,
-                        snapshot: Some((
+                        retained_state: Some((
                             memory,
-                            Some(crate::surface::diagnostics::describe_snapshot_selector(
-                                selector,
-                            )),
+                            Some(
+                                crate::surface::diagnostics::describe_program_point_selector(
+                                    selector,
+                                ),
+                            ),
                         )),
                     });
                 }
@@ -137,16 +136,17 @@ impl Proof<'_> {
             // state is the state from which the field value was read.
             for (selector, state) in recent
                 .iter()
-                .filter(|(selector, _)| matches!(selector, SnapshotSelector::Mark(_)))
+                .filter(|(selector, _)| matches!(selector, ProgramPointSelector::Mark(_)))
                 .chain(
                     recent
                         .iter()
-                        .filter(|(selector, _)| !matches!(selector, SnapshotSelector::Mark(_))),
+                        .filter(|(selector, _)| !matches!(selector, ProgramPointSelector::Mark(_))),
                 )
             {
                 let (parameters, arguments) =
                     crate::surface::diagnostics::local_naming_tables_with_source(state, function);
-                let base_point = crate::surface::diagnostics::describe_snapshot_selector(selector);
+                let base_point =
+                    crate::surface::diagnostics::describe_program_point_selector(selector);
                 if let Some(text) = crate::surface::diagnostics::diagnostic_source_pointer_cell(
                     &address,
                     ParameterBinding::new(&parameters, &arguments),
@@ -154,7 +154,7 @@ impl Proof<'_> {
                 ) {
                     return Some(PointerTraceView {
                         text,
-                        snapshot: Some((memory, point)),
+                        retained_state: Some((memory, point)),
                     });
                 }
             }

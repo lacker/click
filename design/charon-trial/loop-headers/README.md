@@ -53,7 +53,7 @@ and stores do not shift these targets. Every crossed transition and the selected
 store still need checked execution; branches and backward/unreachable targets
 are not bypassed. The selector stops before the store itself, which may follow
 compiler-generated right-hand-side helpers. `loop(N)` selects the loop entry;
-`mark` names a reached state. Assignment selectors are not snapshot expressions.
+`mark` names a reached state. Assignment selectors are not state expressions.
 
 Both syntax and typed-kernel layouts index these targets once, with immutable
 sharing and deterministic scaling at 8, 128, and 1024 store pairs. Live Charon

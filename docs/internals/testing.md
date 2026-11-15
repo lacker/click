@@ -521,7 +521,7 @@ checked-out revisions, and workflow links are recorded below.
   [tests run for PR #1963](https://github.com/clicklang/click/actions/runs/40110835408)
   on 2026-10-24 took 6m11s from the first `scope` job log to the final `test`
   check, testing merge commit `9588023c0`. It restored tool caches and the
-  compatible `master` build snapshot.
+  compatible `master` build state.
   Preparation took 3m41s, including cache restore, exporter work, a 51.80s test
   build, and artifact upload. Shards and orchestration completed the remaining
   time. The interval excludes initial runner queue time but includes waits
@@ -531,7 +531,7 @@ checked-out revisions, and workflow links are recorded below.
   on 2026-10-24 took 6m15s by the same clock. Its checked-out commit
   `7c8dfce80` and the preceding PR run's checked-out merge commit `879f26cb5`
   both have Git tree `0ab69065245b88683a3c519f17edf64107f73ba1`.
-  Tool caches hit and the build snapshot came from `master` at `10cb3a2e7`.
+  Tool caches hit and the build state came from `master` at `10cb3a2e7`.
   Preparation took 3m53s, including a 27.52s test build. This is a measured
   same-source workflow, rather than an assumption that a queue run has the
   same source as its PR run.
@@ -759,7 +759,7 @@ CI uses these internal modes for code-affecting changes:
   the Rust import tests, which alone need Charon; mdtests run on five
   runners, each taking every fifth file by `MDTEST_PARTITION`; examples run
   on two, split by `EXAMPLE_PARTITION` so that their recorded costs
-  (`EXAMPLE_COSTS` in `tests/examples.rs`) balance. The build job saves its build snapshot only
+  (`EXAMPLE_COSTS` in `tests/examples.rs`) balance. The build job saves its build state only
   on a push to `master`, because every shard waits for that job to end. The build job takes about six of the ten minutes, so a shard has to
   finish in under four.
 
@@ -775,7 +775,7 @@ CI uses these internal modes for code-affecting changes:
   run in the nightly gate. `scripts/check.sh --charon-live` runs them alone,
   building pinned Charon first.
 
-A push to `master` runs the build job alone, to save the build snapshot that
+A push to `master` runs the build job alone, to save the build state that
 pull requests and the merge queue restore. The merge queue already ran the
 whole gate on that exact tree, and repeating it after every merge took a dozen
 runners that gating runs then waited for.
@@ -805,15 +805,15 @@ same profile. Cargo's extractor dependency pin is checked against it.
 
 The build job caches dependencies, Click's own build artifacts, and
 incremental compilation state under the compiler and dependency identity.
-Each revision saves a new snapshot and later runs restore the latest
-compatible snapshot. A separate frontend cache retains the C++ exporter and
+Each revision saves a new state and later runs restore the latest
+compatible state. A separate frontend cache retains the C++ exporter and
 its fingerprint plus Charon's pinned source checkout (including Git metadata).
 It is keyed by frontend sources, build/setup scripts, the Rust frontend profile,
 and runner OS/architecture, and published only by master. Build scripts still
 validate the exporter fingerprint and Charon revision on every run. Restore
 this cache after evaluating the Click build-cache key so Charon's Cargo files
 do not alter that key. Cargo still checks source freshness and rebuilds changed
-code. Build snapshots can be large, so cache transfer and fresh-checkout
+code. Build states can be large, so cache transfer and fresh-checkout
 rebuild costs must be included
 when comparing CI timings; a cold cache still builds everything normally.
 
@@ -1120,10 +1120,10 @@ hide quadratic growth and is not sufficient. Conversely, explicitly emitted
 paths, quantified instances, premises, and definition members count as input
 or output and may be charged accordingly.
 
-Kernel memory snapshots have such regressions in
+Kernel memory states have such regressions in
 `src/scaling_tests/kernel/tests/memory_scaling_tests.rs`: sequential stores into one block,
 one store beside a growing number of unrelated cells, interning a one-store
-derivative of an interned snapshot, and deduplication of equal content reached
+derivative of an interned state, and deduplication of equal content reached
 by different routes. The same file bounds by a constant plus a logarithm the
 work of one C store, one call havoc and its checker, one free, and one typed
 load into a heap block beside a growing number of unrelated live allocations,
@@ -1255,7 +1255,7 @@ locals, grows linearly by design; read the per-size output before filing.
 
 Time is reported beside work because work counts only what is charged. The
 hunt's first finding was invisible to it: an atomic proposition hashed its
-debug text, which printed every memory snapshot it named, so each call in a
+debug text, which printed every memory state it named, so each call in a
 long function paid more than the last while every step charged the same work
 (`hashing_a_memory_fact_is_constant_in_the_memory_size`).
 
@@ -1280,7 +1280,7 @@ density produced roughly 250--1,700 lines per second. About 500 lines per second
 is therefore a reasonable planning estimate for this corpus, not a
 hardware-independent SLA or a substitute for multi-size scaling tests.
 
-This snapshot also gives a concrete interpretation to an aspirational target:
+This state also gives a concrete interpretation to an aspirational target:
 10,000 selected lines in three seconds is about 3,300 lines per second, roughly
 six to seven times this corpus-wide baseline. Re-measure after substantial
 checker or corpus changes instead of treating the dated numbers as permanent.
@@ -1519,8 +1519,8 @@ Metadata is cleared alongside the kernel tables when a fresh
 `VerificationSession` starts. Verification prepares all functions' input
 metadata before any proof runs.
 
-Load names and snapshot content hashes derive from input names, and closers
-search facts and recorded snapshots in an order that follows them.
+Load names and state content hashes derive from input names, and closers
+search facts and recorded states in an order that follows them.
 The nightly `a_functions_tactic_work_does_not_grow_with_earlier_unrelated_functions`
 checks exact input-name and per-tactic work equality between whole-file and
 selected-unit verification beside 1, 2, 4, and 8 unrelated earlier functions,
@@ -1803,7 +1803,7 @@ its sites:
    unit as the baseline and the Click source to be identical outside that unit;
    it then reverifies just that proof unit while reusing certified dependencies.
    The retained session runs on a thread of its own: its certified environment
-   names snapshots in that thread's kernel tables, which every other
+   names states in that thread's kernel tables, which every other
    verification on a thread replaces, and a session refuses to reuse an
    environment whose tables were replaced;
 3. **cold original/rewritten** — on the first site of each claim, directly
@@ -1837,7 +1837,7 @@ CLAIM scalar.arithmetic_result verify 1 rewrite(s) ... ok (1210 units, 17ms)
 
 ### Small-stack canary
 
-Checked verification advances a persistent `Proof`; its execution snapshot
+Checked verification advances a persistent `Proof`; its execution state
 (`ExecutionProofState`) is carried by value through the driver frames.
 `nested_conjunction_body_parsing_uses_small_frames_and_linear_work` parses
 nested proof bodies on an explicit 1.75 MiB thread stack, below libtest's

@@ -105,7 +105,7 @@ fn model_argument_guard_work(prepare: bool) {
         );
         let state = ExecutionState::new().with_memory(memory);
         let algebraic = BTreeMap::new();
-        let snapshots = RecordedSnapshots::new();
+        let retained_states = RecordedStates::new();
         let application_context = TheoremApplicationContext {
             values: &context.values,
             array_refs: &context.array_refs,
@@ -113,7 +113,7 @@ fn model_argument_guard_work(prepare: bool) {
             pre_state: &state,
             post_state: &state,
             result: None,
-            recorded_snapshots: &snapshots,
+            recorded_states: &retained_states,
             integer_values: &context.integer_values,
             pointer_element_widths: BTreeMap::new(),
         };

@@ -1,9 +1,9 @@
 # Memory derivation DAG
 
-Click interns kernel memory snapshots and records how each new snapshot was
+Click interns kernel memory states and records how each new state was
 derived. The resulting directed acyclic graph (DAG) lets memory reasoning
 relate loads across stores, calls, allocation, and other state changes without
-reconstructing the complete history from snapshot values.
+reconstructing the complete history from state values.
 
 This is an internal representation. It doesn't add Surface Click syntax or
 change which C programs Click accepts.
@@ -12,25 +12,25 @@ change which C programs Click accepts.
 
 `SharedMemory` is the stable identity of an interned `Memory` value. The
 arena assigns dense identifiers. A separately stored `MemoryDerivation`
-describes the edge from an already-interned parent to a child snapshot.
+describes the edge from an already-interned parent to a child state.
 Keeping provenance outside `Memory` means that equality, hashing, and ordering
 continue to describe memory values rather than the route used to produce them.
 
-Each map and set inside a snapshot (`blocks`, `cells`, `union_cells`, the
-ended-lifetime set, and every heap collection) is a `SnapshotMap` or
-`SnapshotSet` from `src/kernel/primitives/persistent_map.rs`: a persistent
+Each map and set inside a state (`blocks`, `cells`, `union_cells`, the
+ended-lifetime set, and every heap collection) is a `HashedOrdMap` or
+`HashedOrdSet` from `src/kernel/primitives/persistent_map.rs`: a persistent
 B-tree (`imbl::OrdMap` / `imbl::OrdSet`) that also carries a cached content
-hash, the wrapping sum of one fixed-key hash per entry. A snapshot therefore
-shares structure with the snapshot it came from: cloning a map is O(1), a
-store copies only the O(log n) path it changes, and hashing a snapshot reads
+hash, the wrapping sum of one fixed-key hash per entry. A state therefore
+shares structure with the state it came from: cloning a map is O(1), a
+store copies only the O(log n) path it changes, and hashing a state reads
 the cached sums instead of visiting its cells. The sum is independent of
 insertion order, so equal contents hash equally however they were built.
-Equality rejects on the snapshot's O(1) content hash, accepts maps that share
+Equality rejects on the state's O(1) content hash, accepts maps that share
 a root, and otherwise compares elementwise, charging each compared entry to
 the deterministic work counters. Ordering stays lexicographic over entries.
 
 A rule applied at one address visits only the entries that can alias it.
-Every snapshot collection is keyed by a `Pointer` (or a key that orders by
+Every state collection is keyed by a `Pointer` (or a key that orders by
 one), `Pointer` orders by block first, and `PointerBlock` orders by variant,
 so one block's entries are one key range, the `Symbolic` blocks are one range
 and the `Heap` and `Temporary` blocks come last. `PointerBlock::proven_distinct`
@@ -47,43 +47,43 @@ on the first rung of its ladder, and restricting the visit changes no answer.
 Loop havoc stays whole-memory: its write set is every reachable cell. The
 interface join does not. It keeps a cell, or a whole run, that every arm
 holds with the same value, and it finds the rest by diffing the arms'
-snapshots, which share every subtree no arm touched. Its work is the entries
-on which the arms differ, not the snapshot
-(`interface_join_does_not_visit_cells_its_arms_share`). A snapshot that holds
+states, which share every subtree no arm touched. Its work is the entries
+on which the arms differ, not the state
+(`interface_join_does_not_visit_cells_its_arms_share`). A state that holds
 a typed union view takes the whole-map pass instead, because a view is
 forgotten whatever the arms agree on.
 
 Interning looks up the caller's storage roots first, then the content. A
 structural hit registers the caller's roots too, and the arena pins them so
 the addresses cannot be reused by other content; asking again for the same
-snapshot is then a pointer-identity hit with no comparison.
+state is then a pointer-identity hit with no comparison.
 
 Execution carries the arena's canonical storage forward. A producer interns
 its input as the edge's base and continues from the base's stored instance
 (`intern_derivation_base`), and `record_memory_derivation` replaces the
 result with the stored instance of its content, an O(1) handle clone, so
-every snapshot a path carries, and every fact, term, or certified store built
-from it, is the instance the arena holds. Equal snapshots therefore share
+every state a path carries, and every fact, term, or certified store built
+from it, is the instance the arena holds. Equal states therefore share
 their roots, and facts that embed them compare by root identity rather than
 entry by entry; the recorded edges are unchanged. Because every result is
 derived from its base's canonical storage, a statement executed twice from
 one state (planned, then checked) is recognized as the base's recorded child
 before any structural lookup: the arena indexes each base's recorded children
 by content hash, and `Memory::eq_relative_to` compares the two results'
-changes from the base (`SnapshotMap::eq_relative_to`, which diffs against the
+changes from the base (`HashedOrdMap::eq_relative_to`, which diffs against the
 base and so walks only the changed paths). The answer is exact whatever the
-snapshots share; only the cost depends on the sharing.
+states share; only the cost depends on the sharing.
 
 The arena is per thread and per verification. Interning dedups by content and
 keeps the first derivation recorded for an id, so two verifications sharing
-one arena would let the second inherit the first's edges for any snapshot
+one arena would let the second inherit the first's edges for any state
 with the same content — a call havoc of a same-named callee, for example,
 since havoc identities restart per verification. `VerificationSession`
 (`src/kernel/mod.rs`), entered at the outermost verification boundary,
 starts a fresh arena under a new token and empties every table keyed by
-arena ids or holding arena snapshots (the load registry, the canonical-form
+arena ids or holding arena states (the load registry, the canonical-form
 caches, the reasoning memos, and the per-verification execution caches).
-Snapshots from an earlier session still compare by content but answer no
+Memory states from an earlier session still compare by content but answer no
 derivation query.
 
 The producers in `src/kernel/primitives/memory_state.rs` record these edge
@@ -91,7 +91,7 @@ kinds:
 
 | Edge | Meaning |
 | --- | --- |
-| `BranchJoin` | An abstraction of all incoming memories. A selected read crosses only when typed preservation paths connect every input to a common snapshot; cache presence is irrelevant. |
+| `BranchJoin` | An abstraction of all incoming memories. A selected read crosses only when typed preservation paths connect every input to a common state; cache presence is irrelevant. |
 | `Store` | One pointer was assigned a value. No fact context is recorded on the edge. |
 | `LoopHavoc` | A loop may have changed memory; verified whole-loop effects carry a checked write set. That set also holds every automatic object, record or array, the body may write through a pointer: one the body names, a bare object name being its address, or one whose address a local or cell holds at entry. A set derived from the function's resources alone covers only memory the function was given (`a_loop_call_writing_a_local_struct_forgets_its_earlier_value.md`). |
 | `CallHavoc` | A call may have changed the callee's owned ranges, and none of the memory its caller kept owning. |
@@ -119,12 +119,12 @@ load whatever the array's length.
 A scalar program store retains its original input before invalidating cached
 values, records initialization and effective types, and interns only the completed
 store. Cache cleanup is not a separate transition on this path. If invalidation
-loses knowledge, the completed snapshot retains the `ForgottenFrom` marker for
+loses knowledge, the completed state retains the `ForgottenFrom` marker for
 the original input; discarding a cached value must not make a post-write state
 identical to an older state. The low-level store constructor used for already
 prepared cells remains distinct from the program-store operation.
 
-Unresolved scalar program reads name their actual input snapshot, so an explicit
+Unresolved scalar program reads name their actual input state, so an explicit
 fact about that state matches the returned value. Temporary cache reduction can
 resolve a read but does not choose the state named by an unresolved scalar
 result. Pointer-read naming retains its existing projection and provenance
@@ -149,13 +149,13 @@ partially overlapping windows take precedence over
 separation authority. Evidence stays local to the fact context; a context without
 the premise, or another branch, does not hold that authority.
 
-## What a snapshot's identity is
+## What a state's identity is
 
-A snapshot includes its known cells, the snapshot it was forgotten from, and
+A state includes its known cells, the state it was forgotten from, and
 the incoming identities of its most recent branch join.
 
 Interning by content is what lets one node stand for every execution that
-reaches it, and a load reads its name from the snapshot it happens at. Both
+reaches it, and a load reads its name from the state it happens at. Both
 rely on the content deciding the state. Known cells alone don't: dropping a
 cached value leaves the memory unchanged and the knowledge of it gone, and a
 cell map that has forgotten a store looks exactly like the cell map before
@@ -163,8 +163,8 @@ that store. After `a[i] = 7; a[j] = 0;` the second write drops the possibly
 aliasing `a[i]` cell and the map is empty again, as it was at function entry.
 
 So `Memory` carries a `forgotten_from` mark: the interned identity of the
-snapshot cached values were dropped from, part of equality, hashing, ordering
-and the interning key. A snapshot means "the memory the mark denotes, with
+state cached values were dropped from, part of equality, hashing, ordering
+and the interning key. A state means "the memory the mark denotes, with
 these cells known on top of it", so two executions reaching the same cells
 over the same mark really are in the same state and interning stays sound,
 deterministic and path-independent. An entry state carries no mark, so no
@@ -188,20 +188,20 @@ Later stores carry the mark they were given, and so do the projections used
 for load naming: the pointer-observable form may drop cells this load is
 proven not to read, but not the mark.
 
-An interface join retains the identities of all incoming snapshots in
+An interface join retains the identities of all incoming states in
 `join_inputs`, including through read projections. Two joins with empty cell
-maps must not become the same snapshot when their incoming histories differ.
+maps must not become the same state when their incoming histories differ.
 The persistent set hashes incoming content hashes without recursively walking
 their histories; equality also checks their exact arena identities.
 
-A load's name is not usually this snapshot's hash, because
+A load's name is not usually this state's hash, because
 `load_variable_for_cell_with_origin` first asks the resource tracker for the
 cell's version point — the oldest point back to which the recorded steps show
 this cell unchanged — and names the load there. A cell whose version the tracker can reach keeps the
 name it had; the mark decides the name only where the walk stops. It decides
 the *history* everywhere, which is the point.
 
-A cell the snapshot holds materialized is named by its value before any walk.
+A cell the state holds materialized is named by its value before any walk.
 An integer cell holding a load variable resolves to that variable through the
 canonical form. A pointer cell whose value is exactly the pointer a typed load
 of that cell produces (the read's own `LoadedPointer` name at displacement
@@ -221,7 +221,7 @@ A real partial store remains a barrier before those cache-only edges.
 Checking compares the source identity, load mode and exact scalar stride; it
 never enumerates the run or assumes a caller's separation facts. Boolean and
 pointer representations remain under their existing rules. Constant runs,
-copies from another address, and loads from an older changed snapshot cannot
+copies from another address, and loads from an older changed state cannot
 use this witness. Thus opening a returned resource preserves unrelated caller
 cells without hiding the call's preceding havoc.
 
@@ -236,7 +236,7 @@ never causes lookup to enumerate every element, including during refolding
 and failed old-value searches.
 
 Wide scalar reads use selected pointer equalities without entering the int32
-congruence graph. Equal addresses give equal eight-byte reads in one snapshot,
+congruence graph. Equal addresses give equal eight-byte reads in one state,
 or when bounded history walks reach the same source node. Each walk retains
 the full access width and stops after at most 64 edges. If the cheap address
 classifier stops at a store, the full pointer matcher may identify that exact
@@ -244,7 +244,7 @@ store as the read's source, provided its value has the matching width. This
 check neither searches earlier writes nor preserves an old value across a
 whole or partial overwrite.
 
-Seeded runs keep their source snapshots, but do not retain named slot values.
+Seeded runs keep their source states, but do not retain named slot values.
 Reading a slot goes through the load-naming cache scoped to the current
 load-origin epoch. A reusable verification session retains the arena and its
 runs across rechecks; returning a slot value cached inside a run would skip
@@ -304,7 +304,7 @@ unchanged store. In particular:
   through the affected allocation;
 - havoc marker blocks remain attached during materialization-source
   canonicalization, so materialized sibling cells can't hide a havoc, and the
-  source's cells survive only where the projected snapshot still holds them,
+  source's cells survive only where the projected state still holds them,
   so the source can't restore a cell the havoc erased.
 
 These rules are soundness boundaries, not search heuristics.
@@ -326,9 +326,9 @@ proposition facts.
 ## Consumers and scope
 
 Memory-load equality and unchanged-load reasoning use derivation ancestry to
-find a common source snapshot for a specific pointer. A query stops at an edge
+find a common source state for a specific pointer. A query stops at an edge
 whose safety condition it can't prove. Positive answers are cached by stable
-snapshot and pointer identities; failed answers can be retried after new
+state and pointer identities; failed answers can be retried after new
 derivation information becomes available.
 
 Exact-store lookup uses the maintained pointer equality graph, so a known
@@ -382,7 +382,7 @@ load may cross with evidence that it is outside every range. A declaring loop
 also retains the flat ownership withheld from its body. Explicit read transport
 may select one indexed kept range covering the entire read, even if a
 conditional collection over-approximates the mutable footprint. The persistent
-kept-range identity is part of the havoc marker; snapshots with different
+kept-range identity is part of the havoc marker; states with different
 frames cannot intern together. No composite or alias search is enabled.
 The copy-back
 in `prepare_loop_top_state` materializes entry cells already known to be stable;
@@ -428,24 +428,24 @@ those boundaries. `wide_range_reader_tests` cover native bounds above 2³²,
 alias alignment, resource unfolding and projection, loop frames, certificates,
 missing-resource diagnostics and mixed domains/element widths.
 
-## Bounded two-snapshot load equality
+## Bounded two-state load equality
 
-A two-snapshot load equality first uses the typed common-ancestor read walk.
+A two-state load equality first uses the typed common-ancestor read walk.
 It advances the newer endpoint until the paths meet, retaining each checked
 no-write hop, and stops before their shared older history. If an intervening
 step affects the read or cannot be framed, the existing source/value walks
 still decide stored-value equality, endpoint pinning, or refusal. Transport
-traces name the successful stop as a common snapshot. The cold-query scaling
-regressions `load_equality_ignores_history_before_both_snapshots` and
-`load_equality_work_tracks_the_snapshot_delta` distinguish history before both
-snapshots from the steps between them, including a previously written cell.
+traces name the successful stop as a common state. The cold-query scaling
+regressions `load_equality_ignores_history_before_both_states` and
+`load_equality_work_tracks_the_state_delta` distinguish history before both
+states from the steps between them, including a previously written cell.
 
 ## Source and tests
 
 The representation and edge producers live in
 `src/kernel/primitives/memory_state.rs`. The consumers live primarily in
 `src/kernel/reasoning/memory_resolution.rs` and memory-load reasoning. Focused
-shape, boundary, sibling-snapshot, marker-preservation, and scaling regressions
+shape, boundary, sibling-state, marker-preservation, and scaling regressions
 live in `src/kernel/tests/memory_dag_tests.rs`; heap lifetime edges also have
 coverage in `src/kernel/tests/heap_tests.rs`.
 
@@ -457,9 +457,9 @@ current architecture contract.
 
 A rejected `transport(source, target) using { ... }` reports the cell walks
 actually performed while checking that operation. Each observation identifies
-the queried address and byte width, starting and stopping snapshots, number of
+the queried address and byte width, starting and stopping states, number of
 crossed edges, stopping reason, and the extended/explicit DAG modes used by the
-query. The address and snapshot identities share the checked source, target,
+query. The address and state identities share the checked source, target,
 and execution facts' exact formatter and construction legend.
 
 These observations are captured as each walk returns, not reconstructed by

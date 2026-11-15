@@ -1,4 +1,4 @@
-//! Where an execution proof begins and how its snapshot is edited: the
+//! Where an execution proof begins and how its state is edited: the
 //! root constructors from an entry execution state, derived roots for loop
 //! effects and post-execution tactics, and the in-place edit of the focused branch
 //! frontier's execution.

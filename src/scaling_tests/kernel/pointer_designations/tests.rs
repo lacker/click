@@ -205,11 +205,11 @@ fn recent_pointer_read_origin_avoids_older_alias_histories() {
             older.push(pointer);
         }
         let before = intern_memory_ref(&memory);
-        let read = |snapshot: &SharedMemory, pointer: &Pointer| {
+        let read = |retained_state: &SharedMemory, pointer: &Pointer| {
             PointerValue::from_read(
-                Pointer::loaded_value(snapshot, pointer),
+                Pointer::loaded_value(retained_state, pointer),
                 ProgramType::Int32Pointer,
-                snapshot,
+                retained_state,
                 pointer,
             )
         };

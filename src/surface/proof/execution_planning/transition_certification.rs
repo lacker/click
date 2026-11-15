@@ -19,7 +19,7 @@ pub(in crate::surface::proof) fn record_loop_exit_invariants(
             .items()
             .get(*index)
             .ok_or_else(|| ClickError::new("loop-exit invariant index exceeds declared clauses"))?;
-        let surface = surface_at_snapshot(item.proposition(), &exit_point)?;
+        let surface = surface_at_program_point(item.proposition(), &exit_point)?;
         presentation.record_lowering(&surface, target)?;
     }
     Ok(())
@@ -923,7 +923,7 @@ fn certified_transitions_from_execution(
             };
             if matches!(outcome, StatementOutcome::Normal(_) | StatementOutcome::Return { .. })
             {
-                // Publish the producer's facts at their original snapshots.
+                // Publish the producer's facts at their original states.
                 // Extra current-state consequences belong to explicit proof or
                 // expandable search, not automatic statement-exit discovery.
                 let mut transported_facts = Vec::new();
@@ -1037,17 +1037,20 @@ fn generated_load_bindings_from_facts(
         let next = match bindings.get(&variable) {
             Some(crate::kernel::GeneratedLoadBinding::Ambiguous { .. }) => continue,
             Some(crate::kernel::GeneratedLoadBinding::Exact {
-                snapshot,
+                retained_state,
                 pointer,
                 load,
                 ..
             }) => match binding {
                 crate::kernel::GeneratedLoadBinding::Exact {
-                    snapshot: next_snapshot,
+                    retained_state: next_state,
                     pointer: next_pointer,
                     load: next_load,
                     ..
-                } if snapshot == next_snapshot && pointer == next_pointer && load == next_load => {
+                } if retained_state == next_state
+                    && pointer == next_pointer
+                    && load == next_load =>
+                {
                     continue;
                 }
                 _ => crate::kernel::GeneratedLoadBinding::Ambiguous { variable },
@@ -1212,7 +1215,7 @@ mod condition_transition_tests {
         let mut execution = ExecutionProofState::at_entry(
             state,
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         );

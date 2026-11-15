@@ -1824,11 +1824,11 @@ impl ProgramVerificationSession {
 
     /// Refuses to reuse the retained environment once another verification
     /// on this thread has started fresh kernel tables. The environment's
-    /// snapshots name entries of the tables it was built under; against a
+    /// states name entries of the tables it was built under; against a
     /// replaced arena they would resolve to unrelated derivations, which at
     /// best makes proof work depend on whatever ran in between (a tactic
     /// exhausting its budget only in the session) and at worst lets a
-    /// snapshot inherit another verification's facts. Keep a session on a
+    /// state inherit another verification's facts. Keep a session on a
     /// thread of its own when other verification runs on the same thread.
     /// On success, the tables are first restored to the state captured when
     /// the environment was built, so a check starts from that state alone and
@@ -2190,7 +2190,7 @@ fn verify_program_in_context(
         ));
     }
     // A verification that continues from an earlier one's environment shares
-    // that environment's snapshots and keeps its kernel session; every other
+    // that environment's states and keeps its kernel session; every other
     // verification starts its own, so thread-local kernel state cannot carry
     // over from whatever verified before it on this thread.
     // The guard scopes the kernel's thread-local state to this verification
@@ -2398,7 +2398,7 @@ fn verify_program_in_context(
         // so the declared bodies are recorded once here, for this
         // verification's kernel session.
         // A pure function application is a term over its argument values and
-        // the snapshots its array-ref arguments carry, and a predicate fact a
+        // the states its array-ref arguments carry, and a predicate fact a
         // term over its arguments; neither records the ambient memory. A body
         // that read a C object by name would make one such term stand for the
         // object's value before and after a store to it, so those bodies are
@@ -2628,7 +2628,7 @@ fn verify_program_in_context(
         check_verification_deadline()?;
         // Load-variable origins are first-seen per verified function: an
         // origin minted while verifying an earlier function belongs to a
-        // memory DAG this function's effect snapshots never connect to.
+        // memory DAG this function's effect states never connect to.
         crate::kernel::begin_load_origin_epoch();
         if function_block.is_external() {
             continue;
@@ -2706,7 +2706,7 @@ fn verify_program_in_context(
         }
         // This outer span makes otherwise-unclassified proof orchestration
         // visible at an interrupted project deadline. Nested tactic and
-        // certification spans take precedence in the active-work snapshot.
+        // certification spans take precedence in the active-work state.
         let _verifier_core_timing = VerificationTimingPhase::new("verifier-core");
         // The entry model of each declared binder is what `old(c.rank)` names,
         // and the registry that lets a refusal spell it that way is per
@@ -4392,7 +4392,7 @@ pub(in crate::surface) fn termination_measure_source(expression: &ContractExpres
             expression,
         } => format!(
             "at({}, {})",
-            crate::surface::diagnostics::describe_snapshot_selector(selector),
+            crate::surface::diagnostics::describe_program_point_selector(selector),
             termination_measure_source(expression)
         ),
         ContractExpression::Negate(inner) => format!("-{}", termination_measure_source(inner)),
@@ -4715,7 +4715,7 @@ pub(in crate::surface) fn program_function_termination_plans(
 /// a file-scope object by its bare name, or any object by its qualified
 /// `unit::name` spelling.
 ///
-/// An application is keyed on its argument values and the snapshots its
+/// An application is keyed on its argument values and the states its
 /// array-ref arguments carry, and a predicate fact on its arguments; nothing
 /// in either records the ambient memory. A body that read `counter` would make
 /// `read_counter(0)` one term before and after a store to `counter`, and a
@@ -6029,7 +6029,7 @@ pub(in crate::surface) fn function_resource_summary(
             *spec = spec
                 .clone()
                 .with_role(role)
-                .with_snapshot(ResourceSnapshot::Entry)
+                .with_state_source(ResourceStateSource::Entry)
                 .with_clause_position(clause_index, clause_count);
         }
         resource_clause_index += 1;
@@ -6058,10 +6058,10 @@ pub(in crate::surface) fn function_resource_summary(
         } else {
             ResourceTransferRole::Produce
         };
-        let snapshot = if ensure.borrowed() {
-            ResourceSnapshot::Entry
+        let retained_state = if ensure.borrowed() {
+            ResourceStateSource::Entry
         } else {
-            ResourceSnapshot::Post
+            ResourceStateSource::Post
         };
         let result_binding = BTreeMap::from([(
             "result".to_string(),
@@ -6085,7 +6085,7 @@ pub(in crate::surface) fn function_resource_summary(
             parsed_function.parameters(),
             (!ensure.borrowed()).then(|| parsed_function.return_type().to_kernel_type()),
             role,
-            snapshot,
+            retained_state,
             None,
         )?;
         let guard = ensure
@@ -6114,9 +6114,9 @@ pub(in crate::surface) fn function_resource_summary(
             // Instance ownership is identity-borrowed but field-produced: its
             // selected identity comes from entry while its declared fields are
             // checked against the post-call instance.  Keep that exceptional
-            // snapshot explicit in the normalized descriptor.
+            // state explicit in the normalized descriptor.
             if ensure.borrowed() && spec.is_instance() {
-                spec = spec.with_snapshot(ResourceSnapshot::Post);
+                spec = spec.with_state_source(ResourceStateSource::Post);
             }
             if let Some(guard) = &guard {
                 spec = spec.with_guard(guard.clone());
@@ -6127,11 +6127,15 @@ pub(in crate::surface) fn function_resource_summary(
     }
     if let Some(storage) = crate::surface::lowering::construction_result_resource(parsed_function)?
     {
-        requires.push(storage.clone().with_snapshot(ResourceSnapshot::Entry));
+        requires.push(
+            storage
+                .clone()
+                .with_state_source(ResourceStateSource::Entry),
+        );
         ensures.push(
             storage
                 .with_role(ResourceTransferRole::Produce)
-                .with_snapshot(ResourceSnapshot::Post),
+                .with_state_source(ResourceStateSource::Post),
         );
     }
     if parsed_function.requires_read_only_contract()
@@ -6173,7 +6177,7 @@ pub(in crate::surface) fn function_resource_constructors(
                 &[],
                 None,
                 ResourceTransferRole::Produce,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
                 None,
             )
         })
@@ -6466,7 +6470,7 @@ pub(in crate::surface) fn composite_resource_definitions(
                             &definition_parameters,
                             None,
                             ResourceTransferRole::Borrow,
-                            ResourceSnapshot::Current,
+                            ResourceStateSource::Current,
                             None,
                         )
                     })
@@ -6511,7 +6515,7 @@ pub(in crate::surface) fn append_entry_resource_specs(
         parameters,
         None,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
         None,
     )?);
     Ok(())
@@ -6528,7 +6532,7 @@ pub(in crate::surface) fn append_entry_resource_specs_with_pointer_types(
         parameters,
         None,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
         Some(pointer_element_types),
     )?);
     Ok(())
@@ -6539,7 +6543,7 @@ fn resource_clause_to_resource_specs_with_metadata(
     parameters: &[crate::languages::interface::ImportedParameter],
     result_type: Option<crate::kernel::ProgramType>,
     role: crate::kernel::ResourceTransferRole,
-    snapshot: crate::kernel::ResourceSnapshot,
+    retained_state: crate::kernel::ResourceStateSource,
     pointer_element_types: Option<&BTreeMap<String, crate::kernel::ProgramType>>,
 ) -> Result<Vec<ResourceSpec>, ClickError> {
     if let ResourceClause::MemoryAggregate { access, segments } = resource {
@@ -6555,7 +6559,7 @@ fn resource_clause_to_resource_specs_with_metadata(
                     parameters,
                     result_type,
                     role,
-                    snapshot,
+                    retained_state,
                     pointer_element_types,
                 )
             })
@@ -6566,7 +6570,7 @@ fn resource_clause_to_resource_specs_with_metadata(
         parameters,
         result_type,
         role,
-        snapshot,
+        retained_state,
         pointer_element_types,
     )?;
     fn declared_arguments(resource: &ResourceClause) -> Option<&[ContractExpression]> {
@@ -6598,7 +6602,7 @@ fn resource_clause_to_resource_spec_with_parameters(
         parameters,
         result_type,
         crate::kernel::ResourceTransferRole::Borrow,
-        crate::kernel::ResourceSnapshot::Entry,
+        crate::kernel::ResourceStateSource::Entry,
         None,
     )
 }
@@ -6653,7 +6657,7 @@ fn resource_clause_to_resource_spec_for_body(
         parameters,
         result_type,
         role,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
         None,
     )
 }
@@ -6663,7 +6667,7 @@ fn resource_clause_to_resource_spec_with_metadata(
     parameters: &[crate::languages::interface::ImportedParameter],
     result_type: Option<crate::kernel::ProgramType>,
     role: crate::kernel::ResourceTransferRole,
-    snapshot: crate::kernel::ResourceSnapshot,
+    retained_state: crate::kernel::ResourceStateSource,
     pointer_element_types: Option<&BTreeMap<String, crate::kernel::ProgramType>>,
 ) -> Result<ResourceSpec, ClickError> {
     match resource {
@@ -6676,7 +6680,7 @@ fn resource_clause_to_resource_spec_with_metadata(
                 parameters,
                 result_type,
                 role,
-                snapshot,
+                retained_state,
                 pointer_element_types,
             )?;
             if matches!(
@@ -6697,7 +6701,7 @@ fn resource_clause_to_resource_spec_with_metadata(
                 })?,
                 inner,
                 role,
-                snapshot,
+                retained_state,
             )
             .map_err(|error| ClickError::new(error.to_string()))
         }
@@ -6707,20 +6711,20 @@ fn resource_clause_to_resource_spec_with_metadata(
                 parameters,
                 result_type,
                 role,
-                snapshot,
+                retained_state,
                 pointer_element_types,
             )?;
-            let (quantity, quantity_snapshot) =
-                crate::surface::lowering::resource_argument_to_typed_program_expression_with_snapshot(
+            let (quantity, quantity_state_source) =
+                crate::surface::lowering::resource_argument_to_typed_program_expression_with_state(
                     quantity,
                     crate::languages::interface::InterfaceType::Int32,
                 )?;
-            ResourceSpec::quantified_with_quantity_snapshot(
+            ResourceSpec::quantified_with_quantity_state(
                 quantity,
                 inner,
                 role,
-                snapshot,
-                quantity_snapshot,
+                retained_state,
+                quantity_state_source,
             )
             .map_err(|error| ClickError::new(error.to_string()))
         }
@@ -6743,7 +6747,7 @@ fn resource_clause_to_resource_spec_with_metadata(
             )),
             KernelResourceAccessMode::View,
             role,
-            snapshot,
+            retained_state,
         )),
         ResourceClause::OwnMemory(segment) => Ok(ResourceSpec::memory(
             MemorySegment::new(
@@ -6765,7 +6769,7 @@ fn resource_clause_to_resource_spec_with_metadata(
             )),
             KernelResourceAccessMode::Own,
             role,
-            snapshot,
+            retained_state,
         )),
         ResourceClause::MemoryAggregate { .. } => Err(ClickError::new(
             "aggregate resource clauses must be expanded before one resource spec is required",
@@ -6777,7 +6781,7 @@ fn resource_clause_to_resource_spec_with_metadata(
             KernelResourceAccessMode::Own,
             crate::kernel::ResourceQuantity::One,
             role,
-            snapshot,
+            retained_state,
         )
         .map_err(|error| ClickError::new(error.to_string())),
         ResourceClause::Declared {
@@ -6803,13 +6807,13 @@ fn resource_clause_to_resource_spec_with_metadata(
                 .iter()
                 .zip(parameter_types)
                 .map(|(argument, parameter_type)| {
-                    crate::surface::lowering::resource_argument_to_typed_program_expression_with_snapshot(
+                    crate::surface::lowering::resource_argument_to_typed_program_expression_with_state(
                         argument,
                         *parameter_type,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let (arguments, argument_snapshots): (Vec<_>, Vec<_>) =
+            let (arguments, argument_state_sources): (Vec<_>, Vec<_>) =
                 lowered_arguments.into_iter().unzip();
             let parameter_types = parameter_types
                 .iter()
@@ -6854,7 +6858,7 @@ fn resource_clause_to_resource_spec_with_metadata(
                     parameters,
                     result_type,
                     role,
-                    snapshot,
+                    retained_state,
                     pointer_element_types,
                 )?
                 .with_source_arguments(
@@ -6871,12 +6875,12 @@ fn resource_clause_to_resource_spec_with_metadata(
                             resource: Box::new(protected_spec),
                             schema: schema.clone(),
                         }),
-                        snapshot,
+                        state_source: retained_state,
                     },
                     access,
                     crate::kernel::ResourceQuantity::One,
                     role,
-                    snapshot,
+                    retained_state,
                 )
                 .map_err(|error| ClickError::new(error.to_string()));
             }
@@ -6887,12 +6891,12 @@ fn resource_clause_to_resource_spec_with_metadata(
                 return ResourceSpec::new(
                     crate::kernel::ResourceTerm::MutexGuard {
                         mutex: Box::new(mutex.clone()),
-                        snapshot: argument_snapshots[0],
+                        state_source: argument_state_sources[0],
                     },
                     access,
                     crate::kernel::ResourceQuantity::One,
                     role,
-                    snapshot,
+                    retained_state,
                 )
                 .map_err(|error| ClickError::new(error.to_string()));
             }
@@ -6903,12 +6907,12 @@ fn resource_clause_to_resource_spec_with_metadata(
                 return ResourceSpec::new(
                     crate::kernel::ResourceTerm::MutexLive {
                         mutex: Box::new(mutex.clone()),
-                        snapshot: argument_snapshots[0],
+                        state_source: argument_state_sources[0],
                     },
                     access,
                     crate::kernel::ResourceQuantity::One,
                     role,
-                    snapshot,
+                    retained_state,
                 )
                 .map_err(|error| ClickError::new(error.to_string()));
             }
@@ -6937,7 +6941,7 @@ fn resource_clause_to_resource_spec_with_metadata(
                             parameters,
                             result_type,
                             role,
-                            snapshot,
+                            retained_state,
                             pointer_element_types,
                         )?
                         .with_source_arguments(
@@ -6954,12 +6958,12 @@ fn resource_clause_to_resource_spec_with_metadata(
                         side,
                         payload: Box::new(payload),
                         flag: Box::new(flag.clone()),
-                        snapshot: argument_snapshots[0],
+                        state_source: argument_state_sources[0],
                     },
                     access,
                     crate::kernel::ResourceQuantity::One,
                     role,
-                    snapshot,
+                    retained_state,
                 )
                 .map_err(|error| ClickError::new(error.to_string()));
             }
@@ -6972,7 +6976,7 @@ fn resource_clause_to_resource_spec_with_metadata(
                         protected: resource_type_arguments.first().map(|resource| {
                             let ResourceClause::Declared { type_schema: Some(schema), .. } = resource else { return Err(ClickError::new("protected resource type has no checked schema")); };
                             Ok(Box::new(crate::kernel::ResourceTypeSpec {
-                                resource: Box::new(resource_clause_to_resource_spec_with_metadata(resource, parameters, result_type, role, snapshot, pointer_element_types,
+                                resource: Box::new(resource_clause_to_resource_spec_with_metadata(resource, parameters, result_type, role, retained_state, pointer_element_types,
 )?.with_source_arguments(match resource {
                                     ResourceClause::Declared { arguments, .. } => arguments.iter().map(crate::surface::diagnostics::describe_contract_expression).collect(),
                                     _ => unreachable!(),
@@ -6981,16 +6985,16 @@ fn resource_clause_to_resource_spec_with_metadata(
                             }))
                         }).transpose()?,
                         mutex: Box::new(mutex.clone()),
-                        snapshot: argument_snapshots[0],
+                        state_source: argument_state_sources[0],
                     },
                     access,
                     crate::kernel::ResourceQuantity::One,
                     role,
-                    snapshot,
+                    retained_state,
                 )
                 .map_err(|error| ClickError::new(error.to_string()));
             }
-            ResourceSpec::declared_with_argument_snapshots(
+            ResourceSpec::declared_with_argument_states(
                 match kind {
                     ResourceKind::Composite => ResourceFamily::Composite,
                     ResourceKind::Token => ResourceFamily::Token,
@@ -6998,10 +7002,10 @@ fn resource_clause_to_resource_spec_with_metadata(
                 access,
                 name.clone(),
                 arguments,
-                argument_snapshots,
+                argument_state_sources,
                 parameter_types,
                 role,
-                snapshot,
+                retained_state,
             )
             .map(|spec| {
                 spec.with_resource_arguments(
@@ -7187,7 +7191,7 @@ pub(in crate::surface) fn resource_clause_to_resource_spec(
         &[],
         None,
         crate::kernel::ResourceTransferRole::Borrow,
-        crate::kernel::ResourceSnapshot::Current,
+        crate::kernel::ResourceStateSource::Current,
         None,
     )
 }

@@ -125,7 +125,7 @@ impl<'a> SpecNode<'a> {
                 | SpecExpression::NarrowArithmetic(body, _)
                 | SpecExpression::Cast(body, _)
                 | SpecExpression::PointerCoercion(body, _)
-                | SpecExpression::LoopEntrySnapshot(body) => visit(N::Expression(body)),
+                | SpecExpression::LoopEntryState(body) => visit(N::Expression(body)),
                 SpecExpression::If {
                     condition,
                     then_branch,

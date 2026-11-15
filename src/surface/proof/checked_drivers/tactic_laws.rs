@@ -361,7 +361,7 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             state: state.clone(),
             pure_facts: available_pure_facts.clone(),
             surface_propositions: execution.presentation.surface_propositions.clone(),
-            recorded_snapshots: execution.presentation.recorded_snapshots.clone(),
+            recorded_states: execution.presentation.recorded_states.clone(),
             case_path,
             next_opaque_call: execution.core.next_opaque_call,
             next_kernel_variable: execution.core.kernel_variable_mark(),
@@ -459,11 +459,11 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     match certificates.exit_points.get(&loop_index).map(Vec::as_slice) {
         Some([points]) => execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_region_points(points),
         Some(paths) if paths.len() > 1 => execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_ambiguous_exit_points(loop_index, paths),
         _ => {}
     }
@@ -490,8 +490,8 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
     if let Some(exit_condition) = loop_exit_condition.filter(|_| {
         execution
             .presentation
-            .recorded_snapshots
-            .get(&SnapshotSelector::ProgramPoint(ProgramPointRef {
+            .recorded_states
+            .get(&ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Loop(loop_index),
                 kind: ProgramPointKind::Exit,
             }))
@@ -501,12 +501,12 @@ pub(in crate::surface::proof) fn execute_frontier_local_loop(
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Exit,
         };
-        let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
+        let exit_surface = surface_at_program_point(&exit_condition, &exit_point)?;
         let lowered_exit_condition = lower_fixed_state_proposition(
             &exit_surface,
             available_pure_facts,
             ParameterBinding::new(parsed_function.parameters(), arguments),
-            FixedStateFrame::new(&initial_state, state, None, &execution.presentation.recorded_snapshots),
+            FixedStateFrame::new(&initial_state, state, None, &execution.presentation.recorded_states),
             SpecDefinitions::new(predicate_environment, click_function_environment),
         )
         .map_err(|message| {

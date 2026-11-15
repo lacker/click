@@ -115,7 +115,7 @@ verify, with the C, contracts, resources, and verifier unchanged by this proof
 repair.
 
 The mirrored color-flip sidecar now uses the same explicit framing for the
-opposite insertion branch, taking its snapshot after the extra left-child
+opposite insertion branch, taking its state after the extra left-child
 read. All three selected proofs in
 `rbtree_size_insert_mirrored_color_flip.click` verify as well. Its C, contracts,
 resources, and verifier are unchanged by this repair. The other sidecars and

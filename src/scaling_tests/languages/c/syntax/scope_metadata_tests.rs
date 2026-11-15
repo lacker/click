@@ -45,11 +45,11 @@ fn explicit_embedded_layout_work_tracks_materialized_leaves() {
 }
 
 /// Every parsed function keeps the declarations visible at its definition.
-/// Those snapshots share one persistent map, so `n` functions after `n`
+/// Those states share one persistent map, so `n` functions after `n`
 /// declarations hold one copy of them, not `n`. Interleaved declarations
 /// still give each function exactly the ones declared before it.
 #[test]
-fn function_declaration_snapshots_share_the_translation_unit_maps() {
+fn function_declaration_states_share_the_translation_unit_maps() {
     for size in [8usize, 32, 128, 512] {
         let mut source = String::new();
         for index in 0..size {

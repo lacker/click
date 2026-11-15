@@ -818,9 +818,9 @@ mod tests {
             &PureFactContext::new(),
         );
         assert!(forgotten.known_value(&address).is_none());
-        for snapshot in [&memory, &forgotten] {
+        for retained_state in [&memory, &forgotten] {
             let origin =
-                Pointer::loaded_value(&crate::kernel::intern_memory_ref(snapshot), &address);
+                Pointer::loaded_value(&crate::kernel::intern_memory_ref(retained_state), &address);
             let recovered =
                 crate::kernel::memory_provenance::complete_pointer_carrier_read_retained_value(
                     &origin,
@@ -830,7 +830,7 @@ mod tests {
             assert_eq!(recovered.shared(), Some(&root));
             assert!(recovered.pointer().unwrap().pointee_constant());
             let paths = crate::kernel::eval::evaluate_retained_memory_load_paths(
-                snapshot,
+                retained_state,
                 address.clone(),
                 ProgramType::Int32Pointer,
                 ExecutionFacts::new(),

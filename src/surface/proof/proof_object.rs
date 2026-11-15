@@ -234,7 +234,7 @@ impl ExecutionProofCaseSplitData<'_> {
 }
 
 /// One checked branch arm's contribution to a checked execution join: the
-/// arm's structured certificate, final facts and execution snapshot,
+/// arm's structured certificate, final facts and execution state,
 /// recorded condition theorem, and the introduction deltas the merge
 /// re-applies on the shared continuation. The container join and the
 /// in-`Proof` sibling join both reduce their arms to this view, so the
@@ -322,7 +322,7 @@ impl<'a> ExecutionSplitData<'a> {
 
     /// The structural preflight for `branch ensuring` on this split: a
     /// decided path always supports an interface, and a two-arm join does
-    /// when the shared continuation is derivable and both arm snapshots
+    /// when the shared continuation is derivable and both arm states
     /// descend from the parent's resource context.
     pub(super) fn supports_interface_branch(&self) -> bool {
         // A branch that ends a bounded region has no derivable continuation:
@@ -351,7 +351,7 @@ impl<'a> ExecutionSplitData<'a> {
 
 /// The audited branch-entry result shared by the execution container and
 /// the in-`Proof` sibling split: source structure plus each feasible arm's
-/// checked facts, snapshot, path-fact delta, and condition theorem.
+/// checked facts, state, path-fact delta, and condition theorem.
 struct PreparedExecutionBranch {
     statement_index: usize,
     continuation_index: usize,
@@ -545,7 +545,7 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     pub(in crate::surface::proof) loop_return_proofs: PersistentMap<usize, PlannedLoopReturns>,
     /// The immutable states recorded under program points or proof marks,
     /// which `at(selector, ...)` premises resolve against.
-    pub(in crate::surface::proof) recorded_snapshots: RecordedSnapshots,
+    pub(in crate::surface::proof) recorded_states: RecordedStates,
     /// The surface spellings this path has lowered, paired with their
     /// kernel propositions, so premises can be written as the source wrote
     /// them.
@@ -559,7 +559,7 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// Case assumptions introduced on this path by proof-level splits.
     pub(in crate::surface::proof) case_assumptions: PersistentSequence<CaseAssumption>,
     /// The C `if` conditions this path took, in the order it took them, each
-    /// spelled at the branching statement's entry snapshot and carrying the
+    /// spelled at the branching statement's entry state and carrying the
     /// polarity of the arm the path entered. A C branch the body took is as
     /// written as the loop guard is, so the smart invariant-bundle closer may
     /// name these too. The list is what execution recorded on this path; it
@@ -613,8 +613,8 @@ pub(in crate::surface::proof) struct ExecutionProofPresentation {
     /// share history and add only the new decision and its index entry.
     branch_decisions: ExecutionBranchDecisions,
     /// Path-local provenance aligned with terminal execution candidates.
-    /// Keeping each outcome's lineage, Surface lowerings, and recorded-snapshot
-    /// snapshots in one record makes their correspondence structural rather
+    /// Keeping each outcome's lineage, Surface lowerings, and recorded-state
+    /// states in one record makes their correspondence structural rather
     /// than an invariant across parallel vectors. The record is output-sized
     /// Proof provenance; its persistent roots do not copy semantic state.
     outcome_provenance: crate::kernel::proof::PersistentVector<OutcomeProvenance>,
@@ -695,7 +695,7 @@ pub(in crate::surface::proof) struct ExistentialProjection {
     pub(in crate::surface::proof) chosen_body: Proposition,
     pub(in crate::surface::proof) chosen_name: String,
     pub(in crate::surface::proof) chosen_variable: crate::kernel::Variable,
-    pub(in crate::surface::proof) source_snapshot: crate::kernel::MemorySnapshotIdentity,
+    pub(in crate::surface::proof) source_memory_state: crate::kernel::MemoryStateIdentity,
     pub(in crate::surface::proof) leaves: Vec<ExistentialProjectionLeaf>,
 }
 
@@ -707,7 +707,7 @@ pub(in crate::surface::proof) struct ExistentialProjectionLeaf {
 }
 
 /// Surface spellings for the checked leaves of a selected existential body.
-/// The source requirement and snapshot are retained alongside every checked
+/// The source requirement and state are retained alongside every checked
 /// leaf so a spelling cannot silently drift to the current heap after a C
 /// declaration.  This record is intentionally branch-local and is never a
 /// proof fact in its own right.
@@ -723,8 +723,8 @@ pub(in crate::surface::proof) struct ChosenProjection {
     pub(in crate::surface::proof) checked_source: Proposition,
     pub(in crate::surface::proof) chosen_name: String,
     pub(in crate::surface::proof) chosen_variable: crate::kernel::Variable,
-    pub(in crate::surface::proof) source_snapshot: crate::kernel::MemorySnapshotIdentity,
-    pub(in crate::surface::proof) source_selector: SnapshotSelector,
+    pub(in crate::surface::proof) source_memory_state: crate::kernel::MemoryStateIdentity,
+    pub(in crate::surface::proof) source_selector: ProgramPointSelector,
     pub(in crate::surface::proof) leaves: Vec<ChosenProjectionLeaf>,
 }
 
@@ -822,7 +822,7 @@ impl ExecutionProofState {
                 case_obligations: PersistentMap::default(),
                 checked_haves: PersistentMap::default(),
                 surface_propositions: self.presentation.surface_propositions.clone(),
-                recorded_snapshots: self.presentation.recorded_snapshots.clone(),
+                recorded_states: self.presentation.recorded_states.clone(),
                 generated_load_bindings: self.presentation.generated_load_bindings.clone(),
             })
     }
@@ -835,7 +835,7 @@ impl ExecutionProofState {
         ExecutionView::new(
             &self.core.frontier,
             &self.core.effect_facts,
-            &self.presentation.recorded_snapshots,
+            &self.presentation.recorded_states,
             &self.presentation.surface_propositions,
             context.constants.function_entry_state.as_ref(),
         )
@@ -846,7 +846,7 @@ impl ExecutionProofState {
     pub(in crate::surface::proof) fn at_entry(
         state: ExecutionState,
         frontier: ExecutionFrontier,
-        recorded_snapshots: RecordedSnapshots,
+        recorded_states: RecordedStates,
         surface_propositions: SurfacePropositionMap,
         branch_path: PersistentSequence<String>,
     ) -> Self {
@@ -854,7 +854,7 @@ impl ExecutionProofState {
             ExecutionProofCore::at_entry(state, frontier),
             ExecutionProofPresentation {
                 loop_return_proofs: PersistentMap::default(),
-                recorded_snapshots,
+                recorded_states,
                 surface_propositions,
                 resource_body_clauses: PersistentSequence::default(),
                 case_assumptions: PersistentSequence::default(),
@@ -1137,7 +1137,7 @@ impl ProofExecutionView<'_> {
                         &case.state,
                     )
                     .ok_or_else(|| "terminal statement case has no Click spelling".to_string())?;
-                    let condition = super::cursor_execution::surface_frozen_at_snapshot(
+                    let condition = super::cursor_execution::surface_frozen_at_program_point(
                         &condition,
                         &case.point,
                     )
@@ -1353,7 +1353,7 @@ struct OutcomeProvenance {
     /// Explicit source haves already checked while preparing a later split.
     checked_haves: PersistentMap<usize, Arc<ProofCertificate>>,
     surface_propositions: SurfacePropositionMap,
-    recorded_snapshots: RecordedSnapshots,
+    recorded_states: RecordedStates,
     #[cfg_attr(not(test), allow(dead_code))]
     generated_load_bindings:
         PersistentMap<crate::kernel::Variable, crate::kernel::GeneratedLoadBinding>,
@@ -1387,9 +1387,9 @@ struct ProofDiagnosticProofState(
     Option<Arc<crate::kernel::ResourceInstance>>,
     &'static str,
     DiagnosticNaming,
-    // The recorded snapshots an outcome goal's `at(...)` cites. A shared
+    // The recorded states an outcome goal's `at(...)` cites. A shared
     // handle; the citable ones are selected only when a report is rendered.
-    Option<crate::surface::RecordedSnapshots>,
+    Option<crate::surface::RecordedStates>,
     // The function's source layout, so names registered after the proof has
     // unwound still spell a call's result as `<region>.result`.
     Option<crate::surface::lowering::SourceExecutionLayout>,
@@ -1410,7 +1410,7 @@ pub(in crate::surface::proof) enum DiagnosticNaming {
 }
 
 impl DiagnosticNaming {
-    fn register(&self, labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels) {
+    fn register(&self, labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels) {
         match self {
             Self::Tables(names, values) => {
                 labels.register_naming(ParameterBinding::new(names, values));
@@ -1591,41 +1591,41 @@ fn diagnostic_value_variable(value: &ProgramValue) -> Option<Variable> {
     }
 }
 
-/// How many recorded snapshots a failure report consults for names.
-const NAMED_SNAPSHOT_LIMIT: usize = 32;
+/// How many recorded states a failure report consults for names.
+const NAMED_STATE_LIMIT: usize = 32;
 
 /// A value no current name holds, but a scalar local held at a recorded
-/// snapshot this path can cite, spells as `at(region(N).entry, x)`:
+/// state this path can cite, spells as `at(region(N).entry, x)`:
 /// exactly the value `x` had there. The value a loop havocked for `i` is `i`
 /// at the loop's own entry, so a body goal names it as the iteration's entry
 /// value. Names the current state gives were registered first and win. Among
-/// snapshots, the oldest of the most recent [`NAMED_SNAPSHOT_LIMIT`] wins,
+/// states, the oldest of the most recent [`NAMED_STATE_LIMIT`] wins,
 /// which for a loop-carried value is the head that minted it. A read of a
-/// snapshot's memory is qualified by its point, and an address no structural
+/// state's memory is qualified by its point, and an address no structural
 /// spelling names (a heap allocation after its local's frame ended) is the
 /// pointer local that held it there, `at(region(2).exit, p)`. Diagnostics
 /// only: this runs when a failure is printed, never while checking.
-pub(in crate::surface::proof) fn register_recorded_snapshot_names(
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
-    snapshots: &crate::surface::RecordedSnapshots,
+pub(in crate::surface::proof) fn register_recorded_state_names(
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
+    retained_states: &crate::surface::RecordedStates,
 ) {
-    labels.recorded_snapshots(snapshots);
-    register_snapshot_names(labels, &citable_snapshots(snapshots));
+    labels.recorded_states(retained_states);
+    register_state_names(labels, &citable_states(retained_states));
     // Each exited loop's pass count, `loop(i).iterations`.
-    for (name, iterations) in snapshots.loop_iteration_bindings() {
+    for (name, iterations) in retained_states.loop_iteration_bindings() {
         if let crate::kernel::IntegerTerm::Variable(variable) = iterations {
             labels.integer_source_name(*variable, name);
         }
     }
     // Each recorded call's result, `statement(0).call(f, 0).result`.
-    for (spelling, value) in snapshots.call_result_bindings() {
+    for (spelling, value) in retained_states.call_result_bindings() {
         register_call_result_name(labels, spelling, value);
     }
 }
 
 /// A call's result is spelled by its call, `<call>.result`.
 fn register_call_result_name(
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
     spelling: String,
     value: &ProgramValue,
 ) {
@@ -1644,21 +1644,21 @@ fn register_call_result_name(
     }
 }
 
-/// The most recent recorded snapshots an `at(...)` can cite, oldest first,
+/// The most recent recorded states an `at(...)` can cite, oldest first,
 /// then the proof's older marks, with the point each one is spelled by.
-/// Each part is bounded by `NAMED_SNAPSHOT_LIMIT`; each state shares its
+/// Each part is bounded by `NAMED_STATE_LIMIT`; each state shares its
 /// persistent storage.
-fn citable_snapshots(
-    snapshots: &crate::surface::RecordedSnapshots,
+fn citable_states(
+    retained_states: &crate::surface::RecordedStates,
 ) -> Vec<(String, ExecutionState)> {
-    use crate::surface::{CodeRegionRef, ProgramPointRef, SnapshotSelector};
-    let recent = snapshots.recent(NAMED_SNAPSHOT_LIMIT);
+    use crate::surface::{CodeRegionRef, ProgramPointRef, ProgramPointSelector};
+    let recent = retained_states.recent(NAMED_STATE_LIMIT);
     // The proof's own marks stay citable however many statements ran since:
     // a long loop body pushes `mark iteration` out of the recent window, and
     // the iteration-entry values only it names would print as `<unnamed>`.
     // They come last, so a name the recent window gives still wins.
-    let marks = snapshots
-        .marks(NAMED_SNAPSHOT_LIMIT)
+    let marks = retained_states
+        .marks(NAMED_STATE_LIMIT)
         .into_iter()
         .filter(|(selector, _)| !recent.iter().any(|(known, _)| known == selector))
         .collect::<Vec<_>>();
@@ -1666,28 +1666,28 @@ fn citable_snapshots(
         .into_iter()
         .rev()
         .chain(marks)
-        // Only points `at(...)` resolves from recorded snapshots.
+        // Only points `at(...)` resolves from recorded states.
         .filter(|(selector, _)| match selector {
-            SnapshotSelector::Mark(_) => true,
-            SnapshotSelector::ProgramPoint(ProgramPointRef { region, .. }) => matches!(
+            ProgramPointSelector::Mark(_) => true,
+            ProgramPointSelector::ProgramPoint(ProgramPointRef { region, .. }) => matches!(
                 region,
                 CodeRegionRef::Region(_) | CodeRegionRef::Loop(_) | CodeRegionRef::Label(_)
             ),
         })
         .map(|(selector, state)| {
             (
-                crate::surface::diagnostics::describe_snapshot_selector(selector),
+                crate::surface::diagnostics::describe_program_point_selector(selector),
                 state.clone(),
             )
         })
         .collect()
 }
 
-fn register_snapshot_names(
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+fn register_state_names(
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
     citable: &[(String, ExecutionState)],
 ) {
-    // A read of a snapshot's memory is spelled against the locals it held,
+    // A read of a state's memory is spelled against the locals it held,
     // as `at(point, p[1])`.
     for (point, state) in citable {
         labels.source_state(state, point.clone());
@@ -1745,7 +1745,7 @@ fn register_snapshot_names(
 impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnosticProofState {
     fn register_names(
         &self,
-        labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+        labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
     ) {
         let _spelling = self
             .15
@@ -1816,12 +1816,12 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
                     }
                 }
             }
-            register_recorded_snapshot_names(labels, &execution.presentation.recorded_snapshots);
+            register_recorded_state_names(labels, &execution.presentation.recorded_states);
         }
-        // An outcome goal's snapshots name what a local held at a recorded
+        // An outcome goal's states name what a local held at a recorded
         // point, in the goal and the premises as in the proof context.
-        if let Some(snapshots) = &self.14 {
-            register_recorded_snapshot_names(labels, snapshots);
+        if let Some(retained_states) = &self.14 {
+            register_recorded_state_names(labels, retained_states);
         }
     }
 
@@ -1895,7 +1895,7 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
     fn proof_trace(
         &self,
         claim: &str,
-        labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+        labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
         tactic_location: &dyn Fn(&[usize]) -> Option<(String, crate::source::SourcePosition)>,
         branch_arm: &dyn Fn(&[usize], &crate::source::SourcePosition) -> Option<usize>,
         have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
@@ -1909,11 +1909,11 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         if let Some(branch) = self.0.state().open_branches().get(self.0.focused_branch())
             && let Some(execution) = branch.state.execution.as_deref()
         {
-            labels.recorded_snapshots(&execution.presentation.recorded_snapshots);
-            for (selector, state) in execution.presentation.recorded_snapshots.recent(32) {
+            labels.recorded_states(&execution.presentation.recorded_states);
+            for (selector, state) in execution.presentation.recorded_states.recent(32) {
                 labels.source_state(
                     state,
-                    crate::surface::diagnostics::describe_snapshot_selector(selector),
+                    crate::surface::diagnostics::describe_program_point_selector(selector),
                 );
             }
         }
@@ -2250,7 +2250,7 @@ impl Proof<'_> {
     ) -> String {
         use crate::surface::proof_diagnostics::ProofDiagnosticState as _;
         use crate::surface::proof_diagnostics::render;
-        let mut labels = render::SnapshotLabels::ambient();
+        let mut labels = render::MemoryStateLabels::ambient();
         self.diagnostic_state().register_names(&mut labels);
         let mut text = render::render_proposition_labeled(proposition, &mut labels);
         text.push_str(&labels.trace_legend());
@@ -2392,11 +2392,11 @@ impl Proof<'_> {
             match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
                 ProofContext::FixedState(context) => {
-                    Some(context.fixed_state.recorded_snapshots.clone())
+                    Some(context.fixed_state.recorded_states.clone())
                 }
                 ProofContext::Execution(_) => self
                     .outcome_fixed_state_view()
-                    .map(|view| view.fixed_state.recorded_snapshots.clone()),
+                    .map(|view| view.fixed_state.recorded_states.clone()),
             },
             crate::surface::diagnostics::spelling_layout(),
         )
@@ -2454,7 +2454,7 @@ impl<'p> FixedStateOperationView<'p> {
 /// one execution path awaiting its result-dependent continuations.
 ///
 /// The goal owns the path's result value, post-outcome C state, and fact
-/// context, and borrows the function-exit frontier's snapshot by identity
+/// context, and borrows the function-exit frontier's state by identity
 /// for lowering. Result and effect operations will consume these goals
 /// directly instead of converting through a mutable execution-context adapter.
 /// The result-aware data one function outcome supplies to fixed-state operations:
@@ -2463,7 +2463,7 @@ impl<'p> FixedStateOperationView<'p> {
 #[derive(Clone)]
 pub(in crate::surface::proof) struct OutcomeProofPresentation {
     pub(in crate::surface::proof) surface_propositions: SurfacePropositionMap,
-    pub(in crate::surface::proof) recorded_snapshots: RecordedSnapshots,
+    pub(in crate::surface::proof) recorded_states: RecordedStates,
     /// The statement-entry anchor for premises naming a C local after it
     /// left scope, captured from the frontier at derivation.
     pub(in crate::surface::proof) premise_anchor: Option<ProgramPointRef>,
@@ -2725,7 +2725,7 @@ impl OpenBranchConstruction for OpenBranch {
 }
 
 /// An equality with an `old(...)` or `at(label, ...)` operand can use that
-/// snapshot expression's reflexivity as an explicit transport source. Keep
+/// state expression's reflexivity as an explicit transport source. Keep
 /// this selector intentionally syntactic: the fixed-state checker remains the
 /// authority for whether execution effects and result provenance permit the
 /// transport.
@@ -2741,7 +2741,7 @@ pub(in crate::surface::proof) fn old_reflexive_transport_source(
         return None;
     };
     // An `old(..)` side first, then a side read at a marked program point:
-    // either names the earlier snapshot the other side's reads frame to.
+    // either names the earlier state the other side's reads frame to.
     let old = match (left, right) {
         (_, ContractExpression::Old(_)) => right,
         (ContractExpression::Old(_), _) => left,
@@ -2797,7 +2797,7 @@ impl<'a> Proof<'a> {
         if let Some(execution) = self.execution() {
             for (name, iterations) in execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .loop_iteration_bindings()
             {
                 values.insert(
@@ -3027,7 +3027,7 @@ impl<'a> Proof<'a> {
     /// The spelling of a refined goal no written template carries over to:
     /// the premise speller's, which lowers back to exactly `goal`. A goal is
     /// stated at the current state, so it is spelled with no premise anchor
-    /// and never searches recorded snapshots. Smart refinements reconstruct
+    /// and never searches recorded states. Smart refinements reconstruct
     /// their structural goal from indexed source names, without premise search.
     /// Written refinements retain the existing premise presentation support.
     pub(in crate::surface::proof) fn spelled_goal(
@@ -3068,7 +3068,7 @@ impl<'a> Proof<'a> {
             ),
             ProofContext::FixedState(context) => {
                 let _points = synthesis::SynthesisRecordedPointsScope::enter(
-                    context.fixed_state.recorded_snapshots,
+                    context.fixed_state.recorded_states,
                 );
                 synthesis::synthesize_surface_proposition_at_entry_and_post(
                     goal,
@@ -3080,7 +3080,7 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) => {
                 let view = self.premise_fixed_state_view()?;
                 let _points = synthesis::SynthesisRecordedPointsScope::enter(
-                    view.fixed_state.recorded_snapshots,
+                    view.fixed_state.recorded_states,
                 );
                 synthesis::synthesize_surface_proposition_at_entry_and_post(
                     goal,
@@ -3805,17 +3805,17 @@ impl ExecutionProofPresentation {
             let merged = match by_variable.get(&variable) {
                 Some(crate::kernel::GeneratedLoadBinding::Ambiguous { .. }) => continue,
                 Some(crate::kernel::GeneratedLoadBinding::Exact {
-                    snapshot,
+                    retained_state,
                     pointer,
                     load,
                     ..
                 }) => match binding {
                     crate::kernel::GeneratedLoadBinding::Exact {
-                        snapshot: next_snapshot,
+                        retained_state: next_state,
                         pointer: next_pointer,
                         load: next_load,
                         ..
-                    } if snapshot == next_snapshot
+                    } if retained_state == next_state
                         && pointer == next_pointer
                         && load == next_load =>
                     {

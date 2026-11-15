@@ -1,7 +1,7 @@
 use super::diagnostics::{
     aligned_sugar, describe_contract_expression, describe_contract_segment,
-    describe_program_expression, describe_resource_subject, describe_snapshot_selector,
-    snapshot_aligned_sugar,
+    describe_program_expression, describe_program_point_selector, describe_resource_subject,
+    program_point_aligned_sugar,
 };
 use super::*;
 
@@ -34,7 +34,7 @@ fn source_rewrite_arguments(equality: &ClickProposition) -> String {
                 proposition,
             } => {
                 let (left, right) = operands(proposition, positive);
-                let selector = describe_snapshot_selector(selector);
+                let selector = describe_program_point_selector(selector);
                 (
                     format!("at({selector}, {left})"),
                     format!("at({selector}, {right})"),
@@ -94,7 +94,7 @@ fn comparison_operand(
                 expression,
             } => Some(format!(
                 "at({}, {})",
-                describe_snapshot_selector(selector),
+                describe_program_point_selector(selector),
                 typed_count_reference(expression)?,
             )),
             _ => None,
@@ -106,7 +106,7 @@ fn comparison_operand(
         return rendered;
     }
     // Generated machine arithmetic must retain its type when reparsed as
-    // specification syntax, including arithmetic outside a snapshot.
+    // specification syntax, including arithmetic outside a state.
     if mode == PropositionSpelling::Source
         && let Some(machine_type) = machine_arithmetic(expression, integer_comparison_type(other))
     {
@@ -149,7 +149,7 @@ fn integer_comparison_type(other: &ContractExpression) -> Option<&'static str> {
     }
 }
 
-/// Preserve the existing machine-arithmetic type barrier both at snapshots
+/// Preserve the existing machine-arithmetic type barrier both at states
 /// and in current-state comparison operands. Mathematical Integer operands
 /// do not receive a machine cast. `comparison` is the integer type the
 /// comparison's other operand fixes, if it fixes one: then a current-state
@@ -160,20 +160,20 @@ fn machine_arithmetic(
     comparison: Option<&'static str>,
 ) -> Option<&'static str> {
     let mut inner = expression;
-    let mut snapshot = false;
+    let mut retained_state = false;
     while let ContractExpression::Old(next)
     | ContractExpression::At {
         expression: next, ..
     } = inner
     {
-        snapshot = true;
+        retained_state = true;
         inner = next;
     }
     // Surface addition/subtraction may be pointer arithmetic. A typed
     // literal nested inside it does not determine the result type:
     // `a + (i + 1u64)` can be a pointer. Preserve its source semantics;
     // generated C arithmetic still receives the machine barrier below.
-    if !snapshot
+    if !retained_state
         && comparison.is_none()
         && matches!(
             inner,
@@ -200,7 +200,7 @@ fn machine_arithmetic(
                 | ProgramExpression::BitwiseNot(..)
         )
     }
-    // The operation's operands, read under the same snapshot.
+    // The operation's operands, read under the same state.
     let mut machine = false;
     let mut interface_types = Vec::new();
     let mut contract_pending = vec![inner];
@@ -273,7 +273,7 @@ fn machine_arithmetic(
     }
     // Current-state expressions without typed operands need their type
     // retained by the producer; do not infer it from variable spellings.
-    if !snapshot && interface_types.is_empty() {
+    if !retained_state && interface_types.is_empty() {
         return comparison;
     }
     let mut machine_type = "int32";
@@ -299,10 +299,10 @@ pub(super) fn print_proposition(
             describe_program_expression(pointer)
         );
     }
-    if let Some((selector, pointer, alignment)) = snapshot_aligned_sugar(proposition) {
+    if let Some((selector, pointer, alignment)) = program_point_aligned_sugar(proposition) {
         return format!(
             "at({}, aligned({}, {alignment}))",
-            describe_snapshot_selector(selector),
+            describe_program_point_selector(selector),
             describe_program_expression(pointer)
         );
     }
@@ -336,8 +336,8 @@ pub(super) fn print_proposition(
             resources,
         } => {
             let mut args = vec![
-                describe_snapshot_selector(before),
-                describe_snapshot_selector(after),
+                describe_program_point_selector(before),
+                describe_program_point_selector(after),
             ];
             args.extend(resources.iter().map(describe_resource_subject));
             format!("changes_only({})", args.join(", "))
@@ -366,7 +366,7 @@ pub(super) fn print_proposition(
             proposition,
         } => format!(
             "at({}, {})",
-            describe_snapshot_selector(selector),
+            describe_program_point_selector(selector),
             print_proposition(proposition, mode)
         ),
         // Connectives print as the sidecar writes them, with only the
@@ -1072,7 +1072,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let (snapshot, mut body) = match &binding.proposition {
+            let (retained_state, mut body) = match &binding.proposition {
                 ClickProposition::At {
                     selector,
                     proposition,
@@ -1085,10 +1085,10 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 };
                 body = inner;
             }
-            let body = if let Some(selector) = snapshot {
+            let body = if let Some(selector) = retained_state {
                 format!(
                     "at({}, {})",
-                    describe_snapshot_selector(selector),
+                    describe_program_point_selector(selector),
                     source_click_proposition(body)
                 )
             } else {
@@ -2730,7 +2730,7 @@ mod tests {
             )),
         };
         let proposition = ClickProposition::At {
-            selector: SnapshotSelector::Mark("checkpoint".to_string()),
+            selector: ProgramPointSelector::Mark("checkpoint".to_string()),
             proposition: Box::new(ClickProposition::And(
                 Box::new(equality("left")),
                 Box::new(equality("right")),

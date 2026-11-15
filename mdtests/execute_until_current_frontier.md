@@ -1,7 +1,7 @@
 # step until from the current frontier
 
 `step_until` composes with earlier execution steps and selected branches.
-It records the same statement snapshots as repeated
+It records the same statement states as repeated
 `step` calls.
 
 ```c filename=execute_until_after_step.c

@@ -7,7 +7,7 @@ fn hash_of(value: &impl std::hash::Hash) -> u64 {
     hasher.finish()
 }
 
-/// Snapshot hashes name symbolic loads, so tagging every existing (32-bit)
+/// Memory state hashes name symbolic loads, so tagging every existing (32-bit)
 /// extent must not change them: an `Int32` extent hashes and prints as its
 /// byte term. The kind still separates the two extents of one term.
 #[test]

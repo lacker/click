@@ -16,7 +16,7 @@ The loop counts toward `j->hi`, a viewed field the body never writes, so the
 measure reads it. The ranking members are named before the back edge in the
 shape the obligation is built in. After the increment, the proof explicitly converts
 `k < i` to `k <= at(region(4).entry, i)` and instantiates the filled-prefix
-fact from that snapshot. The final closer can then use the stated invariant
+fact from that state. The final closer can then use the stated invariant
 instead of rediscovering the quantified prefix extension through memory history.
 
 ```c filename=probe_contract.c

@@ -66,7 +66,7 @@ instead of from what the step changed.
    through a `Symbolic` pointer visits only those. `heap_objects` stores now
    cost 135 units at every position at N = 64.
 2. **Composition evidence is a list that only grows.** Every step states
-   about four snapshots of the whole resource context as
+   about four states of the whole resource context as
    `Proposition::CResourceComposition` facts. Stores no longer read them:
    the write path states the writer's current composition as the store owner
    (`PureFactContext::with_store_owner`), and `owned_store_footprint` and
@@ -106,9 +106,9 @@ instead of from what the step changed.
    part: a statement theorem lists only its own path facts and obligations
    (`statement_theorems_do_not_list_the_context_they_executed_under`), and
    recording a step checks the frontier and running state but walks no
-   premises. Memory snapshots and resource contexts also order by a cached
+   premises. Memory states and resource contexts also order by a cached
    content hash first, so the lookups that remain no longer walk shared
-   entries (`ordering_snapshots_of_one_path_does_not_walk_their_shared_entries`).
+   entries (`ordering_states_of_one_path_does_not_walk_their_shared_entries`).
    Together, on `heap_objects`: 6.28 to 3.75 billion instructions at
    N = 64, and a mean step of 18.7 to 6.4 ms at N = 256. Still open, under
    the rule in `AGENTS.md` (construct valid proofs; never produce-then-check):
@@ -132,7 +132,7 @@ instead of from what the step changed.
    path's execution-fact stream answered membership by scanning: a stream
    that had been filtered or selected (each path's facts are) dropped its
    proposition index, so every context published onto it compared each new
-   fact against every fact already held, memory snapshots included. The
+   fact against every fact already held, memory states included. The
    stream's indexes now cover its context blocks and survive filtering
    (`membership_reads_no_context_block_of_a_growing_stream`); at N = 128 the
    membership lookups went from 492 to 6 million instructions. A plain
@@ -159,14 +159,14 @@ instead of from what the step changed.
    (141 units at every position at N = 24).
 7. **Fixed: a call reserved every variable its assumptions mention.** To
    pick fresh identities, a verified call collected every variable of every
-   assumption, including each variable every named snapshot holds: per call
-   the facts times the snapshot's variables, so cubic in `objects_and_calls`
+   assumption, including each variable every named state holds: per call
+   the facts times the state's variables, so cubic in `objects_and_calls`
    (`collect_assumption_variables`, x50 from N = 32 to 128). A fact context
    now keeps an upper bound on the execution-range variables its facts
    mention (`ExecutionVariableCeiling`): filing a fact reads its syntax, a
-   fact that names a snapshot is taken whole once when an execution first
+   fact that names a state is taken whole once when an execution first
    asks, and executions allocate above the bound instead of reserving the
-   facts' variables (`asking_after_every_fact_takes_each_snapshot_fact_whole_once`).
+   facts' variables (`asking_after_every_fact_takes_each_state_fact_whole_once`).
    `objects_and_calls` at N = 128: 10.69 to 9.90 billion instructions.
    Separately, lowering a function's requirements bound every parameter
    into the entry state again for each requirement; the state is now built

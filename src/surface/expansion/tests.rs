@@ -2316,7 +2316,7 @@ fn wide_arithmetic_promotes_unsuffixed_literals_in_checked_certificates() {
 
 #[test]
 #[ignore = "nightly: 0.6s in the parallel gate"]
-fn wide_arithmetic_reads_listed_bounds_at_their_named_snapshot() {
+fn wide_arithmetic_reads_listed_bounds_at_their_named_state() {
     for carrier in ["uint64", "int64"] {
         let c_source = format!("{carrier} advance({carrier} n) {{ n = n - 4; return n; }}");
         let source = format!(
@@ -2344,17 +2344,17 @@ fn wide_arithmetic_reads_listed_bounds_at_their_named_snapshot() {
 }}"#
         );
         let sources = [("advance.c", c_source.as_str())];
-        verify_c_sources(&source, &sources).expect("snapshot bounds must verify");
+        verify_c_sources(&source, &sources).expect("state bounds must verify");
         let expanded = expand_c_claim_source_by_label(&source, &sources, "advance.ensures_0")
-            .expect("snapshot bridges must expand");
+            .expect("state bridges must expand");
         assert!(!expanded.contains("solve() using"), "{expanded}");
-        verify_c_sources(&expanded, &sources).expect("snapshot bridges must independently verify");
+        verify_c_sources(&expanded, &sources).expect("state bridges must independently verify");
         let missing_bound = source.replace("to_integer(at(before, n)) <= 16;", "");
         verify_c_sources(&missing_bound, &sources)
             .expect_err("a historical upper bound cannot be inferred from type bounds");
         let false_result = source.replace("result <= 12", "result <= 11");
         verify_c_sources(&false_result, &sources)
-            .expect_err("snapshot facts cannot prove a false bound");
+            .expect_err("state facts cannot prove a false bound");
     }
 }
 

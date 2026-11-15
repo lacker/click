@@ -7,6 +7,38 @@ memory, write footprints, stack memory, and Click array refs.
 The memory model is central to Click. Many proof failures are aliasing or frame
 failures, not arithmetic failures.
 
+## Program points, symbolic states, and version points
+
+These names describe different things:
+
+- A **program point** identifies where an expression is evaluated. It is the
+  first argument of `at(point, expression)`, such as `region(3).exit`.
+  A proof mark names the current point on its proof path. The surface type
+  `ProgramPointSelector` distinguishes code locations from proof marks.
+- A **recorded symbolic state** is the verifier's `ExecutionState` retained
+  for a point on one proof path. It contains symbolic locals, memory,
+  resources, and execution bookkeeping. `RecordedStates` associates point
+  selectors with these states. It is not a table of all concrete values at
+  a source location, and different paths need not supply one common state.
+- A **memory state** is a `Memory` value, or its interned `SharedMemory`
+  handle. It records symbolic memory information, which may be incomplete,
+  abstracted by a call or loop, or projected for one selected read. It is
+  not a program point or a complete execution state.
+- A **version point** identifies the memory state selected by the
+  assumption-free version walk for a particular cell or observed block.
+  The kernel resource tracker represents it with `VersionPoint`. A read's
+  address, type, and version point determine its identity.
+
+Evaluating a read at a later program point can select an earlier version
+point when the intervening operations leave that cell unchanged. Two
+program points can therefore name the same read without being the same
+program point. A version point need not have a direct surface name; raising
+uses a program point whose recorded state selects that exact read.
+
+Use these terms in code, comments, diagnostics, and documentation. A model
+field's version is its symbolic value; comparing it uses a borrowed
+`StatePoint`, rather than inventing a memory version point for the field.
+
 ## Blocks and pointers
 
 Kernel memory is a map of named byte-sized blocks plus known cells. A
@@ -233,7 +265,7 @@ cells, the entry also publishes a pure fact of the form
 coordinates. Use ordinary `instantiate` with the two bounds to select a read.
 Publication constructs one quantified fact per admitted clause; it does not
 visit the cells or inspect memory history. The fact describes the entry
-snapshot, not every later state. Inactive guarded clauses, `uninitialized(...)`
+state, not every later state. Inactive guarded clauses, `uninitialized(...)`
 inputs, and constructor destination storage do not supply it. Aggregate ranges
 with padding or multiple cell types do not supply a scalar-array fact.
 See [`initialized_input_ranges_publish_definedness.md`](https://github.com/clicklang/click/blob/master/mdtests/initialized_input_ranges_publish_definedness.md),

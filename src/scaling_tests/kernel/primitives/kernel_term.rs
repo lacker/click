@@ -355,7 +355,7 @@ fn machine_root_checking_views_keep_shared_prefixes_unboxed() {
 }
 
 #[test]
-fn retained_load_terms_grow_without_rewalking_snapshots_or_prior_arithmetic() {
+fn retained_load_terms_grow_without_rewalking_states_or_prior_arithmetic() {
     for unrelated in [0, 128, 512] {
         let mut memory = Memory::new();
         for index in 0..unrelated {

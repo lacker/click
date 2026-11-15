@@ -102,7 +102,7 @@ fn wide_condition_index_construction_charges_its_variable_entries() {
 }
 
 #[test]
-fn snapshot_condition_index_builds_once_and_survives_scalar_updates() {
+fn state_condition_index_builds_once_and_survives_scalar_updates() {
     let mut cold_samples = Vec::new();
     let mut warm_samples = Vec::new();
     for size in [8, 16, 32, 64] {
@@ -133,7 +133,7 @@ fn snapshot_condition_index_builds_once_and_survives_scalar_updates() {
         });
         assert!(
             cold >= warm + size,
-            "snapshot construction must be charged: {cold}, {warm}"
+            "state construction must be charged: {cold}, {warm}"
         );
         cold_samples.push(cold);
         warm_samples.push(warm);
@@ -145,7 +145,7 @@ fn snapshot_condition_index_builds_once_and_survives_scalar_updates() {
         });
         assert_eq!(
             branch_work, warm,
-            "scalar insertion must share the completed snapshot index"
+            "scalar insertion must share the completed state index"
         );
         let extra = ConditionTerm::Compare {
             format: MachineIntegerType::Int32,
@@ -167,9 +167,9 @@ fn snapshot_condition_index_builds_once_and_survives_scalar_updates() {
         assert_eq!(selected.len(), 8);
         assert!(
             extended_work > warm && extended_work <= warm + 8,
-            "snapshot insertion must apply only its delta: {extended_work}, {warm}"
+            "state insertion must apply only its delta: {extended_work}, {warm}"
         );
-        eprintln!("snapshot bucket {size}: cold {cold}, warm {warm}");
+        eprintln!("state bucket {size}: cold {cold}, warm {warm}");
     }
     assert!(
         warm_samples.iter().all(|work| *work == warm_samples[0]),

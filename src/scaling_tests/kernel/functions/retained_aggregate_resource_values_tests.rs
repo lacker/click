@@ -63,7 +63,7 @@ fn retained_resource_fields_preserve_lvalues_and_scale_with_expression() {
             crate::instrumentation::measure_deterministic_work(|| resolve(&mut expression));
         work.push(measured);
         // The retained field keeps its entry-read name; the graph relates
-        // its complete value to the pointer stored at that snapshot.
+        // its complete value to the pointer stored at that state.
         let retained = |expression: &ProgramExpression| match expression {
             ProgramExpression::Value(ProgramValue::Pointer(read)) => {
                 let ProgramValue::Pointer(stored) = &value else {

@@ -161,7 +161,7 @@ pub(super) fn matched_resource_instance_case_read_projection(
         .clone()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
-    // These are snapshot read facts and ownership containment, not child
+    // These are state read facts and ownership containment, not child
     // ownership. They are justified only by the exact currently owned head.
     let mut read_projection = supporting_facts
         .iter()
@@ -211,7 +211,7 @@ pub(super) fn matched_resource_instance_case_read_projection(
 /// evidence contributes nothing.
 /// A returned named head carries its verified body's pure invariants. Only
 /// the explicit outputs are visited, after ensures have selected their model.
-/// Snapshot readability and containment follow the exact owned head; no child
+/// Memory state readability and containment follow the exact owned head; no child
 /// ownership or permanent view is published.
 pub(super) fn checked_returned_instance_body_facts(
     outputs: &ResourceContext,
@@ -342,7 +342,7 @@ pub(super) fn selected_resource_instance_case_facts(
                 )
                 .into_iter()
                 // A post-call heap cell may have no materialized value yet.
-                // Lowering its arm equality against that incomplete snapshot
+                // Lowering its arm equality against that incomplete state
                 // can simplify it to `false`; publishing that as a premise
                 // would make every subsequent obligation vacuous.
                 .filter_map(|clause| {

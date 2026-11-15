@@ -2,7 +2,7 @@ use super::*;
 use crate::kernel::{KernelFoldIndex, KernelIntegerOperator, KernelTermExport, KernelTermImport};
 
 #[test]
-fn common_fold_read_dependencies_visit_shared_bodies_once_and_recheck_snapshots() {
+fn common_fold_read_dependencies_visit_shared_bodies_once_and_recheck_states() {
     for size in [16, 64, 256] {
         let _session = crate::kernel::VerificationSession::enter();
         let current = Memory::new();

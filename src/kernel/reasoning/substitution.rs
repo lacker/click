@@ -115,8 +115,8 @@ impl VariableSubstitution for BitvectorSubstitution<'_> {
         capture_avoiding_quantifier_body(binder, body, self.from, self.to)
     }
     fn proposition_scope(&self) -> Option<SubstitutedMemoryScope> {
-        // Hold the snapshot memo open across the whole proposition, so two
-        // sibling load terms over one snapshot rewrite it once between them.
+        // Hold the state memo open across the whole proposition, so two
+        // sibling load terms over one state rewrite it once between them.
         Some(SubstitutedMemoryScope::enter(self.from, self.to))
     }
 }
@@ -1590,7 +1590,7 @@ fn walk_resource_spec<S: VariableSubstitution + ?Sized>(
             }
         },
         resource.role(),
-        resource.snapshot(),
+        resource.state_source(),
     )
     .expect("pointer substitution preserves resource validity")
     .with_resource_arguments(resource.resource_arguments().to_vec());
@@ -1621,28 +1621,34 @@ fn walk_resource_term<S: VariableSubstitution + ?Sized>(
         ResourceTerm::PopulationAuthority {
             protected,
             population_arity,
-            snapshot,
+            state_source: retained_state,
         } => ResourceTerm::PopulationAuthority {
             population_arity: *population_arity,
             protected: Box::new(ResourceTypeSpec {
                 resource: Box::new(walk_resource_spec(&protected.resource, s)),
                 schema: protected.schema.clone(),
             }),
-            snapshot: *snapshot,
+            state_source: *retained_state,
         },
-        ResourceTerm::MutexGuard { mutex, snapshot } => ResourceTerm::MutexGuard {
+        ResourceTerm::MutexGuard {
+            mutex,
+            state_source: retained_state,
+        } => ResourceTerm::MutexGuard {
             mutex: Box::new(s.program_expression(mutex)),
-            snapshot: *snapshot,
+            state_source: *retained_state,
         },
-        ResourceTerm::MutexLive { mutex, snapshot } => ResourceTerm::MutexLive {
+        ResourceTerm::MutexLive {
+            mutex,
+            state_source: retained_state,
+        } => ResourceTerm::MutexLive {
             mutex: Box::new(s.program_expression(mutex)),
-            snapshot: *snapshot,
+            state_source: *retained_state,
         },
         ResourceTerm::Publication {
             side,
             payload,
             flag,
-            snapshot,
+            state_source: retained_state,
         } => ResourceTerm::Publication {
             side: *side,
             payload: Box::new(ResourceTypeSpec {
@@ -1650,11 +1656,11 @@ fn walk_resource_term<S: VariableSubstitution + ?Sized>(
                 schema: payload.schema.clone(),
             }),
             flag: Box::new(s.program_expression(flag)),
-            snapshot: *snapshot,
+            state_source: *retained_state,
         },
         ResourceTerm::MutexUse {
             mutex,
-            snapshot,
+            state_source: retained_state,
             protected,
         } => ResourceTerm::MutexUse {
             protected: protected.as_ref().map(|p| {
@@ -1664,7 +1670,7 @@ fn walk_resource_term<S: VariableSubstitution + ?Sized>(
                 })
             }),
             mutex: Box::new(s.program_expression(mutex)),
-            snapshot: *snapshot,
+            state_source: *retained_state,
         },
         ResourceTerm::Iterated(spec) => ResourceTerm::Iterated(Box::new(
             spec.map_expressions(|expression| s.program_expression(expression)),
@@ -1684,7 +1690,7 @@ fn walk_resource_term<S: VariableSubstitution + ?Sized>(
         ResourceTerm::Composite {
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         } => ResourceTerm::Composite {
             name: name.clone(),
@@ -1692,13 +1698,13 @@ fn walk_resource_term<S: VariableSubstitution + ?Sized>(
                 .iter()
                 .map(|argument| s.program_expression(argument))
                 .collect(),
-            argument_snapshots: argument_snapshots.clone(),
+            argument_state_sources: argument_state_sources.clone(),
             parameter_types: parameter_types.clone(),
         },
         ResourceTerm::Token {
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         } => ResourceTerm::Token {
             name: name.clone(),
@@ -1706,7 +1712,7 @@ fn walk_resource_term<S: VariableSubstitution + ?Sized>(
                 .iter()
                 .map(|argument| s.program_expression(argument))
                 .collect(),
-            argument_snapshots: argument_snapshots.clone(),
+            argument_state_sources: argument_state_sources.clone(),
             parameter_types: parameter_types.clone(),
         },
     }
@@ -1853,7 +1859,7 @@ mod resource_frame_substitution_tests {
     }
 
     #[test]
-    fn unrelated_binder_preserves_nested_offset_snapshot() {
+    fn unrelated_binder_preserves_nested_offset_state() {
         let base = Memory::new();
         let metadata = Pointer {
             block: PointerBlock::ExternalArgument,
@@ -1868,15 +1874,15 @@ mod resource_frame_substitution_tests {
                 Box::new(PointerOffsetTerm::Constant(4)),
             ),
         };
-        let snapshot = crate::kernel::intern_memory(
+        let retained_state = crate::kernel::intern_memory(
             base.store(metadata, ProgramValue::Int32(MachineTerm::constant(7))),
         );
         let rewritten = substitute_bitvector_variable_in_shared_memory(
-            &snapshot,
+            &retained_state,
             Variable(2_000_000),
             &MachineTerm::Variable(Variable(3_200_000)),
         );
-        assert_eq!(rewritten.arena_id(), snapshot.arena_id());
+        assert_eq!(rewritten.arena_id(), retained_state.arena_id());
     }
 
     #[test]
@@ -2040,7 +2046,7 @@ mod resource_frame_substitution_tests {
 }
 
 /// Resolves load variables in a proposition through
-/// defining-equation propositions (`v == load(snapshot, ptr)`), restoring
+/// defining-equation propositions (`v == load(retained_state, ptr)`), restoring
 /// the load terms. For surface-form synthesis, where the internal
 /// names have no surface form but their loads do.
 /// Resolves load variables in a proposition through the
@@ -3116,13 +3122,13 @@ pub(crate) fn memory_bound_cell_visits() -> usize {
 }
 
 fn collect_memory_bound_variables(memory: &Memory, variables: &mut BTreeSet<Variable>) {
-    // While a fact set reserves a fact's variables, an interned snapshot's
-    // bound variables are walked once: they depend on the snapshot alone,
-    // and the set already reserves those of every snapshot walked before.
-    // A snapshot derived from one already walked adds only the bound
+    // While a fact set reserves a fact's variables, an interned state's
+    // bound variables are walked once: they depend on the state alone,
+    // and the set already reserves those of every state walked before.
+    // A state derived from one already walked adds only the bound
     // variables of the entries it changed since.
     if let Some(shared) = crate::kernel::primitives::interned_storage_of(memory) {
-        if crate::kernel::reasoning::variable_collection::bound_snapshot_already_reserved(
+        if crate::kernel::reasoning::variable_collection::bound_state_already_reserved(
             shared.arena_id(),
         ) {
             return;
@@ -3416,8 +3422,8 @@ fn collect_bitvector_bound_variables(term: &MachineTerm, variables: &mut BTreeSe
             }
         }
         MachineTerm::MemoryLoad(memory, pointer, _) => {
-            // Memory snapshots are immutable kernel values; their free
-            // variable collector remains the source of truth for snapshot
+            // Memory states are immutable kernel values; their free
+            // variable collector remains the source of truth for state
             // contents, while the pointer can contain nested fold terms.
             collect_memory_bitvector_variables(memory, variables);
             collect_pointer_offset_bound_variables(&pointer.offset, variables);
@@ -3951,7 +3957,7 @@ pub(crate) fn substitute_integer_variable_in_pure_proposition(
     // at each occurrence. Shared descendants are not copied by substitution.
     // `validate_integer_pure_term` uses the checked carrier collector, so the
     // replacement's selected registered-load pointers are included in this
-    // one setup traversal without scanning their snapshots.
+    // one setup traversal without scanning their states.
     validate_integer_pure_term(to, &mut reserved, &mut collector)?;
     validate_integer_pure_proposition(proposition, &mut reserved, &mut collector)?;
     if collector.exhausted() {
@@ -3971,7 +3977,7 @@ pub(crate) fn substitute_integer_variable_in_pure_proposition(
     // A symbolic C load is represented by a registered load variable.  The
     // selected pointer is part of the source expression for this checked
     // witness substitution, so let the shared walker remint that load at the
-    // rewritten cell while retaining its original snapshot.
+    // rewritten cell while retaining its original state.
     walker.enable_registered_load_resolution();
     walker.reserve_integer_substitution_variables(&reserved);
     let result = substitute_pure_proposition_with_walker(proposition, from, false, &mut walker);
@@ -4024,7 +4030,7 @@ fn validate_integer_pure_proposition(
             // A symbolic array read contributes this obligation to the
             // existential body.  It is a supported C carrier as long as its
             // pointer and byte-count expressions are rewritten by the same
-            // checked walker; the memory snapshot remains opaque.
+            // checked walker; the memory state remains opaque.
             integer_work(1)?;
             collector.collect(proposition);
             if collector.exhausted() {
@@ -4517,7 +4523,7 @@ fn rewrite_integer_memory_loadable_with_walker(
     let bytes = walker.bits(bytes);
     integer_substitution_refusal(walker.refusal())?;
     Ok(Proposition::MemoryLoadable {
-        // Snapshots are immutable proof-state identities.  Keep the same
+        // Memory states are immutable proof-state identities.  Keep the same
         // handle and rewrite only the selected address/width expressions.
         memory: memory.clone(),
         base: pointer.pointer().clone(),
@@ -5685,25 +5691,25 @@ fn substitute_through_load_variable(
         offset: substitute_bitvector_variable_in_pointer_offset(&pointer.offset, from, to),
     };
     // Deciding that this load variable is untouched means rewriting the
-    // snapshot it was minted against, whose own cells hold further load
-    // variables. Going through the interned-snapshot memo makes the common
+    // state it was minted against, whose own cells hold further load
+    // variables. Going through the interned-state memo makes the common
     // "nothing changed" answer a lookup instead of a fresh rebuild of the
-    // whole reachable snapshot DAG, and compares the result by arena identity
+    // whole reachable state DAG, and compares the result by arena identity
     // rather than by deep structural equality.
     let substituted_memory = substitute_bitvector_variable_in_shared_memory(&memory, from, to);
     if substituted_pointer == pointer && substituted_memory == memory {
         return None;
     }
-    // A load variable's snapshot is the canonical projection of the snapshot
+    // A load variable's state is the canonical projection of the state
     // the load read, cut down to what that one address can observe. The
     // projection is recorded per `(projected, address)`, and the history walk
     // reaches the source through that record. A substituted address has none,
-    // so a load renamed or instantiated here would be stranded at a snapshot
+    // so a load renamed or instantiated here would be stranded at a state
     // with no history, where the same read lowered directly for the new
     // address (an `intro`duced binder, say) crosses the steps back to the
     // source. Substitute from the source instead and let `canonical_term`
     // project it for the new address and record that projection, exactly as
-    // a direct lowering does. Sound: two snapshots with one projection agree
+    // a direct lowering does. Sound: two states with one projection agree
     // on every cell the address may observe for every value of its
     // variables, and an instance observes no more of them than that.
     let substituted_memory = if substituted_pointer == pointer {
@@ -5873,7 +5879,7 @@ pub(crate) fn substitute_bitvector_variable(
                 crate::kernel::MachineOperandView::Legacy(term),
             )
             .expect("structural read");
-            // A projected snapshot is indexed by the address it was selected
+            // A projected state is indexed by the address it was selected
             // for. Renaming that address must project the original source
             // again, just as direct lowering at the new binder does.
             if rewritten_pointer != **pointer
@@ -5928,7 +5934,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_pointer_offset(
 
 /// Keep an unchanged pointer spelling intact. Rebuilding every `Add` through
 /// the normalizing constructor changes an otherwise untouched memory cell's
-/// key, which in turn mints a different snapshot for a binder rename that did
+/// key, which in turn mints a different state for a binder rename that did
 /// not occur anywhere in that cell.
 fn substitute_bitvector_variable_in_pointer_offset_cow<'a>(
     offset: &'a PointerOffsetTerm,
@@ -6040,19 +6046,19 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_pointer(
     }
 }
 
-/// One in-flight `(from, to)` substitution's already-rewritten snapshots.
+/// One in-flight `(from, to)` substitution's already-rewritten states.
 ///
-/// A `MemoryLoad` term carries a whole snapshot, and a snapshot's cells can
+/// A `MemoryLoad` term carries a whole state, and a state's cells can
 /// hold further `MemoryLoad` terms, so the terms a proof builds form a DAG of
-/// snapshots rather than a tree. Rewriting one variable used to walk that DAG
-/// as a tree, re-deriving and re-interning every shared snapshot once per path
+/// states rather than a tree. Rewriting one variable used to walk that DAG
+/// as a tree, re-deriving and re-interning every shared state once per path
 /// that reaches it: in `mdtests/rb_replace_node_with_children.md`, whose three
 /// nested `unfold`s name a cell at each level, 96 variable substitutions cost
-/// 965,776 snapshot rebuilds.
+/// 965,776 state rebuilds.
 ///
-/// Snapshots are interned, so the rewrite of one is a pure function of its
+/// Memory states are interned, so the rewrite of one is a pure function of its
 /// arena id and the `(from, to)` pair. Keyed by that id, each distinct
-/// snapshot is rebuilt exactly once per substitution and the walk becomes
+/// state is rebuilt exactly once per substitution and the walk becomes
 /// linear in the DAG's nodes. The frame holds the borrowed replacement term's
 /// address: the term is alive for as long as the frame, so an equal address is
 /// the same object with the same contents, the argument
@@ -6066,12 +6072,12 @@ struct SubstitutedMemoryFrame {
 thread_local! {
     static SUBSTITUTED_MEMORIES: std::cell::RefCell<Vec<SubstitutedMemoryFrame>> =
         const { std::cell::RefCell::new(Vec::new()) };
-    /// Interned snapshots a variable was found not to occur in. A quantified
+    /// Interned states a variable was found not to occur in. A quantified
     /// fact over `m[p + j]` names its binder only in the address, never in
-    /// the snapshot, yet each instantiation used to rewrite the whole
-    /// snapshot again: the arena pipeline's order decisions instantiate its
+    /// the state, yet each instantiation used to rewrite the whole
+    /// state again: the arena pipeline's order decisions instantiate its
     /// frames once per candidate term. The answer depends only on the
-    /// immutable snapshot and the variable, so it is kept across
+    /// immutable state and the variable, so it is kept across
     /// substitutions; the key names the arena, so a reset arena misses.
     static MEMORY_LACKS_VARIABLE: std::cell::RefCell<
         std::collections::HashSet<((u32, u32), Variable)>,
@@ -6081,7 +6087,7 @@ thread_local! {
 /// Entries kept before the absent-variable memo is cleared.
 const MEMORY_LACKS_VARIABLE_LIMIT: usize = 1 << 20;
 
-/// Opens (or joins) the snapshot memo for one `(from, to)` substitution.
+/// Opens (or joins) the state memo for one `(from, to)` substitution.
 struct SubstitutedMemoryScope {
     pushed: bool,
 }
@@ -6119,8 +6125,8 @@ impl Drop for SubstitutedMemoryScope {
     }
 }
 
-/// Rewrites one variable inside an interned snapshot, reusing this
-/// substitution's earlier answer for the same snapshot.
+/// Rewrites one variable inside an interned state, reusing this
+/// substitution's earlier answer for the same state.
 fn substitute_bitvector_variable_in_shared_memory(
     memory: &SharedMemory,
     from: Variable,
@@ -6140,8 +6146,7 @@ fn substitute_bitvector_variable_in_shared_memory(
     if let Some(substituted) = substituted {
         return substituted;
     }
-    let substituted =
-        crate::kernel::intern_memory(rewrite_memory_snapshot(memory.memory(), from, to));
+    let substituted = crate::kernel::intern_memory(rewrite_memory_state(memory.memory(), from, to));
     if substituted == *memory {
         record_memory_lacks_variable(identity, from);
     }
@@ -6153,11 +6158,11 @@ fn substitute_bitvector_variable_in_shared_memory(
     substituted
 }
 
-/// Rewrites one variable throughout a memory snapshot.
+/// Rewrites one variable throughout a memory state.
 ///
-/// This is the unit of work the snapshot DAG multiplies, so it is a named
-/// profiler operation charged its snapshot's size: a rewrite that revisits one
-/// shared snapshot once per reaching path shows up as `substitution: snapshot
+/// This is the unit of work the state DAG multiplies, so it is a named
+/// profiler operation charged its state's size: a rewrite that revisits one
+/// shared state once per reaching path shows up as `substitution: state
 /// rewrite` growing far faster than the proof, which is what `click profile`
 /// could not point at before.
 pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
@@ -6165,15 +6170,15 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
     from: Variable,
     to: &MachineTerm,
 ) -> Memory {
-    // A snapshot carried by value (a loadability or effect proposition) is
+    // A state carried by value (a loadability or effect proposition) is
     // interned only to consult and fill the absent-variable memo; interning
-    // an already-registered snapshot is a shallow lookup.
+    // an already-registered state is a shallow lookup.
     let shared = crate::kernel::intern_memory(memory.clone());
     let identity = shared.arena_id();
     if memory_lacks_variable(identity, from) {
         return memory.clone();
     }
-    let substituted = rewrite_memory_snapshot(memory, from, to);
+    let substituted = rewrite_memory_state(memory, from, to);
     if crate::kernel::intern_memory(substituted.clone()) == shared {
         record_memory_lacks_variable(identity, from);
     }
@@ -6224,11 +6229,11 @@ fn run_slot_named_by_load_variable(
     (index < run.count() && !run.holes().contains(index)).then_some(index)
 }
 
-fn rewrite_memory_snapshot(memory: &Memory, from: Variable, to: &MachineTerm) -> Memory {
+fn rewrite_memory_state(memory: &Memory, from: Variable, to: &MachineTerm) -> Memory {
     crate::instrumentation::measure_operation(
         "kernel",
         "substitution",
-        "substitution: snapshot rewrite",
+        "substitution: state rewrite",
         || substitute_bitvector_variable_in_memory_contents(memory, from, to),
     )
 }
@@ -6253,7 +6258,7 @@ fn record_memory_lacks_variable(identity: (u32, u32), from: Variable) {
 
 #[cfg(test)]
 #[test]
-fn snapshot_size_substitution_preserves_declared_types_and_write_protection() {
+fn state_size_substitution_preserves_declared_types_and_write_protection() {
     let from = Variable(84001);
     let mut memory =
         Memory::new().with_declared_scalar_block("local:word".into(), 4, ProgramType::UInt32);
@@ -6330,7 +6335,7 @@ fn substitute_bitvector_variable_in_memory_contents(
                 .collect(),
         ),
         // Carried unrewritten. The mark inside is an identity, not an
-        // address or a value, and a rewritten snapshot that dropped it could
+        // address or a value, and a rewritten state that dropped it could
         // re-intern as a state that forgot nothing.
         forgotten: memory.forgotten.clone(),
         heap: std::sync::Arc::new(HeapMemory {
@@ -7478,11 +7483,9 @@ fn substitute_pointer_variable_in_spec_expression(
             result_object_class: result_object_class.clone(),
             projection: projection.clone(),
         },
-        SpecExpression::LoopEntrySnapshot(expression) => {
-            SpecExpression::LoopEntrySnapshot(Box::new(
-                substitute_pointer_variable_in_spec_expression(expression, from, to),
-            ))
-        }
+        SpecExpression::LoopEntryState(expression) => SpecExpression::LoopEntryState(Box::new(
+            substitute_pointer_variable_in_spec_expression(expression, from, to),
+        )),
         SpecExpression::Subobject { pointer, width } => SpecExpression::Subobject {
             pointer: Box::new(substitute_pointer_variable_in_spec_expression(
                 pointer, from, to,
@@ -8653,7 +8656,7 @@ mod integer_mixed_quantifier_tests {
             panic!("witness replacement changed Integer carrier")
         };
         let MachineTerm::Variable(rewritten_load) = machine.value() else {
-            panic!("registered load was expanded into the memory snapshot")
+            panic!("registered load was expanded into the memory state")
         };
         let (rewritten_memory, rewritten_pointer) =
             crate::kernel::eval::registered_load_for_variable(rewritten_load)
@@ -9182,7 +9185,7 @@ mod integer_range_fold_substitution_tests {
         let MachineTerm::MemoryLoad(projected, _, _) = &original else {
             panic!("structural read");
         };
-        assert_ne!(*projected, source, "exercise a projected snapshot");
+        assert_ne!(*projected, source, "exercise a projected state");
         let renamed_pointer = substitute_bitvector_variable_in_pointer(
             &pointer,
             binder,
@@ -9261,7 +9264,7 @@ mod integer_range_fold_substitution_tests {
             &pointer,
             crate::kernel::LoadKind::Int32,
         );
-        let (source_snapshot, _) =
+        let (source_memory_state, _) =
             crate::kernel::eval::registered_load_for_variable(&load_variable)
                 .expect("the source load must be registered");
         let body = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
@@ -9280,7 +9283,8 @@ mod integer_range_fold_substitution_tests {
         let IntegerTerm::Machine(machine) = result else {
             panic!("the machine load carrier was lost");
         };
-        let (snapshot, pointer, kind) = machine.operand_view().read().expect("structural read");
+        let (retained_state, pointer, kind) =
+            machine.operand_view().read().expect("structural read");
         assert_eq!(kind, crate::kernel::LoadKind::Int32);
         assert_ne!(
             pointer,
@@ -9288,7 +9292,7 @@ mod integer_range_fold_substitution_tests {
                 .unwrap()
                 .1
         );
-        assert_eq!(snapshot, &source_snapshot);
+        assert_eq!(retained_state, &source_memory_state);
         assert_eq!(pointer.offset, PointerOffsetTerm::Constant(0));
     }
 
@@ -9311,7 +9315,7 @@ mod integer_range_fold_substitution_tests {
             &pointer,
             crate::kernel::LoadKind::Int32,
         );
-        let (source_snapshot, _) =
+        let (source_memory_state, _) =
             crate::kernel::eval::registered_load_for_variable(&load_variable)
                 .expect("the source load must be registered");
         let body = IntegerTerm::Machine(SharedMachineIntegerTerm::intern(
@@ -9330,7 +9334,8 @@ mod integer_range_fold_substitution_tests {
         let IntegerTerm::Machine(machine) = result else {
             panic!("the machine load carrier was lost");
         };
-        let (snapshot, pointer, kind) = machine.operand_view().read().expect("structural read");
+        let (retained_state, pointer, kind) =
+            machine.operand_view().read().expect("structural read");
         assert_eq!(kind, crate::kernel::LoadKind::Int32);
         assert_ne!(
             pointer,
@@ -9338,7 +9343,7 @@ mod integer_range_fold_substitution_tests {
                 .unwrap()
                 .1
         );
-        assert_eq!(snapshot, &source_snapshot);
+        assert_eq!(retained_state, &source_memory_state);
         assert_eq!(pointer.offset, PointerOffsetTerm::Constant(4));
     }
 

@@ -14,7 +14,7 @@ fn resource_call_arguments_are_checked_in_kernel_and_fields_are_fresh() {
             schema.clone(),
             ResourceSpec::composite(ResourceAccessMode::Own, "marker".into(), vec![], vec![]),
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap()
     };
@@ -128,7 +128,7 @@ fn direct_call_map_is_checked_in_kernel_like_named_proof_arguments() {
             schema.clone(),
             ResourceSpec::composite(ResourceAccessMode::Own, "marker".into(), vec![], vec![]),
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap()
     };
@@ -212,7 +212,7 @@ fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
         ProgramExpression::Value(int32(1)),
     ))
     .with_role(ResourceTransferRole::Borrow)
-    .with_snapshot(ResourceSnapshot::Entry);
+    .with_state_source(ResourceStateSource::Entry);
     let function = program_function(
         ProgramType::Void,
         "borrow_role",
@@ -241,8 +241,8 @@ fn resource_transition_retains_borrow_role_for_owned_entry_fact() {
     assert_eq!(transfer.borrowed_inputs.len(), 1);
     assert!(transfer.consumed_inputs.is_empty());
     assert_eq!(
-        transfer.borrowed_inputs[0].snapshot,
-        ResourceSnapshot::Entry
+        transfer.borrowed_inputs[0].state_source,
+        ResourceStateSource::Entry
     );
     assert_eq!(
         transfer.borrowed_inputs[0].role,
@@ -812,7 +812,7 @@ fn direct_and_named_callback_resource_interfaces_agree_across_families() {
         schema.clone(),
         instance_resource,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let instance = ResourceInstance::new(
@@ -1343,14 +1343,14 @@ fn resource_derived_loop_setup_does_not_fallback_to_surface_metadata() {
         vec![],
         vec![],
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let quantity = ResourceSpec::quantified(
         ProgramExpression::Variable("missing_quantity".into()),
         token,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let inherited = LoopEffectCheck::new_with_origin(
@@ -1462,16 +1462,16 @@ fn unresolved_call_requirements_retain_selected_source_site_identity() {
         arguments.as_slice()
     );
     assert_eq!(
-        first_site.source_snapshot,
-        MemorySnapshotIdentity::of(first_state.memory())
+        first_site.source_memory_state,
+        MemoryStateIdentity::of(first_state.memory())
     );
     assert_eq!(
-        second_site.source_snapshot,
-        MemorySnapshotIdentity::of(second_state.memory())
+        second_site.source_memory_state,
+        MemoryStateIdentity::of(second_state.memory())
     );
     assert_ne!(
-        first_site.source_snapshot, second_site.source_snapshot,
-        "same callee and arguments must remain separated by source snapshot identity"
+        first_site.source_memory_state, second_site.source_memory_state,
+        "same callee and arguments must remain separated by source state identity"
     );
 }
 
@@ -1740,18 +1740,18 @@ fn contract_source_maps_do_not_change_function_semantic_identity() {
 }
 
 #[test]
-fn call_snapshot_identity_work_does_not_scale_with_unrelated_memory() {
+fn call_state_identity_work_does_not_scale_with_unrelated_memory() {
     let small = Memory::new();
     let large = (0..256).fold(Memory::new(), |memory, index| {
         memory.with_block(format!("unrelated{index}"), 4)
     });
     let (_, small_work) =
-        crate::instrumentation::measure_deterministic_work(|| MemorySnapshotIdentity::of(&small));
+        crate::instrumentation::measure_deterministic_work(|| MemoryStateIdentity::of(&small));
     let (_, large_work) =
-        crate::instrumentation::measure_deterministic_work(|| MemorySnapshotIdentity::of(&large));
+        crate::instrumentation::measure_deterministic_work(|| MemoryStateIdentity::of(&large));
     assert_eq!(
         small_work, large_work,
-        "snapshot identity must not scan unrelated memory"
+        "state identity must not scan unrelated memory"
     );
 }
 
@@ -1796,18 +1796,18 @@ fn empty_requirement_lowering_retains_selected_call_source() {
 }
 
 #[test]
-fn source_load_snapshot_collection_is_iterative_and_bounded() {
+fn source_load_state_collection_is_iterative_and_bounded() {
     let leaf = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
     // The condition node is visited in addition to the proposition nodes.
     let within_limit = (0..4094).fold(leaf.clone(), |body, _| Proposition::Not(Box::new(body)));
     assert!(
-        source_load_snapshot_for_proposition(&within_limit)
+        source_load_state_for_proposition(&within_limit)
             .expect("the bounded collector should handle deep logical structure")
             .is_none()
     );
     let over_limit = Proposition::Not(Box::new(within_limit));
     assert_eq!(
-        source_load_snapshot_for_proposition(&over_limit),
+        source_load_state_for_proposition(&over_limit),
         Err(ExecutionLimit::ExpressionSteps),
         "metadata collection must propagate structural exhaustion"
     );

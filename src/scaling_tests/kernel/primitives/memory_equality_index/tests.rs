@@ -21,16 +21,16 @@ fn checked_read_endpoint_selects_framed_ranges_without_ambient_scan() {
         };
         let before = Memory::new();
         let read = |context: &PureFactContext, memory: &Memory, address: &Pointer| {
-            let snapshot = crate::kernel::intern_memory_ref(memory);
+            let retained_state = crate::kernel::intern_memory_ref(memory);
             let variable = crate::kernel::load_variable_for_cell_with_origin(
-                &snapshot,
+                &retained_state,
                 address,
                 LoadKind::Int32,
                 C_POINTER_BYTE_WIDTH,
-                &snapshot,
+                &retained_state,
             );
             let pointer = Pointer::loaded(&MachineTerm::Variable(variable)).unwrap();
-            context.register_pointer_read(&pointer, &snapshot, address);
+            context.register_pointer_read(&pointer, &retained_state, address);
             pointer
         };
         let source = read(&PureFactContext::new(), &before, &field);

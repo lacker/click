@@ -31,7 +31,7 @@ fn evaluate(scope: SpecScope<'_>, expression: &SpecExpression) -> SpecExpression
 }
 
 #[test]
-fn shared_let_values_keep_identity_shadowing_and_snapshot_scope() {
+fn shared_let_values_keep_identity_shadowing_and_state_scope() {
     let _session = VerificationSession::enter();
     let state = ExecutionState::new().with_local(
         "x",
@@ -47,7 +47,7 @@ fn shared_let_values_keep_identity_shadowing_and_snapshot_scope() {
         evaluate(scope, &bind("v", value.clone(), name("v"))),
         expected
     );
-    // `old` keeps the existing snapshot-local name interpretation, even when
+    // `old` keeps the existing state-local name interpretation, even when
     // the current evaluation shadows that name with a retained value.
     assert_eq!(
         evaluate(
@@ -55,7 +55,7 @@ fn shared_let_values_keep_identity_shadowing_and_snapshot_scope() {
             &bind(
                 "v",
                 value.clone(),
-                SpecExpression::LoopEntrySnapshot(Box::new(name("v")))
+                SpecExpression::LoopEntryState(Box::new(name("v")))
             )
         )
         .value,

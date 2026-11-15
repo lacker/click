@@ -2644,7 +2644,7 @@ fn checked_evidence_sequence_seals_each_appended_call_locally() {
 }
 
 #[test]
-fn snapshots_share_storage_and_updates_do_not_mutate_predecessors() {
+fn states_share_storage_and_updates_do_not_mutate_predecessors() {
     let (ledger, owner, reader) = participants();
     let clone = ledger.clone();
     assert!(ledger.shares_storage_with(&clone));
@@ -2779,7 +2779,7 @@ pub(super) fn checked(fact: ResourceFact) -> CheckedResourceFact {
     CheckedResourceFact {
         fact,
         role: ResourceTransferRole::Borrow,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,
@@ -3082,7 +3082,7 @@ fn composite_planner_rejects_an_owned_requirement_inside_the_viewed_frontier() {
                 CheckedResourceFact {
                     fact: owned,
                     role: ResourceTransferRole::Consume,
-                    snapshot: ResourceSnapshot::Entry,
+                    state_source: ResourceStateSource::Entry,
                     clause_position: None,
                     section_index: None,
                     selected_mutex_source: None,
@@ -3984,7 +3984,7 @@ fn joint_planner_rejects_view_and_mutable_transfer_of_same_authority() {
         CheckedResourceFact {
             fact: owner,
             role: ResourceTransferRole::Consume,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: None,
             selected_mutex_source: None,
@@ -4011,7 +4011,7 @@ fn joint_planner_partitions_disjoint_write_and_view_ranges_in_any_clause_order()
     let write = CheckedResourceFact {
         fact: memory(4, 8, true),
         role: ResourceTransferRole::Consume,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,
@@ -4072,7 +4072,7 @@ fn joint_planner_partitions_disjoint_write_and_view_ranges_in_any_clause_order()
     let reverse_write = CheckedResourceFact {
         fact: memory(0, 4, true),
         role: ResourceTransferRole::Consume,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,
@@ -4113,7 +4113,7 @@ fn rejected_joint_plan_leaves_caller_resources_and_ledger_unchanged() {
         CheckedResourceFact {
             fact: missing.clone(),
             role: ResourceTransferRole::Consume,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: None,
             selected_mutex_source: None,
@@ -4362,7 +4362,7 @@ fn active_memory_index_returns_only_overlapping_live_loans() {
         .lend(owner, reader, backing(&owned_range), owned_range)
         .unwrap();
     let ledger = ledger.apply(&opening.transition).unwrap();
-    let protected_snapshot = ledger.clone();
+    let protected_state = ledger.clone();
     assert!(ledger.has_active_memory_loans());
     assert!(ledger.has_indexed_memory_overlap(memory(2, 4, false).memory_range().unwrap()));
     assert!(!ledger.has_indexed_memory_overlap(memory(8, 10, false).memory_range().unwrap()));
@@ -4416,12 +4416,12 @@ fn active_memory_index_returns_only_overlapping_live_loans() {
     );
     assert!(!ledger.has_indexed_memory_overlap(memory(2, 4, false).memory_range().unwrap()));
     assert!(
-        protected_snapshot.has_indexed_memory_overlap(memory(2, 4, false).memory_range().unwrap())
+        protected_state.has_indexed_memory_overlap(memory(2, 4, false).memory_range().unwrap())
     );
     assert!(!ledger.has_active_memory_loans());
-    assert!(protected_snapshot.has_active_memory_loans());
+    assert!(protected_state.has_active_memory_loans());
     assert_eq!(
-        protected_snapshot.permits_memory_access(memory(2, 4, false).memory_range().unwrap()),
+        protected_state.permits_memory_access(memory(2, 4, false).memory_range().unwrap()),
         Err(LoanRefusal::ActiveDependency)
     );
     let _ = ledger.recover(opening.loan, owner).unwrap();

@@ -1,7 +1,7 @@
 # a signed at read is not an unsigned body read
 
 `at(function.entry, s[i])` reads the byte at entry as `signed char`; the body
-read it as `unsigned char`. Nothing writes the byte, so the snapshots agree,
+read it as `unsigned char`. Nothing writes the byte, so the states agree,
 and the two reads still differ for every byte of `0x80` or more.
 
 The claim was **provable** for the same reason as

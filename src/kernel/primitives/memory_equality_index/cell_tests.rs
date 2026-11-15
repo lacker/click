@@ -116,10 +116,10 @@ fn publication_in_one_branch_keeps_sibling_input_pairing() {
 }
 
 #[test]
-fn cell_index_follows_completed_pointer_reads_and_preserves_snapshots() {
+fn cell_index_follows_completed_pointer_reads_and_preserves_states() {
     let _session = crate::kernel::VerificationSession::enter();
     let memory = Memory::new();
-    let snapshot = crate::kernel::intern_memory(memory.clone());
+    let retained_state = crate::kernel::intern_memory(memory.clone());
     let (a, b) = (
         Pointer::symbolic(Variable(852_010)),
         Pointer::symbolic(Variable(852_011)),
@@ -185,7 +185,7 @@ fn cell_index_follows_completed_pointer_reads_and_preserves_snapshots() {
     assert!(!sibling.permits_memory_read(&y, 4, &facts));
     assert!(sibling.memory_write_range(&y, 4, &facts).is_none());
     assert!(!resources.permits_memory_read(&y.offset_by_bytes(4), 4, &connected));
-    let old = Pointer::loaded_value(&snapshot, &a);
+    let old = Pointer::loaded_value(&retained_state, &a);
     assert!(
         resources
             .concrete_read_entries(&old, 4, &connected)
@@ -578,9 +578,9 @@ fn interval_candidates_ignore_unrelated_scalar_equalities() {
 fn interval_candidates_follow_loaded_pointer_origins_without_spelling_retry() {
     let a = Pointer::symbolic(Variable(895_010));
     let b = Pointer::symbolic(Variable(895_011));
-    let snapshot = crate::kernel::intern_memory(Memory::new());
-    let x = Pointer::loaded_value(&snapshot, &a);
-    let y = Pointer::loaded_value(&snapshot, &b);
+    let retained_state = crate::kernel::intern_memory(Memory::new());
+    let x = Pointer::loaded_value(&retained_state, &a);
+    let y = Pointer::loaded_value(&retained_state, &b);
     let initial = PureFactContext::new();
     let connected = initial
         .clone()
@@ -643,8 +643,8 @@ fn interval_candidates_follow_loaded_pointer_origins_without_spelling_retry() {
             .clone()
             .store(slot.offset_by_bytes(4), crate::kernel::uint8(1u32)),
     );
-    let other_snapshot = Pointer::loaded_value(&later, &slot);
-    assert!(!resources.permits_memory_read(&other_snapshot.offset_by_bytes(8), 4, &connected));
+    let other_memory_state = Pointer::loaded_value(&later, &slot);
+    assert!(!resources.permits_memory_read(&other_memory_state.offset_by_bytes(8), 4, &connected));
 }
 
 #[test]

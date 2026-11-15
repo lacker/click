@@ -32,12 +32,12 @@ fn fixture(
                 resource: Box::new(slot.clone()),
                 schema: ResourceFieldSchema::new(vec![]).unwrap(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let control = CompositeResourceDefinition::new(
@@ -76,7 +76,7 @@ fn fixture(
         )),
         slot,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let mut resources = vec![ResourceSpec::composite(

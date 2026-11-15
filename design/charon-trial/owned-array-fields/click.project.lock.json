@@ -18,18 +18,18 @@
             "profile": "38b817cc5760845d2e37b8f72a333f6d36a3ccdbfbf19e8c22da436e67a79ab1"
           },
           "schema": 9,
-          "source": "06e9d211e1e0b095872a1c55450d7d12ecc656e45d82dee070951fb56a336bdd"
+          "source": "dbb2406f9a7cdeb48c483b69ea1edf835e14f52041034e8244a36cee453dbab2"
         },
         "sources": {
           "owned.rs": {
             "artifact": {
-              "bytes": 119431,
+              "bytes": 119451,
               "path": ".click/owned/owned.rs.ullbc",
-              "sha256": "7eb1dc8100ddcdf9ed452a57949ba8aeba006b91ab3cb239cffc555fd2b61b03"
+              "sha256": "4442c2a4b4b98d965ab29ed8d1ce7e4e7f27c22eabceb51cc4cc1e49fd99a43d"
             },
-            "identity": "8eb6f4b9899ba3ff4e7bf32ade32c988931a625b029fba6a8bbec2f226a71e35",
+            "identity": "99928630c526d7da12e66f0cf647cc8b92a2f9725f78ef57ed34b12e6c16f5c8",
             "inputs": {
-              "owned.rs": "06e9d211e1e0b095872a1c55450d7d12ecc656e45d82dee070951fb56a336bdd"
+              "owned.rs": "dbb2406f9a7cdeb48c483b69ea1edf835e14f52041034e8244a36cee453dbab2"
             }
           }
         },

@@ -1158,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn finite_read_certificate_preserves_snapshot_address_and_kind() {
+    fn finite_read_certificate_preserves_state_address_and_kind() {
         let _session = crate::kernel::VerificationSession::enter();
         let memory = crate::kernel::intern_memory(crate::kernel::Memory::new());
         let pointer = crate::kernel::Pointer::symbolic(Variable(22_104));

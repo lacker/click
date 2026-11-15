@@ -2,14 +2,14 @@ use super::*;
 
 impl PureFactContext {
     /// Decides whether two conditions are two forms of one fact that
-    /// differ only in the memory snapshots their load atoms carry.
+    /// differ only in the memory states their load atoms carry.
     ///
     /// Sound because it is exact everywhere except at load atoms, and a pair
     /// of load atoms is accepted only when `memory_loads_proven_equal`
     /// proves the two loads denote the same value under these assumptions —
-    /// which for differing snapshots means proving the snapshots agree at the
+    /// which for differing states means proving the states agree at the
     /// loaded pointer. Structurally different conditions never match.
-    pub fn conditions_equal_modulo_proven_snapshots(
+    pub fn conditions_equal_modulo_proven_states(
         &self,
         left: &ConditionTerm,
         right: &ConditionTerm,
@@ -33,8 +33,8 @@ impl PureFactContext {
         })
     }
 
-    /// Like [`Self::conditions_equal_modulo_proven_snapshots`], additionally
-    /// accepting two loads of one pointer whose snapshots the recorded memory
+    /// Like [`Self::conditions_equal_modulo_proven_states`], additionally
+    /// accepting two loads of one pointer whose states the recorded memory
     /// DAG proves agree at that pointer under these assumptions, crossing
     /// call-havoc and store edges by the separation and ownership facts in
     /// this context. This is the checked replacement for load names that
@@ -114,11 +114,11 @@ impl PureFactContext {
     }
 
     /// Whether a fact proves `condition`, an equality of values of an
-    /// abstract type, up to the snapshots its loads read: a field the fact
-    /// read at one snapshot holds the same value at another that agrees at
+    /// abstract type, up to the states its loads read: a field the fact
+    /// read at one state holds the same value at another that agrees at
     /// its address. Only the facts mentioning a variable of a load's
     /// address are candidates, since a matching fact loads the same one.
-    pub(in crate::kernel) fn proves_algebraic_condition_modulo_snapshots(
+    pub(in crate::kernel) fn proves_algebraic_condition_modulo_states(
         &self,
         condition: &ConditionTerm,
         value: bool,
@@ -143,7 +143,7 @@ impl PureFactContext {
                 facts.any(|(fact, fact_value)| {
                     fact_value == value
                         && conditions_equal_ignoring_memories(fact, condition)
-                        && self.conditions_equal_modulo_proven_snapshots(fact, condition)
+                        && self.conditions_equal_modulo_proven_states(fact, condition)
                 })
             })
     }
@@ -208,7 +208,7 @@ impl PureFactContext {
         false
     }
 
-    pub(in crate::kernel) fn memory_snapshots_directly_proven_equal_for_memory_resolution(
+    pub(in crate::kernel) fn memory_states_directly_proven_equal_for_memory_resolution(
         &self,
         left: &Memory,
         right: &Memory,
@@ -306,7 +306,7 @@ impl PureFactContext {
         // may be decided by this context's facts (a bound index proven
         // distinct from every stored cell) even though the variable was
         // created without them. The result is canonical so a resolution
-        // to an earlier snapshot's load compares by canonical form.
+        // to an earlier state's load compares by canonical form.
         let viewed = crate::kernel::eval::viewed_as_memory_load(term)?;
         let MachineTerm::MemoryLoad(memory, pointer, kind) = &viewed else {
             return None;

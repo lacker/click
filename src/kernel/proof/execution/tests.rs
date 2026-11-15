@@ -502,7 +502,7 @@ fn constructor_partition_freshness_is_indexed_and_output_linear() {
 }
 
 #[test]
-fn cached_body_loadability_preserves_exact_range_and_snapshot_barriers() {
+fn cached_body_loadability_preserves_exact_range_and_state_barriers() {
     let before = Memory::new();
     let at = |block: &str| Pointer {
         block: block.into(),
@@ -808,15 +808,15 @@ fn return_proposition_rejects_sibling_assumptions_and_other_memory() {
     }
     let (function, mut events) = returned_proposition_trace(&state, &sibling);
     let mut other_state = state.clone();
-    other_state.memory = Memory::new().with_block("other_snapshot", 4);
+    other_state.memory = Memory::new().with_block("other_memory_state", 4);
     let other_context = returned_proposition_context(&other_state);
-    let wrong_snapshot =
+    let wrong_state =
         returned_proposition_event(&other_context, &other_state, &sibling, &sibling, fact);
-    let CheckedExecutionEvent::ReturnProposition(retained) = &wrong_snapshot else {
+    let CheckedExecutionEvent::ReturnProposition(retained) = &wrong_state else {
         unreachable!()
     };
     assert!(CheckedReturnProposition::check(retained.proof.clone(), &sibling, context,).is_err());
-    events.push(wrong_snapshot);
+    events.push(wrong_state);
     assert_eq!(
         trace_completion(&function, &events, sibling.assumptions(), false).err(),
         Some("return proof belongs to a different execution path")
@@ -1323,7 +1323,7 @@ fn return_resource_observations_construct_successors_and_reject_other_paths() {
 }
 
 #[test]
-fn return_exchange_keeps_the_published_body_snapshot() {
+fn return_exchange_keeps_the_published_body_state() {
     use crate::kernel::{
         PointerValue, ResourceFieldSchema, ResourceFieldType, ResourceInstance, SpecMemory,
     };
@@ -1362,7 +1362,7 @@ fn return_exchange_keeps_the_published_body_snapshot() {
     .with_instance_schema(Some(schema));
     let physical = ExecutionState::new();
     // Publication may materialize an observed value without modifying the
-    // retained execution snapshot. The exchange belongs to that publication.
+    // retained execution state. The exchange belongs to that publication.
     let published = physical
         .clone()
         .with_memory(physical.memory().clone().store(pointer, int32(7)));
@@ -2862,7 +2862,7 @@ fn interface_logical_read_does_not_establish_validity() {
         1 + path.facts.len() + path.obligations.len()
     );
     assert!(checked.facts.shares_premises_with(&facts));
-    assert_eq!(checked.snapshot, state);
+    assert_eq!(checked.retained_state, state);
     assert_eq!(checked.reference, state);
     assert_eq!(checked.spec.as_ref(), &spec);
     let copy = checked.clone();
@@ -2921,7 +2921,7 @@ fn interface_assertion_requires_an_available_proof_not_derivability() {
 }
 
 #[test]
-fn interface_load_definition_rejects_wrong_variable_address_and_snapshot() {
+fn interface_load_definition_rejects_wrong_variable_address_and_state() {
     use crate::kernel::{ConditionTerm, Memory, Pointer};
     let memory = crate::kernel::intern_memory(Memory::new());
     let pointer = Pointer {
@@ -2960,12 +2960,12 @@ fn interface_load_definition_rejects_wrong_variable_address_and_snapshot() {
             offset: PointerOffsetTerm::Constant(0),
         },
     );
-    let wrong_snapshot = equation(
+    let wrong_state = equation(
         variable,
         crate::kernel::intern_memory(Memory::new().with_block("different", 4)),
         pointer,
     );
-    for wrong in [wrong_variable, wrong_address, wrong_snapshot] {
+    for wrong in [wrong_variable, wrong_address, wrong_state] {
         assert!(CheckedInterfaceLoadDefinition::check(&wrong).is_none());
         assert!(!definition.matches_goal_exactly(&wrong));
     }

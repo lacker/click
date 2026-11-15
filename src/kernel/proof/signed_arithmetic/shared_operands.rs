@@ -26,7 +26,7 @@ mod tests {
     fn structural_keys_survive_state_restore_but_clear_for_a_new_session() {
         {
             let _session = crate::kernel::VerificationSession::enter();
-            let snapshot = crate::kernel::VerificationSession::capture_state();
+            let retained_state = crate::kernel::VerificationSession::capture_state();
             let format = MachineIntegerType::Int32;
             let mut term = KernelTerm::variable(
                 KernelType::Program(crate::kernel::ProgramType::Int32),
@@ -42,7 +42,9 @@ mod tests {
             let view = MachineOperandView::Shared(&term);
             assert!(operands_equal(view, view));
             let count = atom_keys::cache_len();
-            assert!(crate::kernel::VerificationSession::restore_state(&snapshot));
+            assert!(crate::kernel::VerificationSession::restore_state(
+                &retained_state
+            ));
             crate::kernel::eval::begin_load_origin_epoch();
             let (same, work) =
                 crate::instrumentation::measure_deterministic_work(|| operands_equal(view, view));

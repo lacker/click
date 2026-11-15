@@ -3,10 +3,10 @@
 This checks the direct loop-invariant form of the standard-library
 `permutation` predicate. Unfolding `permutation` reaches `count`, which uses
 `.fold`; loop invariant spec lowering keeps that as pure Click core over
-explicit current and entry memory snapshots.
+explicit current and entry memory states.
 
 The body writes only `i`, so the array argument `count` folds over names the
-same snapshot at the back edge as at the iteration's start, and the
+same state at the back edge as at the iteration's start, and the
 permutation invariant is preserved without a step of its own. The bundle the
 closer sees is therefore the two `decreases` obligations; the invariant used
 to need an `intro(); solve();` leaf beside them, when every statement renamed

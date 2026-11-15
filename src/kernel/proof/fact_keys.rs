@@ -1,7 +1,7 @@
 //! Structural index keys for persistent checked proof facts.
 //!
-//! Snapshot-blind keys select a small set of potentially transportable facts.
-//! A key match is never proof authority: the checked snapshot bridge still
+//! MemoryState-blind keys select a small set of potentially transportable facts.
+//! A key match is never proof authority: the checked state bridge still
 //! validates every selected candidate.
 
 #[cfg(test)]
@@ -50,108 +50,108 @@ pub(crate) fn alpha_proposition_key_visits() -> usize {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) enum SnapshotBlindPropositionKey {
-    Condition(SnapshotBlindConditionKey, bool),
+pub(crate) enum MemoryErasedPropositionKey {
+    Condition(MemoryErasedConditionKey, bool),
     Implies(Box<Self>, Box<Self>),
     And(Box<Self>, Box<Self>),
     Or(Box<Self>, Box<Self>),
     Not(Box<Self>),
     MemorySeparate(
-        Box<SnapshotBlindMemoryRangeKey>,
-        Box<SnapshotBlindMemoryRangeKey>,
+        Box<MemoryErasedMemoryRangeKey>,
+        Box<MemoryErasedMemoryRangeKey>,
     ),
     Exact(Proposition),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct SnapshotBlindMemoryRangeKey {
+pub(crate) struct MemoryErasedMemoryRangeKey {
     block: PointerBlock,
-    offset: SnapshotBlindPointerOffsetKey,
-    start: SnapshotBlindBitvectorKey,
-    end: SnapshotBlindBitvectorKey,
+    offset: MemoryErasedPointerOffsetKey,
+    start: MemoryErasedBitvectorKey,
+    end: MemoryErasedBitvectorKey,
     wide: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) enum SnapshotBlindConditionKey {
-    PointerValueEqual(SnapshotBlindPointerValueKey, SnapshotBlindPointerValueKey),
+pub(crate) enum MemoryErasedConditionKey {
+    PointerValueEqual(MemoryErasedPointerValueKey, MemoryErasedPointerValueKey),
     AlgebraicEqual(Box<AlgebraicTerm>, Box<AlgebraicTerm>),
     Constant(bool),
     Variable(Variable),
     Comparison(
         BitvectorComparisonOp,
-        SnapshotBlindBitvectorKey,
-        SnapshotBlindBitvectorKey,
+        MemoryErasedBitvectorKey,
+        MemoryErasedBitvectorKey,
     ),
-    Float32(SnapshotBlindFloatConditionKey),
-    Float64(SnapshotBlindFloatConditionKey),
-    PointerOffsetEqual(SnapshotBlindPointerOffsetKey, SnapshotBlindPointerOffsetKey),
-    PointerEqual(SnapshotBlindPointerKey, SnapshotBlindPointerKey),
+    Float32(MemoryErasedFloatConditionKey),
+    Float64(MemoryErasedFloatConditionKey),
+    PointerOffsetEqual(MemoryErasedPointerOffsetKey, MemoryErasedPointerOffsetKey),
+    PointerEqual(MemoryErasedPointerKey, MemoryErasedPointerKey),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) enum SnapshotBlindFloatConditionKey {
+pub(crate) enum MemoryErasedFloatConditionKey {
     Comparison {
         operator: ComparisonOperator,
-        left: SnapshotBlindBitvectorKey,
-        right: SnapshotBlindBitvectorKey,
+        left: MemoryErasedBitvectorKey,
+        right: MemoryErasedBitvectorKey,
     },
     Classification {
         classification: FloatClassification,
-        value: SnapshotBlindBitvectorKey,
+        value: MemoryErasedBitvectorKey,
     },
 }
 
 #[allow(dead_code)]
 mod fold_keys;
 mod match_keys;
+mod memory_operands;
 mod pointer_keys;
-mod snapshot_operands;
+use memory_operands::MemoryErasedBitvectorKey;
 use pointer_keys::Canonical;
-use snapshot_operands::SnapshotBlindBitvectorKey;
 
-pub(crate) fn clear_snapshot_operand_keys() {
-    snapshot_operands::clear();
+pub(crate) fn clear_state_operand_keys() {
+    memory_operands::clear();
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct SnapshotBlindPointerValueKey {
+pub(crate) struct MemoryErasedPointerValueKey {
     program_type: ProgramType,
-    address: SnapshotBlindPointerKey,
-    designation: SnapshotBlindPointerKey,
-    opaque_extent: Option<SnapshotBlindPointerKey>,
-    extent: Option<(SnapshotBlindPointerKey, SnapshotBlindBitvectorKey)>,
+    address: MemoryErasedPointerKey,
+    designation: MemoryErasedPointerKey,
+    opaque_extent: Option<MemoryErasedPointerKey>,
+    extent: Option<(MemoryErasedPointerKey, MemoryErasedBitvectorKey)>,
     extent_known: bool,
 }
 
-impl SnapshotBlindPointerValueKey {
+impl MemoryErasedPointerValueKey {
     fn requires_checked_match(&self) -> bool {
         self.address.requires_checked_match()
             || self.designation.requires_checked_match()
             || self
                 .opaque_extent
                 .as_ref()
-                .is_some_and(SnapshotBlindPointerKey::requires_checked_match)
+                .is_some_and(MemoryErasedPointerKey::requires_checked_match)
             || self.extent.as_ref().is_some_and(|(start, width)| {
                 start.requires_checked_match() || width.requires_checked_match()
             })
     }
 }
 
-fn snapshot_blind_pointer_value_key(pointer: &PointerValue) -> SnapshotBlindPointerValueKey {
-    SnapshotBlindPointerValueKey {
+fn memory_erased_pointer_value_key(pointer: &PointerValue) -> MemoryErasedPointerValueKey {
+    MemoryErasedPointerValueKey {
         program_type: pointer.program_type(),
-        address: snapshot_blind_pointer_key(pointer.pointer()),
-        designation: snapshot_blind_pointer_key(pointer.designation()),
+        address: memory_erased_pointer_key(pointer.pointer()),
+        designation: memory_erased_pointer_key(pointer.designation()),
         opaque_extent: if pointer.extent_is_known() {
             None
         } else {
-            pointer.opaque_extent().map(snapshot_blind_pointer_key)
+            pointer.opaque_extent().map(memory_erased_pointer_key)
         },
         extent: pointer.extent().map(|extent| {
             (
-                snapshot_blind_pointer_key(&extent.start),
-                snapshot_blind_bitvector_key(&extent.width),
+                memory_erased_pointer_key(&extent.start),
+                memory_erased_bitvector_key(&extent.width),
             )
         }),
         extent_known: pointer.extent_is_known(),
@@ -159,34 +159,34 @@ fn snapshot_blind_pointer_value_key(pointer: &PointerValue) -> SnapshotBlindPoin
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) struct SnapshotBlindPointerKey {
-    block: SnapshotBlindPointerBlockKey,
-    offset: Box<SnapshotBlindPointerOffsetKey>,
+pub(crate) struct MemoryErasedPointerKey {
+    block: MemoryErasedPointerBlockKey,
+    offset: Box<MemoryErasedPointerOffsetKey>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-enum SnapshotBlindPointerBlockKey {
+enum MemoryErasedPointerBlockKey {
     Exact(PointerBlock),
-    Read(Box<SnapshotBlindPointerKey>),
+    Read(Box<MemoryErasedPointerKey>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) enum SnapshotBlindPointerOffsetNode {
-    Add(SnapshotBlindPointerOffsetKey, SnapshotBlindPointerOffsetKey),
+pub(crate) enum MemoryErasedPointerOffsetNode {
+    Add(MemoryErasedPointerOffsetKey, MemoryErasedPointerOffsetKey),
     Int32Scaled {
-        value: SnapshotBlindBitvectorKey,
+        value: MemoryErasedBitvectorKey,
         byte_width: i64,
     },
     Int64Scaled {
-        value: SnapshotBlindBitvectorKey,
+        value: MemoryErasedBitvectorKey,
         byte_width: i64,
         unsigned: bool,
     },
     Exact(PointerOffsetTerm),
 }
 
-impl SnapshotBlindPropositionKey {
-    /// Index facts whose keys erase read snapshots or address-origin
+impl MemoryErasedPropositionKey {
+    /// Index facts whose keys erase read states or address-origin
     /// annotations. Sharing a key selects candidates; the checked matcher
     /// still establishes their semantic identity.
     pub(crate) fn requires_checked_match(&self) -> bool {
@@ -197,7 +197,7 @@ impl SnapshotBlindPropositionKey {
             }
             Self::Not(body) => body.requires_checked_match(),
             Self::MemorySeparate(left, right) => {
-                let side = |key: &SnapshotBlindMemoryRangeKey| {
+                let side = |key: &MemoryErasedMemoryRangeKey| {
                     key.offset.requires_checked_match()
                         || key.start.requires_checked_match()
                         || key.end.requires_checked_match()
@@ -209,7 +209,7 @@ impl SnapshotBlindPropositionKey {
     }
 }
 
-impl SnapshotBlindConditionKey {
+impl MemoryErasedConditionKey {
     fn requires_checked_match(&self) -> bool {
         match self {
             Self::AlgebraicEqual(_, _) => false,
@@ -233,7 +233,7 @@ impl SnapshotBlindConditionKey {
     }
 }
 
-impl SnapshotBlindFloatConditionKey {
+impl MemoryErasedFloatConditionKey {
     fn requires_checked_match(&self) -> bool {
         match self {
             Self::Comparison { left, right, .. } => {
@@ -244,17 +244,17 @@ impl SnapshotBlindFloatConditionKey {
     }
 }
 
-impl SnapshotBlindPointerKey {
+impl MemoryErasedPointerKey {
     fn requires_checked_match(&self) -> bool {
-        matches!(self.block, SnapshotBlindPointerBlockKey::Read(_))
+        matches!(self.block, MemoryErasedPointerBlockKey::Read(_))
             || self.offset.requires_checked_match()
     }
 }
 
-type SnapshotBlindPointerOffsetKey = Canonical<SnapshotBlindPointerOffsetNode>;
+type MemoryErasedPointerOffsetKey = Canonical<MemoryErasedPointerOffsetNode>;
 type AlphaPointerOffsetKey = Canonical<AlphaPointerOffsetNode>;
 
-impl SnapshotBlindPointerOffsetNode {
+impl MemoryErasedPointerOffsetNode {
     fn requires_checked_match(&self) -> bool {
         match self {
             Self::Add(left, right) => {
@@ -268,9 +268,9 @@ impl SnapshotBlindPointerOffsetNode {
     }
 }
 
-pub(crate) fn snapshot_blind_proposition_key(
+pub(crate) fn memory_erased_proposition_key(
     proposition: &Proposition,
-) -> SnapshotBlindPropositionKey {
+) -> MemoryErasedPropositionKey {
     enum Frame<'a> {
         Visit(&'a Proposition),
         BuildImplies,
@@ -286,7 +286,7 @@ pub(crate) fn snapshot_blind_proposition_key(
             | Proposition::Or(_, _)
             | Proposition::Not(_)
     ) {
-        return snapshot_blind_proposition_key_one(proposition);
+        return memory_erased_proposition_key_one(proposition);
     }
 
     let mut frames = vec![Frame::Visit(proposition)];
@@ -313,12 +313,12 @@ pub(crate) fn snapshot_blind_proposition_key(
                     frames.push(Frame::BuildNot);
                     frames.push(Frame::Visit(body));
                 }
-                proposition => values.push(snapshot_blind_proposition_key_one(proposition)),
+                proposition => values.push(memory_erased_proposition_key_one(proposition)),
             },
             Frame::BuildImplies => {
                 let right = values.pop().expect("the implication consequent is keyed");
                 let left = values.pop().expect("the implication antecedent is keyed");
-                values.push(SnapshotBlindPropositionKey::Implies(
+                values.push(MemoryErasedPropositionKey::Implies(
                     Box::new(left),
                     Box::new(right),
                 ));
@@ -326,7 +326,7 @@ pub(crate) fn snapshot_blind_proposition_key(
             Frame::BuildAnd => {
                 let right = values.pop().expect("the conjunction right side is keyed");
                 let left = values.pop().expect("the conjunction left side is keyed");
-                values.push(SnapshotBlindPropositionKey::And(
+                values.push(MemoryErasedPropositionKey::And(
                     Box::new(left),
                     Box::new(right),
                 ));
@@ -334,70 +334,70 @@ pub(crate) fn snapshot_blind_proposition_key(
             Frame::BuildOr => {
                 let right = values.pop().expect("the disjunction right side is keyed");
                 let left = values.pop().expect("the disjunction left side is keyed");
-                values.push(SnapshotBlindPropositionKey::Or(
+                values.push(MemoryErasedPropositionKey::Or(
                     Box::new(left),
                     Box::new(right),
                 ));
             }
             Frame::BuildNot => {
                 let body = values.pop().expect("the negated proposition is keyed");
-                values.push(SnapshotBlindPropositionKey::Not(Box::new(body)));
+                values.push(MemoryErasedPropositionKey::Not(Box::new(body)));
             }
         }
     }
     values.pop().expect("the root proposition is keyed")
 }
 
-fn snapshot_blind_proposition_key_one(proposition: &Proposition) -> SnapshotBlindPropositionKey {
+fn memory_erased_proposition_key_one(proposition: &Proposition) -> MemoryErasedPropositionKey {
     match proposition {
         Proposition::ConditionIs(
             condition @ crate::kernel::integer_comparison_condition!(_, _),
             value,
-        ) => snapshot_observation_key(condition, *value)
-            .map(|(key, value)| SnapshotBlindPropositionKey::Condition(key, value))
-            .unwrap_or_else(|| SnapshotBlindPropositionKey::Exact(proposition.clone())),
-        // `Bool` values have no snapshot-blind key yet: they are filed
+        ) => state_observation_key(condition, *value)
+            .map(|(key, value)| MemoryErasedPropositionKey::Condition(key, value))
+            .unwrap_or_else(|| MemoryErasedPropositionKey::Exact(proposition.clone())),
+        // `Bool` values have no state-blind key yet: they are filed
         // exactly until their checked memory bridge has a structural view.
         Proposition::ConditionIs(condition, _) if condition.is_bool_value_form() => {
-            SnapshotBlindPropositionKey::Exact(proposition.clone())
+            MemoryErasedPropositionKey::Exact(proposition.clone())
         }
         Proposition::ConditionIs(condition, value) => {
-            SnapshotBlindPropositionKey::Condition(snapshot_blind_condition_key(condition), *value)
+            MemoryErasedPropositionKey::Condition(memory_erased_condition_key(condition), *value)
         }
-        Proposition::Implies(left, right) => SnapshotBlindPropositionKey::Implies(
-            Box::new(snapshot_blind_proposition_key(left)),
-            Box::new(snapshot_blind_proposition_key(right)),
+        Proposition::Implies(left, right) => MemoryErasedPropositionKey::Implies(
+            Box::new(memory_erased_proposition_key(left)),
+            Box::new(memory_erased_proposition_key(right)),
         ),
-        Proposition::And(left, right) => SnapshotBlindPropositionKey::And(
-            Box::new(snapshot_blind_proposition_key(left)),
-            Box::new(snapshot_blind_proposition_key(right)),
+        Proposition::And(left, right) => MemoryErasedPropositionKey::And(
+            Box::new(memory_erased_proposition_key(left)),
+            Box::new(memory_erased_proposition_key(right)),
         ),
-        Proposition::Or(left, right) => SnapshotBlindPropositionKey::Or(
-            Box::new(snapshot_blind_proposition_key(left)),
-            Box::new(snapshot_blind_proposition_key(right)),
+        Proposition::Or(left, right) => MemoryErasedPropositionKey::Or(
+            Box::new(memory_erased_proposition_key(left)),
+            Box::new(memory_erased_proposition_key(right)),
         ),
         Proposition::Not(body) => {
-            SnapshotBlindPropositionKey::Not(Box::new(snapshot_blind_proposition_key(body)))
+            MemoryErasedPropositionKey::Not(Box::new(memory_erased_proposition_key(body)))
         }
         Proposition::ResourceSeparate { .. } if proposition.memory_separation().is_some() => {
             let (left, right) = proposition
                 .memory_separation()
                 .expect("the guard matched a memory separation");
-            SnapshotBlindPropositionKey::MemorySeparate(
-                snapshot_blind_memory_range_key(left),
-                snapshot_blind_memory_range_key(right),
+            MemoryErasedPropositionKey::MemorySeparate(
+                memory_erased_memory_range_key(left),
+                memory_erased_memory_range_key(right),
             )
         }
-        proposition => SnapshotBlindPropositionKey::Exact(proposition.clone()),
+        proposition => MemoryErasedPropositionKey::Exact(proposition.clone()),
     }
 }
 
-fn snapshot_blind_memory_range_key(range: &MemoryRange) -> Box<SnapshotBlindMemoryRangeKey> {
-    Box::new(SnapshotBlindMemoryRangeKey {
+fn memory_erased_memory_range_key(range: &MemoryRange) -> Box<MemoryErasedMemoryRangeKey> {
+    Box::new(MemoryErasedMemoryRangeKey {
         block: range.base().block.clone(),
-        offset: snapshot_blind_pointer_offset_key(&range.base().offset),
-        start: snapshot_blind_bitvector_key(range.bound_terms().0),
-        end: snapshot_blind_bitvector_key(range.bound_terms().1),
+        offset: memory_erased_pointer_offset_key(&range.base().offset),
+        start: memory_erased_bitvector_key(range.bound_terms().0),
+        end: memory_erased_bitvector_key(range.bound_terms().1),
         // One untyped term can bound a range of either kind, and the two
         // are different ranges.
         wide: range.wide_bounds().is_some(),
@@ -406,23 +406,23 @@ fn snapshot_blind_memory_range_key(range: &MemoryRange) -> Box<SnapshotBlindMemo
 
 /// Candidate identity for a legacy nonoverflow premise, read from retained
 /// query operands. Matching this key alone never supplies memory authority.
-pub(super) fn snapshot_blind_nonoverflow_key(
+pub(super) fn memory_erased_nonoverflow_key(
     query: &crate::kernel::machine_integer::definedness::OverflowQueryView,
-) -> SnapshotBlindPropositionKey {
-    SnapshotBlindPropositionKey::Condition(
-        SnapshotBlindConditionKey::Comparison(
+) -> MemoryErasedPropositionKey {
+    MemoryErasedPropositionKey::Condition(
+        MemoryErasedConditionKey::Comparison(
             BitvectorComparisonOp::Overflows(query.format, query.operation_kind()),
-            snapshot_operands::operand(query.operands[0].operand_view()),
-            snapshot_operands::operand(query.operands[1].operand_view()),
+            memory_operands::operand(query.operands[0].operand_view()),
+            memory_operands::operand(query.operands[1].operand_view()),
         ),
         false,
     )
 }
 
-fn snapshot_observation_key(
+fn state_observation_key(
     condition: &ConditionTerm,
     value: bool,
-) -> Option<(SnapshotBlindConditionKey, bool)> {
+) -> Option<(MemoryErasedConditionKey, bool)> {
     use crate::kernel::CompareRelation as R;
     use crate::kernel::machine_integer::{
         Relation,
@@ -443,13 +443,13 @@ fn snapshot_observation_key(
             .map(|operand| operand.operand_view()),
     );
     let [left, right] = sides.map(|side| match side {
-        FactOperand::Term(view) => snapshot_operands::operand(view),
+        FactOperand::Term(view) => memory_operands::operand(view),
         FactOperand::Value(value) => {
-            snapshot_blind_bitvector_key(&MachineTerm::narrow_constant(format, value as u128))
+            memory_erased_bitvector_key(&MachineTerm::narrow_constant(format, value as u128))
         }
     });
     Some((
-        SnapshotBlindConditionKey::Comparison(
+        MemoryErasedConditionKey::Comparison(
             BitvectorComparisonOp::Compare(format, relation),
             left,
             right,
@@ -458,90 +458,90 @@ fn snapshot_observation_key(
     ))
 }
 
-fn snapshot_blind_boolean_operand_key(
+fn memory_erased_boolean_operand_key(
     condition: crate::kernel::BooleanOperandView<'_>,
-) -> SnapshotBlindConditionKey {
+) -> MemoryErasedConditionKey {
     use crate::kernel::machine_integer::comparison::{FactOperand, fact_operand_identity};
     if let Some((format, relation, operands)) = condition.comparison() {
         let (format, operands) = fact_operand_identity(format, relation, operands);
         let [left, right] = operands.map(|operand| match operand {
-            FactOperand::Term(term) => snapshot_operands::operand(term),
-            FactOperand::Value(value) => snapshot_blind_bitvector_key(
+            FactOperand::Term(term) => memory_operands::operand(term),
+            FactOperand::Value(value) => memory_erased_bitvector_key(
                 &crate::kernel::ComparisonSide::Value(value).term(format),
             ),
         });
-        return SnapshotBlindConditionKey::Comparison(
+        return MemoryErasedConditionKey::Comparison(
             BitvectorComparisonOp::Compare(format, relation),
             left,
             right,
         );
     }
     if let Some((format, operation, [a, b])) = condition.overflow() {
-        return SnapshotBlindConditionKey::Comparison(
+        return MemoryErasedConditionKey::Comparison(
             BitvectorComparisonOp::Overflows(format, operation),
-            snapshot_operands::operand(a),
-            snapshot_operands::operand(b),
+            memory_operands::operand(a),
+            memory_operands::operand(b),
         );
     }
     if let Some([a, b]) = condition.pointer_offsets() {
-        return SnapshotBlindConditionKey::PointerOffsetEqual(
-            pointer_keys::snapshot_offset(&a),
-            pointer_keys::snapshot_offset(&b),
+        return MemoryErasedConditionKey::PointerOffsetEqual(
+            pointer_keys::state_offset(&a),
+            pointer_keys::state_offset(&b),
         );
     }
     if let Some([a, b]) = condition.pointer_values() {
-        return SnapshotBlindConditionKey::PointerValueEqual(
-            pointer_keys::snapshot_value(&a),
-            pointer_keys::snapshot_value(&b),
+        return MemoryErasedConditionKey::PointerValueEqual(
+            pointer_keys::recorded_value(&a),
+            pointer_keys::recorded_value(&b),
         );
     }
     if let Some([a, b]) = condition.pointer_addresses() {
-        return SnapshotBlindConditionKey::PointerEqual(
-            pointer_keys::snapshot_address(&a),
-            pointer_keys::snapshot_address(&b),
+        return MemoryErasedConditionKey::PointerEqual(
+            pointer_keys::state_address(&a),
+            pointer_keys::state_address(&b),
         );
     }
-    snapshot_blind_condition_key(&condition.native())
+    memory_erased_condition_key(&condition.native())
 }
 
-fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindConditionKey {
+fn memory_erased_condition_key(condition: &ConditionTerm) -> MemoryErasedConditionKey {
     // Keyed at the fact identity: a native 8- or 16-bit comparison and the
     // `int32` comparison of its widenings are one fact.
     if let Some((operator, left, right)) = condition.as_fact_comparison() {
-        return SnapshotBlindConditionKey::Comparison(
+        return MemoryErasedConditionKey::Comparison(
             operator,
-            snapshot_blind_bitvector_key(&left),
-            snapshot_blind_bitvector_key(&right),
+            memory_erased_bitvector_key(&left),
+            memory_erased_bitvector_key(&right),
         );
     }
     match condition {
         ConditionTerm::PointerValueEqual(left, right) => {
-            SnapshotBlindConditionKey::PointerValueEqual(
-                snapshot_blind_pointer_value_key(left),
-                snapshot_blind_pointer_value_key(right),
+            MemoryErasedConditionKey::PointerValueEqual(
+                memory_erased_pointer_value_key(left),
+                memory_erased_pointer_value_key(right),
             )
         }
 
-        ConditionTerm::Constant(value) => SnapshotBlindConditionKey::Constant(*value),
+        ConditionTerm::Constant(value) => MemoryErasedConditionKey::Constant(*value),
         ConditionTerm::AlgebraicEqual(left, right) => {
-            SnapshotBlindConditionKey::AlgebraicEqual(left.clone(), right.clone())
+            MemoryErasedConditionKey::AlgebraicEqual(left.clone(), right.clone())
         }
-        ConditionTerm::Variable(variable) => SnapshotBlindConditionKey::Variable(*variable),
+        ConditionTerm::Variable(variable) => MemoryErasedConditionKey::Variable(*variable),
         ConditionTerm::Float32(float_condition) => {
-            SnapshotBlindConditionKey::Float32(snapshot_blind_float_condition_key(float_condition))
+            MemoryErasedConditionKey::Float32(memory_erased_float_condition_key(float_condition))
         }
         ConditionTerm::Float64(float_condition) => {
-            SnapshotBlindConditionKey::Float64(snapshot_blind_float_condition_key(float_condition))
+            MemoryErasedConditionKey::Float64(memory_erased_float_condition_key(float_condition))
         }
         ConditionTerm::PointerOffsetEqual(left, right) => {
-            SnapshotBlindConditionKey::PointerOffsetEqual(
-                snapshot_blind_pointer_offset_key(left),
-                snapshot_blind_pointer_offset_key(right),
+            MemoryErasedConditionKey::PointerOffsetEqual(
+                memory_erased_pointer_offset_key(left),
+                memory_erased_pointer_offset_key(right),
             )
         }
-        ConditionTerm::PointerEqual(left, right) => SnapshotBlindConditionKey::PointerEqual(
-            snapshot_blind_pointer_key(left),
-            snapshot_blind_pointer_key(right),
+        ConditionTerm::PointerEqual(left, right) => MemoryErasedConditionKey::PointerEqual(
+            memory_erased_pointer_key(left),
+            memory_erased_pointer_key(right),
         ),
         crate::kernel::ConditionTerm::Compare { .. }
         | crate::kernel::ConditionTerm::Overflows { .. } => {
@@ -559,31 +559,29 @@ fn snapshot_blind_condition_key(condition: &ConditionTerm) -> SnapshotBlindCondi
     }
 }
 
-fn snapshot_blind_float_condition_key(
-    condition: &FloatCondition,
-) -> SnapshotBlindFloatConditionKey {
+fn memory_erased_float_condition_key(condition: &FloatCondition) -> MemoryErasedFloatConditionKey {
     match condition {
         FloatCondition::Comparison {
             operator,
             left,
             right,
-        } => SnapshotBlindFloatConditionKey::Comparison {
+        } => MemoryErasedFloatConditionKey::Comparison {
             operator: *operator,
-            left: snapshot_blind_bitvector_key(left),
-            right: snapshot_blind_bitvector_key(right),
+            left: memory_erased_bitvector_key(left),
+            right: memory_erased_bitvector_key(right),
         },
         FloatCondition::Classification {
             classification,
             value,
-        } => SnapshotBlindFloatConditionKey::Classification {
+        } => MemoryErasedFloatConditionKey::Classification {
             classification: *classification,
-            value: snapshot_blind_bitvector_key(value),
+            value: memory_erased_bitvector_key(value),
         },
     }
 }
 
-fn snapshot_blind_bitvector_key(term: &MachineTerm) -> SnapshotBlindBitvectorKey {
-    snapshot_operands::written(term)
+fn memory_erased_bitvector_key(term: &MachineTerm) -> MemoryErasedBitvectorKey {
+    memory_operands::written(term)
 }
 
 thread_local! {
@@ -597,10 +595,10 @@ impl Drop for PointerReadKeyDepth {
     }
 }
 
-fn snapshot_blind_pointer_key(pointer: &Pointer) -> SnapshotBlindPointerKey {
+fn memory_erased_pointer_key(pointer: &Pointer) -> MemoryErasedPointerKey {
     let depth = POINTER_READ_KEY_DEPTH.with(|depth| depth.replace(depth.get() + 1));
     let _restore = PointerReadKeyDepth(depth);
-    // This candidate key forgets snapshots, never proof authority. Bound
+    // This candidate key forgets states, never proof authority. Bound
     // registry expansion across both defining addresses and their offsets.
     let read = match &pointer.block {
         PointerBlock::LoadedPointer(_) if depth < 3 => {
@@ -611,25 +609,25 @@ fn snapshot_blind_pointer_key(pointer: &Pointer) -> SnapshotBlindPointerKey {
         }
         _ => None,
     };
-    SnapshotBlindPointerKey {
+    MemoryErasedPointerKey {
         block: read
             .map(|source| {
-                SnapshotBlindPointerBlockKey::Read(Box::new(snapshot_blind_pointer_key(&source)))
+                MemoryErasedPointerBlockKey::Read(Box::new(memory_erased_pointer_key(&source)))
             })
-            .unwrap_or_else(|| SnapshotBlindPointerBlockKey::Exact(pointer.block.clone())),
-        offset: Box::new(snapshot_blind_pointer_offset_key(&pointer.offset)),
+            .unwrap_or_else(|| MemoryErasedPointerBlockKey::Exact(pointer.block.clone())),
+        offset: Box::new(memory_erased_pointer_offset_key(&pointer.offset)),
     }
 }
 
-fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlindPointerOffsetKey {
+fn memory_erased_pointer_offset_key(offset: &PointerOffsetTerm) -> MemoryErasedPointerOffsetKey {
     Canonical::new(match offset {
-        PointerOffsetTerm::Add(left, right) => SnapshotBlindPointerOffsetNode::Add(
-            snapshot_blind_pointer_offset_key(left),
-            snapshot_blind_pointer_offset_key(right),
+        PointerOffsetTerm::Add(left, right) => MemoryErasedPointerOffsetNode::Add(
+            memory_erased_pointer_offset_key(left),
+            memory_erased_pointer_offset_key(right),
         ),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-            SnapshotBlindPointerOffsetNode::Int32Scaled {
-                value: snapshot_operands::operand(value.operand_view()),
+            MemoryErasedPointerOffsetNode::Int32Scaled {
+                value: memory_operands::operand(value.operand_view()),
                 byte_width: *byte_width,
             }
         }
@@ -637,27 +635,27 @@ fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlin
             value,
             byte_width,
             unsigned,
-        } => SnapshotBlindPointerOffsetNode::Int64Scaled {
-            value: snapshot_operands::operand(value.operand_view()),
+        } => MemoryErasedPointerOffsetNode::Int64Scaled {
+            value: memory_operands::operand(value.operand_view()),
             byte_width: *byte_width,
             unsigned: *unsigned,
         },
-        offset => SnapshotBlindPointerOffsetNode::Exact(offset.clone()),
+        offset => MemoryErasedPointerOffsetNode::Exact(offset.clone()),
     })
 }
 
 /// Alpha-invariant key for the quantified logical/condition fragment used by
 /// checked premises. Bound variables use structural ordinals and free
 /// variables retain their kernel identities. Raw bitvector loads outside a
-/// loadability atom remain snapshot-blind on this selection path, while a
-/// `MemoryLoadable` atom retains the exact snapshot that is part of its
+/// loadability atom remain state-blind on this selection path, while a
+/// `MemoryLoadable` atom retains the exact state that is part of its
 /// checked premise.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) struct QuantifiedEquivalenceKey(AlphaPropositionKey);
 
 /// Structural identity for a stated proposition.  Unlike the older
-/// snapshot-blind selection key, this key retains the identity of every
-/// memory snapshot named by a load.  Bound variables are represented by their
+/// state-blind selection key, this key retains the identity of every
+/// memory state named by a load.  Bound variables are represented by their
 /// structural ordinal while free variables retain their kernel identity.
 ///
 /// The key is intentionally private in shape: callers can use it for exact
@@ -702,12 +700,12 @@ enum AlphaPropositionKey {
         arguments: Vec<AlphaPredicateArgumentKey>,
     },
     MemoryReadDefined {
-        memory: AlphaSnapshotKey,
+        memory: AlphaStateKey,
         pointer: AlphaPointerKey,
         value_type: ProgramType,
     },
     MemoryLoadable {
-        memory: AlphaSnapshotKey,
+        memory: AlphaStateKey,
         base: AlphaPointerKey,
         bytes: AlphaBitvectorKey,
         wide: bool,
@@ -725,8 +723,8 @@ enum AlphaPropositionKey {
 /// checks its non-memory storage without copying the whole state into a key.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum AlphaPredicateArgumentKey {
-    StateMemory(AlphaSnapshotKey),
-    Memory(AlphaSnapshotKey),
+    StateMemory(AlphaStateKey),
+    Memory(AlphaStateKey),
     Value(AlphaProgramValueKey),
     Integer(AlphaIntegerKey),
     Algebraic(AlphaAlgebraicKey),
@@ -797,7 +795,7 @@ impl IntegerConditionAlphaKey {
 /// Backwards-compatible name for callers that only consume equality keys.
 /// The underlying key is now shared by all root range-fold Integer
 /// comparisons, so the persistent fact index can reuse the same checked,
-/// snapshot-aware alpha boundary for equality and inequality premises.
+/// state-aware alpha boundary for equality and inequality premises.
 pub(crate) type IntegerEqualityAlphaKey = IntegerConditionAlphaKey;
 
 /// Alpha key used by the checked fact index for root range-fold Integer
@@ -806,7 +804,7 @@ pub(crate) type IntegerEqualityAlphaKey = IntegerConditionAlphaKey;
 /// Integer range-fold binders are canonicalized by a typed alpha environment.
 /// Load-bearing C payloads retain their exact `SharedMemory` identities, so
 /// this index is authoritative only for comparisons whose loads name the same
-/// snapshots. The entry point is deliberately narrow: only a true Integer
+/// states. The entry point is deliberately narrow: only a true Integer
 /// comparison with a range-fold operand at its root is eligible. Scalar
 /// arithmetic comparisons remain on their existing exact/certificate path, so
 /// indexing them cannot turn a sequence of growing arithmetic facts into
@@ -830,7 +828,7 @@ pub(crate) fn integer_condition_alpha_key(
     if crate::instrumentation::deadline_exceeded() {
         return None;
     }
-    snapshot_alpha_proposition_key(comparison.as_ref().unwrap_or(proposition))
+    state_alpha_proposition_key(comparison.as_ref().unwrap_or(proposition))
         .map(|(key, work_units)| IntegerConditionAlphaKey { key, work_units })
 }
 
@@ -906,7 +904,7 @@ enum AlphaPureFunctionArgumentKey {
     Integer(AlphaIntegerKey),
     Algebraic(AlphaAlgebraicKey),
     ArrayRef {
-        memory: AlphaSnapshotKey,
+        memory: AlphaStateKey,
         pointer: AlphaProgramValueKey,
         element_type: ProgramType,
     },
@@ -962,59 +960,59 @@ enum AlphaAlgebraicValueKey {
     Algebraic(AlphaAlgebraicKey),
 }
 
-/// O(1) identity for a retained memory snapshot.
+/// O(1) identity for a retained memory state.
 ///
 /// A same-arena `(arena, id)` pair is the exact identity assigned by the
 /// immutable memory arena.  Handles are retained so the identity cannot be
-/// observed after its backing snapshot has been dropped.  Cross-arena
-/// snapshots deliberately compare unequal: structural equality there would
+/// observed after its backing state has been dropped.  Cross-arena
+/// states deliberately compare unequal: structural equality there would
 /// scan the complete memory, so the exact authority falls back to its normal
 /// proof path instead of consulting unrelated heap/history state.
 #[derive(Clone)]
-struct AlphaSnapshotKey {
+struct AlphaStateKey {
     identity: (u32, u32),
-    _snapshot: SharedMemory,
+    _state: SharedMemory,
 }
 
-impl AlphaSnapshotKey {
-    fn new(snapshot: &SharedMemory) -> Self {
+impl AlphaStateKey {
+    fn new(retained_state: &SharedMemory) -> Self {
         Self {
-            identity: snapshot.arena_id(),
-            _snapshot: snapshot.clone(),
+            identity: retained_state.arena_id(),
+            _state: retained_state.clone(),
         }
     }
 }
 
-impl fmt::Debug for AlphaSnapshotKey {
+impl fmt::Debug for AlphaStateKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_tuple("AlphaSnapshotKey")
+            .debug_tuple("AlphaStateKey")
             .field(&self.identity)
             .finish()
     }
 }
 
-impl PartialEq for AlphaSnapshotKey {
+impl PartialEq for AlphaStateKey {
     fn eq(&self, other: &Self) -> bool {
         self.identity == other.identity
     }
 }
 
-impl Eq for AlphaSnapshotKey {}
+impl Eq for AlphaStateKey {}
 
-impl PartialOrd for AlphaSnapshotKey {
+impl PartialOrd for AlphaStateKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for AlphaSnapshotKey {
+impl Ord for AlphaStateKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.identity.cmp(&other.identity)
     }
 }
 
-impl Hash for AlphaSnapshotKey {
+impl Hash for AlphaStateKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.identity.hash(state);
     }
@@ -1052,11 +1050,11 @@ enum AlphaPointerBlockKey {
     LoadedPointer(crate::kernel::PointerLoadId),
     /// A pointer loaded from memory is its own block, named by the load
     /// variable; like a load at an offset position, it is keyed by the
-    /// snapshot and address it reads, so a binder inside that address
+    /// state and address it reads, so a binder inside that address
     /// renames.
     RegisteredLoad(AlphaRegisteredLoadId),
     /// A pointer read named by its `PointerLoadId`, keyed like
-    /// `RegisteredLoad` by the snapshot and address it reads; a distinct
+    /// `RegisteredLoad` by the state and address it reads; a distinct
     /// variant so it never meets a scalar load's key.
     LoadedRead(AlphaRegisteredLoadId),
     Heap(u64),
@@ -1076,10 +1074,10 @@ struct AlphaPointerKey {
 }
 
 /// A compact reference to one live canonical registered-load node. The node
-/// owns its snapshot and its immediate pointer descriptor, while nested load
+/// owns its state and its immediate pointer descriptor, while nested load
 /// references own only their child nodes. This makes each key retain exactly
 /// the reachable load DAG; the process-local interner stores weak records and
-/// cannot keep unrelated snapshots alive after their keys are dropped.
+/// cannot keep unrelated states alive after their keys are dropped.
 #[derive(Clone)]
 struct AlphaRegisteredLoadId(Arc<AlphaRegisteredLoadRecord>);
 
@@ -1128,7 +1126,7 @@ struct AlphaRegisteredLoadRecord {
     id: u64,
     interner: Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>,
     fingerprint: u64,
-    snapshot: AlphaSnapshotKey,
+    retained_state: AlphaStateKey,
     pointer: AlphaPointerKey,
     kind: LoadKind,
 }
@@ -1187,12 +1185,12 @@ fn alpha_registered_load_interner() -> Option<Arc<std::sync::Mutex<AlphaRegister
 }
 
 fn alpha_registered_load_descriptor_fingerprint(
-    snapshot: &AlphaSnapshotKey,
+    retained_state: &AlphaStateKey,
     pointer: &AlphaPointerKey,
     kind: LoadKind,
 ) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    snapshot.hash(&mut hasher);
+    retained_state.hash(&mut hasher);
     pointer.hash(&mut hasher);
     kind.hash(&mut hasher);
     hasher.finish()
@@ -1200,11 +1198,11 @@ fn alpha_registered_load_descriptor_fingerprint(
 
 fn intern_alpha_registered_load(
     interner: &Arc<std::sync::Mutex<AlphaRegisteredLoadInterner>>,
-    snapshot: AlphaSnapshotKey,
+    retained_state: AlphaStateKey,
     pointer: AlphaPointerKey,
     kind: LoadKind,
 ) -> Option<AlphaRegisteredLoadId> {
-    let fingerprint = alpha_registered_load_descriptor_fingerprint(&snapshot, &pointer, kind);
+    let fingerprint = alpha_registered_load_descriptor_fingerprint(&retained_state, &pointer, kind);
     let mut interner_state = interner.lock().ok()?;
     let bucket = interner_state.buckets.entry(fingerprint).or_default();
     if crate::instrumentation::deadline_exceeded_with_work(bucket.len().max(1)) {
@@ -1215,7 +1213,10 @@ fn intern_alpha_registered_load(
         let Some(record) = candidate.upgrade() else {
             continue;
         };
-        if record.snapshot == snapshot && record.pointer == pointer && record.kind == kind {
+        if record.retained_state == retained_state
+            && record.pointer == pointer
+            && record.kind == kind
+        {
             return Some(AlphaRegisteredLoadId(record));
         }
     }
@@ -1230,7 +1231,7 @@ fn intern_alpha_registered_load(
         id,
         interner: interner.clone(),
         fingerprint,
-        snapshot,
+        retained_state,
         pointer,
         kind,
     });
@@ -1433,7 +1434,7 @@ struct AlphaIntegerKey {
 
 /// Opaque, exact alpha identity for one root Integer range fold.
 ///
-/// The inner node graph retains carrier-aware binders and, in the snapshot
+/// The inner node graph retains carrier-aware binders and, in the state
 /// aware mode, the `SharedMemory` handles named by load-bearing C payloads.
 /// Consumers may hash or compare this value, but cannot inspect or rebuild its
 /// structural representation on an arithmetic hot path.
@@ -1559,8 +1560,8 @@ fn alpha_integer_key(
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
-        snapshot_aware: false,
-        raw_snapshot_load_seen: false,
+        state_aware: false,
+        raw_state_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         pointer_load_stack: BTreeSet::new(),
@@ -1601,7 +1602,7 @@ pub(crate) fn integer_terms_alpha_equivalent(
     Some(left_key == right_key)
 }
 
-/// Build the exact snapshot-aware alpha identity used by fold comparisons.
+/// Build the exact state-aware alpha identity used by fold comparisons.
 /// Only a root `IntegerTerm::RangeFold` is admitted; callers needing a larger
 /// expression retain the ordinary proof path instead of treating a partial
 /// key as authority.
@@ -1623,7 +1624,7 @@ pub(crate) fn integer_fold_alpha_key(term: &SharedIntegerTerm) -> Option<Integer
 /// accumulator and item variables.
 ///
 /// This is [`integer_terms_alpha_equivalent`]'s int32 counterpart and shares
-/// its whole implementation: the snapshot-aware alpha key builder. That
+/// its whole implementation: the state-aware alpha key builder. That
 /// builder gives every binder occurrence a structural ordinal
 /// ([`AlphaVariableKey::Bound`]) and every free occurrence its own identity
 /// ([`AlphaVariableKey::Free`]), so a variable bound in one fold can never
@@ -1676,7 +1677,7 @@ pub(crate) fn machine_fold_bodies_alpha_equivalent(
     Some(left == right)
 }
 
-/// Build the snapshot-aware alpha identity of one int32 range fold, with the
+/// Build the state-aware alpha identity of one int32 range fold, with the
 /// work its construction charged. Mirrors [`integer_fold_alpha_key`].
 fn bitvector_fold_alpha_key(term: &MachineTerm) -> Option<(AlphaBitvectorKey, usize)> {
     if !matches!(term, MachineTerm::RangeFold { .. }) {
@@ -1695,8 +1696,8 @@ struct AlphaBindings {
     integer_scope: u64,
     bitvector_scope: u64,
     next_scope_id: u64,
-    snapshot_aware: bool,
-    raw_snapshot_load_seen: bool,
+    state_aware: bool,
+    raw_state_load_seen: bool,
     registered_load_stack: BTreeSet<Variable>,
     registered_load_memo: HashMap<(Variable, u64, u64, usize), (AlphaRegisteredLoadId, usize)>,
     pointer_load_stack: BTreeSet<crate::kernel::PointerLoadId>,
@@ -1708,7 +1709,7 @@ struct AlphaBindings {
 
 fn alpha_work_checkpoint(bindings: &mut AlphaBindings, units: usize) -> Option<()> {
     bindings.work_units = bindings.work_units.saturating_add(units);
-    let exhausted = if bindings.snapshot_aware {
+    let exhausted = if bindings.state_aware {
         crate::instrumentation::deadline_exceeded_with_work(units)
     } else {
         crate::instrumentation::record_deterministic_work(units);
@@ -1949,8 +1950,8 @@ fn alpha_variable_key_with_bindings<const ALLOW_LOADS: bool>(
     if let Some(ordinal) = carrier_bindings.get(&variable) {
         return Some(AlphaVariableKey::Bound(*ordinal));
     }
-    if bindings.snapshot_aware && crate::kernel::is_load_variable(&variable) {
-        // An unbound registered load is represented by its snapshot-bearing
+    if bindings.state_aware && crate::kernel::is_load_variable(&variable) {
+        // An unbound registered load is represented by its state-bearing
         // load node at bitvector/pointer-offset positions.  Pointer blocks
         // and logical variables have no load form, so reject them here and
         // let the ordinary checked path decide the fact.
@@ -1980,7 +1981,7 @@ fn alpha_registered_load_pointer_with_bindings<const ALLOW_LOADS: bool>(
     let result = (|| {
         let (memory, pointer) = crate::kernel::registered_load_for_variable(&variable)?;
         let kind = crate::kernel::registered_load_kind_for_variable(&variable)?;
-        let snapshot = AlphaSnapshotKey::new(&memory);
+        let retained_state = AlphaStateKey::new(&memory);
         let pointer =
             alpha_pointer_key_with_bindings::<ALLOW_LOADS>(&pointer, bindings, next_binder)?;
         let interner = match bindings.load_interner.clone() {
@@ -1992,7 +1993,7 @@ fn alpha_registered_load_pointer_with_bindings<const ALLOW_LOADS: bool>(
             }
         };
         alpha_work_checkpoint(bindings, 1)?;
-        let load_id = intern_alpha_registered_load(&interner, snapshot, pointer, kind)?;
+        let load_id = intern_alpha_registered_load(&interner, retained_state, pointer, kind)?;
         Some((load_id, *next_binder))
     })();
     bindings.registered_load_stack.remove(&variable);
@@ -2003,10 +2004,10 @@ fn alpha_registered_load_pointer_with_bindings<const ALLOW_LOADS: bool>(
     Some(load_id)
 }
 
-/// A pointer read keyed by the exact snapshot and the alpha key of the
+/// A pointer read keyed by the exact state and the alpha key of the
 /// address it reads, as `alpha_registered_load_pointer_with_bindings` keys a
 /// load variable: a binder inside the address renames, and two reads match
-/// only when they read one snapshot at alpha-equal addresses.
+/// only when they read one state at alpha-equal addresses.
 fn alpha_pointer_load_with_bindings<const ALLOW_LOADS: bool>(
     identity: crate::kernel::PointerLoadId,
     bindings: &mut AlphaBindings,
@@ -2027,7 +2028,7 @@ fn alpha_pointer_load_with_bindings<const ALLOW_LOADS: bool>(
     }
     let result = (|| {
         let (memory, address) = crate::kernel::eval::registered_pointer_load(identity)?;
-        let snapshot = AlphaSnapshotKey::new(&memory);
+        let retained_state = AlphaStateKey::new(&memory);
         let address =
             alpha_pointer_key_with_bindings::<ALLOW_LOADS>(&address, bindings, next_binder)?;
         let interner = match bindings.load_interner.clone() {
@@ -2039,7 +2040,8 @@ fn alpha_pointer_load_with_bindings<const ALLOW_LOADS: bool>(
             }
         };
         alpha_work_checkpoint(bindings, 1)?;
-        let load_id = intern_alpha_registered_load(&interner, snapshot, address, LoadKind::Bits64)?;
+        let load_id =
+            intern_alpha_registered_load(&interner, retained_state, address, LoadKind::Bits64)?;
         Some((load_id, *next_binder))
     })();
     bindings.pointer_load_stack.remove(&identity);
@@ -2059,7 +2061,7 @@ fn alpha_pointer_offset_key_with_bindings<const ALLOW_LOADS: bool>(
     Some(Canonical::new(match offset {
         PointerOffsetTerm::Constant(value) => AlphaPointerOffsetNode::Constant(*value),
         PointerOffsetTerm::Variable(variable)
-            if bindings.snapshot_aware
+            if bindings.state_aware
                 && crate::kernel::is_load_variable(variable)
                 && !bindings.bitvector.contains_key(variable) =>
         {
@@ -2154,7 +2156,7 @@ fn alpha_pointer_block_key<const ALLOW_LOADS: bool>(
             )?)
         }
         PointerBlock::Symbolic(variable)
-            if bindings.snapshot_aware
+            if bindings.state_aware
                 && crate::kernel::is_load_variable(variable)
                 && !bindings.bitvector.contains_key(variable) =>
         {
@@ -2169,7 +2171,7 @@ fn alpha_pointer_block_key<const ALLOW_LOADS: bool>(
                 &bindings.bitvector,
             )?)
         }
-        PointerBlock::LoadedPointer(identity) if bindings.snapshot_aware => {
+        PointerBlock::LoadedPointer(identity) if bindings.state_aware => {
             AlphaPointerBlockKey::LoadedRead(alpha_pointer_load_with_bindings::<ALLOW_LOADS>(
                 *identity,
                 bindings,
@@ -2388,7 +2390,7 @@ fn alpha_pure_function_argument_key_with_bindings<const ALLOW_LOADS: bool>(
             pointer,
             element_type,
         } => AlphaPureFunctionArgumentKey::ArrayRef {
-            memory: AlphaSnapshotKey::new(&crate::kernel::intern_memory_ref(memory)),
+            memory: AlphaStateKey::new(&crate::kernel::intern_memory_ref(memory)),
             pointer: alpha_program_value_key_with_bindings::<ALLOW_LOADS>(
                 pointer,
                 bindings,
@@ -2405,10 +2407,10 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
     next_binder: &mut usize,
 ) -> Option<AlphaBitvectorKey> {
     alpha_work_checkpoint(bindings, 1)?;
-    // Load variables hide snapshots too: their binders cannot be treated as
+    // Load variables hide states too: their binders cannot be treated as
     // opaque free variables by the memory-free structural authority.
     if !ALLOW_LOADS
-        && !bindings.snapshot_aware
+        && !bindings.state_aware
         && (matches!(term, MachineTerm::MemoryLoad(..))
             || matches!(term, MachineTerm::Variable(variable) if crate::kernel::is_load_variable(variable)))
     {
@@ -2454,7 +2456,7 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
                     .then(|| crate::kernel::registered_load_for_variable(variable))
                     .flatten()
                 {
-                    Some(_) if bindings.snapshot_aware => {
+                    Some(_) if bindings.state_aware => {
                         let load_id = alpha_registered_load_pointer_with_bindings::<ALLOW_LOADS>(
                             *variable,
                             bindings,
@@ -2580,9 +2582,9 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
         MachineTerm::AlgebraicMatch { scrutinee, arms } => {
             match_keys::machine::<ALLOW_LOADS>(scrutinee, arms, bindings, next_binder)?
         }
-        MachineTerm::MemoryLoad(memory, pointer, kind) if bindings.snapshot_aware => {
-            bindings.raw_snapshot_load_seen = true;
-            let snapshot = AlphaSnapshotKey::new(memory);
+        MachineTerm::MemoryLoad(memory, pointer, kind) if bindings.state_aware => {
+            bindings.raw_state_load_seen = true;
+            let retained_state = AlphaStateKey::new(memory);
             let pointer =
                 alpha_pointer_key_with_bindings::<ALLOW_LOADS>(pointer, bindings, next_binder)?;
             let interner = match bindings.load_interner.clone() {
@@ -2595,11 +2597,14 @@ fn alpha_bitvector_key_with_bindings<const ALLOW_LOADS: bool>(
             };
             alpha_work_checkpoint(bindings, 1)?;
             AlphaBitvectorKey::RegisteredLoad(intern_alpha_registered_load(
-                &interner, snapshot, pointer, *kind,
+                &interner,
+                retained_state,
+                pointer,
+                *kind,
             )?)
         }
         MachineTerm::MemoryLoad(_, pointer, kind) => {
-            bindings.raw_snapshot_load_seen = true;
+            bindings.raw_state_load_seen = true;
             AlphaBitvectorKey::Load(
                 Box::new(alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
                     pointer,
@@ -2692,8 +2697,8 @@ fn alpha_bitvector_key<const ALLOW_LOADS: bool>(
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
-        snapshot_aware: false,
-        raw_snapshot_load_seen: false,
+        state_aware: false,
+        raw_state_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         pointer_load_stack: BTreeSet::new(),
@@ -2923,8 +2928,8 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
-        snapshot_aware: false,
-        raw_snapshot_load_seen: false,
+        state_aware: false,
+        raw_state_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         pointer_load_stack: BTreeSet::new(),
@@ -2936,7 +2941,7 @@ fn alpha_proposition_key<const ALLOW_LOADS: bool>(
 }
 
 /// Build the shared identity used for exact stated-requirement lookup and
-/// Surface/kernel goal correspondence. Snapshot-aware load keys make a
+/// Surface/kernel goal correspondence. MemoryState-aware load keys make a
 /// registered load and its spelled load agree only when they name the same
 /// memory version.
 pub(crate) fn proposition_identity_key(
@@ -2946,9 +2951,9 @@ pub(crate) fn proposition_identity_key(
 }
 
 /// Authority for alpha-renaming a proof-local algebraic binder in a captured
-/// array-dependent fact. Array references carry opaque, exact snapshots;
+/// array-dependent fact. Array references carry opaque, exact states;
 /// raw loads do not, because a quantified C variable can occur inside their
-/// snapshot contents. Those cases retain the memory-aware substitution rule.
+/// state contents. Those cases retain the memory-aware substitution rule.
 pub(crate) fn quantified_algebraic_captured_array_identity_key(
     proposition: &Proposition,
 ) -> Option<PropositionIdentityKey> {
@@ -2979,10 +2984,7 @@ fn proposition_identity_key_with_raw_load_flag(
     }
     let mut environment = fold_keys::bindings();
     let key = alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)?;
-    Some((
-        PropositionIdentityKey(key),
-        environment.raw_snapshot_load_seen,
-    ))
+    Some((PropositionIdentityKey(key), environment.raw_state_load_seen))
 }
 
 /// Whether [`proposition_identity_key`] declines `proposition` by shape
@@ -3184,7 +3186,7 @@ mod proposition_identity_tests {
 
     /// Pure-function applications are keyed through typed arguments, so a
     /// separately lowered binder keeps its identity without erasing an array
-    /// snapshot or accidentally treating a free variable as bound.
+    /// state or accidentally treating a free variable as bound.
     #[test]
     fn pure_function_applications_compare_equal_up_to_binder_numbering() {
         let application = |bound: u64| {
@@ -3207,7 +3209,7 @@ mod proposition_identity_tests {
     }
 
     #[test]
-    fn array_dependent_algebraic_existential_keeps_snapshot_and_binding_identity() {
+    fn array_dependent_algebraic_existential_keeps_state_and_binding_identity() {
         let ty = crate::kernel::AlgebraicType::parameter("Fuel".into());
         let pointer = Pointer {
             block: "alpha-array".into(),
@@ -3546,11 +3548,9 @@ mod proposition_identity_tests {
 }
 
 /// Exact alpha identity for fold equalities whose C payload contains loads.
-/// Retained snapshot handles make each load part of the key while the
+/// Retained state handles make each load part of the key while the
 /// pointer visitor canonicalizes fold-bound C variables by ordinal.
-fn snapshot_alpha_proposition_key(
-    proposition: &Proposition,
-) -> Option<(AlphaPropositionKey, usize)> {
+fn state_alpha_proposition_key(proposition: &Proposition) -> Option<(AlphaPropositionKey, usize)> {
     let mut environment = fold_keys::bindings();
     let key = alpha_proposition_key_with_bindings::<true>(proposition, &mut environment, &mut 0)?;
     Some((key, environment.work_units))
@@ -3606,13 +3606,11 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
                 .map(|argument| {
                     alpha_work_checkpoint(bindings, 1)?;
                     Some(match argument {
-                        Term::ExecutionState(state) => {
-                            AlphaPredicateArgumentKey::StateMemory(AlphaSnapshotKey::new(
-                                &crate::kernel::intern_memory_ref(state.memory()),
-                            ))
-                        }
+                        Term::ExecutionState(state) => AlphaPredicateArgumentKey::StateMemory(
+                            AlphaStateKey::new(&crate::kernel::intern_memory_ref(state.memory())),
+                        ),
                         Term::Memory(memory) => AlphaPredicateArgumentKey::Memory(
-                            AlphaSnapshotKey::new(&crate::kernel::intern_memory_ref(memory)),
+                            AlphaStateKey::new(&crate::kernel::intern_memory_ref(memory)),
                         ),
                         Term::ProgramValue(value) => AlphaPredicateArgumentKey::Value(
                             alpha_program_value_key_with_bindings::<ALLOW_LOADS>(
@@ -3644,16 +3642,16 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
             if !ALLOW_LOADS {
                 return None;
             }
-            bindings.raw_snapshot_load_seen = true;
-            let prior_snapshot_aware = bindings.snapshot_aware;
-            bindings.snapshot_aware = true;
+            bindings.raw_state_load_seen = true;
+            let prior_state_aware = bindings.state_aware;
+            bindings.state_aware = true;
             let key = (|| -> Option<AlphaPropositionKey> {
                 alpha_work_checkpoint(bindings, 1)?;
-                let snapshot = crate::kernel::intern_memory_ref(memory);
+                let retained_state = crate::kernel::intern_memory_ref(memory);
                 Some(AlphaPropositionKey::MemoryReadDefined {
-                    memory: AlphaSnapshotKey {
-                        identity: snapshot.local_read_definedness_identity(pointer),
-                        _snapshot: snapshot.clone(),
+                    memory: AlphaStateKey {
+                        identity: retained_state.local_read_definedness_identity(pointer),
+                        _state: retained_state.clone(),
                     },
                     pointer: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
                         pointer,
@@ -3663,7 +3661,7 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
                     value_type: *value_type,
                 })
             })();
-            bindings.snapshot_aware = prior_snapshot_aware;
+            bindings.state_aware = prior_state_aware;
             key?
         }
         Proposition::MemoryLoadable {
@@ -3675,21 +3673,21 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
             if !ALLOW_LOADS {
                 return None;
             }
-            bindings.raw_snapshot_load_seen = true;
+            bindings.raw_state_load_seen = true;
             // A wide (64-bit extent) range keys like a narrow one, with its
             // width kind kept in the key so the two never alpha-match.
             // Loadability is an explicit checked premise, so its memory
-            // snapshot is part of the alpha identity.  Raw MemoryLoad terms
-            // keep the existing snapshot-blind selection behavior above;
+            // state is part of the alpha identity.  Raw MemoryLoad terms
+            // keep the existing state-blind selection behavior above;
             // only this atom temporarily enables the exact registered-load
             // representation for its selected pointer and width.
-            let prior_snapshot_aware = bindings.snapshot_aware;
-            bindings.snapshot_aware = true;
+            let prior_state_aware = bindings.state_aware;
+            bindings.state_aware = true;
             let key = (|| -> Option<AlphaPropositionKey> {
                 alpha_work_checkpoint(bindings, 1)?;
-                let snapshot = crate::kernel::intern_memory_ref(memory);
+                let retained_state = crate::kernel::intern_memory_ref(memory);
                 Some(AlphaPropositionKey::MemoryLoadable {
-                    memory: AlphaSnapshotKey::new(&snapshot),
+                    memory: AlphaStateKey::new(&retained_state),
                     base: alpha_pointer_key_with_bindings::<ALLOW_LOADS>(
                         base,
                         bindings,
@@ -3703,7 +3701,7 @@ fn alpha_proposition_key_with_bindings<const ALLOW_LOADS: bool>(
                     wide: *wide,
                 })
             })();
-            bindings.snapshot_aware = prior_snapshot_aware;
+            bindings.state_aware = prior_state_aware;
             key?
         }
         Proposition::And(left, right) => {
@@ -3866,10 +3864,10 @@ pub(crate) fn implication_chain_conclusion(mut proposition: &Proposition) -> &Pr
 }
 
 /// Compare only quantified propositions containing a loadability atom using
-/// the checked, snapshot-aware alpha representation. `None` means neither
+/// the checked, state-aware alpha representation. `None` means neither
 /// proposition needs this path; `Some(false)` is a fail-closed mismatch,
 /// including unsupported or exhausted key construction.
-pub(crate) fn snapshot_quantified_alpha_equivalent(
+pub(crate) fn state_quantified_alpha_equivalent(
     left: &Proposition,
     right: &Proposition,
 ) -> Option<bool> {
@@ -3894,10 +3892,10 @@ pub(crate) fn snapshot_quantified_alpha_equivalent(
     if !same_quantifier {
         return Some(false);
     }
-    let Some((left_key, left_work)) = snapshot_alpha_proposition_key(left) else {
+    let Some((left_key, left_work)) = state_alpha_proposition_key(left) else {
         return Some(false);
     };
-    let Some((right_key, right_work)) = snapshot_alpha_proposition_key(right) else {
+    let Some((right_key, right_work)) = state_alpha_proposition_key(right) else {
         return Some(false);
     };
     if crate::instrumentation::deadline_exceeded_with_work(left_work.saturating_add(right_work)) {
@@ -3973,8 +3971,8 @@ fn checked_proposition_contains_memory_loadability(proposition: &Proposition) ->
 }
 
 /// Exact alpha identity for the memory-free logical fragment. Unlike the
-/// snapshot-blind selection key, this refuses all explicit and registered
-/// loads; no snapshot contents or memory relations are inspected.
+/// state-blind selection key, this refuses all explicit and registered
+/// loads; no state contents or memory relations are inspected.
 pub(crate) fn memory_free_quantified_key(
     proposition: &Proposition,
 ) -> Option<QuantifiedEquivalenceKey> {
@@ -4309,7 +4307,7 @@ mod integer_alpha_scaling_tests {
 }
 
 #[cfg(test)]
-mod snapshot_alpha_tests {
+mod memory_state_alpha_tests {
     use super::*;
     use crate::kernel::{
         IntegerRangeFoldIndex, Memory, ProgramValue, SharedIntegerRangeEndpoint, SharedIntegerTerm,
@@ -4329,7 +4327,7 @@ mod snapshot_alpha_tests {
             MachineTerm::MemoryLoad(
                 memory.clone(),
                 Box::new(Pointer {
-                    block: "snapshot-alpha".into(),
+                    block: "retained_state-alpha".into(),
                     offset: PointerOffsetTerm::Variable(item),
                 }),
                 crate::kernel::LoadKind::Int32,
@@ -4366,7 +4364,7 @@ mod snapshot_alpha_tests {
         })
     }
 
-    fn registered_load_interner_live_snapshots() -> BTreeSet<(u32, u32)> {
+    fn registered_load_interner_live_states() -> BTreeSet<(u32, u32)> {
         ALPHA_REGISTERED_LOAD_INTERNER.with(|cell| {
             let Some(interner) = cell.borrow().upgrade() else {
                 return BTreeSet::new();
@@ -4379,7 +4377,7 @@ mod snapshot_alpha_tests {
                 .values()
                 .flat_map(|bucket| bucket.iter())
                 .filter_map(|candidate| candidate.upgrade())
-                .map(|record| record.snapshot.identity)
+                .map(|record| record.retained_state.identity)
                 .collect()
         })
     }
@@ -4392,12 +4390,13 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_fold_loads_require_exact_snapshot_identity() {
+    fn state_alpha_fold_loads_require_exact_state_identity() {
         let pointer = Pointer {
-            block: "snapshot-alpha".into(),
+            block: "retained_state-alpha".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let before = crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha", 8));
+        let before =
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha", 8));
         let after = crate::kernel::intern_memory(
             before
                 .as_ref()
@@ -4417,21 +4416,22 @@ mod snapshot_alpha_tests {
             Variable(311_001),
         )))
         .expect("renamed explicit load fold should have an exact alpha key");
-        let changed_snapshot = integer_equality_alpha_key(&equality(fold(
+        let changed_memory_state = integer_equality_alpha_key(&equality(fold(
             &after,
             Variable(311_000),
             Variable(311_001),
         )))
-        .expect("changed-snapshot fold should still have a key");
+        .expect("changed-state fold should still have a key");
 
         assert_eq!(source, renamed);
-        assert_ne!(source, changed_snapshot);
+        assert_ne!(source, changed_memory_state);
     }
 
     #[test]
-    fn snapshot_alpha_rejects_unknown_registered_loads() {
+    fn state_alpha_rejects_unknown_registered_loads() {
         let unknown_load = Variable((1 << 40) + 313);
-        let memory = crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha", 8));
+        let memory =
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha", 8));
         let term = IntegerTerm::range_fold(
             int32_index(),
             IntegerTerm::constant_i64(0),
@@ -4442,7 +4442,7 @@ mod snapshot_alpha_tests {
                 MachineTerm::MemoryLoad(
                     memory,
                     Box::new(Pointer {
-                        block: "snapshot-alpha".into(),
+                        block: "retained_state-alpha".into(),
                         offset: PointerOffsetTerm::Variable(unknown_load),
                     }),
                     crate::kernel::LoadKind::Int32,
@@ -4454,12 +4454,13 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_registered_loads_keep_their_snapshot_identity() {
+    fn state_alpha_registered_loads_keep_their_state_identity() {
         let pointer = Pointer {
-            block: "snapshot-alpha".into(),
+            block: "retained_state-alpha".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let before = crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha", 8));
+        let before =
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha", 8));
         let after = crate::kernel::intern_memory(before.as_ref().clone().store(
             pointer.clone(),
             ProgramValue::Int32(MachineTerm::constant(11)),
@@ -4508,7 +4509,7 @@ mod snapshot_alpha_tests {
             Variable(314_000),
             Variable(314_001),
         )))
-        .expect("registered load from another snapshot should resolve to an exact key");
+        .expect("registered load from another state should resolve to an exact key");
 
         assert_eq!(before_key, renamed_before_key);
         assert_ne!(before_key, after_key);
@@ -4520,7 +4521,7 @@ mod snapshot_alpha_tests {
     /// cell's load, and the key must follow it there as it does at an
     /// offset position; the load naming the block keeps its identity.
     #[test]
-    fn snapshot_alpha_renames_a_binder_under_a_loaded_pointer_block() {
+    fn state_alpha_renames_a_binder_under_a_loaded_pointer_block() {
         let block = "loaded-pointer-block-alpha";
         let memory = crate::kernel::intern_memory(Memory::new().with_block(block, 16));
         let field = |offset: i64| Pointer {
@@ -4581,8 +4582,8 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_explicit_and_registered_loads_share_nested_identity() {
-        let block = "snapshot-alpha-equivalent-loads";
+    fn state_alpha_explicit_and_registered_loads_share_nested_identity() {
+        let block = "retained_state-alpha-equivalent-loads";
         let memory = crate::kernel::intern_memory(Memory::new().with_block(block, 64));
         let first_pointer = Pointer {
             block: block.into(),
@@ -4606,7 +4607,7 @@ mod snapshot_alpha_tests {
             4,
             &memory,
         );
-        // The load registry keeps the provenance-projected snapshot used by
+        // The load registry keeps the provenance-projected state used by
         // the minted variable.  Use those exact identities for the explicit
         // forms below; the original `memory` may project to a different DAG
         // version even though it names the same source cell.
@@ -4660,7 +4661,7 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_accepts_free_program_endpoints_and_body_values() {
+    fn state_alpha_accepts_free_program_endpoints_and_body_values() {
         let start = Variable(319_000);
         let end = Variable(319_001);
         let payload = Variable(319_002);
@@ -4694,12 +4695,13 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_fold_comparison_uses_exact_snapshot_identity() {
+    fn state_alpha_fold_comparison_uses_exact_state_identity() {
         let pointer = Pointer {
-            block: "snapshot-alpha".into(),
+            block: "retained_state-alpha".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let before = crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha", 8));
+        let before =
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha", 8));
         let after = crate::kernel::intern_memory(
             before
                 .as_ref()
@@ -4734,12 +4736,13 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_nested_folds_canonicalize_load_pointers() {
+    fn state_alpha_nested_folds_canonicalize_load_pointers() {
         let pointer = Pointer {
-            block: "snapshot-alpha".into(),
+            block: "retained_state-alpha".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let before = crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha", 8));
+        let before =
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha", 8));
         let after = crate::kernel::intern_memory(before.as_ref().clone().store(
             pointer.clone(),
             ProgramValue::Int32(MachineTerm::constant(5)),
@@ -4766,19 +4769,19 @@ mod snapshot_alpha_tests {
             Variable(317_101),
         )))
         .expect("renamed nested explicit load fold should have an exact alpha key");
-        let changed_snapshot = integer_equality_alpha_key(&equality(nested(
+        let changed_memory_state = integer_equality_alpha_key(&equality(nested(
             &after,
             Variable(317_100),
             Variable(317_101),
         )))
-        .expect("changed nested snapshot should still have a key");
+        .expect("changed nested state should still have a key");
 
         assert_eq!(source, renamed);
-        assert_ne!(source, changed_snapshot);
+        assert_ne!(source, changed_memory_state);
     }
 
     fn registered_load_chain(depth: usize) -> (SharedMemory, Variable) {
-        let block = format!("snapshot-alpha-registry-{depth}");
+        let block = format!("retained_state-alpha-registry-{depth}");
         let memory = crate::kernel::intern_memory(Memory::new().with_block(block.clone(), 4096));
         let mut pointer = Pointer {
             block: block.into(),
@@ -4808,7 +4811,7 @@ mod snapshot_alpha_tests {
     }
 
     fn registered_load_branching_chain(depth: usize) -> (SharedMemory, Variable) {
-        let block = format!("snapshot-alpha-registry-branch-{depth}");
+        let block = format!("retained_state-alpha-registry-branch-{depth}");
         let memory = crate::kernel::intern_memory(Memory::new().with_block(block.clone(), 4096));
         let mut pointer = Pointer {
             block: block.into(),
@@ -4841,7 +4844,7 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_registered_load_dags_stop_at_the_active_budget() {
+    fn state_alpha_registered_load_dags_stop_at_the_active_budget() {
         let (_, load) = registered_load_chain(128);
         let term = IntegerTerm::range_fold(
             int32_index(),
@@ -4855,9 +4858,9 @@ mod snapshot_alpha_tests {
         );
         let tactic = crate::instrumentation::TacticEvent {
             source_tactic_path: None,
-            claim: "integer.snapshot_alpha_budget".into(),
+            claim: "integer.state_alpha_budget".into(),
             tactic_index: 0,
-            tactic_name: "snapshot_alpha_budget".into(),
+            tactic_name: "state_alpha_budget".into(),
             class: "simple".into(),
             statement_index: 0,
             source_index: 0,
@@ -4881,7 +4884,7 @@ mod snapshot_alpha_tests {
                 result
             })
         });
-        assert!(key.is_none(), "budgeted snapshot traversal must reject");
+        assert!(key.is_none(), "budgeted state traversal must reject");
         assert!(
             work <= 32,
             "registry traversal exceeded bounded work: {work}"
@@ -4893,16 +4896,16 @@ mod snapshot_alpha_tests {
     }
 
     #[test]
-    fn snapshot_alpha_drops_unreachable_registered_load_snapshots() {
+    fn state_alpha_drops_unreachable_registered_load_states() {
         let early_memory =
-            crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha-early", 8));
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha-early", 8));
         let early_term: SharedIntegerTerm =
             fold(&early_memory, Variable(324_000), Variable(324_001)).into();
         let early_key = integer_fold_alpha_key(&early_term).expect("early fold key");
         let early_identity = early_memory.arena_id();
 
         for index in 0..64u64 {
-            let block = format!("snapshot-alpha-temporary-{index}");
+            let block = format!("retained_state-alpha-temporary-{index}");
             let memory = crate::kernel::intern_memory(Memory::new().with_block(block.clone(), 8));
             let term: SharedIntegerTerm = IntegerTerm::range_fold(
                 int32_index(),
@@ -4931,12 +4934,12 @@ mod snapshot_alpha_tests {
             "weak registry entries were not cleaned: {entries}"
         );
         assert_eq!(live, 1, "only the retained early load should stay live");
-        assert!(registered_load_interner_live_snapshots().contains(&early_identity));
+        assert!(registered_load_interner_live_states().contains(&early_identity));
         drop(early_key);
 
         let mut trigger_key = None;
         for index in 0..16u64 {
-            let block = format!("snapshot-alpha-cleanup-trigger-{index}");
+            let block = format!("retained_state-alpha-cleanup-trigger-{index}");
             let memory = crate::kernel::intern_memory(Memory::new().with_block(block.clone(), 8));
             let term: SharedIntegerTerm = IntegerTerm::range_fold(
                 int32_index(),
@@ -4958,14 +4961,14 @@ mod snapshot_alpha_tests {
             .into();
             trigger_key = Some(integer_fold_alpha_key(&term).expect("cleanup trigger key"));
         }
-        assert!(!registered_load_interner_live_snapshots().contains(&early_identity));
+        assert!(!registered_load_interner_live_states().contains(&early_identity));
         drop(trigger_key);
         assert_eq!(registered_load_interner_stats(), (0, 0));
     }
 
     #[cfg(test)]
     mod scaling_tests {
-        include!("../../scaling_tests/kernel/proof/fact_keys/snapshot_alpha_tests.rs");
+        include!("../../scaling_tests/kernel/proof/fact_keys/memory_state_alpha_tests.rs");
     }
 }
 
@@ -5113,8 +5116,8 @@ mod offset_condition_tests {
                     Box::new(PointerOffsetTerm::Constant(0)),
                 );
                 let root = crate::kernel::KernelTermImport::default().condition(&source);
-                let expected = snapshot_blind_condition_key(&source);
-                let actual = snapshot_blind_boolean_operand_key(
+                let expected = memory_erased_condition_key(&source);
+                let actual = memory_erased_boolean_operand_key(
                     crate::kernel::BooleanOperandView::Shared(&root),
                 );
                 assert_eq!(actual, expected);
@@ -5149,10 +5152,9 @@ mod raw_pointer_condition_tests {
                 Box::new(Pointer::null()),
             );
             let root = crate::kernel::KernelTermImport::default().condition(&source);
-            let actual = snapshot_blind_boolean_operand_key(
-                crate::kernel::BooleanOperandView::Shared(&root),
-            );
-            assert_eq!(actual, snapshot_blind_condition_key(&source));
+            let actual =
+                memory_erased_boolean_operand_key(crate::kernel::BooleanOperandView::Shared(&root));
+            assert_eq!(actual, memory_erased_condition_key(&source));
             assert!(!keys.contains(&actual));
             keys.push(actual);
         }
@@ -5164,7 +5166,7 @@ mod complete_pointer_condition_tests {
     use super::*;
     use crate::kernel::SubobjectExtent;
     #[test]
-    fn complete_pointer_conditions_keep_snapshot_domain_keys() {
+    fn complete_pointer_conditions_keep_state_domain_keys() {
         let _session = crate::kernel::VerificationSession::enter();
         let a = PointerValue::new(
             Pointer::symbolic(Variable(998620)),
@@ -5181,10 +5183,9 @@ mod complete_pointer_condition_tests {
         ] {
             let source = ConditionTerm::PointerValueEqual(Box::new(value), Box::new(a.clone()));
             let root = crate::kernel::KernelTermImport::default().condition(&source);
-            let actual = snapshot_blind_boolean_operand_key(
-                crate::kernel::BooleanOperandView::Shared(&root),
-            );
-            assert_eq!(actual, snapshot_blind_condition_key(&source));
+            let actual =
+                memory_erased_boolean_operand_key(crate::kernel::BooleanOperandView::Shared(&root));
+            assert_eq!(actual, memory_erased_condition_key(&source));
             assert!(!keys.contains(&actual));
             keys.push(actual);
         }
@@ -5213,10 +5214,10 @@ mod overflow_condition_tests {
                     right: Box::new(MachineTerm::Variable(Variable(998631))),
                 };
                 let root = crate::kernel::KernelTermImport::default().condition(&source);
-                let actual = snapshot_blind_boolean_operand_key(
+                let actual = memory_erased_boolean_operand_key(
                     crate::kernel::BooleanOperandView::Shared(&root),
                 );
-                assert_eq!(actual, snapshot_blind_condition_key(&source));
+                assert_eq!(actual, memory_erased_condition_key(&source));
                 assert!(!keys.contains(&actual));
                 keys.push(actual);
             }

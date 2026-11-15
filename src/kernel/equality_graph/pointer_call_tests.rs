@@ -64,7 +64,7 @@ fn pointer_calls_follow_late_model_aliases_and_displaced_addresses() {
 }
 
 #[test]
-fn pointer_calls_keep_sorts_order_snapshots_and_noninjectivity() {
+fn pointer_calls_keep_sorts_order_states_and_noninjectivity() {
     let _session = VerificationSession::enter();
     let mut graph = EqualityGraph::default();
     let p = Pointer::symbolic(Variable(30));

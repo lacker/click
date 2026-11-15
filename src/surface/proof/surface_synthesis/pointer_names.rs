@@ -134,7 +134,7 @@ mod tests {
                     bindings.clone(),
                     bindings.clone(),
                     None,
-                    &RecordedSnapshots::new(),
+                    &RecordedStates::new(),
                     SpecDefinitions::new(
                         &PredicateEnvironment::new(&[]),
                         &ClickFunctionEnvironment::new(&[]),
@@ -183,7 +183,7 @@ mod tests {
                 bindings.clone(),
                 bindings.clone(),
                 None,
-                &RecordedSnapshots::new(),
+                &RecordedStates::new(),
                 SpecDefinitions::new(
                     &PredicateEnvironment::new(&[]),
                     &ClickFunctionEnvironment::new(&[]),

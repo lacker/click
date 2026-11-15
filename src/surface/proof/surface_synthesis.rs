@@ -33,16 +33,16 @@ thread_local! {
     static STRUCTURAL_GOAL_SYNTHESIS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SYNTHESIS_QUALIFIED_SOURCES: std::cell::RefCell<Option<SurfacePropositionMap>> = const { std::cell::RefCell::new(None) };
     static SYNTHESIS_ENTRY_STATE: std::cell::RefCell<Option<ExecutionState>> = const { std::cell::RefCell::new(None) };
-    /// A second reference state, named by its own recorded snapshot selector
+    /// A second reference state, named by its own recorded program point selector
     /// rather than by `old(...)`. A loop back edge needs this: the iteration
     /// entry is neither the function entry nor the current state, and the
     /// ranking members compare the two ends of one iteration.
-    static SYNTHESIS_SNAPSHOT_STATE: std::cell::RefCell<Option<(ExecutionState, SnapshotSelector)>> = const { std::cell::RefCell::new(None) };
+    static SYNTHESIS_REFERENCE_STATE: std::cell::RefCell<Option<(ExecutionState, ProgramPointSelector)>> = const { std::cell::RefCell::new(None) };
     /// The proof's recorded points. A load registered in a memory that
     /// neither the spelled state nor the entry state reads is spelled at the
     /// point whose memory reads it, found by
-    /// [`RecordedSnapshots::point_reading_memory`].
-    static SYNTHESIS_RECORDED_POINTS: std::cell::RefCell<Option<RecordedSnapshots>> = const { std::cell::RefCell::new(None) };
+    /// [`RecordedStates::point_reading_memory`].
+    static SYNTHESIS_RECORDED_POINTS: std::cell::RefCell<Option<RecordedStates>> = const { std::cell::RefCell::new(None) };
     static SURFACE_SYNTHESIS_BUDGET: std::cell::RefCell<Option<SurfaceSynthesisBudget>> =
         const { std::cell::RefCell::new(None) };
     static LAST_SURFACE_SYNTHESIS_EXHAUSTION: std::cell::Cell<Option<&'static str>> =
@@ -625,37 +625,37 @@ pub(in crate::surface) fn synthesize_surface_proposition_at_entry_post_with_boun
 }
 
 /// As above, plus one further reference state addressed by a recorded
-/// snapshot selector. A value the current state no longer holds but the
-/// snapshot state does reads as `at(<selector>, name)`, which is the same
+/// program point selector. A value the current state no longer holds but the
+/// state state does reads as `at(<selector>, name)`, which is the same
 /// spelling loop-body premises already use, so the synthesized form lowers
-/// back to exactly this term at the snapshot the selector names.
-pub(in crate::surface) fn synthesize_surface_proposition_at_entry_post_and_snapshot(
+/// back to exactly this term at the state the selector names.
+pub(in crate::surface) fn synthesize_surface_proposition_at_entry_post_and_state(
     proposition: &Proposition,
     parameter_binding: ParameterBinding<'_>,
     entry: &ExecutionState,
     post: &ExecutionState,
-    snapshot: Option<(&ExecutionState, &SnapshotSelector)>,
+    retained_state: Option<(&ExecutionState, &ProgramPointSelector)>,
 ) -> Option<ClickProposition> {
-    let _snapshot = SynthesisSnapshotScope(SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
-        slot.replace(snapshot.map(|(state, selector)| (state.clone(), selector.clone())))
+    let _state = SynthesisReferenceStateScope(SYNTHESIS_REFERENCE_STATE.with(|slot| {
+        slot.replace(retained_state.map(|(state, selector)| (state.clone(), selector.clone())))
     }));
     synthesize_surface_proposition_at_entry_and_post(proposition, parameter_binding, entry, post)
 }
 
-struct SynthesisSnapshotScope(Option<(ExecutionState, SnapshotSelector)>);
-impl Drop for SynthesisSnapshotScope {
+struct SynthesisReferenceStateScope(Option<(ExecutionState, ProgramPointSelector)>);
+impl Drop for SynthesisReferenceStateScope {
     fn drop(&mut self) {
-        SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+        SYNTHESIS_REFERENCE_STATE.with(|slot| {
             slot.replace(self.0.take());
         });
     }
 }
 
 /// Spells loads registered at the proof's recorded points while alive.
-pub(in crate::surface) struct SynthesisRecordedPointsScope(Option<RecordedSnapshots>);
+pub(in crate::surface) struct SynthesisRecordedPointsScope(Option<RecordedStates>);
 
 impl SynthesisRecordedPointsScope {
-    pub(in crate::surface) fn enter(points: &RecordedSnapshots) -> Self {
+    pub(in crate::surface) fn enter(points: &RecordedStates) -> Self {
         Self(SYNTHESIS_RECORDED_POINTS.with(|slot| slot.replace(Some(points.clone()))))
     }
 }
@@ -672,7 +672,7 @@ impl Drop for SynthesisRecordedPointsScope {
 /// Prefer the point recording its memory, then indexed nearby points.
 fn recorded_point_of_load(
     read: &MachineTerm,
-) -> Option<(SnapshotSelector, ExecutionState, MachineTerm)> {
+) -> Option<(ProgramPointSelector, ExecutionState, MachineTerm)> {
     let MachineTerm::MemoryLoad(memory, _, _) = read else {
         return None;
     };
@@ -756,11 +756,11 @@ fn synthesize_read_at_recorded_point(
     })
 }
 
-/// The `at(<selector>, name)` spelling of a term the snapshot state's own
+/// The `at(<selector>, name)` spelling of a term the state state's own
 /// scalar local holds exactly. Only a term the current state cannot name
-/// reaches this, so the snapshot spelling never shadows a current name.
-fn synthesize_snapshot_local(term: &MachineTerm) -> Option<ContractExpression> {
-    SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+/// reaches this, so the state spelling never shadows a current name.
+fn synthesize_state_local(term: &MachineTerm) -> Option<ContractExpression> {
+    SYNTHESIS_REFERENCE_STATE.with(|slot| {
         let slot = slot.borrow();
         let (state, selector) = slot.as_ref()?;
         let name = state.locals().names_holding_integer(term).find(|name| {
@@ -891,7 +891,7 @@ impl SurfacePointerFrame {
         bound_variables: &BTreeMap<Variable, String>,
     ) -> Option<Self> {
         // All borrowed inputs remain live for this frame. Their addresses
-        // distinguish snapshot and binder environments without cloning or
+        // distinguish state and binder environments without cloning or
         // structurally hashing the surrounding proof state.
         crate::instrumentation::record_deterministic_work(1);
         let key = PointerSynthesisKey {
@@ -1551,7 +1551,7 @@ fn omit_leading_definedness_spellings(
 /// Re-lower one candidate through the ordinary fixed-state path and require
 /// the complete proposition to retain its shared alpha/load identity.  This
 /// is intentionally a small, context-free validation used only for the
-/// arithmetic guard fallback; callers with snapshot- or proof-local context
+/// arithmetic guard fallback; callers with state- or proof-local context
 /// still perform their own authoritative re-lowering.
 fn synthesized_surface_matches_proposition(
     candidate: &ClickProposition,
@@ -1596,7 +1596,7 @@ fn synthesized_surface_matches_proposition(
             candidate,
             &PureFactContext::new(),
             ContractEnvironment::new(&values, &array_refs),
-            FixedStateFrame::new(state, state, None, &RecordedSnapshots::default()),
+            FixedStateFrame::new(state, state, None, &RecordedStates::default()),
             SpecDefinitions::new(
                 &PredicateEnvironment::new(&[]),
                 &ClickFunctionEnvironment::new(&[]),
@@ -2180,7 +2180,7 @@ fn named_pointer_bases<'a>(
 
 /// Synthesize the internal equation emitted when a memory read is assigned a
 /// registered load identity. The variable is not a source-level identifier;
-/// spell both sides through the registered pointer, anchored at the snapshot
+/// spell both sides through the registered pointer, anchored at the state
 /// named by the load.  Keeping this separate from ordinary bitvector
 /// synthesis is important: the latter may deliberately resolve a load to a
 /// current-state value, while this equation must retain its memory version.
@@ -2194,27 +2194,31 @@ fn synthesize_load_defining_equation(
 ) -> Option<ClickProposition> {
     let (registered_memory, registered_pointer) =
         crate::kernel::registered_load_for_variable(variable)?;
-    // The defining equation carries the canonical snapshot that was recorded
+    // The defining equation carries the canonical state that was recorded
     // with this variable. A merely equivalent load from another memory would
     // erase the epoch the equation is required to preserve.
     if registered_memory != *memory || registered_pointer != *pointer {
         return None;
     }
 
-    let synthesize_at = |snapshot: &ExecutionState| {
-        let load = registered_load_in_state(variable, snapshot)?;
+    let synthesize_at = |retained_state: &ExecutionState| {
+        let load = registered_load_in_state(variable, retained_state)?;
         // Let the ordinary load spelling select a qualified source, an exact
         // local cell, a field, or the pointer/load fallback. It receives the
-        // snapshot-specific load above, so the selected source cannot drift
+        // state-specific load above, so the selected source cannot drift
         // to another epoch while the defining equation is presented.
         let left = synthesize_surface_bitvector(
             &MachineTerm::Variable(*variable),
             parameter_binding,
-            snapshot,
+            retained_state,
             bound_variables,
         )?;
-        let right =
-            synthesize_surface_bitvector(&load, parameter_binding, snapshot, bound_variables)?;
+        let right = synthesize_surface_bitvector(
+            &load,
+            parameter_binding,
+            retained_state,
+            bound_variables,
+        )?;
         Some(ClickProposition::Comparison {
             left,
             operator: ComparisonOperator::Equal,
@@ -2229,27 +2233,27 @@ fn synthesize_load_defining_equation(
         && registered_load_in_state(variable, &entry).is_some()
     {
         return synthesize_at(&entry).map(|proposition| ClickProposition::At {
-            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Function,
                 kind: ProgramPointKind::Entry,
             }),
             proposition: Box::new(proposition),
         });
     }
-    SYNTHESIS_SNAPSHOT_STATE
+    SYNTHESIS_REFERENCE_STATE
         .with(|slot| {
             let slot = slot.borrow();
-            let (snapshot, selector) = slot.as_ref()?;
-            registered_load_in_state(variable, snapshot)?;
-            synthesize_at(snapshot).map(|proposition| ClickProposition::At {
+            let (retained_state, selector) = slot.as_ref()?;
+            registered_load_in_state(variable, retained_state)?;
+            synthesize_at(retained_state).map(|proposition| ClickProposition::At {
                 selector: selector.clone(),
                 proposition: Box::new(proposition),
             })
         })
         .or_else(|| {
             let read = crate::kernel::registered_load_term_for_variable(variable)?;
-            let (selector, snapshot, _) = recorded_point_of_load(&read)?;
-            synthesize_at(&snapshot).map(|proposition| ClickProposition::At {
+            let (selector, retained_state, _) = recorded_point_of_load(&read)?;
+            synthesize_at(&retained_state).map(|proposition| ClickProposition::At {
                 selector,
                 proposition: Box::new(proposition),
             })
@@ -2448,14 +2452,14 @@ fn synthesize_surface_atomic_proposition(
         });
     }
     // A declared predicate call starts with its hidden logical resource-state
-    // snapshot. Its source call does not write that argument. Each array-ref
+    // state. Its source call does not write that argument. Each array-ref
     // argument then lowers to a (memory, pointer) term pair and each value
     // argument to a single value term, so the remaining kernel argument list
     // reads back unambiguously: a `Memory` term always opens an array-ref
-    // pair. The snapshot the pair names is not written here — the current
+    // pair. The state the pair names is not written here — the current
     // memory needs no form, and every caller re-lowers the candidate and
     // compares it to the kernel fact, so a candidate built against the wrong
-    // snapshot is rejected by that round trip rather than by a guess made
+    // state is rejected by that round trip rather than by a guess made
     // here.
     if let Proposition::Predicate {
         name,
@@ -2530,15 +2534,15 @@ fn synthesize_surface_atomic_proposition(
                 .as_ref()
                 .is_some_and(|entry| entry.memory() == memory)
         }) {
-            SnapshotSelector::ProgramPoint(ProgramPointRef {
+            ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Function,
                 kind: ProgramPointKind::Entry,
             })
         } else {
-            SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+            SYNTHESIS_REFERENCE_STATE.with(|slot| {
                 let slot = slot.borrow();
-                let (snapshot, selector) = slot.as_ref()?;
-                (snapshot.memory() == memory).then(|| selector.clone())
+                let (retained_state, selector) = slot.as_ref()?;
+                (retained_state.memory() == memory).then(|| selector.clone())
             })?
         };
         return Some(ClickProposition::At {
@@ -2605,15 +2609,15 @@ fn synthesize_surface_atomic_proposition(
                 .is_some_and(|entry| entry.memory() == memory)
         });
         let selector = if at_entry {
-            SnapshotSelector::ProgramPoint(ProgramPointRef {
+            ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Function,
                 kind: ProgramPointKind::Entry,
             })
         } else {
-            SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+            SYNTHESIS_REFERENCE_STATE.with(|slot| {
                 let slot = slot.borrow();
-                let (snapshot, selector) = slot.as_ref()?;
-                (snapshot.memory() == memory).then(|| selector.clone())
+                let (retained_state, selector) = slot.as_ref()?;
+                (retained_state.memory() == memory).then(|| selector.clone())
             })?
         };
         return Some(ClickProposition::At {
@@ -2654,19 +2658,19 @@ fn synthesize_surface_atomic_proposition(
         });
         if at_entry {
             return Some(ClickProposition::At {
-                selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Function,
                     kind: ProgramPointKind::Entry,
                 }),
                 proposition: Box::new(loadable),
             });
         }
-        let snapshot_selector = SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+        let program_point_selector = SYNTHESIS_REFERENCE_STATE.with(|slot| {
             let slot = slot.borrow();
-            let (snapshot, selector) = slot.as_ref()?;
-            (snapshot.memory() == memory).then(|| selector.clone())
+            let (retained_state, selector) = slot.as_ref()?;
+            (retained_state.memory() == memory).then(|| selector.clone())
         });
-        return Some(if let Some(selector) = snapshot_selector {
+        return Some(if let Some(selector) = program_point_selector {
             ClickProposition::At {
                 selector,
                 proposition: Box::new(loadable),
@@ -3547,7 +3551,7 @@ fn integer_conversion_name(format: crate::kernel::MachineIntegerType) -> &'stati
     }
 }
 
-/// Keep the observation's interpretation inside its snapshot selector.
+/// Keep the observation's interpretation inside its program point selector.
 fn synthesize_observation_operand(
     expression: SurfaceTerm,
     format: ProgramType,
@@ -3587,7 +3591,7 @@ fn synthesize_observation_operand(
 /// so that it reads as `uint32`: constants and `uint32` locals keep their
 /// direct spellings, and computed operands and signed locals receive an
 /// explicit `uint32` cast. The comparison lowers back to the same `uint32`
-/// order. A comparison with a snapshot-relative operand has no spelling
+/// order. A comparison with a state-relative operand has no spelling
 /// here.
 fn synthesize_unsigned_comparison(
     condition: &ConditionTerm,
@@ -3643,10 +3647,10 @@ fn synthesize_unsigned_comparison(
             .or_else(|| {
                 let expression =
                     synthesize_surface_bitvector(term, parameter_binding, state, bound_variables)?;
-                // A snapshot-relative operand is left to the diagnostic
-                // renderer, which spells it in its snapshot, preserving
+                // A state-relative operand is left to the diagnostic
+                // renderer, which spells it in its state, preserving
                 // loop-ranking observations and refusal diagnostics.
-                // Division/remainder still cast within their own snapshot
+                // Division/remainder still cast within their own state
                 // when reconstructing those operations.
                 if matches!(
                     expression,
@@ -3768,7 +3772,7 @@ pub(super) fn synthesize_surface_resource_subject(
 }
 
 /// Spells one certified equality whose operands were read from different
-/// snapshots, such as a callee postcondition relating a cell after
+/// states, such as a callee postcondition relating a cell after
 /// the call to its value before it. Each operand is anchored at the first
 /// listed point where it denotes a source expression; the caller lists the
 /// recorded statement entries nearest first and must re-lower the result to
@@ -3790,7 +3794,7 @@ pub(in crate::surface) fn synthesize_surface_equality_across_points(
             .find_map(|(point, state)| {
                 let expression = synthesize(state)?;
                 Some(ContractExpression::At {
-                    selector: SnapshotSelector::ProgramPoint(point.clone()),
+                    selector: ProgramPointSelector::ProgramPoint(point.clone()),
                     expression: Box::new(expression),
                 })
             })
@@ -3983,7 +3987,7 @@ pub(super) fn synthesize_surface_pointer_offset(
 /// Names a canonical pointer value through a currently readable pointer field
 /// of a struct parameter. Allocation identity conditions compare canonical
 /// allocation offsets, not the memory-load syntax that produced them; this
-/// reverse lookup recovers stable source syntax at each recorded snapshot.
+/// reverse lookup recovers stable source syntax at each recorded state.
 fn synthesize_parameter_field_pointer_value(
     term: &PointerOffsetTerm,
     parameter_binding: ParameterBinding<'_>,
@@ -4104,13 +4108,13 @@ fn scalar_read_in_state(read: &MachineTerm, state: &ExecutionState) -> Option<Ma
 }
 
 // Unsigned division and remainder use the usual C conversion of both
-// operands when either operand is uint32. Keep an explicit snapshot outside
+// operands when either operand is uint32. Keep an explicit state outside
 // the cast so reconstruction never silently changes which memory is read.
 fn synthesize_uint32_operand(expression: ContractExpression) -> Option<ContractExpression> {
     synthesize_observation_operand(expression, ProgramType::UInt32)
 }
 
-/// `expression` converted to `int32`, inside its snapshot selector: the
+/// `expression` converted to `int32`, inside its program point selector: the
 /// signed counterpart of [`synthesize_uint32_operand`].
 fn synthesize_int32_operand(expression: ContractExpression) -> Option<ContractExpression> {
     synthesize_observation_operand(expression, ProgramType::Int32)
@@ -4228,7 +4232,7 @@ fn synthesize_named_integer_local<'a>(
 }
 
 /// A retained word read carries its interpretation. Spell that exact typed
-/// load, at the same selected snapshot, instead of a signed load followed by
+/// load, at the same selected state, instead of a signed load followed by
 /// an unsigned cast (which introduces a different observation node).
 fn synthesize_typed_word_read(
     read: &MachineTerm,
@@ -4327,7 +4331,7 @@ fn synthesize_surface_bitvector(
         let reassigned = state.locals().get(&name).is_some();
         return Some(if reassigned {
             ContractExpression::At {
-                selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Function,
                     kind: ProgramPointKind::Entry,
                 }),
@@ -4372,8 +4376,8 @@ fn synthesize_surface_bitvector(
     if let Some(field) = synthesize_local_struct_pointer_field(term, parameter_binding, state) {
         return Some(field);
     }
-    if let Some(snapshot) = synthesize_snapshot_local(term) {
-        return Some(snapshot);
+    if let Some(retained_state) = synthesize_state_local(term) {
+        return Some(retained_state);
     }
     if let Some(recorded) = synthesize_recorded_local(term) {
         return Some(recorded);
@@ -4785,7 +4789,7 @@ fn synthesize_surface_bitvector(
             }
         }
         // A load variable names one cell of one memory version. It denotes
-        // the source load of that cell from any snapshot whose memory
+        // the source load of that cell from any state whose memory
         // lies in the same epoch; the kernel's own naming law decides that,
         // so the spelling lowers back to exactly this variable there.
         MachineTerm::Variable(variable) => {
@@ -4986,8 +4990,8 @@ fn synthesize_surface_bitvector(
 }
 
 /// Restore explicit calls in invariant-body goals so their defining equations
-/// can be opened by ordinary `unfold`. Array snapshots are named only when
-/// they are exactly the current or function-entry snapshot; no frame search
+/// can be opened by ordinary `unfold`. Array states are named only when
+/// they are exactly the current or function-entry state; no frame search
 /// or memory-content comparison is used to choose the spelling.
 #[inline(never)]
 fn synthesize_surface_call(
@@ -5019,9 +5023,9 @@ fn synthesize_surface_call(
     })
 }
 
-/// A snapshot-bearing argument selects its memory by identity. An intermediate
-/// recorded snapshot is as explicit as `old`; no timeline or frame search is
-/// needed to recover that snapshot's source selector.
+/// A state-bearing argument selects its memory by identity. An intermediate
+/// recorded state is as explicit as `old`; no timeline or frame search is
+/// needed to recover that state's source selector.
 fn synthesize_at_memory(
     memory: &crate::kernel::SharedMemory,
     state: &ExecutionState,
@@ -5719,7 +5723,7 @@ fn pointer_read_address_in_state(pointer: &Pointer, state: &ExecutionState) -> O
         }
         PointerBlock::LoadedPointer(_) => {
             let read = pointer.as_loaded_value()?;
-            // A retained read always names its exact defining snapshot,
+            // A retained read always names its exact defining state,
             // including a post-store read whose canonical value is now known.
             (memory == read.defining_memory
                 || Pointer::canonical_loaded_value(&memory, &read.defining_address) == *pointer)
@@ -5739,7 +5743,7 @@ fn synthesize_owned_pointer_field(
     };
     // Local storage names include a lifetime prefix when scopes reuse a name.
     // Look up the named object and verify its actual slot rather than scanning
-    // all unrelated automatic aggregates in the snapshot.
+    // all unrelated automatic aggregates in the state.
     let name = block.strip_prefix("local:")?.rsplit(':').next()?;
     let slot = state.locals().aggregate_object_pointer(name)?;
     let layout = state.locals().aggregate_layout(name)?;
@@ -6129,7 +6133,7 @@ fn synthesize_surface_pointer_expression(
     ) {
         return Some(offset);
     }
-    synthesize_snapshot_pointer_expression(pointer, parameter_binding, bound_variables)
+    synthesize_state_pointer_expression(pointer, parameter_binding, bound_variables)
         .or_else(|| {
             synthesize_entry_pointer_expression(pointer, parameter_binding, state, bound_variables)
         })
@@ -6184,7 +6188,7 @@ fn synthesize_entry_pointer_expression(
 
 /// A pointer value read from a struct field, whose block is the read itself
 /// as a loaded pointer to a heap object is, spelled `local->field` where this
-/// state, or failing that the snapshot state as `at(<selector>, ..)`,
+/// state, or failing that the state state as `at(<selector>, ..)`,
 /// registers that read.
 fn synthesize_loaded_pointer_value(
     pointer: &crate::kernel::PointerValue,
@@ -6197,9 +6201,9 @@ fn synthesize_loaded_pointer_value(
     };
     at_state(state)
         .or_else(|| {
-            let (snapshot, selector) =
-                SYNTHESIS_SNAPSHOT_STATE.with(|slot| slot.borrow().clone())?;
-            let expression = at_state(&snapshot)?;
+            let (retained_state, selector) =
+                SYNTHESIS_REFERENCE_STATE.with(|slot| slot.borrow().clone())?;
+            let expression = at_state(&retained_state)?;
             Some(ContractExpression::At {
                 selector,
                 expression: Box::new(expression),
@@ -6220,7 +6224,7 @@ fn synthesize_loaded_pointer_value(
 fn recorded_point_of_pointer_read(
     pointer: &Pointer,
     state: &ExecutionState,
-) -> Option<(SnapshotSelector, ExecutionState)> {
+) -> Option<(ProgramPointSelector, ExecutionState)> {
     if pointer.offset != PointerOffsetTerm::Constant(0) {
         return None;
     }
@@ -6252,7 +6256,7 @@ fn recorded_point_of_pointer_read(
 
 /// The source spelling of a scalar model-field variable: `o.size` where the
 /// current state's instance holds it at that field, `at(<selector>, o.size)`
-/// where the snapshot state's does, and `old(o.size)` where the entry
+/// where the state state's does, and `old(o.size)` where the entry
 /// state's does. One registry lookup and one instance lookup per state.
 fn synthesize_scalar_model_field(
     variable: Variable,
@@ -6288,12 +6292,12 @@ fn synthesize_scalar_model_field(
     if let Some(field) = field_at(state) {
         return Some(field);
     }
-    if let Some(field) = SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+    if let Some(field) = SYNTHESIS_REFERENCE_STATE.with(|slot| {
         let slot = slot.borrow();
-        let (snapshot, selector) = slot.as_ref()?;
+        let (retained_state, selector) = slot.as_ref()?;
         Some(ContractExpression::At {
             selector: selector.clone(),
-            expression: Box::new(field_at(snapshot)?),
+            expression: Box::new(field_at(retained_state)?),
         })
     }) {
         return Some(field);
@@ -6316,20 +6320,22 @@ fn synthesize_scalar_model_field(
 }
 
 /// The `at(<selector>, e)` spelling of a pointer the current state cannot
-/// name but the snapshot state can, such as a call's `old(p->kid)` read at
-/// that call's entry. The snapshot scope is cleared for the inner synthesis,
-/// so the snapshot spelling never nests.
-fn synthesize_snapshot_pointer_expression(
+/// name but the state state can, such as a call's `old(p->kid)` read at
+/// that call's entry. The state scope is cleared for the inner synthesis,
+/// so the state spelling never nests.
+fn synthesize_state_pointer_expression(
     pointer: &Pointer,
     parameter_binding: ParameterBinding<'_>,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
-    let (snapshot, selector) = SYNTHESIS_SNAPSHOT_STATE.with(|slot| slot.borrow().clone())?;
-    let _cleared = SynthesisSnapshotScope(SYNTHESIS_SNAPSHOT_STATE.with(|slot| slot.replace(None)));
+    let (retained_state, selector) =
+        SYNTHESIS_REFERENCE_STATE.with(|slot| slot.borrow().clone())?;
+    let _cleared =
+        SynthesisReferenceStateScope(SYNTHESIS_REFERENCE_STATE.with(|slot| slot.replace(None)));
     let expression = synthesize_surface_pointer_expression(
         pointer,
         parameter_binding,
-        &snapshot,
+        &retained_state,
         bound_variables,
     )?;
     Some(ContractExpression::At {
@@ -6411,7 +6417,7 @@ fn synthesize_surface_algebraic(
             }
             // A value a local holds, a Rust local of an enum, a `Vec` or a
             // library iterator, is spelled by that local: now, or at the
-            // snapshot the goal reads.
+            // state the goal reads.
             let held_by = |state: &ExecutionState| {
                 state
                     .locals()
@@ -6426,7 +6432,7 @@ fn synthesize_surface_algebraic(
             if let Some(local) = held_by(state) {
                 return Some(local);
             }
-            if let Some(local) = SYNTHESIS_SNAPSHOT_STATE.with(|slot| {
+            if let Some(local) = SYNTHESIS_REFERENCE_STATE.with(|slot| {
                 let slot = slot.borrow();
                 let (state, selector) = slot.as_ref()?;
                 Some(ContractExpression::At {

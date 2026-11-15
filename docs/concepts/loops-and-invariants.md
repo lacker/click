@@ -194,7 +194,7 @@ no invariants. `step_until` stops sooner, at the `if` it never splits.
 
 A labeled loop can also expose its entry point to the invariant:
 
-<!-- verified-example: mdtests/loop_entry_snapshot.md -->
+<!-- verified-example: mdtests/loop_entry_program_point.md -->
 ```click
 loop as drain {
     decreases n;
@@ -596,7 +596,7 @@ loop, and the join reconciles each piece in the direction that claims less:
 - The counter that names re-entered declarations takes the largest value any
   exit reached, so no ended block's identity is issued again.
 - When the exits' memories disagree on what they have forgotten or on their
-  contract-call snapshot epochs, the
+  contract-call state epochs, the
   successor's memory keeps the cells every exit holds and takes a freshly
   minted identity with no recorded history
   (`mdtests/loop_break_exit_after_a_call_with_a_local_joins.md`). A load after

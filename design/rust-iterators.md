@@ -24,7 +24,7 @@ model and the temporary `"iterators": "library"` unit option are removed. The
 loop fact is a library function, `after(it, k)`, the iterator after `k` calls
 of `next()`: a loop carries `iter == start.after(iterations)`. The loop's
 starting iterator is spelled with the
-existing snapshot form, `at(loop(i).entry, iter)` (open question 2).
+existing state form, `at(loop(i).entry, iter)` (open question 2).
 
 ## Problem
 
@@ -212,7 +212,7 @@ importer-made operations (`SliceIter::len`, `SliceIter::as_ptr`,
    - `loop(i).start`, a new built-in like `iterations`;
    - the program's own local that the loop consumes, such as `chunks` in
      `for chunk in chunks`, read at loop entry;
-   - an existing snapshot form.
+   - an existing state form.
 3. **Iterators advanced before the loop or resumed after a `break`.** In
    those cases `iterations` is not the number of items consumed. The loop
    fact is stated relative to the value at loop entry, so it still holds.

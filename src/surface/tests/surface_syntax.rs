@@ -2557,7 +2557,7 @@ fn records_checked_surface_forms_for_lowered_propositions() {
         &surface,
         &PureFactContext::new(),
         ContractEnvironment::new(&values, &BTreeMap::new()),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicates, &functions),
     )
     .expect("surface proposition should lower");
@@ -3167,9 +3167,9 @@ fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
         operator: ComparisonOperator::Equal,
         right: current_int(1),
     };
-    let snapshot = ClickProposition::Comparison {
+    let retained_state = ClickProposition::Comparison {
         left: ContractExpression::At {
-            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(5),
                 kind: ProgramPointKind::Entry,
             }),
@@ -3182,9 +3182,9 @@ fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     let wrong = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
     let mut spellings = SurfacePropositionMap::default();
     spellings.record_lowering(&current, &kernel).unwrap();
-    spellings.record_lowering(&snapshot, &kernel).unwrap();
+    spellings.record_lowering(&retained_state, &kernel).unwrap();
 
-    assert_eq!(spellings.surface(&kernel).unwrap(), &snapshot);
+    assert_eq!(spellings.surface(&kernel).unwrap(), &retained_state);
     assert_eq!(
         spellings
             .checked_surface(&kernel, |surface| {
@@ -3936,7 +3936,7 @@ fn parses_block_by_clause() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by surface_syntax_batch_24")]
-fn parses_sequence_literals_snapshots_and_concatenation() {
+fn parses_sequence_literals_states_and_concatenation() {
     let source = r#"
         verifying "join.c";
 
@@ -5282,10 +5282,10 @@ fn a_whole_struct_view_reads_and_does_not_write() {
 /// A function-entry alignment fact cited after execution is qualified side
 /// by side, `at(S, address(p) & 7u64) == at(S, 0u64)`. Click has no cast
 /// spelling for the address inside, so it renders as the `aligned` sugar
-/// read at that snapshot rather than as an unparseable `p as uint64`.
+/// read at that state rather than as an unparseable `p as uint64`.
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by surface_syntax_batch_31")]
-fn snapshot_read_alignment_fact_renders_as_aligned() {
+fn state_read_alignment_fact_renders_as_aligned() {
     let source = "theorem entry_alignment(arena: int32*) { \
         requires at(function.entry, address(arena) & 7u64) == at(function.entry, 0u64); \
         ensures 0 == 0; }";
@@ -6005,7 +6005,7 @@ fn synthesized_signed_difference_preserves_its_type_without_literals() {
         &reparsed,
         &facts,
         ContractEnvironment::new(&values, &BTreeMap::new()),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicates, &functions),
     )
     .unwrap();
@@ -6169,7 +6169,7 @@ test_batches! {
         parses_block_by_clause,
     ],
     surface_syntax_batch_24: [
-        parses_sequence_literals_snapshots_and_concatenation,
+        parses_sequence_literals_states_and_concatenation,
         integer_datatype_match_bindings_shadow_each_source_carrier,
         integer_datatype_match_iota_survives_function_substitution_and_recheck,
         integer_datatype_match_numeral_arm_inherits_integer_result_and_rechecks,
@@ -6214,7 +6214,7 @@ test_batches! {
         a_struct_pointer_range_counts_structs,
         a_resource_clause_names_a_place,
         a_whole_struct_view_reads_and_does_not_write,
-        snapshot_read_alignment_fact_renders_as_aligned,
+        state_read_alignment_fact_renders_as_aligned,
     ],
     surface_syntax_batch_32: [
         integer_cast_identity_round_trips_and_cannot_establish_an_unrelated_integer_equality,
@@ -6290,7 +6290,7 @@ fn local_storage_and_resource_stars_have_round_tripping_spellings() {
         &reparsed,
         &crate::kernel::PureFactContext::new(),
         ContractEnvironment::new(&values, &BTreeMap::new()),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicates, &functions),
     )
     .unwrap();

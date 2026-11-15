@@ -95,7 +95,7 @@ without it. A full rebuild attests `HEAD`, and also the requested baseline
 only when the commit's sidecar, declared C sources, and transitively included
 local headers exactly match the inputs that were verified. An uncommitted
 header change cannot attest the original commit. Files changed after
-verification do not change which input snapshot the marker records.
+verification do not change which input state the marker records.
 
 For a sidecar with Click imports, `--changed-since` currently uses the safe
 fallback: it rebuilds the selected entry scope whenever it runs and does not
@@ -190,7 +190,7 @@ defined in a `where` list after the report (see
 `goal:` shows the checked proposition after rewrites and `adds:` uses that same
 format for each admitted fact. The trace uses readable expressions only when
 they preserve checked identities; its typed memory operands include their read
-width, memory label (`snapshot#N`), and address, with shared labels and a
+width, memory label (`state#N`), and address, with shared labels and a
 construction legend.
 
 A failed `normalize() using { ... }` that checks a recorded 64-bit read prints
@@ -209,8 +209,10 @@ fixed-state checks and loop-body execution; it does not replace the premise
 with an abbreviated dump of available facts and resources.
 
 A checked function-pointer load step prints the local it produces, the exact
-value label, and `at(snapshot, load_function_pointer(address))`, where
-`snapshot` is the memory label of the read. The address and
+value label, and `read: load_function_pointer(address) in state#N`, where
+`state#N` is the memory label of the read, not a surface program point.
+The diagnostic uses `at(point, expression)` only when it has a program point
+that names the expression. The address and
 value share labels with subsequent facts and goals; the legend distinguishes
 concrete function addresses from symbolic function addresses. The read's memory
 comes from the accepted statement evidence, including entry initialization and

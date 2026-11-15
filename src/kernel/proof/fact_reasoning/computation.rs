@@ -10,7 +10,7 @@ use crate::kernel::{
     constant_i64, constant_u32, constant_u64, int32_constant, int64_constant, uint64_constant,
 };
 
-/// Whether this leaf is true by direct computation or snapshot metadata.
+/// Whether this leaf is true by direct computation or state metadata.
 /// Positive connectives belong to the caller's structural walk. Negated
 /// connective trees may compute, but implications and quantifiers always
 /// require their ordinary introduction steps.
@@ -158,7 +158,7 @@ fn condition_value(condition: &ConditionTerm) -> Option<bool> {
                     CompareRelation::GreaterEqual => left >= right,
                 });
             }
-            // Raw goal atoms retain their exact typed snapshot identities.
+            // Raw goal atoms retain their exact typed state identities.
             // In particular, this key must never canonicalize a memory read.
             machine_affine_equality(condition, Clone::clone)
                 .or_else(|| bounds::comparison(condition))

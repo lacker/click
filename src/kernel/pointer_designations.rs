@@ -9,7 +9,7 @@ pub(super) struct ValueClasses<K: Ord> {
     parents: PersistentMap<K, K>,
     sizes: PersistentMap<K, usize>,
     edges: PersistentMap<K, PersistentSet<K>>,
-    /// Reverse admission order, independent of snapshot content hashes.
+    /// Reverse admission order, independent of state content hashes.
     ordered_edges: PersistentMap<K, PersistentMap<u64, K>>,
     next_edge: u64,
     representative: PersistentMap<K, K>,
@@ -331,11 +331,15 @@ mod tests {
             start: parent.pointer().clone(),
             width: 4u32.into(),
         }));
-        let snapshot = crate::kernel::intern_memory(Memory::new());
+        let retained_state = crate::kernel::intern_memory(Memory::new());
         let cell = Pointer::symbolic(Variable(824_002));
         let read_address = Pointer::symbolic(Variable(824_003));
-        let read =
-            PointerValue::from_read(read_address, ProgramType::Int32Pointer, &snapshot, &cell);
+        let read = PointerValue::from_read(
+            read_address,
+            ProgramType::Int32Pointer,
+            &retained_state,
+            &cell,
+        );
         let context = PureFactContext::new().assume_proposition(equality(&read, &member));
         assert!(context.pointer_value_at_entry(&read).extent().is_some());
         assert!(context.pointer_value_at_entry(&parent).extent().is_none());
@@ -347,17 +351,17 @@ mod tests {
     fn equal_storage_addresses_preserve_a_complete_pointer_reads_designation() {
         let a = value(825_001);
         let b = value(825_002);
-        let snapshot = crate::kernel::intern_memory(Memory::new());
+        let retained_state = crate::kernel::intern_memory(Memory::new());
         let x = PointerValue::from_read(
             Pointer::symbolic(Variable(825_003)),
             ProgramType::Int32Pointer,
-            &snapshot,
+            &retained_state,
             a.pointer(),
         );
         let y = PointerValue::from_read(
             Pointer::symbolic(Variable(825_004)),
             ProgramType::Int32Pointer,
-            &snapshot,
+            &retained_state,
             b.pointer(),
         );
         let context = PureFactContext::new().assume_condition(

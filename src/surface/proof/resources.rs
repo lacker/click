@@ -291,7 +291,7 @@ impl DynamicViewDependencyIndex {
 type QuantifiedBinder<'a> = Option<(Variable, &'a Proposition)>;
 
 /// Find the live stable-view authority needed by the current memory loads in
-/// one lowered body fact.  Loads from an older memory snapshot are historical
+/// one lowered body fact.  Loads from an older memory state are historical
 /// scalar facts and deliberately do not participate in this check.  The
 /// caller supplies views which are about to be inserted by an observation so
 /// that dependency capture does not search equal ambient occurrences.
@@ -1041,7 +1041,7 @@ fn common_possible_instance_arm(
 /// This is the same projection contract lowering runs, so the cell layout and
 /// element types are the ones already chosen there rather than a second
 /// convention. It is bounded by the arm body: one cell per element of each
-/// constant-bounded range the arm owns, no search, and cells the snapshot
+/// constant-bounded range the arm owns, no search, and cells the state
 /// already holds are left alone.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn materialize_unfolded_instance_arm_cells(
@@ -2457,7 +2457,7 @@ fn try_select_composite_resource_body(
     if is_atomic_condition {
         // Conditional resource bodies are intentionally opaque while their
         // guard is undecided. A general contradiction search here can recurse
-        // through every materialized heap snapshot in a recursive resource.
+        // through every materialized heap state in a recursive resource.
         return Ok(None);
     }
     if fact_conflicts_with_assumptions(&lowered, assumptions) {
@@ -2576,7 +2576,7 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
     {
         // `open` retains the folded head for contract accounting while
         // exposing the unique owned body. Until that body is closed, do
-        // not re-project its invariant at a newer memory/count snapshot.
+        // not re-project its invariant at a newer memory/count state.
         return Ok((memory, ResourceContext::new(), false));
     }
     let mut fact_state = state.clone().with_memory(memory.clone());
@@ -2906,7 +2906,7 @@ fn materialize_composite_resource_memory(
                 error.raw_summary()
             )
         })?;
-        memory = materialize_composite_resource_cells_from_snapshot(
+        memory = materialize_composite_resource_cells_from_state(
             memory,
             &naming_memory,
             &contained,
@@ -2930,12 +2930,12 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
 ) -> Result<(Memory, ResourceContext), String> {
     let mut resources = ResourceContext::new();
     // Every cell exposed by this one body expansion names the value it had
-    // in the snapshot before the expansion began.  Lower clauses against the
+    // in the state before the expansion began.  Lower clauses against the
     // progressively materialized memory so a later clause can still address
     // through a cell an earlier clause exposed, but do not let those cached
     // cells become a new load-naming epoch.  The checked resource rewrite
     // independently validates every added cell against this same entry
-    // snapshot.
+    // state.
     let naming_memory = memory.clone();
     for contained in composite_body.contains() {
         let contained =
@@ -2957,7 +2957,7 @@ pub(in crate::surface) fn instantiate_composite_resource_body_resources(
                 describe_available_facts(&[], resources.facts(), parameter_binding, &[])
             )
         })?;
-        memory = materialize_composite_resource_cells_from_snapshot(
+        memory = materialize_composite_resource_cells_from_state(
             memory,
             &naming_memory,
             &contained,
@@ -3564,7 +3564,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     };
     let mut unfolded_facts = Vec::new();
     // Lower later selectors through earlier cached fields, but name every
-    // exposed cell at this one rewrite's input snapshot. Caching a read is
+    // exposed cell at this one rewrite's input state. Caching a read is
     // not a new program write or a new load-naming epoch.
     let naming_memory = state.memory().clone();
     for contained in contained_clauses {
@@ -3589,7 +3589,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
         // receives loadability and symbolic loads without modifying the
         // certified program memory by installing cached cells into it.
         if materialize_memory {
-            let memory = materialize_composite_resource_cells_from_snapshot(
+            let memory = materialize_composite_resource_cells_from_state(
                 state.memory().clone(),
                 &naming_memory,
                 &contained,
@@ -4058,7 +4058,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 &values,
                 guard_state.memory(),
             );
-            let snapshots = RecordedSnapshots::new();
+            let retained_states = RecordedStates::new();
             for argument in arguments {
                 if contains_old_expression(argument) {
                     let value = evaluate_fixed_state_expression_through_kernel(
@@ -4069,7 +4069,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                             pre_state,
                             &guard_state,
                             Some(&guard_result.native()),
-                            &snapshots,
+                            &retained_states,
                         ),
                         spec_definitions,
                         &BTreeSet::new(),
@@ -4419,9 +4419,9 @@ fn fold_composite_resources_on_outcome_with_facts(
                 body_loan_dependency = Some(binding);
             }
             // Available facts may write this body fact through loads recorded
-            // at an earlier snapshot. Decide those forms with the bounded
+            // at an earlier state. Decide those forms with the bounded
             // check matchers first: exact structural membership, the
-            // snapshot-bridging relation with this execution's effect facts as
+            // state-bridging relation with this execution's effect facts as
             // framing, and the direct separation-fact matcher. All of these do
             // work proportional to the fact being checked, so an exactly
             // available body fact never rides on the open-ended kernel search
@@ -4537,9 +4537,9 @@ fn fold_composite_resources_on_outcome_with_facts(
                             == required_text
                     })
                     .count();
-                let snapshot_note = if identically_printed > 0 {
+                let program_point_note = if identically_printed > 0 {
                     format!(
-                        "\n  note: {identically_printed} available fact(s) print identically but carry different embedded memory snapshots, and the recorded execution effects do not prove the snapshots agree at the loaded pointers"
+                        "\n  note: {identically_printed} available fact(s) print identically but carry different embedded memory states, and the recorded execution effects do not prove the states agree at the loaded pointers"
                     )
                 } else {
                     String::new()
@@ -4564,7 +4564,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     ))
                 } else {
                     ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `fold({})` requires an exact body fact: {}{snapshot_note}",
+                        "`{claim_label}` path {path_index}: `fold({})` requires an exact body fact: {}{program_point_note}",
                         describe_resource_clause(resource),
                         describe_missing_pure_fact(
                             &required,
@@ -4599,7 +4599,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         };
         let mut post_state = state;
         // Range forms in held resource facts embed loads at their
-        // creation snapshot; carrying them to the fold state needs the
+        // creation state; carrying them to the fold state needs the
         // execution's store effect facts alongside the pure facts.
         let assumptions = pure_facts.assumptions().clone();
         let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(&assumptions);
@@ -4877,7 +4877,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                 .owned_occurrence_matches(authority_occurrence, &abstract_resource)
             {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `fold({})` changed its folded authority snapshot",
+                    "`{claim_label}` path {path_index}: `fold({})` changed its folded authority state",
                     describe_resource_clause(resource)
                 )));
             }
@@ -4996,7 +4996,7 @@ pub(super) fn fold_composite_resource_for_proof(
     )
 }
 
-/// Checks one result-aware `fold` against the persistent facts and snapshot
+/// Checks one result-aware `fold` against the persistent facts and state
 /// owned by a typed function-outcome goal. The returned outcome and fact root
 /// are the semantic successor; ordered finalization must not reproduce this
 /// transition in a parallel mutable working set.
@@ -5517,7 +5517,7 @@ fn instantiate_contract_segment(
     })
 }
 
-fn materialize_composite_resource_cells_from_snapshot(
+fn materialize_composite_resource_cells_from_state(
     mut memory: Memory,
     naming_memory: &Memory,
     resource_clause: &ResourceClause,
@@ -5951,12 +5951,12 @@ void child_release(struct child* obj) {
             pointer.clone(),
             ProgramValue::Int32(MachineTerm::constant(0)),
         );
-        let snapshot = crate::kernel::intern_memory_ref(&memory);
+        let retained_state = crate::kernel::intern_memory_ref(&memory);
         let condition = ConditionTerm::Compare {
             format: MachineIntegerType::Int32,
             relation: CompareRelation::Equal,
             left: Box::new(MachineTerm::MemoryLoad(
-                snapshot,
+                retained_state,
                 Box::new(pointer.clone()),
                 crate::kernel::LoadKind::Int32,
             )),
@@ -6159,7 +6159,7 @@ mod wide_range_reader_tests {
     use super::*;
     // A wide composite span must not be enumerated as signed constant cells.
     #[test]
-    fn wide_composite_materialization_keeps_the_snapshot_without_enumerating_cells() {
+    fn wide_composite_materialization_keeps_the_state_without_enumerating_cells() {
         let base = Pointer::symbolic(Variable(985_600));
         let wide = MemoryRange::new_wide(
             base.clone(),
@@ -6181,7 +6181,7 @@ mod wide_range_reader_tests {
             },
         };
         let memory = Memory::new();
-        let result = materialize_composite_resource_cells_from_snapshot(
+        let result = materialize_composite_resource_cells_from_state(
             memory.clone(),
             &memory,
             &ResourceClause::OwnMemory(segment),
@@ -6204,7 +6204,7 @@ mod wide_range_reader_tests {
                 end: literal(),
             },
         });
-        let result = materialize_composite_resource_cells_from_snapshot(
+        let result = materialize_composite_resource_cells_from_state(
             memory.clone(),
             &memory,
             &clause,
@@ -6408,7 +6408,7 @@ mod declared_scalar_field_observation_tests {
                 };
                 let memory = Memory::new();
                 let (named, work) = crate::instrumentation::measure_deterministic_work(|| {
-                    materialize_composite_resource_cells_from_snapshot(
+                    materialize_composite_resource_cells_from_state(
                         memory.clone(),
                         &memory,
                         &clause,
@@ -6445,7 +6445,7 @@ mod declared_scalar_field_observation_tests {
             ProgramExpression::Value(ProgramValue::pointer(base.clone())),
             ProgramType::Int32Pointer,
         );
-        let named = materialize_composite_resource_cells_from_snapshot(
+        let named = materialize_composite_resource_cells_from_state(
             memory.clone(),
             &memory,
             &ResourceClause::OwnMemory(segment),
@@ -6489,7 +6489,7 @@ mod declared_scalar_field_observation_tests {
             );
             let range = MemoryRange::new(base.clone(), 0.into(), (count + 4).into());
             let memory = Memory::new();
-            let named = materialize_composite_resource_cells_from_snapshot(
+            let named = materialize_composite_resource_cells_from_state(
                 memory.clone(),
                 &memory,
                 &ResourceClause::OwnMemory(segment),

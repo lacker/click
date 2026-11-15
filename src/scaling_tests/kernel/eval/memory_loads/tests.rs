@@ -380,7 +380,7 @@ fn wide_observations_preserve_width_scope_and_selected_query_scaling() {
         },
         ProgramValue::UInt64(MachineTerm::uint64_constant(7)),
     ));
-    // Materialize the same named value in an independent live snapshot.
+    // Materialize the same named value in an independent live state.
     let second_memory = intern_memory(
         second_memory
             .memory()
@@ -889,7 +889,7 @@ fn logical_scalar_read_meets_model_cell_through_later_external_alias() {
 fn pointer_read_premises_register_definitions_before_transitive_queries() {
     let _session = crate::kernel::VerificationSession::enter();
     let memory = Memory::new();
-    let snapshot = intern_memory_ref(&memory);
+    let retained_state = intern_memory_ref(&memory);
     let base = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::scale_int32(MachineTerm::Variable(Variable(95_600)), 4),
@@ -897,7 +897,7 @@ fn pointer_read_premises_register_definitions_before_transitive_queries() {
     let parent = Pointer::symbolic(Variable(95_601));
     let successor = Pointer::symbolic(Variable(95_602));
     let address = base.offset_by_bytes(16);
-    let load = canonical_form_of_load(snapshot, address.clone(), LoadKind::Int32);
+    let load = canonical_form_of_load(retained_state, address.clone(), LoadKind::Int32);
     let ProgramValue::Pointer(stored) =
         crate::kernel::cell_run_value(ProgramType::Int64Pointer, load)
     else {
@@ -980,7 +980,7 @@ fn pointer_read_premises_register_definitions_before_transitive_queries() {
 fn seeded_pointer_cells_retain_their_typed_load_definition() {
     let _session = crate::kernel::VerificationSession::enter();
     let memory = Memory::new();
-    let snapshot = intern_memory_ref(&memory);
+    let retained_state = intern_memory_ref(&memory);
     let base = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::scale_int32(MachineTerm::Variable(Variable(95_400)), 4),
@@ -988,7 +988,7 @@ fn seeded_pointer_cells_retain_their_typed_load_definition() {
     let alias = Pointer::symbolic(Variable(95_401));
     let address = base.offset_by_bytes(16);
     let alias_address = alias.offset_by_bytes(16);
-    let load = canonical_form_of_load(snapshot, address.clone(), LoadKind::Int32);
+    let load = canonical_form_of_load(retained_state, address.clone(), LoadKind::Int32);
     let ProgramValue::Pointer(seeded) =
         crate::kernel::cell_run_value(ProgramType::Int64Pointer, load)
     else {
@@ -1053,8 +1053,8 @@ fn cached_pointer_value_keeps_its_defining_coordinates_and_scales() {
     let address = owner.offset_by_bytes(16);
     let cursor_address = cursor.offset_by_bytes(16);
     let memory = Memory::new();
-    let snapshot = intern_memory_ref(&memory);
-    let bits = canonical_form_of_load(snapshot, address.clone(), LoadKind::Int32);
+    let retained_state = intern_memory_ref(&memory);
+    let bits = canonical_form_of_load(retained_state, address.clone(), LoadKind::Int32);
     let cached = ProgramValue::Int32(bits);
     let mut samples = Vec::new();
     for count in [4u64, 16, 64, 256] {
@@ -1191,7 +1191,7 @@ fn cached_pointer_reads_retain_their_current_cell_identity() {
                 true,
             );
         }
-        let snapshot = intern_memory_ref(&memory);
+        let retained_state = intern_memory_ref(&memory);
         // A logical read keeps its name. The checked C-read producer below
         // supplies the alias-supported equation in this context.
         let proven_equal =
@@ -1200,7 +1200,7 @@ fn cached_pointer_reads_retain_their_current_cell_identity() {
 
         // A later projection may name the same cell by its scalar load.
         // The checked C pointer read must still denote the cached value.
-        let name = canonical_form_of_load(snapshot, address.clone(), LoadKind::Int32);
+        let name = canonical_form_of_load(retained_state, address.clone(), LoadKind::Int32);
         let projected = memory
             .clone()
             .materialize_named_cell(address.clone(), ProgramValue::Int32(name));
@@ -1743,7 +1743,7 @@ fn a_call_frame_step_queries_its_kept_range_once() {
 /// Each read is its own load (R-mem relates the two in the equality
 /// graph): an unsigned 32-bit read has a name of its own, defined by its own
 /// read. Naming it after its word's `Int32` read costs no more than that
-/// naming did, and the same however many unrelated cells the snapshot
+/// naming did, and the same however many unrelated cells the state
 /// holds.
 #[test]
 fn naming_an_unsigned_32_bit_read_costs_what_naming_its_word_costs() {

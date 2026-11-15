@@ -41,7 +41,7 @@ jobs:
       - name: Set up documentation environment
         run: scripts/setup-environment.sh --docs-only
       # The reference's generated files come from a Rust test. Reuse the test
-      # workflow's latest build snapshot; this job never saves one.
+      # workflow's latest build cache; this job never saves one.
       - uses: actions/cache/restore@v4
         with:
           path: |

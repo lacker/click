@@ -217,7 +217,7 @@ fn an_unfolded_application_has_its_body_s_truth() {
     );
 }
 
-/// A read of a `bool` cell is one value per snapshot and pointer, so its
+/// A read of a `bool` cell is one value per state and pointer, so its
 /// equality with a binder carries the binder's truth.
 #[test]
 fn a_bool_read_is_one_value_per_cell() {

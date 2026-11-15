@@ -1071,7 +1071,7 @@ impl adler2::Adler32 {
         mark vector_a;
         // Connect the actual constructor bytes to the input at the uint64 cursor.
         // Prove machine equality before rewriting an Integer observation;
-        // pointer rewriting inside an observation exposes different snapshots.
+        // pointer rewriting inside an observation exposes different retained_states.
         have to_integer((22208 - ((adler_chunk_bytes(loop(1).iter.len(), 4u64) as uint32) as int32) - 4)) <= 22204 by { rewrite(to_integer((22208 - ((adler_chunk_bytes(loop(1).iter.len(), 4u64) as uint32) as int32) - 4)), to_integer(22208 - at(lane_head, ((adler_chunk_bytes(loop(1).iter.len(), 4u64) as uint32) as int32)))); solve() using { 4 <= at(lane_head, ((adler_chunk_bytes(loop(1).iter.len(), 4u64) as uint32) as int32)); at(lane_head, ((adler_chunk_bytes(loop(1).iter.len(), 4u64) as uint32) as int32)) <= 22208; }; }
         have at(lane_head, (chunk + (22208 - ((adler_chunk_bytes(loop(1).iter.len(), 4u64) as uint32) as int32)))) == bytes + ((((bytes.len() - bytes.len() % 4u64) - (bytes.len() - bytes.len() % 4u64) % 22208u64) - adler_chunk_bytes(loop(0).iter.len(), 22208u64)) - at(lane_head, adler_chunk_bytes(loop(1).iter.len(), 4u64)));
         have to_integer(at(lane_head, adler_chunk_bytes(loop(1).iter.len(), 4u64))) <= to_integer((((bytes.len() - bytes.len() % 4u64) - (bytes.len() - bytes.len() % 4u64) % 22208u64) - adler_chunk_bytes(loop(0).iter.len(), 22208u64)));

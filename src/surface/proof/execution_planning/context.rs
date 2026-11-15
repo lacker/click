@@ -151,7 +151,7 @@ pub(in crate::surface::proof) struct PlanningExecutionContext {
     pub(in crate::surface::proof) state: ExecutionState,
     pub(in crate::surface::proof) pure_facts: PureFactList,
     pub(in crate::surface::proof) surface_propositions: SurfacePropositionMap,
-    pub(in crate::surface::proof) recorded_snapshots: RecordedSnapshots,
+    pub(in crate::surface::proof) recorded_states: RecordedStates,
     pub(in crate::surface::proof) case_path: Vec<ProofCaseChoice>,
     pub(in crate::surface::proof) next_opaque_call: u64,
     pub(in crate::surface::proof) next_kernel_variable: u64,
@@ -689,7 +689,7 @@ pub(in crate::surface) enum StatementPrerequisitePolicy {
 /// The source-backed retry admits pure condition/logical trees and the
 /// deliberately narrow quantified external-byte-range slice. Other
 /// stateful propositions remain on the compatibility route until their
-/// snapshot transport is defined.
+/// state transport is defined.
 const SOURCE_CAPABILITY_MAX_NODES: usize = 4096;
 
 fn is_one_byte_external_range(bytes: &MachineTerm) -> bool {
@@ -758,7 +758,7 @@ fn source_range_universal_is_supported(proposition: &Proposition) -> bool {
 /// A whole written existential range can require a caller-witness projection
 /// even when lowering produced no implicit per-cell read obligations. This
 /// only enables proof search; the retained source projection and transport
-/// steps still check every premise and snapshot independently.
+/// steps still check every premise and state independently.
 fn has_explicit_existential_byte_range(proposition: &Proposition) -> bool {
     let proposition = match proposition {
         Proposition::Implies(_, body) => body.as_ref(),
@@ -803,7 +803,7 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     proposition: &Proposition,
     source_requirement_ordinal: Option<usize>,
     source_requirement_is_state_independent: bool,
-    source_snapshot: Option<crate::kernel::MemorySnapshotIdentity>,
+    source_memory_state: Option<crate::kernel::MemoryStateIdentity>,
 ) -> Result<bool, ClickError> {
     if source_requirement_ordinal.is_none() {
         return Ok(false);
@@ -839,14 +839,14 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     // propositions.  Static-array preconditions are the one deliberately
     // audited exception: their indexed loads are read at the call frontier,
     // so they may be retried only when every load variable is registered from
-    // that exact snapshot and names static storage below.
-    let static_snapshot = if source_requirement_is_state_independent || quantified_external_range {
+    // that exact state and names static storage below.
+    let static_state = if source_requirement_is_state_independent || quantified_external_range {
         None
     } else {
-        let Some(source_snapshot) = source_snapshot else {
+        let Some(source_memory_state) = source_memory_state else {
             return Ok(false);
         };
-        Some(source_snapshot)
+        Some(source_memory_state)
     };
     enum Work<'a> {
         Proposition(&'a Proposition, usize),
@@ -961,8 +961,8 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
                                 && crate::kernel::registered_load_for_variable(variable)
                                     .is_some() => {}
                         N::Variable(variable)
-                            if static_snapshot.is_some_and(|snapshot| {
-                                registered_static_load_matches_snapshot(variable, snapshot)
+                            if static_state.is_some_and(|retained_state| {
+                                registered_static_load_matches_state(variable, retained_state)
                             }) =>
                         {
                             saw_static_load = true
@@ -981,10 +981,10 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
             Work::Bitvector(bits32_constant!(_) | int64_constant!(_) | uint64_constant!(_)) => {}
             Work::Bitvector(MachineTerm::MemoryLoad(..)) if quantified_external_range => {}
             Work::Bitvector(term @ MachineTerm::MemoryLoad(_, _, _))
-                if static_snapshot.is_some_and(|_| {
-                    registered_static_memory_load_matches_snapshot(
+                if static_state.is_some_and(|_| {
+                    registered_static_memory_load_matches_state(
                         term,
-                        static_snapshot.expect("static capability has a source snapshot"),
+                        static_state.expect("static capability has a source state"),
                     )
                 }) =>
             {
@@ -997,10 +997,10 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
                     && crate::kernel::is_load_variable(variable)
                     && crate::kernel::registered_load_for_variable(variable).is_some() => {}
             Work::Bitvector(MachineTerm::Variable(variable))
-                if static_snapshot.is_some_and(|_| {
-                    registered_static_load_matches_snapshot(
+                if static_state.is_some_and(|_| {
+                    registered_static_load_matches_state(
                         variable,
-                        static_snapshot.expect("static capability has a source snapshot"),
+                        static_state.expect("static capability has a source state"),
                     )
                 }) =>
             {
@@ -1041,20 +1041,20 @@ pub(in crate::surface) fn source_backed_requirement_is_supported(
     if quantified_external_range {
         return Ok(saw_external_range && !saw_static_load);
     }
-    Ok(static_snapshot.is_none() || saw_static_load)
+    Ok(static_state.is_none() || saw_static_load)
 }
 
 /// Stateful source-backed requirements are admitted only for the audited
 /// static-array and quantified external-range families.  A load variable is
 /// usable in the static-array family only if its defining load was registered
 /// and its pointer names a linked/static block.  The carrier's exact source
-/// snapshot is checked by the retained-have source lookup before any proof is
+/// state is checked by the retained-have source lookup before any proof is
 /// built; this classifier must not confuse the callee's entry projection with
 /// the caller's persistent memory node.  In particular, heap blocks and
 /// unregistered loads remain on the compatibility path.
-fn registered_static_load_matches_snapshot(
+fn registered_static_load_matches_state(
     variable: &Variable,
-    source_snapshot: crate::kernel::MemorySnapshotIdentity,
+    source_memory_state: crate::kernel::MemoryStateIdentity,
 ) -> bool {
     let Some((_memory, pointer)) = crate::kernel::registered_load_for_variable(variable) else {
         return false;
@@ -1068,7 +1068,7 @@ fn registered_static_load_matches_snapshot(
     // must be the exact source carrier identity; equal contents or matching
     // static markers are not a transport relation.
     if pointer != origin_pointer
-        || crate::kernel::MemorySnapshotIdentity::of(origin.memory()) != source_snapshot
+        || crate::kernel::MemoryStateIdentity::of(origin.memory()) != source_memory_state
     {
         return false;
     }
@@ -1079,9 +1079,9 @@ fn registered_static_load_matches_snapshot(
     )
 }
 
-fn registered_static_memory_load_matches_snapshot(
+fn registered_static_memory_load_matches_state(
     term: &MachineTerm,
-    source_snapshot: crate::kernel::MemorySnapshotIdentity,
+    source_memory_state: crate::kernel::MemoryStateIdentity,
 ) -> bool {
     let Some(read) =
         crate::kernel::scalar_read_observation(crate::kernel::MachineOperandView::Legacy(term))
@@ -1091,7 +1091,7 @@ fn registered_static_memory_load_matches_snapshot(
     let Some(origin) = read.origin else {
         return false;
     };
-    crate::kernel::MemorySnapshotIdentity::of(origin.memory()) == source_snapshot
+    crate::kernel::MemoryStateIdentity::of(origin.memory()) == source_memory_state
         && matches!(read.pointer.block,
             PointerBlock::Concrete(ref block)
                 if PointerBlock::is_static_name(block) || PointerBlock::is_global_name(block))
@@ -1110,14 +1110,14 @@ pub(in crate::surface) fn source_backed_requirement_should_intercept(
     let Some(site) = obligation.call_requirement_site() else {
         return Ok(false);
     };
-    if crate::kernel::MemorySnapshotIdentity::of(current_memory) != site.source_snapshot {
+    if crate::kernel::MemoryStateIdentity::of(current_memory) != site.source_memory_state {
         return Ok(false);
     }
     source_backed_requirement_is_supported(
         obligation.proposition(),
         site.source_requirement_ordinal,
         site.source_requirement_is_state_independent,
-        site.source_load_snapshot,
+        site.source_load_state,
     )
 }
 
@@ -1266,13 +1266,13 @@ mod tests {
             },
             true,
         );
-        let source_snapshot = crate::kernel::MemorySnapshotIdentity::of(memory.memory());
+        let source_memory_state = crate::kernel::MemoryStateIdentity::of(memory.memory());
         assert!(
             source_backed_requirement_is_supported(
                 &proposition,
                 Some(0),
                 false,
-                Some(source_snapshot),
+                Some(source_memory_state),
             )
             .unwrap()
         );
@@ -1294,7 +1294,7 @@ mod tests {
                 &memory_load,
                 Some(0),
                 false,
-                Some(source_snapshot),
+                Some(source_memory_state),
             )
             .unwrap()
         );
@@ -1324,7 +1324,7 @@ mod tests {
                 &dynamic_load,
                 Some(0),
                 false,
-                Some(source_snapshot),
+                Some(source_memory_state),
             )
             .unwrap()
         );
@@ -1334,17 +1334,17 @@ mod tests {
         // eligible for a retry at the wrong frontier. (A derivation would hand
         // back the arena's canonical storage, so build the roots directly.)
         let other = memory.memory().with_fresh_storage_roots();
-        let other_snapshot = crate::kernel::MemorySnapshotIdentity::of(&other);
-        assert_ne!(source_snapshot, other_snapshot);
+        let other_memory_state = crate::kernel::MemoryStateIdentity::of(&other);
+        assert_ne!(source_memory_state, other_memory_state);
         assert!(
             !source_backed_requirement_is_supported(
                 &proposition,
                 Some(0),
                 false,
-                Some(other_snapshot),
+                Some(other_memory_state),
             )
             .unwrap(),
-            "a load registered in the old epoch must not cross an equal-content snapshot"
+            "a load registered in the old epoch must not cross an equal-content state"
         );
     }
 

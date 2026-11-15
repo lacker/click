@@ -8,8 +8,8 @@ use crate::kernel::{
 /// Whether a memory fact about `base` established in `range_memory` still
 /// describes an available region in `current_memory`: the block must be
 /// present in both or absent in both, and no heap allocation that may
-/// contain `base` may have been freed in one snapshot but not the other.
-/// The second condition is what distinguishes the snapshots for an
+/// contain `base` may have been freed in one state but not the other.
+/// The second condition is what distinguishes the states for an
 /// `ExternalArgument` allocation, whose block survives `free`.
 pub(in crate::kernel) fn memory_range_still_available(
     range_memory: &Memory,
@@ -1277,7 +1277,7 @@ fn add_condition_path_fact_with_visibility(
 ) -> Option<()> {
     // A fact certified after a memory effect is part of that transition's
     // public post-state, even when the pre-effect assumptions can derive the
-    // same truth value. Dropping it here loses the exact snapshot fact that a
+    // same truth value. Dropping it here loses the exact state fact that a
     // later statement (and its surface certificate) may require.
     if let Some(known) = assumptions.exact_condition_value(&condition) {
         if known == value && !certified_after_effect {
@@ -1863,8 +1863,8 @@ fn merge_obligations_with_changes(
             // `right` was produced while executing under the complete left
             // path context. Preserve its path guard without asking the
             // general prover to reconsider it against an older memory
-            // snapshot. Exact and intrinsic contradictions still reject the
-            // merge; non-exact cross-snapshot reasoning cannot erase a path
+            // state. Exact and intrinsic contradictions still reject the
+            // merge; non-exact cross-state reasoning cannot erase a path
             // that the executor just certified as possible.
             if assumptions.proves_exact(obligation.proposition()) {
                 continue;
@@ -2085,7 +2085,7 @@ fn merge_execution_pure_facts_and_obligations_in(
     // context. Recheck its assumable obligations against that same context,
     // not against the older base assumptions. In particular, a verified call
     // can change a field that an entry-state branch constrained; checking a
-    // post-call load guard against only the entry snapshot can incorrectly
+    // post-call load guard against only the entry state can incorrectly
     // discard a valid successor path. Only an assumable obligation reads the
     // context, so a right fragment without one builds none.
     let built;

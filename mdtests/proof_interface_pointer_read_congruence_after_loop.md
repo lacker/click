@@ -2,7 +2,7 @@
 
 The loop gives the local pointers fresh names. Each arm proves the field read
 through those aliases, but the interface checker may lower it with a different
-read spelling. Both denote the same field in the same snapshot.
+read spelling. Both denote the same field in the same state.
 
 ```c filename=join-counted.c
 struct node { unsigned long tag; struct node *other; struct node *next; };

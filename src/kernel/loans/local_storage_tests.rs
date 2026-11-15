@@ -12,7 +12,7 @@ fn view(index: usize, end: u32) -> CheckedResourceFact {
             end.into(),
         )),
         role: ResourceTransferRole::Borrow,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,

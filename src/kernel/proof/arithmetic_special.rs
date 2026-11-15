@@ -185,8 +185,8 @@ fn bitvector_payload(root: &MachineTerm) -> Option<usize> {
                 pending.extend(arguments.iter());
             }
             MachineTerm::PointerAddress(pointer, _) | MachineTerm::MemoryLoad(_, pointer, _) => {
-                // A read owns an interned snapshot; only its written address
-                // contributes syntax payload, never the snapshot contents.
+                // A read owns an interned state; only its written address
+                // contributes syntax payload, never the state contents.
                 payload = payload.checked_add(pointer_payload(pointer)?)?;
             }
             _ => return None,
@@ -781,7 +781,7 @@ fn condition_identity_as_written(left: &ConditionTerm, right: &ConditionTerm) ->
             float_condition_identity(left, right)
         }
         // An `int32` or `int64` definedness claim names arbitrary operand
-        // terms (loads, snapshot values, widenings). Both sides were lowered
+        // terms (loads, state values, widenings). Both sides were lowered
         // from the certificate's own explicit text and the goal, so the
         // structural comparison is linear in that input.
         (

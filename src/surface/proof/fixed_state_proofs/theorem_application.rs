@@ -136,7 +136,7 @@ pub(in crate::surface::proof) fn check_fixed_state_theorem_application_using_fac
         pre_state: fixed_state.pre_state,
         post_state: fixed_state.state,
         result: fixed_state.result,
-        recorded_snapshots: fixed_state.recorded_snapshots,
+        recorded_states: fixed_state.recorded_states,
         integer_values,
         pointer_element_widths: parameter_pointer_element_widths_named(parameter_binding, &names),
     };
@@ -239,7 +239,7 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                 &requirement,
                 assumptions,
                 ContractEnvironment::new(&values, &array_refs),
-                FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
+                FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_states),
                 spec_definitions,
                 FixedStateLoweringOptions {
                     algebraic_values: Some(&algebraic_values),

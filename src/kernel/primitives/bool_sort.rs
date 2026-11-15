@@ -161,7 +161,7 @@ impl ConditionTerm {
 
     /// A `Bool` value form rebuilt with `child` applied to each child
     /// condition, `argument` to each argument of an application, and `read`
-    /// to a read's snapshot and pointer; `None` for every other condition.
+    /// to a read's state and pointer; `None` for every other condition.
     /// The constructors are the plain nodes, not the folding ones, so a
     /// substitution changes only what it rewrites.
     pub(crate) fn map_bool_value_form(

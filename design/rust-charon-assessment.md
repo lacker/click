@@ -306,7 +306,7 @@ needed to finish a claim already made:
 - **Stable proof observations.** Provide source-facing slice, array and
   iterator observations, so that contracts need not depend on compiler
   temporary names or storage details. They must preserve qualified
-  identities, shadowing, source spans, snapshot meaning, and correspondence
+  identities, shadowing, source spans, state meaning, and correspondence
   with expanded proofs.
 - **Consistent library models.** Consolidate the supported resolved
   instances. Document their preconditions, effects, panic behavior and trust

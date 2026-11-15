@@ -852,7 +852,7 @@ fn sequential_loop_clauses_cost_the_same_at_every_position() {
 /// vectors and files in the list's exact index (`PureFactList`); the reserved-variable sets it collects for
 /// fresh identities (`LazyReservedVariables`); the variables its facts
 /// hand to their fact sets' reservations beyond already reserved
-/// snapshots; the whole-function annotation walks it makes
+/// states; the whole-function annotation walks it makes
 /// (`LoopAnnotation`); the structural clauses it reads out of the function
 /// block's clause list (`StructuralClauses`); the statements its loop
 /// lookups visit to find the loop in the C and kernel bodies; and the
@@ -860,7 +860,7 @@ fn sequential_loop_clauses_cost_the_same_at_every_position() {
 /// (`KernelLoopPaths`). Each once grew
 /// with the loops before: the list was a flat copy indexed afresh at every
 /// loop, every rule and loop head collected the whole path context's
-/// variables, every fact re-collected its snapshots' variables, every loop
+/// variables, every fact re-collected its states' variables, every loop
 /// re-annotated the whole function, binding a clause rebuilt the block's
 /// clause vector and its label, scope and region checks walked it, and each
 /// lookup walked the body from its first statement, and the body's
@@ -1089,7 +1089,7 @@ fn a_have_ignores_unrelated_parameters() {
 
 #[test]
 #[ignore = "nightly: reduced full-proof setup took 2.8s; larger fixture hit the 30s gate limit"]
-fn saved_iterated_base_ignores_aliases_snapshots_and_unrelated_resources() {
+fn saved_iterated_base_ignores_aliases_states_and_unrelated_resources() {
     let (source, sources) =
         super::expansion_tests::mdtest_sources("mdtests/iterated_saved_base_release.md");
     // Exact work equality detects a scan even at these small sizes. Larger

@@ -281,7 +281,7 @@ pub(in crate::surface) fn instantiate_predicate_definition(
         definition.body(),
         assumptions,
         ContractEnvironment::new(&values, &array_refs),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         spec_definitions,
     )
 }
@@ -312,7 +312,7 @@ pub(in crate::surface) fn decode_predicate_arguments(
     if arguments.len() == expanded_len {
         let Some(Term::ExecutionState(state)) = arguments.first() else {
             return Err(format!(
-                "predicate `{}` is missing its resource-state snapshot",
+                "predicate `{}` is missing its resource-state state",
                 definition.name()
             ));
         };

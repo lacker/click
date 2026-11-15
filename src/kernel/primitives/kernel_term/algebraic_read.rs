@@ -1,4 +1,4 @@
-//! Algebraic read syntax retains the producer's snapshot and common address.
+//! Algebraic read syntax retains the producer's state and common address.
 //! Memory selection and access evidence remain with the existing read producer.
 use super::*;
 
@@ -10,7 +10,7 @@ impl KernelTerm {
     ) -> Self {
         Self::intern(
             KernelType::Algebraic(ty),
-            KernelTermNode::AlgebraicRead(KernelSnapshotRead::new(memory, address)),
+            KernelTermNode::AlgebraicRead(KernelMemoryRead::new(memory, address)),
         )
     }
 
@@ -36,7 +36,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn algebraic_reads_preserve_exact_snapshots_types_and_observation_keys() {
+    fn algebraic_reads_preserve_exact_states_types_and_observation_keys() {
         let first = {
             let _session = crate::kernel::VerificationSession::enter();
             intern_memory(Memory::new())
@@ -71,7 +71,7 @@ mod tests {
         assert!(!roots[0].algebraic_syntax_equal(&other_type));
         let changed_memory = KernelTerm::algebraic_read(
             ty.clone(),
-            intern_memory(Memory::new().with_block("changed-read-snapshot", 8)),
+            intern_memory(Memory::new().with_block("changed-read-retained_state", 8)),
             SharedPointerAddress::import(&pointer),
         );
         assert!(!roots[0].algebraic_syntax_equal(&changed_memory));

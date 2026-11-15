@@ -272,7 +272,7 @@ message is requested, with a 64 KiB report cap, bounded proposition printer,
 and at most eight premises. Individual premise renderings are truncated at 4 KiB
 in an ordinary report, and reports say when additional context was omitted. In an ordinary report a
 memory with no source name is labeled `<state A>`, `<state B>`, and so on, and
-in a trace `snapshot#1`, `snapshot#2`, numbered by first appearance within one
+in a trace `state#1`, `state#2`, numbered by first appearance within one
 report: equal memory shares one label and memory that differs gets another, so
 "same memory" and "different memory" are visible as such. The structural
 comparison stops after the first 32 distinct memories. Expanded

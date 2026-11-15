@@ -22,7 +22,7 @@ use num_traits::ToPrimitive;
 use num_traits::{One, Zero};
 pub(crate) use operand_correspondence::{
     machine_operand_syntax_cmp, shared_condition_operand_leaf_pairs, shared_machine_syntax_equal,
-    shared_operand_leaf_pairs, shared_snapshot_read_pairs,
+    shared_operand_leaf_pairs, shared_state_read_pairs,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -644,7 +644,7 @@ impl SharedMachineIntegerTerm {
 
     /// An address index owns its exact structure. Import shared operands
     /// directly: a cached native input may still contain a reserved name,
-    /// and native snapshot equality is not a cross-arena structural key.
+    /// and native state equality is not a cross-arena structural key.
     pub(crate) fn index(ty: MachineIntegerType, value: MachineTerm) -> Self {
         let mut import = KernelTermImport::default();
         if let Some(term) = import.machine_arithmetic(ty, &value) {
@@ -780,7 +780,7 @@ impl SharedMachineIntegerTerm {
 
     /// Import an explicitly supplied native arithmetic operand once per
     /// verification. Unlike `intern`, a non-arithmetic payload is refused
-    /// without placing its memory snapshots in the global interner.
+    /// without placing its memory states in the global interner.
     pub(crate) fn import_arithmetic(ty: MachineIntegerType, value: &MachineTerm) -> Option<Self> {
         if let Some(found) = Self::retained_import(ty, value) {
             return Some(found);
@@ -990,7 +990,7 @@ enum MachineIntegerKey {
         term: KernelTerm,
     },
     Legacy {
-        // Compare the scope before the native payload: its snapshots have
+        // Compare the scope before the native payload: its states have
         // content equality across arenas, which can walk unrelated memory.
         arena: u32,
         ty: MachineIntegerType,

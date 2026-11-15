@@ -45,7 +45,7 @@ fn integer_argument_state_selection_scales_with_referenced_names() {
 fn proposition_state_selection_scales_with_referenced_names() {
     let proposition = ClickProposition::Comparison {
         left: ContractExpression::At {
-            selector: SnapshotSelector::Mark("before".into()),
+            selector: ProgramPointSelector::Mark("before".into()),
             expression: Box::new(ContractExpression::Binding("used".into())),
         },
         operator: ComparisonOperator::Equal,

@@ -1,7 +1,7 @@
 # Fold read ranges
 
 An `Integer`-valued range-fold function over an `int32[]` or `uint8[]` argument is an
-opaque application, and its array argument names a whole-block snapshot. A
+opaque application, and its array argument names a whole-block state. A
 fact about `unmarked(visited, 0, i)` would therefore die at `visited[i] = 1`,
 even though the fold reads only the cells below `i`. Click bridges such a
 store with a kernel-checked read summary of the function's definition and an
@@ -30,13 +30,13 @@ requirements are below.
 
 An "arrays agree on `[lo, hi)`" relation that pure functions could consume,
 which would remove the `walk_frame` lemma the graph-search examples use to
-move a `walk` between two snapshots of a successor array, was considered and
+move a `walk` between two states of a successor array, was considered and
 deliberately not pursued.
 
 ## Two independent checks
 
 The rule is extensionality. Fix the definition, pointer arguments, scalar
-arguments, and other value arguments. If two array snapshots agree on every
+arguments, and other value arguments. If two array states agree on every
 typed logical read in the inferred support, the two applications are equal:
 the initial accumulators agree, and each iteration sees the same accumulator,
 index, and cell (finite fold induction). An empty fold returns its initial
@@ -46,7 +46,7 @@ value.
    affect the result. `CheckedFoldReadSummary::check` walks the lowered body
    against an explicit whitelist once per verification.
 2. **Framing** proves the selected effects preserve those reads between the
-   two snapshots. `frame_fold_application_transport` decides each recorded
+   two states. `frame_fold_application_transport` decides each recorded
    step between them from its own write set and the querying context's exact
    facts.
 
@@ -86,7 +86,7 @@ definition governs unfolding and framing. Expanded source spells the original
 application and ordinary proof steps, and a fresh verifier reconstructs the
 summary from the definition.
 
-## Framing and snapshots
+## Framing and states
 
 Pointer offsets are exact sums of sign-extended scaled `int32` terms, so the
 interval occupies the contiguous bytes `[p + 4*start, p + 4*end)` with no
@@ -107,7 +107,7 @@ where the assumption-free whole-block rule already proves the block untouched.
 
 The rule records nothing on the edge and caches nothing: each answer is a
 checked derivation of one query, never an assumption-free name. Old facts stay
-facts about their snapshots; the framed application equality is the bridge.
+facts about their states; the framed application equality is the bridge.
 Because the rule is a checked simple step that answers the same for every
 caller, a smart tactic composing the checked transport reaches it too: `solve`
 closes
@@ -157,4 +157,4 @@ read a `uint8` cell at exactly the fold index with stride one; scalar widening
 to `int32` keeps that read support. Instantiation checks the declared element
 type, and framing uses one-byte intervals. A four-byte read or stride under a
 byte-array declaration is refused. This supports the Rust byte-sum fixture
-without changing snapshot, separation, or access-authority rules.
+without changing state, separation, or access-authority rules.

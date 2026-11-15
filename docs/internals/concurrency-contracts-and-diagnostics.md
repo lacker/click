@@ -317,7 +317,7 @@ concept.
 
 The implemented preserving guard contract is safe because it forbids every
 mutex transition. Removing that prohibition must implement the rules above, including
-snapshot/authority checks: a replacement guard cannot revive observations about
+state/authority checks: a replacement guard cannot revive observations about
 current memory from an earlier acquisition. A value can still be proved equal
 across acquisitions when the invariant or another checked argument establishes
 that equality; continuity is not the only possible proof.
@@ -381,7 +381,7 @@ For an unmet proof requirement, use this information order:
 
 1. The C source location and operation, plus the related contract/loop clause.
 2. **Requires:** the exact Click proposition or resource clause, including access
-   mode, arguments, binder identity, and relevant snapshot when needed.
+   mode, arguments, binder identity, and relevant state when needed.
 3. **Available:** a small relevant selection of facts/resources on this path.
 4. **Why it does not suffice:** the specific mismatch, with source provenance.
 5. A next investigation or proof step supported by the evidence, if one exists.
@@ -553,7 +553,7 @@ can existentially hide acquisition identity without hiding the obligation to
 supply ownership.
 
 On acquisition, shared protected memory is interpreted at a fresh state
-satisfying its assertion. Old observations retain their old snapshots. No
+satisfying its assertion. Old observations retain their old states. No
 particular scheduler order is assumed. A member may constrain the fresh state
 only through the control's checked invariant; possession of one member does not
 expose the population total or payload.

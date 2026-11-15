@@ -131,14 +131,14 @@ fn source_mutex(
 ) -> Result<Pointer, String> {
     let ResourceTerm::MutexGuard {
         mutex,
-        snapshot: ResourceSnapshot::Current,
+        state_source: ResourceStateSource::Current,
     } = spec.term()
     else {
         return Err("conditional loop guard requires current mutex_guard ownership".into());
     };
     if spec.access() != ResourceAccessMode::Own
         || spec.quantity() != &ResourceQuantity::One
-        || spec.snapshot() == ResourceSnapshot::Post
+        || spec.state_source() == ResourceStateSource::Post
         || spec.role() != ResourceTransferRole::Borrow
         || spec.binding_identity().is_some()
     {
@@ -261,12 +261,12 @@ pub(in crate::kernel) fn prepare_direct_loop_guard(
             mutex: Box::new(ProgramExpression::Value(ProgramValue::pointer(
                 mutex.clone(),
             ))),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let mut definition = CompositeResourceDefinition::new(

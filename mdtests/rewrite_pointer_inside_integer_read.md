@@ -3,7 +3,7 @@
 The scalar tail of the unchanged Rust Adler checksum needs to relate its
 iterator cursor to the original slice index. A byte read inside `to_integer`
 keeps its load identity; rewriting must follow that identity's address without
-changing its memory snapshot or byte width.
+changing its memory state or byte width.
 
 ```c filename=integer_pointer_reads.c
 struct inner { unsigned char* cells; };

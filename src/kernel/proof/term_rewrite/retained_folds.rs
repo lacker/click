@@ -136,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn common_fold_pointer_transport_preserves_snapshot_and_condition_scope() {
+    fn common_fold_pointer_transport_preserves_state_and_condition_scope() {
         let _session = crate::kernel::VerificationSession::enter();
         let memory = Memory::new();
         let source = Variable(55);
@@ -164,10 +164,10 @@ mod tests {
         let MachineTerm::RangeFold { body, .. } = expected else {
             unreachable!()
         };
-        let MachineTerm::MemoryLoad(snapshot, pointer, _) = *body else {
+        let MachineTerm::MemoryLoad(retained_state, pointer, _) = *body else {
             unreachable!()
         };
-        assert_eq!(snapshot, crate::kernel::intern_memory_ref(&memory));
+        assert_eq!(retained_state, crate::kernel::intern_memory_ref(&memory));
         assert_eq!(*pointer, replacement);
 
         let condition = ConditionTerm::Variable(Variable(59));

@@ -37,7 +37,7 @@ fn pointer_index_fact_keys_keep_shared_dags_and_linear_work() {
 }
 
 #[test]
-fn snapshot_pointer_index_keys_share_growing_prefixes() {
+fn state_pointer_index_keys_share_growing_prefixes() {
     let mut samples = Vec::new();
     for size in [16, 64, 256] {
         let _session = VerificationSession::enter();
@@ -54,8 +54,8 @@ fn snapshot_pointer_index_keys_share_growing_prefixes() {
                 );
                 let value = SharedMachineIntegerTerm::from_shared(ty, root.clone()).unwrap();
                 let fact = fact(offset(value, 4, false));
-                let key = snapshot_blind_proposition_key(&fact);
-                assert_eq!(key, snapshot_blind_proposition_key(&fact));
+                let key = memory_erased_proposition_key(&fact);
+                assert_eq!(key, memory_erased_proposition_key(&fact));
             }
         });
         assert_eq!(exports, KernelTermExport::machine_export_count());

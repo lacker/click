@@ -207,8 +207,8 @@ The [resource documentation](../docs/concepts/resources.md) and
 - A view cannot coexist with an overlapping owner. Ownership satisfies a view
   requirement by lending: the owner is escrowed for the borrow and recovered at
   the return, and no rule turns a view back into ownership.
-- A memory write changes the current snapshot. A prior observation remains
-  a fact about its prior snapshot unless checked framing transports it, and an
+- A memory write changes the current state. A prior observation remains
+  a fact about its prior state unless checked framing transports it, and an
   observation taken through a borrow is historical once the borrow ends.
 - `owns` borrows and returns the resource selected at function entry;
   `consumes` and `produces` express other transfer roles.
@@ -303,7 +303,7 @@ mutate `p.left` while the returned reference remains in use; the negative
 probe receives Rust diagnostic E0506.
 
 A future contract must connect the returned reference, its parent loan, and
-the value recovered by the caller after the loan ends. Current snapshots and
+the value recovered by the caller after the loan ends. Current states and
 explicit memory may help describe this, but the current return boundary alone
 does not establish that connection. Experiment with a conditional choice of
 borrowed fields next, so a solution cannot depend on one fixed field path.
@@ -391,7 +391,7 @@ distinctions, not cross-target layout agreement or source-to-machine refinement.
 1. Done: `owns` and `views` are retained, and ordinary memory views are stable
    shared borrows.
 2. Preserve the existing separation of access mode, transfer role, and
-   snapshot in `CResourceSpec`. These are already separate fields; no broad
+   state in `CResourceSpec`. These are already separate fields; no broad
    refactor is needed to create that separation.
 3. Treat the shipped C loan ledger as groundwork, not a full Rust loan system.
    It has shared reborrows, scoped recovery, and escaping borrows inside a
@@ -465,7 +465,7 @@ ever wider syntax acceptance:
    source locations, loan relationships, initialization, and cleanup effects.
 4. Check deterministic scaling with several loan counts and nesting depths,
    plus growing unrelated resource contexts. Ending a loan should touch its
-   dependent obligations, not scan every fact, pointer, or memory snapshot.
+   dependent obligations, not scan every fact, pointer, or memory state.
 
 For C++, the selected scalar-exception probe now verifies one guard inside a
 `try`; finish the two-guard and conditional-lifetime paths in the P1

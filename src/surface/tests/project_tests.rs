@@ -400,7 +400,7 @@ int32 caller(int32 x) { ensures result == x + x; } by {
 
 #[test]
 #[ignore = "nightly: 2.3s in the parallel gate"]
-fn modular_call_snapshot_anchor_checks_with_owned_resource() {
+fn modular_call_state_anchor_checks_with_owned_resource() {
     let init_c = r#"
 struct box {
     int32 value;
@@ -530,17 +530,17 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
             ("box_pipeline.c", pipeline_c),
         ],
     )
-    .expect("an explicit call-entry snapshot should check with an owned resource");
+    .expect("an explicit call-entry state should check with an owned resource");
 }
 
 /// A `solve() using` premise that equates one expression across two call
 /// transitions (`owner->data == at(region(2).entry, owner->data)`) names
 /// one unwritten cell twice: terms are canonical at creation, so both sides
 /// are the same load variable and the premise is reflexive. The expansion
-/// needs no snapshot transport and rewrites from the remaining premise.
+/// needs no state transport and rewrites from the remaining premise.
 #[test]
 #[ignore = "nightly: 1.6s in the parallel gate"]
-fn snapshot_bridged_solve_premises_expand_to_checked_offset_equality() {
+fn state_bridged_solve_premises_expand_to_checked_offset_equality() {
     let init_c = r#"
 struct box {
     int32 value;
@@ -636,16 +636,16 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     ];
 
     verify_c_sources(click_source, &sources)
-        .expect("the snapshot-bridged restricted solve certificate should check");
+        .expect("the state-bridged restricted solve certificate should check");
 
     let selected = click_source.find("have owner->data == data by {").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
     let expanded =
         expand_c_tactic_source_at(click_source, &sources, position.line, position.column)
-            .expect("the snapshot-bridged restricted solve should expand");
-    // The calls explicitly establish equalities between the load snapshots.
+            .expect("the state-bridged restricted solve should expand");
+    // The calls explicitly establish equalities between the load states.
     // Their transitive chain now closes through the trusted offset fragment,
-    // retaining the cited snapshot forms for the simple normalization check.
+    // retaining the cited state forms for the simple normalization check.
     assert!(expanded.contains("normalize() using {"), "{expanded}");
     for premise in [
         "owner->data == at(region(3).entry, owner->data);",
@@ -663,7 +663,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
 
 #[test]
 #[ignore = "nightly: 1.5s in the parallel gate"]
-fn execute_until_expands_mixed_snapshot_call_postconditions() {
+fn execute_until_expands_mixed_state_call_postconditions() {
     let zero_c = r#"
 struct counter {
     int32 value;
@@ -762,21 +762,21 @@ int32 pipeline(struct counter* owner) {
         have_position.line,
         have_position.column,
     )
-    .expect("the mixed-snapshot frontier-local fact should expand");
+    .expect("the mixed-state frontier-local fact should expand");
     assert!(!have_expanded.contains("have owner->value == 1 by solve()"));
     // Value-only proofs can now cite the current logical read directly;
     // only validity transport needs the historical read's source anchor.
     verify_c_sources(&have_expanded, &sources)
-        .expect("the mixed-snapshot frontier-local expansion should check");
+        .expect("the mixed-state frontier-local expansion should check");
 
     let selected = click_source.find("step_until(region(3));").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
     let expanded =
         expand_c_tactic_source_at(click_source, &sources, position.line, position.column)
-            .expect("mixed-snapshot smart execution should expand");
+            .expect("mixed-state smart execution should expand");
     assert!(!expanded.contains("step_until(region(3));"));
     verify_c_sources(&expanded, &sources)
-        .expect("the mixed-snapshot smart execution expansion should check");
+        .expect("the mixed-state smart execution expansion should check");
 }
 
 #[test]
@@ -945,10 +945,10 @@ int32 buffer_pipeline(
     let position = expansion::position_at_offset(click_source, selected);
     let expanded =
         expand_c_tactic_source_at(click_source, &sources, position.line, position.column)
-            .expect("vector-shaped mixed-snapshot smart execution should expand");
+            .expect("vector-shaped mixed-state smart execution should expand");
     assert!(!expanded.contains("step_until(region(3));"));
     verify_c_sources(&expanded, &sources)
-        .expect("the vector-shaped mixed-snapshot expansion should check");
+        .expect("the vector-shaped mixed-state expansion should check");
 }
 
 #[test]
@@ -993,7 +993,7 @@ int32 caller(int32 x) {
 }
 
 /// A reusable session restores the kernel's tables to its baseline before each
-/// check. Without that, every check's pinned snapshot storage and load names
+/// check. Without that, every check's pinned state storage and load names
 /// stay in the tables, so a session that audits many sites of one large proof
 /// grows without limit. The same check, repeated, must leave the same number
 /// of entries behind each time.
@@ -1180,10 +1180,10 @@ int32 caller(int32 x) {
         .expect("session selection should follow the rewritten claim, not baseline coordinates");
 }
 
-/// A session's verified environment names snapshots in the kernel tables it
+/// A session's verified environment names states in the kernel tables it
 /// was built under. Any later verification on the same thread starts fresh
 /// tables, so the session refuses to reuse its environment afterwards
-/// instead of rechecking a rewrite against unrelated snapshot derivations.
+/// instead of rechecking a rewrite against unrelated state derivations.
 /// `click audit` interleaved expansion with session checks this way, and a
 /// rewritten `arena_write` proof exhausted a simple tactic's work budget only
 /// in the session.
@@ -1992,7 +1992,7 @@ fn vector_push_creates_only_canonical_terms() {
 /// `VerificationSession`, `borrowed-slice` then `linked-list` failed the
 /// second — the content-deduplicated memory arena handed the second
 /// project the first one's DAG derivation for a same-content call-havoc
-/// snapshot, and the load registry its origins.
+/// state, and the load registry its origins.
 #[test]
 #[ignore = "nightly: 13s in the parallel gate"]
 fn verifications_on_one_thread_are_independent() {
@@ -2170,8 +2170,8 @@ int32 f() {ensures result==4;} by {
 int32 f(int32 n) {ensures result==1; } by {step_until(assignment(x, 0)); step(); step_until(function.exit); solve();}"#;
         assert!(verify_c_sources(proof, &[("assignment.c", source)]).is_err());
     }
-    let snapshots = proof.replace("have x==3", "have at(assignment(x, 0).entry, x==3)");
-    assert!(verify_c_sources(&snapshots, &[("assignment.c", source)]).is_err());
+    let retained_states = proof.replace("have x==3", "have at(assignment(x, 0).entry, x==3)");
+    assert!(verify_c_sources(&retained_states, &[("assignment.c", source)]).is_err());
 }
 
 #[test]

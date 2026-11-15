@@ -44,7 +44,7 @@ fn int32_load_congruence_handles_early_and_late_offsets_and_scalar_parents() {
 }
 
 #[test]
-fn shallow_scalar_decision_uses_only_registered_loads_in_one_snapshot() {
+fn shallow_scalar_decision_uses_only_registered_loads_in_one_state() {
     let _session = crate::kernel::VerificationSession::enter();
     let before = memory();
     let left = load(&before, &address(1), 4);
@@ -77,7 +77,7 @@ fn shallow_scalar_decision_uses_only_registered_loads_in_one_snapshot() {
 }
 
 #[test]
-fn int32_load_congruence_keeps_snapshots_blocks_and_widths_distinct() {
+fn int32_load_congruence_keeps_states_blocks_and_widths_distinct() {
     let _session = crate::kernel::VerificationSession::enter();
     let memory = memory();
     let left = load(&memory, &address(1), 4);
@@ -128,7 +128,7 @@ fn int32_load_congruence_is_branch_local() {
 }
 
 #[test]
-fn int32_load_defining_snapshot_is_independent_of_live_origin() {
+fn int32_load_defining_state_is_independent_of_live_origin() {
     let _session = crate::kernel::VerificationSession::enter();
     let before = memory();
     let after = intern_memory(
@@ -145,7 +145,7 @@ fn int32_load_defining_snapshot_is_independent_of_live_origin() {
         &before,
     ));
     crate::kernel::eval::begin_load_origin_epoch();
-    // Change the mutable origin while retaining the exact defining snapshot.
+    // Change the mutable origin while retaining the exact defining state.
     let renamed = MachineTerm::Variable(crate::kernel::load_variable_for_cell_with_origin(
         &before,
         &address(1),
@@ -195,7 +195,7 @@ fn int32_load_registration_can_follow_a_later_width_declaration() {
 }
 
 #[test]
-fn explicit_cross_snapshot_load_equality_composes_without_merging_snapshots() {
+fn explicit_cross_state_load_equality_composes_without_merging_states() {
     let _session = crate::kernel::VerificationSession::enter();
     let before = memory();
     let after = intern_memory(
@@ -535,13 +535,13 @@ fn structural_read_graph_keeps_native_only_stored_values() {
         arguments: vec![var(993184)],
     };
     let pointer = address(993185);
-    let snapshot = intern_memory(
+    let retained_state = intern_memory(
         memory()
             .memory()
             .clone()
             .store(pointer.clone(), ProgramValue::Int32(value.clone())),
     );
-    let read = MachineTerm::MemoryLoad(snapshot, Box::new(pointer), LoadKind::Int32);
+    let read = MachineTerm::MemoryLoad(retained_state, Box::new(pointer), LoadKind::Int32);
     let shared = KernelTermImport::default()
         .machine_arithmetic(MachineIntegerType::Int32, &read)
         .unwrap();

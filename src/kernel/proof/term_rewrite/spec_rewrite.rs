@@ -398,7 +398,7 @@ fn collect_spec_expression_carriers(
                 collect_spec_argument_carriers(argument, variables, integer_seen);
             }
         }
-        SpecExpression::LoopEntrySnapshot(value) => {
+        SpecExpression::LoopEntryState(value) => {
             collect_spec_expression_carriers(value, variables, integer_seen)
         }
         SpecExpression::PointerOffset {
@@ -724,7 +724,7 @@ impl<'a> TermRewrite<'a> {
     /// machine casts, C payloads, algebraic fields, and range-fold bodies;
     /// reserving only the first Integer leaf lets a later free source ID be
     /// captured by an earlier fresh binder.  The shared bound-identity
-    /// collector also keeps captured snapshots opaque and memoizes shared
+    /// collector also keeps captured states opaque and memoizes shared
     /// Integer DAG nodes.
     fn reserve_spec_source_variables_once<'p, I>(&mut self, propositions: I)
     where
@@ -736,7 +736,7 @@ impl<'a> TermRewrite<'a> {
 
         // Use the same carrier-aware collector as ordinary checked term
         // rewriting.  In particular, its C walker follows registered load
-        // pointers with a scoped cycle set while leaving memory snapshots
+        // pointers with a scoped cycle set while leaving memory states
         // opaque.  The Spec adapter below only supplies the Spec node
         // structure; it never reimplements the carrier terms themselves.
         let mut variables = self.new_carrier_variables();
@@ -1284,8 +1284,8 @@ impl<'a> TermRewrite<'a> {
                 result_object_class: result_object_class.clone(),
                 projection: projection.clone(),
             },
-            SpecExpression::LoopEntrySnapshot(value) => {
-                SpecExpression::LoopEntrySnapshot(Box::new(self.rewrite_spec_expression(value)?))
+            SpecExpression::LoopEntryState(value) => {
+                SpecExpression::LoopEntryState(Box::new(self.rewrite_spec_expression(value)?))
             }
             SpecExpression::Subobject { pointer, width } => SpecExpression::Subobject {
                 pointer: Box::new(self.rewrite_spec_expression(pointer)?),

@@ -1,28 +1,28 @@
-# Whole-array assignments and borrowed snapshots
+# Whole-array assignments and borrowed states
 
 `arrays.rs` and `arrays.click` preserve `rust-array-values` byte for byte.
 All sixteen existing contracts now verify through Charon. Whole-array reference
 assignments use the checked compact array-region operation; its immutable
-source snapshot supports shared external reads and mutable external writes.
+source state supports shared external reads and mutable external writes.
 Copies retain their bytes after either source or destination changes.
 Constructor operand order, call side effects (including zero repeats), and
 argument and assignment order remain covered by the frozen fixture.
 
 `bounds.rs` covers local reference assignment, repeated fill, self-copy,
-independent snapshots, and empty arrays. `external.rs` adds borrowed copies and
-fills at 8, 1024, and million elements, signed snapshots after mutation, byte
+independent states, and empty arrays. `external.rs` adds borrowed copies and
+fills at 8, 1024, and million elements, signed states after mutation, byte
 copies, and empty borrowed arrays. False-byte assertions fail. `verify`,
 `profile`, `audit`, and expanded certificates recheck the same contracts.
 Live tests re-extract the checkpoints and the unchanged parity suite, retaining
 compiler rejection of shared-reference writes and conflicting mutable borrows.
 
 The kernel captures represented source runs and sparse cells, then retains one
-compact snapshot run for the unknown remainder. Snapshot forwarding avoids
+compact state run for the unknown remainder. MemoryState forwarding avoids
 expanding MIR's temporary array copies. Source selection uses persistent
 address ranges, including symbolic bases, rather than scanning unrelated
 parameter cells. Deterministic kernel regressions check storage, work,
 variable collection, unchanged mappings, single-source-load substitution,
-source/destination stem cancellation, overlap, neighbors, and sparse snapshots.
+source/destination stem cancellation, overlap, neighbors, and sparse states.
 The existing local adapter scaling regressions retain bounded lowered code.
 
 Full source read and destination write authority are required. Destination
@@ -35,7 +35,7 @@ typed union overlays, and general symbolic pointer expressions remain outside
 this compact path. By-value array parameters and aggregate returns remain
 separate adapter gaps.
 
-`external-scalar-array-snapshot-v1` extends the semantic profile and updates
+The external scalar-array profile milestone extends the semantic profile and updates
 checkpoint identities. Compiler pins, extraction flags, and previous ULLBC
 bytes are unchanged. External Charon locks require explicit refresh.
 

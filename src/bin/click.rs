@@ -346,7 +346,7 @@ mod tests {
             )),
             "{error}"
         );
-        for kernel_spelling in ["can-store(", "snapshot#", "local:items", "value A"] {
+        for kernel_spelling in ["can-store(", "state#", "local:items", "value A"] {
             assert!(!error.contains(kernel_spelling), "{error}");
         }
         fs::remove_dir_all(directory).unwrap();
@@ -1090,7 +1090,7 @@ mod tests {
     }
 
     /// A refused `transport using` prints its own legend. The trace keeps
-    /// that numbering, so the failed check's goal names the snapshots and
+    /// that numbering, so the failed check's goal names the states and
     /// values the refusal defined; its cell walks print one per line; and a
     /// field of a named pointer prints as that name plus its offset.
     #[test]
@@ -1208,11 +1208,11 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
             "{report}"
         );
         // The call's resource composition is kernel authority, not a fact.
-        // Keep the saved read's snapshot visible in the implication rather
+        // Keep the saved read's state visible in the implication rather
         // than confusing it with the current goal.
         assert!(!report.contains("validated-composition"), "{report}");
         assert!(report.contains("is false ⇒ ∃z:ProgramInt32."), "{report}");
-        assert!(report.contains("read<Bits32>(snapshot#"), "{report}");
+        assert!(report.contains("read<Bits32>(state#"), "{report}");
         assert!(
             !report.contains("checked fact(s) with no exact Click spelling"),
             "{report}"
@@ -1222,10 +1222,7 @@ int32 parent(int32 *a, int32 *visited, int32 cur) {
             1,
             "{report}"
         );
-        assert!(
-            !report.contains("snapshot identity (internal):"),
-            "{report}"
-        );
+        assert!(!report.contains("state identity (internal):"), "{report}");
         assert!(!report.contains("v1000001"), "{report}");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -1267,14 +1264,14 @@ theorem bad(p: int32*, q: int32*) {
         // The ordinary report spells the goal in source terms; the requested
         // trace keeps the typed checked goal.
         assert!(ordinary_goal.contains("tag("), "{ordinary}");
-        assert!(!ordinary_goal.contains("snapshot#"), "{ordinary}");
+        assert!(!ordinary_goal.contains("state#"), "{ordinary}");
         assert_eq!(report.matches("goal:").count(), 1, "{report}");
         let checked = report.lines().find(|line| line.contains("goal:")).unwrap();
         assert!(checked.contains("tag("), "{report}");
-        assert!(checked.contains("array-ref<int32>(snapshot#1,"), "{report}");
+        assert!(checked.contains("array-ref<int32>(state#1,"), "{report}");
         assert!(checked.contains("ptr<int32*>("), "{report}");
         assert!(
-            report.contains("snapshot#1 = initial empty memory"),
+            report.contains("state#1 = initial empty memory"),
             "{report}"
         );
         fs::remove_dir_all(directory).unwrap();

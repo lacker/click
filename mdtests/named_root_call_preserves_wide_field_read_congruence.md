@@ -4,7 +4,7 @@ The helper changes only the root link. Nested modeled children retain their
 pointer identities when the root changes. After the call, `near == rid`
 implies equal reads of their eight-byte tag in the same current memory.
 The 32-bit counterpart already worked through the int32 equality graph;
-the wide route must preserve all eight bytes and the recorded read snapshots.
+the wide route must preserve all eight bytes and the recorded read states.
 The subsequent store also preserves current-read congruence and supplies its
 exact wide value through the recorded pointer alias.
 

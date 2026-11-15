@@ -29,11 +29,11 @@ fn definition() -> CompositeResourceDefinition {
             vec![crate::kernel::program_expression::variable("p")],
             vec![ProgramType::Int32],
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap(),
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap()
     .with_source_arguments(vec!["p".into()]);
@@ -295,12 +295,12 @@ fn section_reference_lookup_does_not_duplicate_existing_owned_instances() {
                 vec![crate::kernel::program_expression::int32_literal(3)],
                 vec![ProgramType::Int32],
                 ResourceTransferRole::Borrow,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
             )
             .unwrap()
             .with_resource_arguments(references),
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap()
     };

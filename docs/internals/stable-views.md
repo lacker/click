@@ -57,7 +57,7 @@ frame present.
    values do not identify them.
 6. Supported facts retain support: an owner-supported observation is usable
    only through its current support; a loan-supported one also needs the
-   active loan; a fact about an old snapshot is history, not authority.
+   active loan; a fact about an old state is history, not authority.
 7. Locality: rule checking touches the named authority and its indexed
    dependencies, never the whole frame.
 8. No authority from unknown aliasing: a lending partition needs checked
@@ -181,7 +181,7 @@ unsupplied caller-local storage, such as `cstr_at` of a local `char` array, is
 backed by those pieces: each is lent as a checked local-storage loan, as a
 plain view of it would be, and the composite needs no owner
 (`local_storage_composite_pieces`). Its body facts must hold at the call; a
-`defined(...)` read at a constant offset holds when the snapshot stores a
+`defined(...)` read at a constant offset holds when the state stores a
 value of that width there. A missing fact is refused by name, as an assembly
 from owned pieces is
 (`mdtests/a_local_char_array_lends_its_c_string_view.md`,
@@ -280,7 +280,7 @@ itself: the observation is a projection recorded against the owner's
 occurrence and disappears with it. A borrowed composite's observations keep
 the loan identity through projection, fold, unfold, `open`, `close`,
 normalization, range splitting, and callback-fact extraction. Three outcomes
-stay distinct: a copied value or a snapshot proposition may remain true
+stay distinct: a copied value or a state proposition may remain true
 after a loan ends; a claim about the current cell needs checked framing;
 permission to load needs current authority.
 

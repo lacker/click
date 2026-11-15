@@ -1,18 +1,18 @@
-# field-dependent vector storage across loop snapshots
+# field-dependent vector storage across loop states
 
 This checks that an owned composite resource whose backing range depends on
 owner fields can be used directly through an abstract loop iteration. The loop
 mutates only the backing array, so the separate owner metadata and its dependent
 backing-range identity remain stable while the numeric loop invariant advances.
 
-```c filename=composite_resource_vector_fill_loop_snapshot.c
+```c filename=composite_resource_vector_fill_loop_state.c
 struct vector {
     int32 len;
     int32 cap;
     int32* data;
 };
 
-int32 composite_resource_vector_fill_loop_snapshot(
+int32 composite_resource_vector_fill_loop_state(
     struct vector* owner,
     int32 value
 ) {
@@ -35,9 +35,9 @@ resource vector(owner: struct vector*) {
     fact separate(memory(*owner), memory(owner->data[0..owner->cap]));
 }
 
-verifying "composite_resource_vector_fill_loop_snapshot.c";
+verifying "composite_resource_vector_fill_loop_state.c";
 
-int32 composite_resource_vector_fill_loop_snapshot(
+int32 composite_resource_vector_fill_loop_state(
     struct vector* owner,
     int32 value
 ) {

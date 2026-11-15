@@ -367,7 +367,7 @@ fn callee_state_with_resource_transfer(
 }
 
 /// Resource expansion failures report a bounded clause frontier. Raw context
-/// Debug includes persistent indexes and memory snapshots unrelated to the
+/// Debug includes persistent indexes and memory states unrelated to the
 /// failing call, so it must never be part of an ordinary user diagnostic.
 fn bounded_contract_resource_frontier(resources: &ResourceContext) -> String {
     let mut heads = Vec::new();
@@ -1042,7 +1042,7 @@ fn recover_candidate_stable_view_resources(
 pub(crate) struct CheckedResourceFact {
     pub(crate) fact: ResourceFact,
     pub(crate) role: ResourceTransferRole,
-    pub(crate) snapshot: ResourceSnapshot,
+    pub(crate) state_source: ResourceStateSource,
     pub(crate) clause_position: Option<(usize, usize)>,
     /// Index of this leaf in the normalized resource section, when it was
     /// evaluated from a contract. Distinct leaves may share a source clause.
@@ -1511,7 +1511,7 @@ fn refresh_returned_local_bindings_from_stores(
         };
         crate::instrumentation::record_deterministic_work(1);
         // Refresh the object whose bytes were written, including interior
-        // byte stores. The return snapshot's value is authoritative, rather
+        // byte stores. The return state's value is authoritative, rather
         // than an earlier store's value or a narrower cell at its address.
         crate::kernel::eval::refresh_scalar_local_after_memory_store(
             state,
@@ -3064,7 +3064,7 @@ fn execute_verified_function_applications_with_suspension(
         },
     );
     // The facts' variables are reserved by their ceiling rather than
-    // collected: collecting walked every fact, and every snapshot a fact
+    // collected: collecting walked every fact, and every state a fact
     // names, at every call.
     let mut variables = KernelVariableGenerator::fresh_for_execution(existing_variables)
         .reserving_through(assumptions.execution_variable_ceiling());
@@ -3624,7 +3624,7 @@ fn execute_verified_function_applications_with_suspension(
                 produced_argument_state = Some(argument_state);
             }
             let argument_state = produced_argument_state.as_ref().expect("initialized above");
-            // Each argument keeps its declared snapshot. In particular, an
+            // Each argument keeps its declared state. In particular, an
             // `old(...)` argument uses entry read authority, not the fresh
             // post-call memory used for current arguments.
             let (name, arguments) = match evaluate_function_resource_spec_with_entry(
@@ -3703,7 +3703,7 @@ fn execute_verified_function_applications_with_suspension(
             transfer.caller_resources_after_requirements.clone();
         post_state.resources = caller_resources_after_requirements.clone();
         // Returned ownership keeps its identity, not its old field values.
-        // Only the ensures below relate fresh post-fields to the entry snapshot.
+        // Only the ensures below relate fresh post-fields to the entry state.
         for resource in interface.resource_ensures() {
             let Some(identity) = resource.instance_identity() else {
                 continue;
@@ -3821,7 +3821,7 @@ fn execute_verified_function_applications_with_suspension(
             &prepared_outputs,
             if interface.resource_ensures().iter().all(|resource| {
                 resource.role() == ResourceTransferRole::Borrow
-                    && resource.snapshot() == ResourceSnapshot::Entry
+                    && resource.state_source() == ResourceStateSource::Entry
             }) {
                 ReturnResourceComposition::RestoreEntryBorrows
             } else {
@@ -4251,7 +4251,7 @@ fn execute_verified_function_applications_with_suspension(
                 Arc::make_mut(&mut post_state.population_effects).creation = Some(next);
             }
         }
-        // Postconditions are lowered against the caller's own snapshots, so
+        // Postconditions are lowered against the caller's own states, so
         // their reads are the caller's reads.
         let canonical_entry_contract_state = entry_contract_state.clone();
         let provisional_post_contract_state =
@@ -4949,13 +4949,13 @@ struct PreparedVerifiedFunctionCall<'a> {
     bindings: Option<std::sync::Arc<BTreeMap<Variable, Variable>>>,
 }
 
-/// Finds the exact source snapshot carried by a lowered pure requirement.
+/// Finds the exact source state carried by a lowered pure requirement.
 /// This is deliberately narrower than the general recursive variable walker:
 /// only the logical/condition/bitvector shapes admitted by the source-backed
 /// classifier are visited, with the same finite structural budget.
-fn source_load_snapshot_for_proposition(
+fn source_load_state_for_proposition(
     proposition: &Proposition,
-) -> ExecutionResult<Option<MemorySnapshotIdentity>> {
+) -> ExecutionResult<Option<MemoryStateIdentity>> {
     const MAX_NODES: usize = 4096;
     enum Work<'a> {
         Proposition(&'a Proposition),
@@ -4964,7 +4964,7 @@ fn source_load_snapshot_for_proposition(
     }
     let mut work = vec![Work::Proposition(proposition)];
     let mut visited = 0usize;
-    let mut snapshot = None;
+    let mut memory_identity = None;
     while let Some(item) = work.pop() {
         visited = visited.saturating_add(1);
         crate::instrumentation::record_deterministic_work(1);
@@ -5007,11 +5007,11 @@ fn source_load_snapshot_for_proposition(
                     else {
                         return Ok(None);
                     };
-                    let identity = MemorySnapshotIdentity::of(origin.memory());
-                    if snapshot.is_some_and(|known| known != identity) {
+                    let identity = MemoryStateIdentity::of(origin.memory());
+                    if memory_identity.is_some_and(|known| known != identity) {
                         return Ok(None);
                     }
-                    snapshot = Some(identity);
+                    memory_identity = Some(identity);
                 }
             }
             Work::Bitvector(term @ MachineTerm::MemoryLoad(..)) => {
@@ -5020,11 +5020,11 @@ fn source_load_snapshot_for_proposition(
                 )
                 .expect("structural read observation");
                 let origin = read.origin.unwrap_or(read.memory);
-                let identity = MemorySnapshotIdentity::of(origin.memory());
-                if snapshot.is_some_and(|known| known != identity) {
+                let identity = MemoryStateIdentity::of(origin.memory());
+                if memory_identity.is_some_and(|known| known != identity) {
                     return Ok(None);
                 }
-                snapshot = Some(identity);
+                memory_identity = Some(identity);
             }
             Work::Bitvector(crate::kernel::binary_bitvector32_term!(left, right)) => {
                 work.push(Work::Bitvector(right));
@@ -5036,7 +5036,7 @@ fn source_load_snapshot_for_proposition(
             Work::Bitvector(_) => return Ok(None),
         }
     }
-    Ok(snapshot)
+    Ok(memory_identity)
 }
 
 /// Register only the controls explicitly returned by this call. Custody and
@@ -5774,7 +5774,7 @@ fn prepare_verified_function_call<'a>(
             .clone()
             .allow_symbolic_contract_loads();
         let mut requirement_source: Option<std::sync::Arc<CallRequirementSource>> = None;
-        let source_load_snapshot = std::cell::Cell::new(None);
+        let source_load_state = std::cell::Cell::new(None);
         let mut source_for_requirement = || {
             if let Some(source) = &requirement_source {
                 return source.clone();
@@ -5823,7 +5823,7 @@ fn prepare_verified_function_call<'a>(
                         source_requirement_ordinal.is_some()
                             && spec_proposition_is_state_independent(requirement)
                     }),
-                source_load_snapshot.get(),
+                source_load_state.get(),
             ));
             requirement_source = Some(source.clone());
             source
@@ -5835,22 +5835,21 @@ fn prepare_verified_function_call<'a>(
             &lowering_assumptions,
             budget,
         )?;
-        let mut load_snapshot = None;
-        let mut load_snapshot_consistent = true;
+        let mut load_state = None;
+        let mut load_state_consistent = true;
         for requirement_path in &requirement_paths {
-            let Some(identity) =
-                source_load_snapshot_for_proposition(&requirement_path.proposition)?
+            let Some(identity) = source_load_state_for_proposition(&requirement_path.proposition)?
             else {
                 continue;
             };
-            if load_snapshot.is_some_and(|known| known != identity) {
-                load_snapshot_consistent = false;
+            if load_state.is_some_and(|known| known != identity) {
+                load_state_consistent = false;
             } else {
-                load_snapshot = Some(identity);
+                load_state = Some(identity);
             }
         }
-        if load_snapshot_consistent {
-            source_load_snapshot.set(load_snapshot);
+        if load_state_consistent {
+            source_load_state.set(load_state);
         }
         if requirement_paths.is_empty() {
             obligations.push(
@@ -6734,7 +6733,7 @@ fn call_value_arguments(
             ResourceTerm::Composite {
                 name,
                 arguments,
-                argument_snapshots,
+                argument_state_sources,
                 parameter_types,
             } => arguments
                 .iter()
@@ -6742,12 +6741,13 @@ fn call_value_arguments(
                     matches!(argument, ProgramExpression::Variable(name) if name == parameter.name())
                 })
                 .map(|position| {
-                    (spec, name, arguments, argument_snapshots, parameter_types, position)
+                    (spec, name, arguments, argument_state_sources, parameter_types, position)
                 }),
             _ => None,
         }
         });
-        let Some((spec, name, arguments, argument_snapshots, parameter_types, position)) = clause
+        let Some((spec, name, arguments, argument_state_sources, parameter_types, position)) =
+            clause
         else {
             return Ok(Err(format!(
                 "call to `{function}` needs a value for `{}`, which no resource clause selects",
@@ -6761,7 +6761,7 @@ fn call_value_arguments(
             ResourceFamily::Composite,
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
             spec.source_arguments(),
             &BTreeMap::new(),
@@ -7728,12 +7728,12 @@ fn open_unmatched_instance_body(
 /// memory its unconditional, unmatched body owns -- evaluated here, at the
 /// instance's own fields and arguments, as `unfold` would evaluate it -- is
 /// disjoint from every other owned member of the context and from every other
-/// instance's body. Its ranges are spelled with this snapshot's load
+/// instance's body. Its ranges are spelled with this state's load
 /// variables, so like any composition fact the claim is about addresses and
 /// stays true after the store. This is a selected store-side body observation.
 ///
 /// **What it opens.** Only instances this context holds now, never one a
-/// recorded composition names: a body read at a snapshot where the instance
+/// recorded composition names: a body read at a state where the instance
 /// is no longer held could name memory that is someone else's. Only one
 /// layer: nested instances stay folded, and a view, an iterated clause, a
 /// matched, guarded or witness-bearing body contributes nothing.
@@ -8448,7 +8448,7 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
     if transition_resources.is_some_and(|resources| {
         resources.iter().any(|checked| {
             checked.role == ResourceTransferRole::Produce
-                || checked.snapshot == ResourceSnapshot::Post
+                || checked.state_source == ResourceStateSource::Post
                 || (checked.fact.is_view() && checked.role != ResourceTransferRole::Borrow)
         })
     }) {
@@ -10576,12 +10576,12 @@ const STRING_LITERAL_FACT_BYTES: i64 = 4096;
 
 /// Whether `proposition` holds of string-literal bytes alone. A literal's
 /// block is read-only and holds the bytes its identity carries, so a read of
-/// it at a constant in-bounds offset is that byte, in every snapshot. A
+/// it at a constant in-bounds offset is that byte, in every state. A
 /// universal over a bounded range is decided instance by instance, and every
 /// leaf must then hold with no context: a load from any other storage, or at
 /// an offset the bounds do not fix, leaves the fact undecided. The one
 /// exception is `defined(...)` of a read at a constant offset, which also
-/// holds when the read's snapshot stores a value of its width at that cell. `bindings`
+/// holds when the read's state stores a value of its width at that cell. `bindings`
 /// holds the enclosing universals' instantiated values, which the registered
 /// address of a read inside them still names.
 fn string_literal_fact_holds(
@@ -10653,7 +10653,7 @@ fn string_literal_fact_value(
             let pointer = string_literal_pointer_with_bindings(pointer, bindings);
             let offset = pointer.offset.as_const()?;
             let PointerBlock::StringLiteral { bytes, .. } = &pointer.block else {
-                // Any other read is defined when the snapshot holds a stored
+                // Any other read is defined when the state holds a stored
                 // value of the read's width at that very cell, as a local
                 // array's bytes after their stores do.
                 let cell = Pointer {
@@ -11054,7 +11054,7 @@ fn prepare_contract_resource_transfer_unexplained(
                 ResourceAccessMode::Own,
                 ResourceQuantity::One,
                 spec.role(),
-                spec.snapshot(),
+                spec.state_source(),
             )
             .expect("validated named resource body");
             let inner = match spec.source_arguments() {
@@ -11313,11 +11313,11 @@ fn prepare_contract_resource_transfer_unexplained(
     // Role is section semantics, not a decoration on the access mode.  A
     // viewed fact can only be borrowed, while an owned fact may be either a
     // consumed transfer or an entry borrow returned by the contract.  A
-    // produced input, or a post-snapshot requirement, is malformed and is
+    // produced input, or a post-state requirement, is malformed and is
     // rejected before any residual or effect projection is built.
     if checked_required_resources.iter().any(|checked| {
         checked.role == ResourceTransferRole::Produce
-            || checked.snapshot == ResourceSnapshot::Post
+            || checked.state_source == ResourceStateSource::Post
             || (checked.fact.is_view() && checked.role != ResourceTransferRole::Borrow)
     }) {
         return Ok(Err(RuntimeError::FunctionContract(
@@ -11421,7 +11421,7 @@ fn prepare_contract_resource_transfer_unexplained(
                 let piece = CheckedResourceFact {
                     fact: piece,
                     role: ResourceTransferRole::Borrow,
-                    snapshot: requirement.snapshot,
+                    state_source: requirement.state_source,
                     clause_position: requirement.clause_position,
                     section_index: requirement.section_index,
                     selected_mutex_source: None,
@@ -12074,7 +12074,7 @@ fn prepare_contract_resource_transfer_unexplained(
     // Consumption uses the normalized algebraic context so duplicate token
     // clauses retain their quantity (and diagnostics name the complete
     // requirement).  The provenance-bearing list remains the effect source;
-    // normalization is not allowed to erase its role/snapshot metadata.
+    // normalization is not allowed to erase its role/state metadata.
     let mut required_resource_list = required_resources.facts().to_vec();
     required_resource_list.sort_by_key(resource_fact_transfer_priority);
 
@@ -12346,7 +12346,7 @@ type BorrowedResourceKey = (
     ResourceTerm,
     ResourceAccessMode,
     ResourceQuantity,
-    ResourceSnapshot,
+    ResourceStateSource,
 );
 
 fn borrowed_resource_key(resource: &ResourceSpec) -> BorrowedResourceKey {
@@ -12354,7 +12354,7 @@ fn borrowed_resource_key(resource: &ResourceSpec) -> BorrowedResourceKey {
         resource.term().clone(),
         resource.access(),
         resource.quantity().clone(),
-        resource.quantity_snapshot(),
+        resource.quantity_state_source(),
     )
 }
 
@@ -12363,7 +12363,7 @@ mod entry_borrow_return_tests;
 
 /// `entry_clauses` are the contract's own clauses as checked at entry, every
 /// role. They are the siblings whose folded field-bearing instances supply
-/// read authority to an entry-snapshot clause; nothing else in the entry
+/// read authority to an entry-state clause; nothing else in the entry
 /// frame is visited for that purpose.
 #[allow(clippy::too_many_arguments)]
 fn evaluate_contract_return_resource_context(
@@ -12379,14 +12379,14 @@ fn evaluate_contract_return_resource_context(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceContext, RuntimeError>> {
     let mut context = ResourceContext::new_with_equalities(assumptions);
-    // `owns` requirements that are returned as entry-snapshot borrows carry
+    // `owns` requirements that are returned as entry-state borrows carry
     // caller identity in the checked transition. Re-evaluating an address
     // such as `self->pointer` in the callee entry state can replace that
     // identity with a symbolic parameter spelling, even though the resource
     // being returned is exactly the occurrence that was lent. Consume the
     // already checked owned inputs in their source order instead. Views keep
     // their ordinary evaluation path because their loan provenance is
-    // reconstructed separately, and post-snapshot instances carry fresh
+    // reconstructed separately, and post-state instances carry fresh
     // fields rather than an entry fact.
     let mut canonical_by_checked = BTreeMap::<ResourceFact, VecDeque<ResourceFact>>::new();
     for (checked, canonical) in canonical_borrowed_owners {
@@ -12396,14 +12396,14 @@ fn evaluate_contract_return_resource_context(
             .push_back(canonical.clone());
     }
     let mut canonical_for_entry_borrows = canonical_by_checked.clone();
-    // An entry-snapshot owned borrow denotes the resource checked and lent at
+    // An entry-state owned borrow denotes the resource checked and lent at
     // entry. Keep that evaluated fact by normalized term, in occurrence order,
     // rather than re-reading an unmaterialized field on return. The transfer
     // has already checked every fact placed here against caller ownership.
     let mut entry_borrows = BTreeMap::<BorrowedResourceKey, VecDeque<ResourceFact>>::new();
     for checked in borrowed_inputs {
         if checked.role != ResourceTransferRole::Borrow
-            || checked.snapshot != ResourceSnapshot::Entry
+            || checked.state_source != ResourceStateSource::Entry
             || !checked.fact.is_own()
         {
             continue;
@@ -12426,7 +12426,7 @@ fn evaluate_contract_return_resource_context(
             .or_default()
             .push_back(canonical);
     }
-    // An entry-snapshot borrow whose address depends on a cell the contract's
+    // An entry-state borrow whose address depends on a cell the contract's
     // own composites hold (`owns pair(node)` supplying the link
     // `owns pair(node->left->left)` loads) is read the way the entry read
     // it: through the clause set opened by its definitions. The opened cells
@@ -12438,10 +12438,12 @@ fn evaluate_contract_return_resource_context(
         .iter()
         .take(count)
         .any(|resource| {
-            resource.snapshot() == ResourceSnapshot::Entry
+            resource.state_source() == ResourceStateSource::Entry
                 || resource
-                    .declared_argument_snapshots()
-                    .is_some_and(|snapshots| snapshots.contains(&ResourceSnapshot::Entry))
+                    .declared_argument_states()
+                    .is_some_and(|retained_states| {
+                        retained_states.contains(&ResourceStateSource::Entry)
+                    })
         }) {
         let mut views = opened_composite_read_views(
             entry_state.resources(),
@@ -12602,7 +12604,7 @@ fn evaluate_contract_return_resource_context(
     // of the field-bearing instances already returned beside it.
     // The cells readable while a returned clause is evaluated: the state's
     // own resources, the clauses returned so far, and the views both open.
-    // One supply per snapshot absorbs each returned fact once, so a return
+    // One supply per state absorbs each returned fact once, so a return
     // of `n` clauses costs `n` absorptions rather than `n` per clause.
     struct ReturnSupply {
         supply: ResourceContext,
@@ -12635,14 +12637,16 @@ fn evaluate_contract_return_resource_context(
         if let Some(Some(prepared)) = prepared_outputs.get(clause_index) {
             return Ok(Ok(prepared.clone()));
         }
-        // Snapshot selection is carried by the normalized specification.
+        // Memory state selection is carried by the normalized specification.
         // A named instance uses post fields while retaining entry identity.
-        let (state, cached) = match resource.snapshot() {
-            ResourceSnapshot::Entry => (entry_state, &mut entry_supply),
-            ResourceSnapshot::Current | ResourceSnapshot::Post => (post_state, &mut post_supply),
+        let (state, cached) = match resource.state_source() {
+            ResourceStateSource::Entry => (entry_state, &mut entry_supply),
+            ResourceStateSource::Current | ResourceStateSource::Post => {
+                (post_state, &mut post_supply)
+            }
         };
         let cached = cached.get_or_insert_with(|| {
-            new_supply(state, resource.snapshot() == ResourceSnapshot::Entry)
+            new_supply(state, resource.state_source() == ResourceStateSource::Entry)
         });
         // A returned view or a clause with no checked entry borrow still
         // evaluates against the cells the contract makes readable. A
@@ -12725,7 +12729,7 @@ fn evaluate_contract_return_resource_context(
         };
         Ok(Ok(
             if resource.role() == ResourceTransferRole::Borrow
-                && resource.snapshot() == ResourceSnapshot::Entry
+                && resource.state_source() == ResourceStateSource::Entry
                 && !resource.is_view()
             {
                 canonical_by_checked
@@ -12762,7 +12766,7 @@ fn evaluate_contract_return_resource_context(
             }
         }
         let entry_borrow = (resource.role() == ResourceTransferRole::Borrow
-            && resource.snapshot() == ResourceSnapshot::Entry
+            && resource.state_source() == ResourceStateSource::Entry
             && !resource.is_view())
         .then(|| borrowed_resource_key(resource))
         .and_then(|key| entry_borrows.get_mut(&key))
@@ -12873,7 +12877,7 @@ fn opened_composite_read_views(
 }
 
 /// The contract's own clauses a transfer checked at entry, lent and consumed
-/// alike: the siblings an entry-snapshot returned clause may read through.
+/// alike: the siblings an entry-state returned clause may read through.
 fn transfer_entry_clauses(transfer: &FunctionResourceTransfer) -> Vec<CheckedResourceFact> {
     transfer
         .borrowed_inputs
@@ -13472,7 +13476,7 @@ pub(super) fn bind_composite_witnesses_with_held(
             index.hash(&mut hasher);
             arguments.hash(&mut hasher);
             // The canonical form names a load by its cell rather than by
-            // the snapshot it was read from, so the key is the same before
+            // the state it was read from, so the key is the same before
             // and after the body's cells are materialized.
             word.as_ref()
                 .map(super::eval::canonical_term)
@@ -14015,7 +14019,7 @@ fn resource_body_fact_is_established(
     // A model binding can select an equal address spelling while the
     // logical read retains its own producer identity. Reuse only the exact
     // typed read relation already checked for contract facts: it requires
-    // the same recorded snapshot and address, or a checked stored value.
+    // the same recorded state and address, or a checked stored value.
     if let Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) = proposition
         && crate::kernel::memory_provenance::pointer_read_has_recorded_value(
             left,
@@ -14038,12 +14042,12 @@ fn resource_body_fact_is_established(
     ) {
         return true;
     }
-    // A field of an abstract type is read at the fold's snapshot, while the
+    // A field of an abstract type is read at the fold's state, while the
     // unfold or step that stated its value read it at an earlier one. The
-    // two loads denote one value when the snapshots are proven to agree at
+    // two loads denote one value when the states are proven to agree at
     // its address.
     if let Proposition::ConditionIs(condition, value) = proposition
-        && established.proves_algebraic_condition_modulo_snapshots(condition, *value)
+        && established.proves_algebraic_condition_modulo_states(condition, *value)
     {
         return true;
     }
@@ -15079,8 +15083,8 @@ fn rewrite_resource_instance_selecting_children_unspelled(
             .filter(|fact| seen.insert(fact.clone()))
             .collect()
     } else {
-        // Folding checked each pure body clause in the current snapshot.
-        // A transported old-snapshot fact can establish that clause without
+        // Folding checked each pure body clause in the current state.
+        // A transported old-state fact can establish that clause without
         // already spelling the current proposition, so retain that checked
         // consequence for later ensures. Ownership and auxiliary definedness
         // facts remain scoped to checking the body.
@@ -15218,7 +15222,11 @@ pub(super) fn loop_instance_guard(
     let [spec] = definition.contains.as_slice() else {
         return Ok(None);
     };
-    let ResourceTerm::MutexGuard { mutex, snapshot } = spec.term() else {
+    let ResourceTerm::MutexGuard {
+        mutex,
+        state_source,
+    } = spec.term()
+    else {
         return Ok(None);
     };
     let Some(condition) = definition.condition() else {
@@ -15233,8 +15241,8 @@ pub(super) fn loop_instance_guard(
         || !definition.facts.is_empty()
         || definition.recursive
         || definition.parameters.len() != instance.arguments().len()
-        || *snapshot != ResourceSnapshot::Current
-        || spec.snapshot() != ResourceSnapshot::Current
+        || *state_source != ResourceStateSource::Current
+        || spec.state_source() != ResourceStateSource::Current
         || spec.role() != ResourceTransferRole::Consume
     {
         return Err("conditional loop guard requires a direct guard resource body".into());
@@ -17097,7 +17105,7 @@ fn evaluate_resource_clauses_in_section(
             fact.map(|fact| CheckedResourceFact {
                 fact,
                 role: resources[index].role(),
-                snapshot: resources[index].snapshot(),
+                state_source: resources[index].state_source(),
                 clause_position: resources[index].clause_position(),
                 section_index: Some(index),
                 selected_mutex_source: None,
@@ -18391,29 +18399,29 @@ fn evaluate_resource_type(
     if !spec.resource_arguments().is_empty() {
         return Ok(Err(invalid()));
     }
-    let (family, name, arguments, argument_snapshots, parameter_types) = match spec.term() {
+    let (family, name, arguments, argument_state_sources, parameter_types) = match spec.term() {
         ResourceTerm::Composite {
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         } => (
             ResourceFamily::Composite,
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         ),
         ResourceTerm::Token {
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         } if allow_token && schema.fields().is_empty() => (
             ResourceFamily::Token,
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         ),
         _ => return Ok(Err(invalid())),
@@ -18425,7 +18433,7 @@ fn evaluate_resource_type(
         family,
         name,
         arguments,
-        argument_snapshots,
+        argument_state_sources,
         parameter_types,
         spec.source_arguments(),
         &BTreeMap::new(),
@@ -18707,9 +18715,12 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 ))))
             }
         }
-        ResourceTerm::MutexGuard { mutex, snapshot } => {
-            let selected = match snapshot {
-                ResourceSnapshot::Entry => entry_state,
+        ResourceTerm::MutexGuard {
+            mutex,
+            state_source,
+        } => {
+            let selected = match state_source {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             let value = evaluate_loop_effect_segment_value(
@@ -18724,8 +18735,8 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                     "mutex_guard expects a mutex pointer".into(),
                 )));
             };
-            let acquisition_state = match resource.snapshot() {
-                ResourceSnapshot::Entry => entry_state,
+            let acquisition_state = match resource.state_source() {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             Ok(
@@ -18743,9 +18754,12 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                     }),
             )
         }
-        ResourceTerm::MutexLive { mutex, snapshot } => {
-            let selected = match snapshot {
-                ResourceSnapshot::Entry => entry_state,
+        ResourceTerm::MutexLive {
+            mutex,
+            state_source,
+        } => {
+            let selected = match state_source {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             let value = evaluate_loop_effect_segment_value(
@@ -18760,8 +18774,8 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                     "mutex_live expects a mutex pointer".into(),
                 )));
             };
-            let initialization_state = match resource.snapshot() {
-                ResourceSnapshot::Entry => entry_state,
+            let initialization_state = match resource.state_source() {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             Ok(
@@ -18781,11 +18795,11 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
         }
         ResourceTerm::MutexUse {
             mutex,
-            snapshot,
+            state_source,
             protected,
         } => {
-            let selected = match snapshot {
-                ResourceSnapshot::Entry => entry_state,
+            let selected = match state_source {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             let value = evaluate_loop_effect_segment_value(
@@ -18800,8 +18814,8 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                     "mutex_use expects a mutex pointer".into(),
                 )));
             };
-            let initialization_state = match resource.snapshot() {
-                ResourceSnapshot::Entry => entry_state,
+            let initialization_state = match resource.state_source() {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             let mut fact = super::mutexes::use_resource(initialization_state, pointer.pointer());
@@ -18829,10 +18843,10 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
             side,
             payload,
             flag,
-            snapshot,
+            state_source,
         } => {
-            let selected = match snapshot {
-                ResourceSnapshot::Entry => entry_state,
+            let selected = match state_source {
+                ResourceStateSource::Entry => entry_state,
                 _ => state,
             };
             let value = evaluate_loop_effect_segment_value(
@@ -18879,7 +18893,7 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 ResourceAccessMode::Own,
                 ResourceQuantity::One,
                 resource.role(),
-                resource.snapshot(),
+                resource.state_source(),
             ) {
                 Ok(inner) => match resource.source_arguments() {
                     Some(arguments) => inner.with_source_arguments(arguments.to_vec()),
@@ -19024,13 +19038,13 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
         ResourceTerm::Composite {
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         }
         | ResourceTerm::Token {
             name,
             arguments,
-            argument_snapshots,
+            argument_state_sources,
             parameter_types,
         } => {
             let family = resource.family();
@@ -19041,7 +19055,7 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                 family,
                 name,
                 arguments,
-                argument_snapshots,
+                argument_state_sources,
                 parameter_types,
                 resource.source_arguments(),
                 selected_load_values,
@@ -19059,9 +19073,9 @@ fn evaluate_function_resource_spec_with_entry_and_selected_loads(
                         "symbolic quantities require owned user-declared resources".to_string(),
                     )));
                 }
-                let quantity_state = match resource.quantity_snapshot() {
-                    ResourceSnapshot::Entry => entry_state,
-                    ResourceSnapshot::Current | ResourceSnapshot::Post => state,
+                let quantity_state = match resource.quantity_state_source() {
+                    ResourceStateSource::Entry => entry_state,
+                    ResourceStateSource::Current | ResourceStateSource::Post => state,
                 };
                 let mut quantity = quantity.clone();
                 resolve_retained_aggregate_fields(
@@ -19179,8 +19193,8 @@ pub(super) fn evaluate_iterated_resource_spec(
 /// A clause's declared resource quantity as an int32 term, or the reason it
 /// has none. A read the quantity has no authority for is reported as the
 /// resource it needed, the way a resource argument's is. The diagnostic
-/// carries no memory snapshot: a quantity's failure is its own, and a
-/// snapshot would mark it as waiting for a later clause to supply the cell.
+/// carries no memory state: a quantity's failure is its own, and a
+/// state would mark it as waiting for a later clause to supply the cell.
 fn evaluate_declared_quantity(
     state: &ExecutionState,
     quantity: &ProgramExpression,
@@ -19313,33 +19327,33 @@ fn evaluate_function_declared_resource_spec(
     family: ResourceFamily,
     name: &str,
     arguments: &[ProgramExpression],
-    argument_snapshots: &[ResourceSnapshot],
+    argument_state_sources: &[ResourceStateSource],
     parameter_types: &[ProgramType],
     source_arguments: Option<&[String]>,
     selected_load_values: &BTreeMap<(Pointer, ProgramType), ProgramValue>,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<ResourceFact, RuntimeError>> {
-    if arguments.len() != parameter_types.len() || arguments.len() != argument_snapshots.len() {
+    if arguments.len() != parameter_types.len() || arguments.len() != argument_state_sources.len() {
         return Ok(Err(RuntimeError::FunctionContract(format!(
             "resource `{name}` received the wrong number of arguments"
         ))));
     }
     let mut values = Vec::new();
-    for (index, ((argument, argument_snapshot), parameter_type)) in arguments
+    for (index, ((argument, argument_state_source), parameter_type)) in arguments
         .iter()
-        .zip(argument_snapshots)
+        .zip(argument_state_sources)
         .zip(parameter_types)
         .enumerate()
     {
-        let argument_state = match argument_snapshot {
+        let argument_state = match argument_state_source {
             // A clause checked at entry is evaluated in a frame that adds
             // the read authority of the clause set's own folded instances;
-            // an `old(..)` argument read at that same snapshot reads through
+            // an `old(..)` argument read at that same state reads through
             // the same authority. The frame changes no cell.
-            ResourceSnapshot::Entry if state.memory() == entry_state.memory() => state,
-            ResourceSnapshot::Entry => entry_state,
-            ResourceSnapshot::Current | ResourceSnapshot::Post => state,
+            ResourceStateSource::Entry if state.memory() == entry_state.memory() => state,
+            ResourceStateSource::Entry => entry_state,
+            ResourceStateSource::Current | ResourceStateSource::Post => state,
         };
         let written = argument;
         let mut argument = argument.clone();
@@ -19436,7 +19450,7 @@ fn evaluate_function_declared_resource_spec(
             // consumed: a `const` unpack's lent view of the memory the
             // argument reads.
             if evaluated.is_err()
-                && matches!(argument_snapshot, ResourceSnapshot::Entry)
+                && matches!(argument_state_source, ResourceStateSource::Entry)
                 && !std::ptr::eq(argument_state, entry_state)
             {
                 let mut at_entry = written.clone();
@@ -20028,7 +20042,7 @@ pub(in crate::kernel) fn function_exit_memory(
 /// Checks allocation support using a resource context that a caller has
 /// already lowered and checked.  This is the shared path for explicit
 /// `produces` claims: re-evaluating the function's declared return resources
-/// here would discard entry snapshots such as `old(...)` and make the
+/// here would discard entry states such as `old(...)` and make the
 /// allocation-lifetime closer prove the same claim a second time.
 pub(crate) fn unreturned_allocation_with_checked_returned_resources(
     caller_state: &ExecutionState,

@@ -45,7 +45,7 @@ fn branch_join_read_query_does_not_scan_unrelated_cached_cells() {
             .unwrap();
         // Warm only the common prefix. The query below must inspect the
         // new branch delta, not repeat all of that prefix's work.
-        let expected = last_same_point(
+        let expected = last_same_version_point(
             TrackedResource::Cell {
                 pointer: &cell,
                 bytes: 8,
@@ -53,7 +53,7 @@ fn branch_join_read_query_does_not_scan_unrelated_cached_cells() {
             &point(&before),
         );
         let (answer, work) = crate::instrumentation::measure_deterministic_work(|| {
-            last_same_point(
+            last_same_version_point(
                 TrackedResource::Cell {
                     pointer: &cell,
                     bytes: 8,
@@ -74,7 +74,7 @@ fn branch_join_read_query_does_not_scan_unrelated_cached_cells() {
 fn branch_join_nested_naming_work_tracks_new_branches() {
     let cell = at(block("global:g"), 0);
     let mut memory = entry_memory();
-    let expected = last_same_point(
+    let expected = last_same_version_point(
         TrackedResource::Cell {
             pointer: &cell,
             bytes: 8,
@@ -100,7 +100,7 @@ fn branch_join_nested_naming_work_tracks_new_branches() {
             )
             .unwrap();
         let (answer, work) = crate::instrumentation::measure_deterministic_work(|| {
-            last_same_point(
+            last_same_version_point(
                 TrackedResource::Cell {
                     pointer: &cell,
                     bytes: 8,
@@ -119,7 +119,7 @@ fn branch_join_nested_naming_work_tracks_new_branches() {
 
 #[test]
 fn adjacent_cell_preservation_costs_only_the_selected_edge() {
-    // An explicit chain names the previous snapshot at every store. Each
+    // An explicit chain names the previous state at every store. Each
     // query establishes exactly that adjacent equality, never its prefix.
     let mut samples = Vec::new();
     for size in [16i64, 64, 256] {
@@ -227,7 +227,7 @@ fn fresh_cell_offsets_share_the_whole_block_version_prefix() {
             for index in 0..size {
                 let pointer = at(PointerBlock::ExternalArgument, index as i64 * 4);
                 assert_eq!(
-                    last_same_point(
+                    last_same_version_point(
                         TrackedResource::Cell {
                             pointer: &pointer,
                             bytes: 4
@@ -235,7 +235,7 @@ fn fresh_cell_offsets_share_the_whole_block_version_prefix() {
                         &current
                     )
                     .unwrap()
-                    .snapshot(),
+                    .shared_memory(),
                     &entry,
                 );
             }
@@ -457,7 +457,7 @@ fn shared_pointer_resource_read_collection_visits_each_node_once() {
 }
 
 #[test]
-fn shared_conditional_guard_reads_keep_snapshot_identity_in_linear_work() {
+fn shared_conditional_guard_reads_keep_state_identity_in_linear_work() {
     use crate::kernel::{
         KernelTerm, KernelTermExport, KernelTermImport, KernelType, MachineOperandView, Variable,
         VerificationSession,
@@ -491,7 +491,7 @@ fn shared_conditional_guard_reads_keep_snapshot_identity_in_linear_work() {
         });
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].resource, OwnedResource::Cell { pointer, bytes: 4 });
-        assert_eq!(reads[0].point, ProgramPoint::at(&memory));
+        assert_eq!(reads[0].point, VersionPoint::at(&memory));
         assert_eq!(KernelTermExport::machine_export_count(), exports);
         assert!(work <= size * 32 + 16, "size={size}, work={work}");
     }

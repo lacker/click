@@ -2,7 +2,7 @@
 
 The pruning step is a call rather than a store: the callee's declared write set
 covers `a[0..8]`, so the havoc drops the `a[i]` cell the caller had cached. A
-call havoc leaves a marker block in the snapshot, so this shape was refused
+call havoc leaves a marker block in the state, so this shape was refused
 before forget marks existed; it is here so that the family covers the havoc
 producer as well as the store producer.
 

@@ -1736,7 +1736,7 @@ fn contract_application_binds_each_handle_by_name() {
 }
 
 #[test]
-fn opaque_resource_call_checks_actual_c_arguments_and_call_entry_snapshots() {
+fn opaque_resource_call_checks_actual_c_arguments_and_call_entry_states() {
     let source = r#"verifying "invoke.c";
         resource marker(p: int32*) { field revision: int32; }
         contract int32 Touch(int32* p) {
@@ -2624,7 +2624,7 @@ mod tactic_tests;
 mod width_uniformity;
 
 #[test]
-fn integer_resource_fields_enforce_types_facts_and_snapshots() {
+fn integer_resource_fields_enforce_types_facts_and_states() {
     let c_source = "void change() { }";
     let source = r#"
         verifying "change.c";

@@ -229,7 +229,7 @@ fn memory_view_miss_does_not_scan_same_address_extents() {
 #[test]
 fn ambiguous_view_buckets_keep_exact_and_selected_evidence() {
     for wide in [false, true] {
-        for snapshots in [false, true] {
+        for retained_states in [false, true] {
             let mut misses = Vec::new();
             let mut hits = Vec::new();
             let mut selected_work = Vec::new();
@@ -247,7 +247,7 @@ fn ambiguous_view_buckets_keep_exact_and_selected_evidence() {
                 let mut context = PureFactContext::new();
                 let mut selected = None;
                 for index in 1..=size {
-                    let source = if snapshots {
+                    let source = if retained_states {
                         memory.clone().store(
                             Pointer::symbolic(Variable(790_001 + u64::from(index))),
                             ProgramValue::Int32(7.into()),
@@ -308,7 +308,7 @@ fn ambiguous_view_buckets_keep_exact_and_selected_evidence() {
                 assert!(!proves(&PureFactContext::new(), &extent(6)));
             }
             eprintln!(
-                "view buckets wide={wide} snapshots={snapshots}: misses={misses:?}, hits={hits:?}, selected={selected_work:?}"
+                "view buckets wide={wide} states={retained_states}: misses={misses:?}, hits={hits:?}, selected={selected_work:?}"
             );
             for samples in [misses, hits, selected_work] {
                 assert!(

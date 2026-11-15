@@ -42,7 +42,7 @@ constructor callbacks remain refused. Explicit external construction-return
 contracts may assume that the selected caller-owned result is completed with
 initialized value fields. These are reported external assumptions, not body
 certificates, and do not grant initialization to ordinary output buffers. Contract
-matching, state substitution, branch joins, and checked snapshot comparisons
+matching, state substitution, branch joins, and checked state comparisons
 include the destination and result mode. C++ source admission uses the bounded
 copy-equivalence restriction below.
 

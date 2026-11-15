@@ -14,10 +14,10 @@ which left no way to finish a `both { ... }` arm whose goal was a narrowed
 range. Here the narrowing is established once, then cited: from a `both` arm,
 and under a universal after `intro`.
 
-The rule is exact, not a narrowing: a different range or a different snapshot
+The rule is exact, not a narrowing: a different range or a different state
 does not close the goal
 (`mdtests/known_does_not_close_a_viewable_goal_at_another_range.md`,
-`mdtests/known_does_not_close_a_viewable_goal_at_another_snapshot.md`).
+`mdtests/known_does_not_close_a_viewable_goal_at_another_state.md`).
 
 ```c filename=known_closes_an_established_viewable_fact.c
 int32 probe(int32 a[], int32 n, int32 k) {

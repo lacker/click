@@ -34,7 +34,7 @@ Each call initializer lowers to a call step followed by its local assignment.
 
 C translation: the initial driver expression called both read-only getters
 inside one sum. Click currently rejects multiple unsequenced calls in an
-expression, so `driver.c` explicitly stores their results in local snapshots.
+expression, so `driver.c` explicitly stores their results in local states.
 The getters have no side effects, so this sequencing preserves behavior.
 This example does not demonstrate support for the original unsequenced form.
 

@@ -89,7 +89,7 @@ and memory proofs, not proofs of the original checksum loop.
 
 [Native 64-bit same-base prefix narrowing](../../../../mdtests/native_view_prefix_narrowing.md)
 now checks the full unsigned byte-count bound and preserves the source view's
-lifetime and snapshot evidence. Symbolic byte and word prefixes use explicit
+lifetime and state evidence. Symbolic byte and word prefixes use explicit
 selected premises; low-word bounds, missing bounds, larger prefixes, and
 unrelated bases are rejected. This removes the short-loop refusal when
 narrowing a positive remaining count to its first byte.
@@ -128,7 +128,7 @@ provides no C memory authority or assumed callee result.
 for canonical seed 1, a nonnull buffer, and exactly 16 bytes. It establishes
 the shared checksum, termination, and preservation of every input byte.
 Its sixteen original addition pairs use checked native recurrence lemmas;
-the loop invariant follows the actual remaining count and input snapshot,
+the loop invariant follows the actual remaining count and input state,
 without a generated processed counter. Explicit ranking facts establish
 nonnegativity and the decrease from 16 to 0.
 
@@ -191,7 +191,7 @@ transports the loop-entry view after each sixteen-byte advance, closes both
 counter outcomes, and retains the component equations through the original
 modulo reductions and packing. [Batch helpers](batch-helpers.click) check the
 native capacity, prefix, lane, and reduction bridges. Historical native cast
-bounds use the selected snapshot's counter.
+bounds use the selected state's counter.
 
 The offline NMAX regression checks all helper bodies, complete certificate
 expansion, false results and component invariants, and missing or shortened

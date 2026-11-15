@@ -2,7 +2,7 @@
 
 The three-assignment XOR swap exchanges two independent scalar values without
 a temporary. The proof compares both final parameter values with their
-function-entry snapshots. This is not the aliased-memory version of the trick:
+function-entry states. This is not the aliased-memory version of the trick:
 using the same storage location for both operands would zero that location.
 
 ```c filename=xor_swap.c

@@ -1,7 +1,7 @@
 # Pointer casts retain their current-expression requirement
 
 Integer value casts do not change the source validation for pointer casts.
-The snapshot belongs around the pointer cast.
+The state belongs around the pointer cast.
 
 ```c filename=historical_pointer.c
 int *identity(int *p) { return p; }

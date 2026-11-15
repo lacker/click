@@ -270,7 +270,7 @@ fn retained_machine_rewrite_admission_reads_only_comparison_roots() {
 }
 
 #[test]
-fn rewrite_history_keys_share_call_carriers_and_keep_snapshot_authority() {
+fn rewrite_history_keys_share_call_carriers_and_keep_state_authority() {
     use super::search::RewriteGoalKey;
     use crate::kernel::{
         KernelTermImport, PointerValue, PureFunctionArgument, SharedMachineIntegerTerm,

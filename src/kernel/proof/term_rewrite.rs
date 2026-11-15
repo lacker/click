@@ -1,5 +1,5 @@
 //! Sort-preserving congruence and explicitly directed conditional reduction.
-//! Memory snapshots are opaque: this walks the selected logical expression,
+//! Memory states are opaque: this walks the selected logical expression,
 //! never a heap or an ambient proof state.
 use crate::kernel::CompareRelation;
 #[cfg(test)]
@@ -1062,7 +1062,7 @@ fn collect_bitvector_carriers(term: &MachineTerm, variables: &mut CarrierVariabl
                 }
             }
         }
-        // Memory snapshots are opaque proof-state values.  Only the selected
+        // Memory states are opaque proof-state values.  Only the selected
         // pointer expression participates in freshness collection.
         MachineTerm::MemoryLoad(memory, pointer, kind) => {
             if let Some(terms) = &mut variables.read_terms {
@@ -1147,13 +1147,13 @@ pub(in crate::kernel::proof) fn folded_machine_condition(
     }
 }
 
-/// The content a registered load variable's own snapshot already holds at its
-/// own cell, when that snapshot holds one exactly.
+/// The content a registered load variable's own state already holds at its
+/// own cell, when that state holds one exactly.
 ///
 /// A registered load variable is *defined* as `load(memory, pointer)` for the
 /// pair the registry holds for it -- that is what makes its defining equation
 /// a kernel-certified truth rather than a premise a proof must discharge. A
-/// snapshot's cell map is the authoritative content of that snapshot at an
+/// state's cell map is the authoritative content of that state at an
 /// exact pointer: every load evaluation consults it before anything else and
 /// returns it unconditionally when it hits. So when the map holds an entry for
 /// exactly this pointer, that entry *is* `load(memory, pointer)`, and
@@ -1234,7 +1234,7 @@ fn pointer_addresses_four_byte_elements(pointer: &Pointer) -> bool {
 
 /// Extend the carrier summary through one registered load's selected
 /// pointer.  A per-walker load set prevents shared or cyclic registry edges
-/// from reopening the same pointer DAG; snapshots remain completely opaque.
+/// from reopening the same pointer DAG; states remain completely opaque.
 fn collect_registered_load_carriers(load: Variable, variables: &mut CarrierVariables) {
     if !crate::kernel::is_load_variable(&load) || !variables.registered_loads.insert(load) {
         return;
@@ -1293,7 +1293,7 @@ fn collect_sequence_carriers(term: &SequenceTerm, variables: &mut CarrierVariabl
 }
 
 /// Collect variables needed for capture avoidance in the checked Integer
-/// substitution fragment.  Pure function ArrayRef snapshots are proof-state
+/// substitution fragment.  Pure function ArrayRef states are proof-state
 /// values, so their memory field is deliberately not traversed here; only the
 /// explicit pointer expression participates in lexical freshness.
 pub(crate) struct IntegerSubstitutionVariableCollector {
@@ -1311,7 +1311,7 @@ impl IntegerSubstitutionVariableCollector {
     }
 
     /// A collector that records no deterministic work: for a lookup whose
-    /// visit is bounded by the queried proposition itself (memory snapshots
+    /// visit is bounded by the queried proposition itself (memory states
     /// stay opaque), run beside a check that already charges for it.
     pub(crate) fn uncharged() -> Self {
         Self {
@@ -1319,7 +1319,7 @@ impl IntegerSubstitutionVariableCollector {
         }
     }
 
-    /// Select structural reads alongside lexical variables, without opening snapshots.
+    /// Select structural reads alongside lexical variables, without opening states.
     pub(crate) fn collect_read_terms(&mut self) {
         self.carriers.read_terms = Some(BTreeMap::new());
     }
@@ -1350,7 +1350,7 @@ impl IntegerSubstitutionVariableCollector {
 }
 
 /// Collect only pointer expressions reachable from this explicit goal. Memory
-/// snapshots remain opaque, just as in capture-avoiding term rewriting.
+/// states remain opaque, just as in capture-avoiding term rewriting.
 pub(crate) fn proposition_pointer_terms(proposition: &Proposition) -> Vec<Pointer> {
     let mut carriers = CarrierVariables::for_rewrite(false);
     carriers.pointer_terms = Some(Vec::new());
@@ -1390,7 +1390,7 @@ fn collect_integer_substitution_variables_with_carriers(
             }
             // Loadability obligations produced while lowering a symbolic array
             // read carry the selected pointer and byte-count terms directly.  The
-            // memory snapshot is intentionally opaque: only these expressions
+            // memory state is intentionally opaque: only these expressions
             // participate in capture reservation.
             Proposition::MemoryReadDefined { pointer, .. } => {
                 collect_pointer_carriers(pointer, carriers);
@@ -1836,7 +1836,7 @@ pub(crate) struct TermRewrite<'a> {
         &'a HashMap<((u32, u32), Pointer, LoadKind), (MachineTerm, ReadAddressDependencies)>,
     >,
     /// Reads of a library or enum value at a fixed address, each with the
-    /// value its snapshot stores there: the read-over-write authority for
+    /// value its state stores there: the read-over-write authority for
     /// values a scalar cell cannot hold.
     comparison_algebraic_reads: Option<&'a HashMap<((u32, u32), Pointer), AlgebraicTerm>>,
     // Recursive read-address walks must share this memo: each address can
@@ -1859,7 +1859,7 @@ pub(crate) struct TermRewrite<'a> {
     resolve_registered_loads: bool,
     /// Rewritten registered loads are memoized by load identity and lexical
     /// scope.  A changed address is re-minted as a load variable for the
-    /// exact original snapshot, so a branching registry DAG stays shared
+    /// exact original state, so a branching registry DAG stays shared
     /// instead of expanding into owned `MemoryLoad` trees at every parent.
     registered_load_cache: HashMap<(Variable, u64), Variable>,
     /// A malformed registry cycle is rejected before recursive pointer
@@ -1938,7 +1938,7 @@ impl<'a> TermRewrite<'a> {
         // Comparison introduces no substitution or fresh binder.
         rewrite.source_variables_reserved = true;
         // Normalize the selected scalar read's address too. The read's
-        // snapshot and loaded-pointer identities stay opaque; the existing
+        // state and loaded-pointer identities stay opaque; the existing
         // per-scope registry memo shares repeated address terms.
         rewrite.resolve_registered_loads = true;
         rewrite
@@ -1998,7 +1998,7 @@ impl<'a> TermRewrite<'a> {
     }
 
     /// A retained read is an atom under a binder only when its explicit
-    /// address does not mention that binder. Snapshots remain immutable.
+    /// address does not mention that binder. Memory states remain immutable.
     pub(crate) fn read_address_independent_of(
         term: &MachineTerm,
         bound: &BTreeSet<Variable>,
@@ -2017,7 +2017,7 @@ impl<'a> TermRewrite<'a> {
     }
 
     /// Simultaneous one-step read comparison. Only selected syntax is visited;
-    /// inserted values and the contents of snapshots remain opaque.
+    /// inserted values and the contents of states remain opaque.
     pub(crate) fn comparison_read_batch(
         proposition: &Proposition,
         replacements: impl IntoIterator<Item = (MachineTerm, MachineTerm)>,
@@ -2040,7 +2040,7 @@ impl<'a> TermRewrite<'a> {
             }
             if let Some(read) = crate::kernel::eval::viewed_as_memory_load(&source) {
                 let mut carriers = CarrierVariables::for_rewrite(true);
-                // Collect the explicit address, never its snapshot contents.
+                // Collect the explicit address, never its state contents.
                 if let MachineTerm::MemoryLoad(_, pointer, _) = &read {
                     collect_pointer_carriers(pointer, &mut carriers);
                 }
@@ -2333,10 +2333,10 @@ impl<'a> TermRewrite<'a> {
             self.changed |= rewritten != variable;
             return Some(rewritten);
         }
-        // A pointer equality can expose another cell. Its observed snapshot,
+        // A pointer equality can expose another cell. Its observed state,
         // rather than a projected identity for the original cell, is the same
         // source used by native pointer rewriting. Fold substitution keeps its
-        // existing defining-snapshot semantics.
+        // existing defining-state semantics.
         let origin = (self.pointer_variable.is_some()
             || self.pointer_exact.is_some()
             || self.pointer_offset_exact.is_some())
@@ -2774,7 +2774,7 @@ impl<'a> TermRewrite<'a> {
     /// Return whether the checked replacement contains a variable in the
     /// requested carrier.  The carrier summary follows registered load
     /// origins through their selected pointer expressions while keeping memory
-    /// snapshots opaque.  It is computed once and shared by all nested
+    /// states opaque.  It is computed once and shared by all nested
     /// proposition binders.
     pub(crate) fn replacement_contains_integer_variable(&mut self, variable: Variable) -> bool {
         self.ensure_replacement_carriers();
@@ -3857,9 +3857,9 @@ impl<'a> TermRewrite<'a> {
                 pointer,
                 element_type,
             } => PureFunctionArgument::ArrayRef {
-                // A captured memory snapshot is an opaque proof-state value.
+                // A captured memory state is an opaque proof-state value.
                 // Rewrite only the explicit pointer argument; scanning or
-                // rebuilding the snapshot would make substitution depend on
+                // rebuilding the state would make substitution depend on
                 // unrelated heap size.
                 memory: memory.clone(),
                 pointer: self.value(pointer),
@@ -5078,7 +5078,7 @@ impl<'a> TermRewrite<'a> {
         }
         // A read depends on its selected address. Substitute full pointers
         // or numeric indices through that address, retaining the read's
-        // defining snapshot and memoizing shared read definitions.
+        // defining state and memoizing shared read definitions.
         if (self.pointer_value_exact.is_some() || self.bitvector.is_some())
             && !self.source_disabled
             && let Some(read) = p.as_loaded_value()
@@ -5102,7 +5102,7 @@ impl<'a> TermRewrite<'a> {
             let block = if address != read.defining_address {
                 self.changed = true;
                 // Rewriting changes the selected address, not the read into
-                // its stored value. Keep the immutable defining snapshot.
+                // its stored value. Keep the immutable defining state.
                 Pointer::version_read(&read.defining_memory, &address).block
             } else {
                 p.block.clone()
@@ -5175,7 +5175,7 @@ impl<'a> TermRewrite<'a> {
                 offset: PointerOffsetTerm::add(replacement.offset.clone(), offset),
             };
         }
-        // A loop snapshot's pointer value is a symbolic base plus its
+        // A loop state's pointer value is a symbolic base plus its
         // displacement. Rewriting the complete base value also respells
         // displaced addresses; the value path retains their selected bounds.
         if let Some((from, to)) = self.pointer_value_exact
@@ -5612,7 +5612,7 @@ impl<'a> TermRewrite<'a> {
             }
             // A `Bool` value rewrites its children, an application's
             // arguments and a read's pointer, as a word-valued application
-            // and a load do; a read keeps its snapshot.
+            // and a load do; a read keeps its state.
             v if v.is_bool_value_form() => {
                 let mut children = Vec::with_capacity(3);
                 for child in v.bool_children() {
@@ -6008,7 +6008,7 @@ impl<'a> TermRewrite<'a> {
             // Shared observations can retain a native read name for output.
             // When a replacement crosses the native-only value boundary,
             // match that name to the exact structural read selected by the
-            // caller, without choosing another snapshot or resolving a value.
+            // caller, without choosing another state or resolving a value.
             let (variable, read) = match (native, source) {
                 (MachineTerm::Variable(variable), read @ MachineTerm::MemoryLoad(..))
                 | (read @ MachineTerm::MemoryLoad(..), MachineTerm::Variable(variable)) => {
@@ -6232,14 +6232,14 @@ impl<'a> TermRewrite<'a> {
             && let MachineTerm::Variable(variable) = v
             && crate::kernel::is_load_variable(variable)
         {
-            // Keep the load's snapshot exact and rewrite only its selected
+            // Keep the load's state exact and rewrite only its selected
             // address.  Re-materializing the registered variable would hide
             // a binder-dependent pointer from the fold substitution, while
-            // scanning or rewriting the memory snapshot would change an
+            // scanning or rewriting the memory state would change an
             // unrelated proof-state value.
             if let Some(rewritten) = self.rewrite_registered_load(*variable) {
                 // Substituting the binder can turn a binder-dependent address
-                // into one this very snapshot already materializes. The load
+                // into one this very state already materializes. The load
                 // is then that cell's content, and leaving a fresh load
                 // identity in its place would hide from the proof the value
                 // the store it names just wrote.
@@ -6467,8 +6467,8 @@ impl<'a> TermRewrite<'a> {
                     return v.clone();
                 }
                 // Pointer substitution uses the producer's live memory, which
-                // may retain cells absent from the read's projected snapshot.
-                // Binder substitution continues to use the exact stored snapshot.
+                // may retain cells absent from the read's projected state.
+                // Binder substitution continues to use the exact stored state.
                 let use_origin = self.resolve_registered_loads
                     && (self.pointer_variable.is_some()
                         || self.pointer_exact.is_some()
@@ -7225,7 +7225,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_condition_budget_stops_deep_program_and_ignores_snapshot_size() {
+    fn typed_condition_budget_stops_deep_program_and_ignores_state_size() {
         let limits = crate::instrumentation::TacticWorkLimits {
             simple: 16,
             smart: 16,
@@ -7346,9 +7346,9 @@ mod tests {
             assert!(small.3 <= 32 && large.3 <= 32);
             assert_eq!(
                 small.2, large.2,
-                "opaque snapshots changed collector visits at depth {depth}"
+                "opaque states changed collector visits at depth {depth}"
             );
-            assert_eq!(small.3, large.3, "opaque snapshots changed rewrite work");
+            assert_eq!(small.3, large.3, "opaque states changed rewrite work");
         }
     }
 
@@ -8745,7 +8745,7 @@ mod pointer_integer_rewrite_tests {
     }
 
     #[test]
-    fn full_pointer_rewrite_keeps_the_read_version_and_snapshot() {
+    fn full_pointer_rewrite_keeps_the_read_version_and_state() {
         let _session = crate::kernel::VerificationSession::enter();
         let from = PointerValue::new(
             Pointer::symbolic(Variable(996_010)),
@@ -8778,7 +8778,7 @@ mod pointer_integer_rewrite_tests {
     }
 
     #[test]
-    fn numeric_index_rewrite_keeps_nested_pointer_read_versions_and_snapshots() {
+    fn numeric_index_rewrite_keeps_nested_pointer_read_versions_and_states() {
         let _session = crate::kernel::VerificationSession::enter();
         let from = MachineTerm::Variable(Variable(996_020));
         let to = MachineTerm::Variable(Variable(996_021));
@@ -9163,7 +9163,7 @@ mod comparison_read_batch_tests {
     }
 
     #[test]
-    fn batch_read_comparison_preserves_snapshots_and_sealed_resources() {
+    fn batch_read_comparison_preserves_states_and_sealed_resources() {
         let _session = crate::kernel::VerificationSession::enter();
         let source = Variable(402_001);
         let pointer = Pointer::symbolic(Variable(402_002));

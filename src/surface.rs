@@ -24,7 +24,7 @@ use crate::kernel::{
     ProgramStatement, ProgramType, ProgramValue, ProofObligation, Proposition,
     PropositionDerivation, PureFactContext, Resource,
     ResourceAccessMode as KernelResourceAccessMode, ResourceContext, ResourceContextValidityError,
-    ResourceFact, ResourceFamily, ResourceSnapshot, ResourceSpec, ResourceTransferRole, Sort,
+    ResourceFact, ResourceFamily, ResourceSpec, ResourceStateSource, ResourceTransferRole, Sort,
     SpecAlgebraicExpression, SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition,
     SpecResource, StatementOutcome, SymbolicExecution, Term, TerminationRefusal, Theorem,
     UnsuitableCallback, Variable, VerifiedLoopRule,
@@ -172,7 +172,7 @@ pub fn accepted_proof_trace(
     target: Option<&crate::source::SourcePosition>,
 ) -> Option<String> {
     let _typed = proof_diagnostics::render::TypedNotationScope::enter();
-    let mut labels = proof_diagnostics::render::SnapshotLabels::ambient();
+    let mut labels = proof_diagnostics::render::MemoryStateLabels::ambient();
     proof_trace::render_accepted(
         &mut labels,
         tactic_location,
@@ -2281,7 +2281,7 @@ pub enum ResourceSubject {
         identity: crate::kernel::Variable,
         /// `at(point, name)`: the instance as it was held at that recorded
         /// state, for an instance the current state no longer holds.
-        at: Option<SnapshotSelector>,
+        at: Option<ProgramPointSelector>,
     },
     Footprint(CodeRegionRef),
     Parameter {
@@ -2323,8 +2323,8 @@ pub enum ResourceKind {
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub enum ClickProposition {
     ChangesOnly {
-        before: SnapshotSelector,
-        after: SnapshotSelector,
+        before: ProgramPointSelector,
+        after: ProgramPointSelector,
         resources: Vec<ResourceSubject>,
     },
     Comparison {
@@ -2354,7 +2354,7 @@ pub enum ClickProposition {
         expression: ContractExpression,
     },
     At {
-        selector: SnapshotSelector,
+        selector: ProgramPointSelector,
         proposition: Box<ClickProposition>,
     },
     And(Box<ClickProposition>, Box<ClickProposition>),
@@ -2566,7 +2566,7 @@ pub(crate) fn clone_click_proposition_iteratively(
 ) -> ClickProposition {
     enum Frame<'a> {
         Visit(&'a ClickProposition),
-        BuildAt(SnapshotSelector),
+        BuildAt(ProgramPointSelector),
         BuildAnd,
         BuildOr,
         BuildNot,
@@ -3251,7 +3251,7 @@ pub enum SurfaceTerm {
     },
     /// An immutable, finite specification sequence. Elements remain ordinary
     /// scalar contract expressions and are evaluated at the surrounding
-    /// snapshot.
+    /// state.
     SequenceLiteral(Vec<ContractExpression>),
     /// Persistent sequence concatenation. This is specification syntax only;
     /// it does not denote C pointer arithmetic or allocate C memory.
@@ -3279,7 +3279,7 @@ pub enum SurfaceTerm {
         lowered: ProgramExpression,
         /// Byte offset of `field` from the address denoted by `base`.
         /// Keeping this separately lets lowering rebuild the field load when
-        /// `base` is evaluated in a different snapshot from the field value.
+        /// `base` is evaluated in a different state from the field value.
         offset_bytes: u32,
     },
     /// A binding from the verified C function's lexical environment.
@@ -3311,7 +3311,7 @@ pub enum SurfaceTerm {
     },
     Old(Box<ContractExpression>),
     At {
-        selector: SnapshotSelector,
+        selector: ProgramPointSelector,
         expression: Box<ContractExpression>,
     },
     Negate(Box<ContractExpression>),
@@ -3455,26 +3455,29 @@ type ReadEventNames<T> =
 
 /// A position in a path's recorded history.
 #[derive(Clone, Default)]
-struct RecordedHistoryMark(Option<std::sync::Arc<RecordedSnapshotChange>>);
+struct RecordedHistoryMark(Option<std::sync::Arc<RecordedStateChange>>);
 
 /// Points one path recorded at a range of regions, with their call results.
 #[derive(Clone, Default)]
 struct RecordedRegionPoints {
-    snapshots: Vec<(SnapshotSelector, ExecutionState)>,
+    retained_states: Vec<(ProgramPointSelector, ExecutionState)>,
     call_results: Vec<(usize, ProgramValue)>,
 }
 
+/// Symbolic states recorded at program points on one proof path, plus the
+/// indexes used to name their values and effects. This is not a complete
+/// valuation of every expression at a source location.
 #[derive(Clone)]
-struct RecordedSnapshots {
+struct RecordedStates {
     effect_log: imbl::Vector<crate::kernel::Resource>,
     effect_gaps: imbl::Vector<usize>,
-    effect_offsets: imbl::OrdMap<SnapshotSelector, usize>,
+    effect_offsets: imbl::OrdMap<ProgramPointSelector, usize>,
     footprint_values: std::sync::Arc<
         std::sync::Mutex<
             std::collections::HashMap<
                 (
-                    SnapshotSelector,
-                    SnapshotSelector,
+                    ProgramPointSelector,
+                    ProgramPointSelector,
                     usize,
                     usize,
                     Option<crate::kernel::Resource>,
@@ -3485,7 +3488,7 @@ struct RecordedSnapshots {
             >,
         >,
     >,
-    version: std::sync::Arc<RecordedSnapshotVersion>,
+    version: std::sync::Arc<RecordedStateVersion>,
     /// The labels the proof gave loops on this path. A program point is
     /// recorded once, under its loop's first label when it has one and as
     /// `loop(N)` otherwise; a lookup by either spelling, or by another label
@@ -3499,23 +3502,25 @@ struct RecordedSnapshots {
     /// bytes, keyed by the memory's read identity. A load registered in a
     /// memory other than the one being spelled is looked up here and
     /// spelled `at(point, ...)` in one step, instead of trying recorded
-    /// snapshots in turn. Ordered, because identities are made in program
+    /// states in turn. Ordered, because identities are made in program
     /// order: a load registered in a memory between recorded points is read
     /// at the first recorded memory after it.
-    memory_points: imbl::OrdMap<(u32, u32), SnapshotSelector>,
+    memory_points: imbl::OrdMap<(u32, u32), ProgramPointSelector>,
     /// The recorded point at which each scalar local first held each integer
     /// value, keyed like the locals' held-term index by the value's
     /// fingerprint and the local's name. A value no nearer state names is
     /// spelled `at(point, local)` from here in one lookup. Entries are made
     /// from the locals each insert changed, and checked against the point's
     /// state when read.
-    value_points: crate::persistent::PersistentMap<(u64, String), SnapshotSelector>,
+    value_points: crate::persistent::PersistentMap<(u64, String), ProgramPointSelector>,
     /// The recorded point at which each local first held a pointer into
     /// each block, keyed by the block and the local's name: a pointer no
     /// nearer state names is spelled at such a point, from that local.
     /// Filled and checked as `value_points` is.
-    pointer_points:
-        crate::persistent::PersistentMap<(crate::kernel::PointerBlock, String), SnapshotSelector>,
+    pointer_points: crate::persistent::PersistentMap<
+        (crate::kernel::PointerBlock, String),
+        ProgramPointSelector,
+    >,
     /// Allocation results keep the region that introduced them, independently
     /// of later pointer reads or assignments to the result local.
     allocation_results: crate::persistent::PersistentMap<crate::kernel::Pointer, CodeRegionRef>,
@@ -3524,7 +3529,7 @@ struct RecordedSnapshots {
     /// The points inside a loop that left at several places, by the loop
     /// and its number of leaving paths: each path recorded the point at its
     /// own state, so after the loop the name has no one state.
-    ambiguous_exit_points: crate::persistent::PersistentMap<SnapshotSelector, (usize, usize)>,
+    ambiguous_exit_points: crate::persistent::PersistentMap<ProgramPointSelector, (usize, usize)>,
     call_result_points: crate::persistent::PersistentMap<(u64, usize), ()>,
     read_event_results: crate::persistent::PersistentMap<(usize, usize), ProgramValue>,
     read_event_counts: crate::persistent::PersistentMap<usize, usize>,
@@ -3544,7 +3549,7 @@ struct RecordedSnapshots {
     /// value no nearer state's instance holds is spelled at that point.
     /// Filled from the instances each insert changed, and checked against
     /// the point's state when read.
-    field_points: crate::persistent::PersistentMap<crate::kernel::Variable, SnapshotSelector>,
+    field_points: crate::persistent::PersistentMap<crate::kernel::Variable, ProgramPointSelector>,
     /// The locals of the state inserted last, against which the next insert
     /// finds the locals it changed.
     last_locals: Option<crate::kernel::LocalEnvironment>,
@@ -3558,7 +3563,7 @@ struct RecordedSnapshots {
     /// point's state, as the field or element it is there. Filled from the
     /// cells each insert's memory changed; whether the point's state spells
     /// the value is the reader's check.
-    cell_points: crate::persistent::PersistentMap<(u64, usize), SnapshotSelector>,
+    cell_points: crate::persistent::PersistentMap<(u64, usize), ProgramPointSelector>,
     /// The memory of the state inserted last, against which the next insert
     /// finds the cells it changed.
     last_memory: Option<crate::kernel::Memory>,
@@ -3570,13 +3575,13 @@ struct LoopLabels {
     preferred: BTreeMap<usize, String>,
 }
 
-struct RecordedSnapshotVersion {
-    root: Option<std::sync::Arc<RecordedSnapshotNode>>,
-    history: Option<std::sync::Arc<RecordedSnapshotChange>>,
+struct RecordedStateVersion {
+    root: Option<std::sync::Arc<RecordedStateNode>>,
+    history: Option<std::sync::Arc<RecordedStateChange>>,
     origin: std::sync::Arc<()>,
 }
 
-impl Default for RecordedSnapshots {
+impl Default for RecordedStates {
     fn default() -> Self {
         Self {
             effect_log: imbl::Vector::new(),
@@ -3585,7 +3590,7 @@ impl Default for RecordedSnapshots {
             footprint_values: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
-            version: std::sync::Arc::new(RecordedSnapshotVersion {
+            version: std::sync::Arc::new(RecordedStateVersion {
                 root: None,
                 history: None,
                 origin: std::sync::Arc::new(()),
@@ -3617,21 +3622,21 @@ impl Default for RecordedSnapshots {
 }
 
 #[derive(Clone)]
-struct RecordedSnapshotNode {
-    selector: SnapshotSelector,
+struct RecordedStateNode {
+    selector: ProgramPointSelector,
     state: Option<ExecutionState>,
-    left: Option<std::sync::Arc<RecordedSnapshotNode>>,
-    right: Option<std::sync::Arc<RecordedSnapshotNode>>,
+    left: Option<std::sync::Arc<RecordedStateNode>>,
+    right: Option<std::sync::Arc<RecordedStateNode>>,
     height: u8,
 }
 
 /// One persistent map mutation. Proof branches share their complete prefix;
 /// an audited join can therefore visit only the keys changed in either arm
-/// instead of intersecting every snapshot accumulated by the project.
+/// instead of intersecting every state accumulated by the project.
 #[derive(Clone)]
-struct RecordedSnapshotChange {
-    selector: SnapshotSelector,
-    parent: Option<std::sync::Arc<RecordedSnapshotChange>>,
+struct RecordedStateChange {
+    selector: ProgramPointSelector,
+    parent: Option<std::sync::Arc<RecordedStateChange>>,
 }
 
 /// The history is one node per recorded change, so a proof that steps a few
@@ -3642,7 +3647,7 @@ struct RecordedSnapshotChange {
 /// worker. The chain is unlinked here instead, node by node, for as long as
 /// this drop holds the last reference to the next one; a node another
 /// version still shares stops the walk and is dropped by that version later.
-impl Drop for RecordedSnapshotChange {
+impl Drop for RecordedStateChange {
     fn drop(&mut self) {
         let mut next = self.parent.take();
         while let Some(node) = next {
@@ -3656,29 +3661,29 @@ impl Drop for RecordedSnapshotChange {
 
 #[cfg(test)]
 thread_local! {
-    static RECORDED_SNAPSHOT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RECORDED_STATE_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
-fn recorded_snapshot_node_allocations() -> usize {
-    RECORDED_SNAPSHOT_NODE_ALLOCATIONS.with(std::cell::Cell::get)
+fn recorded_state_node_allocations() -> usize {
+    RECORDED_STATE_NODE_ALLOCATIONS.with(std::cell::Cell::get)
 }
 
-/// A lazy bounded traversal of the persistent snapshot tree. Each visited
+/// A lazy bounded traversal of the persistent state tree. Each visited
 /// node consumes work and checks cancellation, including tombstones/exits.
-struct RecordedSnapshotRange<'a> {
-    stack: Vec<&'a RecordedSnapshotNode>,
-    lower: SnapshotSelector,
-    upper: SnapshotSelector,
+struct RecordedStateRange<'a> {
+    stack: Vec<&'a RecordedStateNode>,
+    lower: ProgramPointSelector,
+    upper: ProgramPointSelector,
     descending: bool,
     stopped: bool,
 }
 
-impl<'a> RecordedSnapshotRange<'a> {
+impl<'a> RecordedStateRange<'a> {
     fn new(
-        root: Option<&'a RecordedSnapshotNode>,
-        lower: SnapshotSelector,
-        upper: SnapshotSelector,
+        root: Option<&'a RecordedStateNode>,
+        lower: ProgramPointSelector,
+        upper: ProgramPointSelector,
         descending: bool,
     ) -> Self {
         let mut result = Self {
@@ -3692,7 +3697,7 @@ impl<'a> RecordedSnapshotRange<'a> {
         result
     }
 
-    fn seek(&mut self, mut node: Option<&'a RecordedSnapshotNode>) {
+    fn seek(&mut self, mut node: Option<&'a RecordedStateNode>) {
         while let Some(current) = node {
             if crate::instrumentation::deadline_exceeded() {
                 self.stopped = true;
@@ -3715,8 +3720,8 @@ impl<'a> RecordedSnapshotRange<'a> {
     }
 }
 
-impl<'a> Iterator for RecordedSnapshotRange<'a> {
-    type Item = (&'a SnapshotSelector, &'a ExecutionState);
+impl<'a> Iterator for RecordedStateRange<'a> {
+    type Item = (&'a ProgramPointSelector, &'a ExecutionState);
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.stopped {
@@ -3742,7 +3747,7 @@ impl<'a> Iterator for RecordedSnapshotRange<'a> {
     }
 }
 
-impl RecordedSnapshots {
+impl RecordedStates {
     fn record_effect(&mut self, effect: Option<&std::sync::Arc<crate::kernel::RegionFootprint>>) {
         if let Some(effect) = effect {
             let gap = self.effect_log.back().is_some_and(|previous| {
@@ -3763,11 +3768,11 @@ impl RecordedSnapshots {
     }
 
     fn footprint(&self, region: &CodeRegionRef) -> Result<crate::kernel::Resource, String> {
-        let before = self.recorded_spelling(SnapshotSelector::ProgramPoint(ProgramPointRef {
+        let before = self.recorded_spelling(ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: region.clone(),
             kind: ProgramPointKind::Entry,
         }));
-        let after = self.recorded_spelling(SnapshotSelector::ProgramPoint(ProgramPointRef {
+        let after = self.recorded_spelling(ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: region.clone(),
             kind: ProgramPointKind::Exit,
         }));
@@ -3841,11 +3846,11 @@ impl RecordedSnapshots {
         // producer's atomic region is currently a complete footprint.
         let complete = match (&before, &after, members.front()) {
             (
-                SnapshotSelector::ProgramPoint(ProgramPointRef {
+                ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Region(a),
                     ..
                 }),
-                SnapshotSelector::ProgramPoint(ProgramPointRef {
+                ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Region(b),
                     ..
                 }),
@@ -3874,7 +3879,7 @@ impl RecordedSnapshots {
         Self::default()
     }
 
-    fn get<K: RecordedSnapshotKey + ?Sized>(&self, key: &K) -> Option<&ExecutionState> {
+    fn get<K: RecordedStateKey + ?Sized>(&self, key: &K) -> Option<&ExecutionState> {
         if self.loop_labels.is_some() || key.is_source_path() {
             let selector = self.recorded_spelling(key.to_selector());
             return self.get_exact(&selector);
@@ -4162,7 +4167,7 @@ impl RecordedSnapshots {
                 break;
             }
             crate::instrumentation::record_deterministic_work(1);
-            if let SnapshotSelector::ProgramPoint(ProgramPointRef {
+            if let ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(index),
                 kind,
             }) = &entry.selector
@@ -4170,7 +4175,7 @@ impl RecordedSnapshots {
                 && let Some(state) = self.get(&entry.selector)
             {
                 points
-                    .snapshots
+                    .retained_states
                     .push((entry.selector.clone(), state.clone()));
                 if *kind == ProgramPointKind::Exit
                     && let Some(value) = self.call_results.get(index)
@@ -4180,7 +4185,7 @@ impl RecordedSnapshots {
             }
             change = entry.parent.as_ref();
         }
-        points.snapshots.reverse();
+        points.retained_states.reverse();
         points
     }
 
@@ -4189,7 +4194,7 @@ impl RecordedSnapshots {
     /// read of one is refused naming the paths.
     fn record_ambiguous_exit_points(&mut self, loop_index: usize, paths: &[RecordedRegionPoints]) {
         for points in paths {
-            for (selector, _) in &points.snapshots {
+            for (selector, _) in &points.retained_states {
                 crate::instrumentation::record_deterministic_work(1);
                 self.ambiguous_exit_points
                     .insert(selector.clone(), (loop_index, paths.len()));
@@ -4199,9 +4204,9 @@ impl RecordedSnapshots {
 
     /// Why `selector` has no recorded state after a loop that left on
     /// several paths, when that is the reason.
-    fn ambiguous_exit_refusal(&self, selector: &SnapshotSelector) -> Option<String> {
+    fn ambiguous_exit_refusal(&self, selector: &ProgramPointSelector) -> Option<String> {
         let (loop_index, paths) = self.ambiguous_exit_points.get(selector)?;
-        let SnapshotSelector::ProgramPoint(point) = selector else {
+        let ProgramPointSelector::ProgramPoint(point) = selector else {
             return None;
         };
         Some(format!(
@@ -4213,7 +4218,7 @@ impl RecordedSnapshots {
     /// Records points another path recorded, as `recorded_since` returned
     /// them.
     fn record_region_points(&mut self, points: &RecordedRegionPoints) {
-        for (selector, state) in &points.snapshots {
+        for (selector, state) in &points.retained_states {
             self.insert(selector.clone(), state.clone());
         }
         for (index, value) in &points.call_results {
@@ -4362,7 +4367,7 @@ impl RecordedSnapshots {
             return Err("`.allocation` requires a fresh allocation region".to_string());
         }
         let state = self
-            .get(&SnapshotSelector::ProgramPoint(point))
+            .get(&ProgramPointSelector::ProgramPoint(point))
             .ok_or("`.allocation` names an allocation this proof has not executed yet")?;
         let result_value = state.locals().get_native(&local);
         let Some(ProgramValue::Pointer(result)) = result_value.as_deref() else {
@@ -4378,15 +4383,15 @@ impl RecordedSnapshots {
     /// The program point `selector` names, spelled as it is recorded: a
     /// statement path as its `region(N)`, and a loop under its first label
     /// when the loop has one.
-    fn recorded_spelling(&self, selector: SnapshotSelector) -> SnapshotSelector {
+    fn recorded_spelling(&self, selector: ProgramPointSelector) -> ProgramPointSelector {
         let selector = match &selector {
-            SnapshotSelector::ProgramPoint(
+            ProgramPointSelector::ProgramPoint(
                 point @ ProgramPointRef {
                     region: CodeRegionRef::Path(_),
                     ..
                 },
             ) => match self.source_point(point) {
-                Ok(point) => SnapshotSelector::ProgramPoint(point),
+                Ok(point) => ProgramPointSelector::ProgramPoint(point),
                 Err(_) => return selector,
             },
             _ => selector,
@@ -4394,7 +4399,7 @@ impl RecordedSnapshots {
         let Some(labels) = &self.loop_labels else {
             return selector;
         };
-        let SnapshotSelector::ProgramPoint(ProgramPointRef { region, kind }) = &selector else {
+        let ProgramPointSelector::ProgramPoint(ProgramPointRef { region, kind }) = &selector else {
             return selector;
         };
         let index = match region {
@@ -4406,11 +4411,11 @@ impl RecordedSnapshots {
             _ => return selector,
         };
         match labels.preferred.get(&index) {
-            Some(label) => SnapshotSelector::ProgramPoint(ProgramPointRef {
+            Some(label) => ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Label(label.clone()),
                 kind: *kind,
             }),
-            None => SnapshotSelector::ProgramPoint(ProgramPointRef {
+            None => ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Loop(index),
                 kind: *kind,
             }),
@@ -4418,7 +4423,7 @@ impl RecordedSnapshots {
     }
 
     /// Records that the proof calls loop `index` `label` on this path.
-    /// Record a loop's labels before its first snapshot.
+    /// Record a loop's labels before its first state.
     fn label_loop(&mut self, index: usize, label: &str) {
         if self
             .loop_labels
@@ -4434,7 +4439,7 @@ impl RecordedSnapshots {
             .preferred
             .entry(index)
             .or_insert_with(|| label.to_string());
-        // A snapshot recorded before the loop had a label moves to the
+        // A state recorded before the loop had a label moves to the
         // label's spelling, so it stays the one entry for its point.
         let unlabeled = if first {
             [ProgramPointKind::Entry, ProgramPointKind::Exit]
@@ -4460,7 +4465,7 @@ impl RecordedSnapshots {
         }
     }
 
-    fn get_exact<K: RecordedSnapshotKey + ?Sized>(&self, key: &K) -> Option<&ExecutionState> {
+    fn get_exact<K: RecordedStateKey + ?Sized>(&self, key: &K) -> Option<&ExecutionState> {
         let mut node = self.version.root.as_deref();
         while let Some(current) = node {
             match key.compare(&current.selector) {
@@ -4473,11 +4478,11 @@ impl RecordedSnapshots {
     }
 
     /// The newest recorded point whose memory reads the same program bytes
-    /// as `memory`, with its state. One hash lookup; no snapshot is visited.
+    /// as `memory`, with its state. One hash lookup; no state is visited.
     fn point_reading_memory(
         &self,
         memory: &crate::kernel::SharedMemory,
-    ) -> Option<(&SnapshotSelector, &ExecutionState)> {
+    ) -> Option<(&ProgramPointSelector, &ExecutionState)> {
         let selector = self.memory_points.get(&memory.read_identity())?;
         Some((selector, self.get_exact(selector)?))
     }
@@ -4488,7 +4493,7 @@ impl RecordedSnapshots {
     fn point_naming_integer(
         &self,
         term: &crate::kernel::MachineTerm,
-    ) -> Option<(&SnapshotSelector, &str, &ExecutionState)> {
+    ) -> Option<(&ProgramPointSelector, &str, &ExecutionState)> {
         let fingerprint = crate::kernel::held_term_fingerprint(term);
         let mut key = (fingerprint, String::new());
         let mut found = self.value_points.get_key_value(&key);
@@ -4513,7 +4518,7 @@ impl RecordedSnapshots {
     /// `state`'s locals hold and the state inserted before it did not, at
     /// `selector`. A value keeps the first
     /// point that names it while that point's state still holds it.
-    fn record_value_points(&mut self, selector: &SnapshotSelector, state: &ExecutionState) {
+    fn record_value_points(&mut self, selector: &ProgramPointSelector, state: &ExecutionState) {
         for (name, term) in state
             .locals()
             .changed_integer_holdings(self.last_locals.as_ref())
@@ -4589,11 +4594,11 @@ impl RecordedSnapshots {
 
     fn update_allocation_result(
         &mut self,
-        selector: &SnapshotSelector,
+        selector: &ProgramPointSelector,
         prior: Option<&ExecutionState>,
         next: Option<&ExecutionState>,
     ) {
-        let SnapshotSelector::ProgramPoint(ProgramPointRef {
+        let ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Region(index),
             kind: ProgramPointKind::Exit,
         }) = selector
@@ -4646,7 +4651,7 @@ impl RecordedSnapshots {
     fn points_near_memory(
         &self,
         memory: &crate::kernel::SharedMemory,
-    ) -> impl Iterator<Item = (&SnapshotSelector, &ExecutionState)> {
+    ) -> impl Iterator<Item = (&ProgramPointSelector, &ExecutionState)> {
         let identity = memory.read_identity();
         let after = self
             .memory_points
@@ -4670,7 +4675,7 @@ impl RecordedSnapshots {
     fn points_holding_pointer_block<'a>(
         &'a self,
         block: &'a crate::kernel::PointerBlock,
-    ) -> impl Iterator<Item = (&'a SnapshotSelector, &'a ExecutionState)> {
+    ) -> impl Iterator<Item = (&'a ProgramPointSelector, &'a ExecutionState)> {
         let mut key = (block.clone(), String::new());
         let mut found = self.pointer_points.get_key_value(&key);
         std::iter::from_fn(move || {
@@ -4699,7 +4704,7 @@ impl RecordedSnapshots {
     fn points_holding_cell_integer(
         &self,
         term: &crate::kernel::MachineTerm,
-    ) -> impl Iterator<Item = (&SnapshotSelector, &ExecutionState)> {
+    ) -> impl Iterator<Item = (&ProgramPointSelector, &ExecutionState)> {
         let fingerprint = crate::kernel::held_term_fingerprint(term);
         let mut key = (fingerprint, 0);
         let mut first = true;
@@ -4729,7 +4734,7 @@ impl RecordedSnapshots {
     fn point_holding_field_value(
         &self,
         variable: crate::kernel::Variable,
-    ) -> Option<(&SnapshotSelector, &ExecutionState)> {
+    ) -> Option<(&ProgramPointSelector, &ExecutionState)> {
         let selector = self.field_points.get(&variable)?;
         let state = self.get_exact(selector)?;
         let origin = crate::kernel::model_fields::registered_model_field_origin(variable)?;
@@ -4737,13 +4742,13 @@ impl RecordedSnapshots {
             .then_some((selector, state))
     }
 
-    fn contains_key<K: RecordedSnapshotKey + ?Sized>(&self, key: &K) -> bool {
+    fn contains_key<K: RecordedStateKey + ?Sized>(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
 
     fn insert(
         &mut self,
-        selector: impl Into<SnapshotSelector>,
+        selector: impl Into<ProgramPointSelector>,
         state: ExecutionState,
     ) -> Option<ExecutionState> {
         let selector = self.recorded_spelling(selector.into());
@@ -4756,7 +4761,7 @@ impl RecordedSnapshots {
             self.memory_points
                 .insert(memory.read_identity(), selector.clone());
         }
-        if let SnapshotSelector::ProgramPoint(ProgramPointRef {
+        if let ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Region(index),
             kind: ProgramPointKind::Exit,
         }) = &selector
@@ -4778,13 +4783,13 @@ impl RecordedSnapshots {
             self.record_call_result(*index, result);
         }
         self.record_value_points(&selector, &state);
-        self.version = std::sync::Arc::new(RecordedSnapshotVersion {
-            root: Some(recorded_snapshot_insert(
+        self.version = std::sync::Arc::new(RecordedStateVersion {
+            root: Some(recorded_state_insert(
                 self.version.root.as_ref(),
                 selector.clone(),
                 Some(state),
             )),
-            history: Some(std::sync::Arc::new(RecordedSnapshotChange {
+            history: Some(std::sync::Arc::new(RecordedStateChange {
                 selector,
                 parent: self.version.history.clone(),
             })),
@@ -4793,7 +4798,7 @@ impl RecordedSnapshots {
         prior
     }
 
-    /// The index of the C statement whose snapshot was recorded most
+    /// The index of the C statement whose state was recorded most
     /// recently and is still recorded: the statement an execution path last
     /// stepped. Diagnostics read this to name where a path ended.
     ///
@@ -4807,7 +4812,7 @@ impl RecordedSnapshots {
         let mut change = self.version.history.as_ref();
         for _ in 0..LATEST_STATEMENT_WALK {
             let entry = change?;
-            if let SnapshotSelector::ProgramPoint(ProgramPointRef {
+            if let ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(index),
                 ..
             }) = &entry.selector
@@ -4820,11 +4825,11 @@ impl RecordedSnapshots {
         None
     }
 
-    fn remove<K: RecordedSnapshotKey + ?Sized>(&mut self, key: &K) -> Option<ExecutionState> {
+    fn remove<K: RecordedStateKey + ?Sized>(&mut self, key: &K) -> Option<ExecutionState> {
         let selector = self.recorded_spelling(key.to_selector());
         let prior = self.get(key).cloned();
         self.update_allocation_result(&selector, prior.as_ref(), None);
-        if let SnapshotSelector::ProgramPoint(ProgramPointRef {
+        if let ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Region(index),
             kind: ProgramPointKind::Exit,
         }) = &selector
@@ -4841,13 +4846,13 @@ impl RecordedSnapshots {
             self.memory_points.remove(&memory.read_identity());
         }
         if prior.is_some() {
-            self.version = std::sync::Arc::new(RecordedSnapshotVersion {
-                root: Some(recorded_snapshot_insert(
+            self.version = std::sync::Arc::new(RecordedStateVersion {
+                root: Some(recorded_state_insert(
                     self.version.root.as_ref(),
                     selector.clone(),
                     None,
                 )),
-                history: Some(std::sync::Arc::new(RecordedSnapshotChange {
+                history: Some(std::sync::Arc::new(RecordedStateChange {
                     selector,
                     parent: self.version.history.clone(),
                 })),
@@ -4860,14 +4865,14 @@ impl RecordedSnapshots {
     /// Intersects two descendants of one exact persistent ancestor by
     /// visiting only the keys changed after the fork.
     ///
-    /// This is the recorded-snapshot merge required by a proof-level execution
+    /// This is the recorded-state merge required by a proof-level execution
     /// case split. Returning `None` for unrelated histories prevents a caller
     /// from treating structurally similar maps as branches of the same proof.
     fn common_descendant(&self, other: &Self, ancestor: &Self) -> Option<Self> {
         fn changed_keys_since(
-            descendant: &RecordedSnapshots,
-            ancestor: &RecordedSnapshots,
-            changed: &mut BTreeSet<SnapshotSelector>,
+            descendant: &RecordedStates,
+            ancestor: &RecordedStates,
+            changed: &mut BTreeSet<ProgramPointSelector>,
         ) -> bool {
             let mut current = descendant.version.history.as_ref();
             loop {
@@ -4911,7 +4916,7 @@ impl RecordedSnapshots {
             match (self.get(&selector), other.get(&selector)) {
                 (Some(left), Some(right)) if left == right => {
                     common.insert(selector.clone(), left.clone());
-                    if let SnapshotSelector::ProgramPoint(ProgramPointRef {
+                    if let ProgramPointSelector::ProgramPoint(ProgramPointRef {
                         region: CodeRegionRef::Region(index),
                         kind: ProgramPointKind::Exit,
                     }) = selector
@@ -4934,54 +4939,54 @@ impl RecordedSnapshots {
         Some(common)
     }
 
-    fn iter(&self) -> std::vec::IntoIter<(&SnapshotSelector, &ExecutionState)> {
+    fn iter(&self) -> std::vec::IntoIter<(&ProgramPointSelector, &ExecutionState)> {
         let mut entries = Vec::new();
-        recorded_snapshot_entries(self.version.root.as_deref(), &mut entries);
+        recorded_state_entries(self.version.root.as_deref(), &mut entries);
         entries.into_iter()
     }
 
     /// The entries newest selector first, read from the persistent tree as
     /// they are taken: a reader that stops at the first one it wants visits
-    /// a logarithm of the tree, not every snapshot the path recorded.
-    fn iter_newest_first(&self) -> RecordedSnapshotsNewestFirst<'_> {
-        let mut entries = RecordedSnapshotsNewestFirst {
+    /// a logarithm of the tree, not every state the path recorded.
+    fn iter_newest_first(&self) -> RecordedStatesNewestFirst<'_> {
+        let mut entries = RecordedStatesNewestFirst {
             pending: Vec::new(),
         };
         entries.push_right_spine(self.version.root.as_deref());
         entries
     }
 
-    fn keys_newest_first(&self) -> impl Iterator<Item = &SnapshotSelector> {
+    fn keys_newest_first(&self) -> impl Iterator<Item = &ProgramPointSelector> {
         self.iter_newest_first().map(|(selector, _)| selector)
     }
 
     /// Statement entries at/before the anchor in reverse order, then later
     /// entries in forward order. Seek through the persistent tree rather than
-    /// materializing and sorting every snapshot before the first candidate.
+    /// materializing and sorting every state before the first candidate.
     fn statement_entries_nearest(
         &self,
         anchor: usize,
     ) -> impl Iterator<Item = (&ProgramPointRef, &ExecutionState)> {
         let selector = |index, kind| {
-            SnapshotSelector::ProgramPoint(ProgramPointRef {
+            ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(index),
                 kind,
             })
         };
-        RecordedSnapshotRange::new(
+        RecordedStateRange::new(
             self.version.root.as_deref(),
             selector(0, ProgramPointKind::Entry),
             selector(anchor, ProgramPointKind::Entry),
             true,
         )
-        .chain(RecordedSnapshotRange::new(
+        .chain(RecordedStateRange::new(
             self.version.root.as_deref(),
             selector(anchor, ProgramPointKind::Exit),
             selector(usize::MAX, ProgramPointKind::Exit),
             false,
         ))
         .filter_map(|(selector, state)| match selector {
-            SnapshotSelector::ProgramPoint(point) if point.kind == ProgramPointKind::Entry => {
+            ProgramPointSelector::ProgramPoint(point) if point.kind == ProgramPointKind::Entry => {
                 Some((point, state))
             }
             _ => None,
@@ -4990,7 +4995,7 @@ impl RecordedSnapshots {
 
     /// Bounded, newest-first source points for diagnostic reconstruction.
     /// History can repeat a key; only its currently recorded state is returned.
-    fn recent(&self, limit: usize) -> Vec<(&SnapshotSelector, &ExecutionState)> {
+    fn recent(&self, limit: usize) -> Vec<(&ProgramPointSelector, &ExecutionState)> {
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
         let mut change = self.version.history.as_ref();
@@ -5011,14 +5016,14 @@ impl RecordedSnapshots {
     /// The proof's marks, at most `limit` of them. `Mark` selectors sort
     /// after every program point, so they lead the newest-first walk and
     /// the walk stops at the first program point.
-    fn marks(&self, limit: usize) -> Vec<(&SnapshotSelector, &ExecutionState)> {
+    fn marks(&self, limit: usize) -> Vec<(&ProgramPointSelector, &ExecutionState)> {
         self.iter_newest_first()
-            .take_while(|(selector, _)| matches!(selector, SnapshotSelector::Mark(_)))
+            .take_while(|(selector, _)| matches!(selector, ProgramPointSelector::Mark(_)))
             .take(limit)
             .collect()
     }
 
-    fn retain(&mut self, mut keep: impl FnMut(&SnapshotSelector, &mut ExecutionState) -> bool) {
+    fn retain(&mut self, mut keep: impl FnMut(&ProgramPointSelector, &mut ExecutionState) -> bool) {
         let mut retained = Self::new();
         retained.loop_labels = self.loop_labels.clone();
         retained.source_layout = self.source_layout.clone();
@@ -5028,7 +5033,7 @@ impl RecordedSnapshots {
             let mut state = state.clone();
             if keep(selector, &mut state) {
                 retained.insert(selector.clone(), state);
-                if let SnapshotSelector::ProgramPoint(ProgramPointRef {
+                if let ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Exit,
                 }) = selector
@@ -5041,27 +5046,27 @@ impl RecordedSnapshots {
     }
 }
 
-trait RecordedSnapshotKey {
-    fn compare(&self, selector: &SnapshotSelector) -> std::cmp::Ordering;
-    fn to_selector(&self) -> SnapshotSelector;
+trait RecordedStateKey {
+    fn compare(&self, selector: &ProgramPointSelector) -> std::cmp::Ordering;
+    fn to_selector(&self) -> ProgramPointSelector;
     /// Whether the key is a path through the statements as written, which
     /// is recorded under the `region(N)` it resolves to.
     fn is_source_path(&self) -> bool;
 }
 
-impl RecordedSnapshotKey for SnapshotSelector {
-    fn compare(&self, selector: &SnapshotSelector) -> std::cmp::Ordering {
+impl RecordedStateKey for ProgramPointSelector {
+    fn compare(&self, selector: &ProgramPointSelector) -> std::cmp::Ordering {
         self.cmp(selector)
     }
 
-    fn to_selector(&self) -> SnapshotSelector {
+    fn to_selector(&self) -> ProgramPointSelector {
         self.clone()
     }
 
     fn is_source_path(&self) -> bool {
         matches!(
             self,
-            SnapshotSelector::ProgramPoint(ProgramPointRef {
+            ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Path(_),
                 ..
             })
@@ -5069,13 +5074,13 @@ impl RecordedSnapshotKey for SnapshotSelector {
     }
 }
 
-impl RecordedSnapshotKey for ProgramPointRef {
-    fn compare(&self, selector: &SnapshotSelector) -> std::cmp::Ordering {
-        SnapshotSelector::ProgramPoint(self.clone()).cmp(selector)
+impl RecordedStateKey for ProgramPointRef {
+    fn compare(&self, selector: &ProgramPointSelector) -> std::cmp::Ordering {
+        ProgramPointSelector::ProgramPoint(self.clone()).cmp(selector)
     }
 
-    fn to_selector(&self) -> SnapshotSelector {
-        SnapshotSelector::ProgramPoint(self.clone())
+    fn to_selector(&self) -> ProgramPointSelector {
+        ProgramPointSelector::ProgramPoint(self.clone())
     }
 
     fn is_source_path(&self) -> bool {
@@ -5083,35 +5088,35 @@ impl RecordedSnapshotKey for ProgramPointRef {
     }
 }
 
-impl std::fmt::Debug for RecordedSnapshots {
+impl std::fmt::Debug for RecordedStates {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_map().entries(self.iter()).finish()
     }
 }
 
-impl PartialEq for RecordedSnapshots {
+impl PartialEq for RecordedStates {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
     }
 }
 
-impl Eq for RecordedSnapshots {}
+impl Eq for RecordedStates {}
 
-fn recorded_snapshot_height(node: Option<&std::sync::Arc<RecordedSnapshotNode>>) -> u8 {
+fn recorded_state_height(node: Option<&std::sync::Arc<RecordedStateNode>>) -> u8 {
     node.map_or(0, |node| node.height)
 }
 
-fn recorded_snapshot_node(
-    selector: SnapshotSelector,
+fn recorded_state_node(
+    selector: ProgramPointSelector,
     state: Option<ExecutionState>,
-    left: Option<std::sync::Arc<RecordedSnapshotNode>>,
-    right: Option<std::sync::Arc<RecordedSnapshotNode>>,
-) -> std::sync::Arc<RecordedSnapshotNode> {
+    left: Option<std::sync::Arc<RecordedStateNode>>,
+    right: Option<std::sync::Arc<RecordedStateNode>>,
+) -> std::sync::Arc<RecordedStateNode> {
     #[cfg(test)]
-    RECORDED_SNAPSHOT_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
+    RECORDED_STATE_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
     let height =
-        1 + recorded_snapshot_height(left.as_ref()).max(recorded_snapshot_height(right.as_ref()));
-    std::sync::Arc::new(RecordedSnapshotNode {
+        1 + recorded_state_height(left.as_ref()).max(recorded_state_height(right.as_ref()));
+    std::sync::Arc::new(RecordedStateNode {
         selector,
         state,
         left,
@@ -5120,27 +5125,27 @@ fn recorded_snapshot_node(
     })
 }
 
-fn recorded_snapshot_balance(
-    selector: SnapshotSelector,
+fn recorded_state_balance(
+    selector: ProgramPointSelector,
     state: Option<ExecutionState>,
-    mut left: Option<std::sync::Arc<RecordedSnapshotNode>>,
-    mut right: Option<std::sync::Arc<RecordedSnapshotNode>>,
-) -> std::sync::Arc<RecordedSnapshotNode> {
-    let balance = i16::from(recorded_snapshot_height(left.as_ref()))
-        - i16::from(recorded_snapshot_height(right.as_ref()));
+    mut left: Option<std::sync::Arc<RecordedStateNode>>,
+    mut right: Option<std::sync::Arc<RecordedStateNode>>,
+) -> std::sync::Arc<RecordedStateNode> {
+    let balance = i16::from(recorded_state_height(left.as_ref()))
+        - i16::from(recorded_state_height(right.as_ref()));
     if balance > 1 {
         let left_root = left.as_ref().expect("left-heavy AVL node has a left child");
-        if recorded_snapshot_height(left_root.left.as_ref())
-            < recorded_snapshot_height(left_root.right.as_ref())
+        if recorded_state_height(left_root.left.as_ref())
+            < recorded_state_height(left_root.right.as_ref())
         {
             let pivot = left_root
                 .right
                 .as_ref()
                 .expect("left-right AVL rotation has a pivot");
-            left = Some(recorded_snapshot_node(
+            left = Some(recorded_state_node(
                 pivot.selector.clone(),
                 pivot.state.clone(),
-                Some(recorded_snapshot_node(
+                Some(recorded_state_node(
                     left_root.selector.clone(),
                     left_root.state.clone(),
                     left_root.left.clone(),
@@ -5150,11 +5155,11 @@ fn recorded_snapshot_balance(
             ));
         }
         let pivot = left.as_ref().expect("left AVL rotation has a pivot");
-        return recorded_snapshot_node(
+        return recorded_state_node(
             pivot.selector.clone(),
             pivot.state.clone(),
             pivot.left.clone(),
-            Some(recorded_snapshot_node(
+            Some(recorded_state_node(
                 selector,
                 state,
                 pivot.right.clone(),
@@ -5166,18 +5171,18 @@ fn recorded_snapshot_balance(
         let right_root = right
             .as_ref()
             .expect("right-heavy AVL node has a right child");
-        if recorded_snapshot_height(right_root.right.as_ref())
-            < recorded_snapshot_height(right_root.left.as_ref())
+        if recorded_state_height(right_root.right.as_ref())
+            < recorded_state_height(right_root.left.as_ref())
         {
             let pivot = right_root
                 .left
                 .as_ref()
                 .expect("right-left AVL rotation has a pivot");
-            right = Some(recorded_snapshot_node(
+            right = Some(recorded_state_node(
                 pivot.selector.clone(),
                 pivot.state.clone(),
                 pivot.left.clone(),
-                Some(recorded_snapshot_node(
+                Some(recorded_state_node(
                     right_root.selector.clone(),
                     right_root.state.clone(),
                     pivot.right.clone(),
@@ -5186,10 +5191,10 @@ fn recorded_snapshot_balance(
             ));
         }
         let pivot = right.as_ref().expect("right AVL rotation has a pivot");
-        return recorded_snapshot_node(
+        return recorded_state_node(
             pivot.selector.clone(),
             pivot.state.clone(),
-            Some(recorded_snapshot_node(
+            Some(recorded_state_node(
                 selector,
                 state,
                 left,
@@ -5198,51 +5203,43 @@ fn recorded_snapshot_balance(
             pivot.right.clone(),
         );
     }
-    recorded_snapshot_node(selector, state, left, right)
+    recorded_state_node(selector, state, left, right)
 }
 
-fn recorded_snapshot_insert(
-    root: Option<&std::sync::Arc<RecordedSnapshotNode>>,
-    selector: SnapshotSelector,
+fn recorded_state_insert(
+    root: Option<&std::sync::Arc<RecordedStateNode>>,
+    selector: ProgramPointSelector,
     state: Option<ExecutionState>,
-) -> std::sync::Arc<RecordedSnapshotNode> {
+) -> std::sync::Arc<RecordedStateNode> {
     let Some(root) = root else {
-        return recorded_snapshot_node(selector, state, None, None);
+        return recorded_state_node(selector, state, None, None);
     };
     match selector.cmp(&root.selector) {
-        std::cmp::Ordering::Less => recorded_snapshot_balance(
+        std::cmp::Ordering::Less => recorded_state_balance(
             root.selector.clone(),
             root.state.clone(),
-            Some(recorded_snapshot_insert(
-                root.left.as_ref(),
-                selector,
-                state,
-            )),
+            Some(recorded_state_insert(root.left.as_ref(), selector, state)),
             root.right.clone(),
         ),
-        std::cmp::Ordering::Greater => recorded_snapshot_balance(
+        std::cmp::Ordering::Greater => recorded_state_balance(
             root.selector.clone(),
             root.state.clone(),
             root.left.clone(),
-            Some(recorded_snapshot_insert(
-                root.right.as_ref(),
-                selector,
-                state,
-            )),
+            Some(recorded_state_insert(root.right.as_ref(), selector, state)),
         ),
         std::cmp::Ordering::Equal => {
-            recorded_snapshot_node(selector, state, root.left.clone(), root.right.clone())
+            recorded_state_node(selector, state, root.left.clone(), root.right.clone())
         }
     }
 }
 
-/// [`RecordedSnapshots::iter_newest_first`].
-struct RecordedSnapshotsNewestFirst<'a> {
-    pending: Vec<&'a RecordedSnapshotNode>,
+/// [`RecordedStates::iter_newest_first`].
+struct RecordedStatesNewestFirst<'a> {
+    pending: Vec<&'a RecordedStateNode>,
 }
 
-impl<'a> RecordedSnapshotsNewestFirst<'a> {
-    fn push_right_spine(&mut self, mut node: Option<&'a RecordedSnapshotNode>) {
+impl<'a> RecordedStatesNewestFirst<'a> {
+    fn push_right_spine(&mut self, mut node: Option<&'a RecordedStateNode>) {
         while let Some(current) = node {
             self.pending.push(current);
             node = current.right.as_deref();
@@ -5250,8 +5247,8 @@ impl<'a> RecordedSnapshotsNewestFirst<'a> {
     }
 }
 
-impl<'a> Iterator for RecordedSnapshotsNewestFirst<'a> {
-    type Item = (&'a SnapshotSelector, &'a ExecutionState);
+impl<'a> Iterator for RecordedStatesNewestFirst<'a> {
+    type Item = (&'a ProgramPointSelector, &'a ExecutionState);
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.pending.pop() {
@@ -5264,18 +5261,18 @@ impl<'a> Iterator for RecordedSnapshotsNewestFirst<'a> {
     }
 }
 
-fn recorded_snapshot_entries<'a>(
-    node: Option<&'a RecordedSnapshotNode>,
-    entries: &mut Vec<(&'a SnapshotSelector, &'a ExecutionState)>,
+fn recorded_state_entries<'a>(
+    node: Option<&'a RecordedStateNode>,
+    entries: &mut Vec<(&'a ProgramPointSelector, &'a ExecutionState)>,
 ) {
     let Some(node) = node else {
         return;
     };
-    recorded_snapshot_entries(node.left.as_deref(), entries);
+    recorded_state_entries(node.left.as_deref(), entries);
     if let Some(state) = &node.state {
         entries.push((&node.selector, state));
     }
-    recorded_snapshot_entries(node.right.as_deref(), entries);
+    recorded_state_entries(node.right.as_deref(), entries);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -5297,7 +5294,7 @@ struct SpecElaborationContext {
     /// an array reference is a memory as well as a pointer; without this the
     /// clause's indexing would read the application's current memory. Only a
     /// binding that names another state appears here, so an ordinary array
-    /// name keeps reading through `current_memory` and carries no snapshot.
+    /// name keeps reading through `current_memory` and carries no state.
     array_memories: PersistentMap<String, SpecMemory>,
     current_memory: SpecMemory,
     current_loop_entry: Option<usize>,
@@ -5305,10 +5302,10 @@ struct SpecElaborationContext {
     /// The context is the function entry (`old(...)`), so a resource count
     /// is the entry's population, not the current one.
     at_function_entry: bool,
-    /// The recorded state a proof snapshot names, when the context is one:
+    /// The recorded state a proof state names, when the context is one:
     /// a resource count there is that state's population, which the spec
     /// form cannot name and the elaboration evaluates.
-    snapshot_state: Option<ExecutionState>,
+    reference_state: Option<ExecutionState>,
     /// Bare `result` names the internal contract-return binding here;
     /// explicit C bindings keep their source identifier and value.
     contract_result_in_scope: bool,
@@ -5328,7 +5325,7 @@ impl Default for SpecElaborationContext {
             current_loop_entry: None,
             at_function_entry: false,
             function_contract: false,
-            snapshot_state: None,
+            reference_state: None,
             contract_result_in_scope: false,
             checking_definedness: false,
         }
@@ -5382,7 +5379,7 @@ impl SpecElaborationContext {
                 current_loop_entry: None,
                 function_contract: true,
                 at_function_entry: true,
-                snapshot_state: None,
+                reference_state: None,
                 contract_result_in_scope: false,
                 checking_definedness: self.checking_definedness,
             });
@@ -5413,7 +5410,7 @@ impl SpecElaborationContext {
             current_loop_entry: None,
             function_contract: false,
             at_function_entry: true,
-            snapshot_state: None,
+            reference_state: None,
             // The return value is a logical proof binding, like `let`.
             // Historical C reads still use their own entry bindings.
             contract_result_in_scope: self.contract_result_in_scope,
@@ -5604,7 +5601,7 @@ pub struct CertifiedStatementTransition {
     pub(crate) obligations: Vec<ProofObligation>,
     pub(crate) pure_facts: PureFactList,
     /// Facts emitted by this statement transition itself, after applying the
-    /// same snapshot transports reflected in `pure_facts`. This is an
+    /// same state transports reflected in `pure_facts`. This is an
     /// output-sized semantic delta; it deliberately excludes inherited
     /// ambient facts without rediscovering them by set difference.
     pub(crate) introduced_facts: Vec<Proposition>,
@@ -5622,7 +5619,7 @@ pub struct CertifiedStatementTransition {
     pub(crate) fact_transports: Vec<CertifiedFactTransport>,
     /// Kernel-produced load equation metadata from this exact transition.
     /// This is carried separately from propositions so presentation can use
-    /// the producer's snapshot/pointer identity without inferring it from
+    /// the producer's state/pointer identity without inferring it from
     /// ambient state.
     pub(crate) generated_load_bindings: Vec<crate::kernel::GeneratedLoadBinding>,
     /// Exact source identities emitted by producer facts in this transition.
@@ -6657,7 +6654,7 @@ impl ProofCases {
 }
 
 /// The two disjuncts of a written `cases` disjunction. A disjunction read at
-/// a snapshot, `at(s, A or B)`, splits into `at(s, A)` and `at(s, B)`.
+/// a state, `at(s, A or B)`, splits into `at(s, A)` and `at(s, B)`.
 fn split_case_disjunction(
     disjunction: &ClickProposition,
 ) -> Option<(ClickProposition, ClickProposition)> {
@@ -7179,7 +7176,7 @@ pub enum CodeRegionRef {
     Region(usize),
     Label(String),
     /// A static local assignment occurrence in the executable layout.
-    /// Currently accepted by `step_until`, not snapshot expressions.
+    /// Currently accepted by `step_until`, not state expressions.
     Assignment {
         local: String,
         occurrence: usize,
@@ -7287,38 +7284,38 @@ impl std::fmt::Display for CodeRegionResolutionError {
     }
 }
 
-/// A proof-visible name for one recorded symbolic state.
+/// The surface program point selected by `at(point, expression)`.
 ///
-/// Program points are locations in C. Marks are proof-local names bound to
-/// the current state, so they deliberately remain a separate variant rather
-/// than masquerading as C code regions.
+/// A code location is a `ProgramPointRef`; a proof mark names the current
+/// point on its proof path. Both select a recorded symbolic state. Neither
+/// is a memory state or a cell's version point.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum SnapshotSelector {
+pub enum ProgramPointSelector {
     ProgramPoint(ProgramPointRef),
     Mark(String),
 }
 
-impl From<ProgramPointRef> for SnapshotSelector {
+impl From<ProgramPointRef> for ProgramPointSelector {
     fn from(point: ProgramPointRef) -> Self {
         Self::ProgramPoint(point)
     }
 }
 
-/// Whether a snapshot can name the contract `result`. `result` is the return
+/// Whether a program point can name the contract `result`. `result` is the return
 /// value, which exists only once the function returns, so `old(...)` (`None`)
 /// and every program point but `function.exit` precede it. A proof mark is
 /// placed by the proof itself and may follow the return.
-pub(crate) fn snapshot_can_name_result(selector: Option<&SnapshotSelector>) -> bool {
+pub(crate) fn program_point_can_name_result(selector: Option<&ProgramPointSelector>) -> bool {
     match selector {
         None => false,
-        Some(SnapshotSelector::Mark(_)) => true,
-        Some(SnapshotSelector::ProgramPoint(point)) => {
+        Some(ProgramPointSelector::Mark(_)) => true,
+        Some(ProgramPointSelector::ProgramPoint(point)) => {
             point.region == CodeRegionRef::Function && point.kind == ProgramPointKind::Exit
         }
     }
 }
 
-/// Whether `result` occurs in a proposition outside any nested snapshot.
+/// Whether `result` occurs in a proposition outside any nested state.
 pub(crate) fn proposition_names_result(proposition: &ClickProposition) -> bool {
     let mut names = BTreeSet::new();
     collect_current_proposition_variables(proposition, &mut names);
@@ -7453,13 +7450,13 @@ pub enum SmartTactic {
 
 /// The fixed state a proposition is evaluated in: the entry state, the
 /// current state, the function's result if it has returned, and the states
-/// recorded at named snapshots.
+/// recorded at named states.
 #[derive(Clone, Copy)]
 pub(in crate::surface) struct FixedStateFrame<'a> {
     pub(in crate::surface) pre_state: &'a ExecutionState,
     pub(in crate::surface) state: &'a ExecutionState,
     pub(in crate::surface) result: Option<&'a ProgramValue>,
-    pub(in crate::surface) recorded_snapshots: &'a RecordedSnapshots,
+    pub(in crate::surface) recorded_states: &'a RecordedStates,
 }
 
 impl<'a> FixedStateFrame<'a> {
@@ -7467,13 +7464,13 @@ impl<'a> FixedStateFrame<'a> {
         pre_state: &'a ExecutionState,
         state: &'a ExecutionState,
         result: Option<&'a ProgramValue>,
-        recorded_snapshots: &'a RecordedSnapshots,
+        recorded_states: &'a RecordedStates,
     ) -> Self {
         Self {
             pre_state,
             state,
             result,
-            recorded_snapshots,
+            recorded_states,
         }
     }
 }
@@ -7817,8 +7814,8 @@ impl ClickFunctionEnvironment {
     }
 
     /// Whether this function's result is a function of its argument *values*
-    /// alone. A pointer argument of such a function carries a memory snapshot
-    /// only as dead weight, and that snapshot would otherwise make the same
+    /// alone. A pointer argument of such a function carries a memory state
+    /// only as dead weight, and that state would otherwise make the same
     /// proposition a different term before and after any C write — which is
     /// what stops a body fact such as `rb_parent_is(left_model, p) == 1` from
     /// being discharged at a `fold` that follows one (gap 42).
@@ -7841,7 +7838,7 @@ fn generic_instance_source_name(name: &str) -> &str {
 /// Click functions whose bodies, transitively, read no C memory.
 ///
 /// The classification is deliberately conservative and syntactic: any field
-/// place, index, qualified global, snapshot selector, resource field or count,
+/// place, index, qualified global, program point selector, resource field or count,
 /// predicate call, or C fragment beyond a bare name or literal makes a
 /// function memory-dependent, and so does calling a memory-dependent or
 /// undeclared function. It is computed once per environment from the declared
@@ -7936,7 +7933,7 @@ fn contract_expression_reads_memory(
         {
             false
         }
-        // A memory read, a snapshot selector, a resource observation, or any
+        // A memory read, a program point selector, a resource observation, or any
         // C fragment richer than a name is conservatively memory-dependent.
         ContractExpression::QualifiedC { .. }
         | ContractExpression::ResourceField(_)
@@ -8035,7 +8032,7 @@ fn click_proposition_reads_memory(
         | ClickProposition::Defined { expression } => {
             contract_expression_reads_memory(expression, callees)
         }
-        // Resource separation, containment, loadability, snapshots, and
+        // Resource separation, containment, loadability, states, and
         // predicates all observe the C state.
         ClickProposition::ChangesOnly { .. }
         | ClickProposition::Separate { .. }
@@ -8381,7 +8378,7 @@ struct ReportDetail {
     /// only: no planner reads it.
     goal: Option<Proposition>,
     /// The labels a refusal that prints its own legend numbered it with, so
-    /// a trace of the same failure names the same snapshots and values the
+    /// a trace of the same failure names the same states and values the
     /// same way instead of numbering them afresh.
     labels: Option<ReportLabels>,
 }
@@ -8397,10 +8394,10 @@ impl ReportDetail {
     }
 }
 
-/// A refusal's own snapshot and value labels. Diagnostics only: two errors
+/// A refusal's own state and value labels. Diagnostics only: two errors
 /// are not told apart by them.
 #[derive(Clone)]
-struct ReportLabels(std::sync::Arc<proof_diagnostics::render::SnapshotLabels>);
+struct ReportLabels(std::sync::Arc<proof_diagnostics::render::MemoryStateLabels>);
 
 impl std::fmt::Debug for ReportLabels {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -8594,7 +8591,7 @@ pub struct ProgramVerificationSession {
     verified_function_environment: ExecutionEnvironment,
     environment_identity: verification::ProofArtifactIdentity,
     /// The kernel generation `verified_function_environment` was built
-    /// under. Its snapshots live in this thread's kernel tables, which the
+    /// under. Its states live in this thread's kernel tables, which the
     /// next fresh verification on the thread replaces.
     kernel_generation: u64,
     /// The kernel tables as they stood once that environment was built. Each
@@ -10248,7 +10245,7 @@ fn split_proof_context(reason: &str) -> (&str, Vec<&str>) {
 /// detail on two lines, as the headline's `context: detail` chain does. Two
 /// kinds of line are already laid out and stay whole: an entry the reason
 /// indents under a list heading (a cell walk's `address: ...; width: ...`
-/// fields), and a legend definition (`snapshot#3 = loop effect: may write
+/// fields), and a legend definition (`state#3 = loop effect: may write
 /// ...`), whose colon belongs to the definition. Splitting those at every
 /// colon scattered one entry over several lines.
 fn concise_reason_lines(reason: &str) -> Vec<(bool, &str)> {
@@ -10467,7 +10464,7 @@ impl ClickError {
             .as_ref()
             .is_some_and(|diagnostic| proof_trace::enabled_for(&diagnostic.claim_label))
             .then(proof_diagnostics::render::TypedNotationScope::enter);
-        let mut snapshot_labels = proof_diagnostics::render::SnapshotLabels::ambient();
+        let mut memory_state_labels = proof_diagnostics::render::MemoryStateLabels::ambient();
         let traced_message = self.diagnostic.as_ref().and_then(|diagnostic| {
             (self.kind == ClickErrorKind::Proof
                 && proof_trace::enabled_for(&diagnostic.claim_label))
@@ -10478,7 +10475,7 @@ impl ClickError {
                     self.search_failures
                         .as_deref()
                         .map_or(&[][..], Vec::as_slice),
-                    &mut snapshot_labels,
+                    &mut memory_state_labels,
                 )
             })
         });
@@ -10494,7 +10491,7 @@ impl ClickError {
             report.push_str(&if traced_message.is_some() {
                 proof_diagnostics::render::render_proposition_labeled(
                     &requirement.proposition,
-                    &mut snapshot_labels,
+                    &mut memory_state_labels,
                 )
             } else {
                 proof_diagnostics::render::render_proposition(&requirement.proposition)
@@ -10512,7 +10509,7 @@ impl ClickError {
             && let Some(trace) = self.diagnostic.as_ref().and_then(|diagnostic| {
                 diagnostic.state.as_ref()?.proof_trace(
                     &diagnostic.claim_label,
-                    &mut snapshot_labels,
+                    &mut memory_state_labels,
                     &|_| None,
                     &|_, _| None,
                     &|_, _| false,
@@ -10623,7 +10620,7 @@ impl ClickError {
         if let Some(diagnostic) = &self.diagnostic
             && let Some(state) = diagnostic.state.as_ref()
         {
-            let mut labels = proof_diagnostics::render::SnapshotLabels::ambient();
+            let mut labels = proof_diagnostics::render::MemoryStateLabels::ambient();
             state.register_names(&mut labels);
             if !proof_trace::enabled_for(&diagnostic.claim_label) {
                 let requirement =
@@ -10699,7 +10696,7 @@ impl ClickError {
             .is_some_and(|diagnostic| proof_trace::enabled_for(&diagnostic.claim_label));
         if !traced && !context.iter().any(|line| line.starts_with("goal: ")) {
             // The failed state names the locals that hold the goal's values.
-            let mut labels = proof_diagnostics::render::SnapshotLabels::ambient();
+            let mut labels = proof_diagnostics::render::MemoryStateLabels::ambient();
             if let Some(state) = self
                 .diagnostic
                 .as_ref()
@@ -10784,7 +10781,7 @@ impl ClickError {
             .as_ref()
             .and_then(|detail| detail.labels.as_ref())
             .map_or_else(
-                proof_diagnostics::render::SnapshotLabels::ambient,
+                proof_diagnostics::render::MemoryStateLabels::ambient,
                 |labels| labels.0.as_ref().clone(),
             );
         let context = proof_diagnostics::render_trace_context_with_requirement(
@@ -11209,7 +11206,7 @@ impl ClickError {
     /// continues that numbering.
     pub(crate) fn with_report_labels(
         mut self,
-        labels: proof_diagnostics::render::SnapshotLabels,
+        labels: proof_diagnostics::render::MemoryStateLabels,
     ) -> Self {
         std::sync::Arc::make_mut(self.report_detail.get_or_insert_default()).labels =
             Some(ReportLabels(std::sync::Arc::new(labels)));

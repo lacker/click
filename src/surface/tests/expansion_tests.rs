@@ -1038,7 +1038,7 @@ fn vector_field_input_pointer_certificates_round_trip() {
         .join("tests/fixtures/proof-expansion/vector-field-input.md");
     let markdown = std::fs::read_to_string(&path).unwrap();
     let fixture = crate::cli::parse_mdtest(&path, &markdown).unwrap();
-    let name = "composite_resource_vector_fill_loop_snapshot";
+    let name = "composite_resource_vector_fill_loop_state";
     let source = fixture.click_source.as_deref().unwrap();
     let sources = fixture
         .c_sources
@@ -1052,7 +1052,7 @@ fn vector_field_input_pointer_certificates_round_trip() {
     let expanded =
         expand_c_tactic_source_at(source, &sources, position.line, position.column).unwrap();
     // An unchanged input can print directly as `owner`; the cold recheck
-    // must resolve it without requiring one particular snapshot spelling.
+    // must resolve it without requiring one particular state spelling.
     assert!(!expanded.contains("have i < owner->cap;"), "{expanded}");
     assert!(!expanded.contains("the pointer value at this program point"));
     verify_c_sources(&expanded, &sources).unwrap();
@@ -1143,7 +1143,7 @@ fn struct_pointer_field_scalar_read_expansion_keeps_its_width() {
 // historical selector for each generated element equality.
 #[test]
 #[ignore = "nightly: targeted sequence-conjunction expansion coverage"]
-fn sequence_equality_children_retain_snapshot_spellings() {
+fn sequence_equality_children_retain_state_spellings() {
     for length in [3, 5] {
         let statements = (0..length)
             .map(|i| format!("dst[{i}] = src[{i}];"))
@@ -2033,7 +2033,7 @@ fn saved_memory_descriptors_expand_and_replay() {
         ("saved_memory_bases_keep_current_indices", "advance"),
         ("saved_memory_struct_elements_keep_their_stride", "advance"),
         ("saved_memory_cell_does_not_increment_its_index", "keep"),
-        ("saved_memory_field_address_keeps_snapshot", "redirect"),
+        ("saved_memory_field_address_keeps_state", "redirect"),
         ("arena_prefix_free_reads_region_arena", "arena_release"),
     ] {
         let (source, c_sources) = mdtest_sources(&format!("mdtests/{fixture}.md"));
@@ -2483,7 +2483,7 @@ fn post_execution_closer_continues_the_proof_a_witness_opened() {
 /// in parseable source spelling. It once cited the function-entry alignment
 /// fact, rendered as a pointer cast Click cannot parse; it now separates the
 /// loop's store from the earlier cells by their indices alone, and
-/// `snapshot_read_alignment_fact_renders_as_aligned` covers the rendering.
+/// `state_read_alignment_fact_renders_as_aligned` covers the rendering.
 #[test]
 #[ignore = "nightly: 2s in the parallel gate"]
 fn entry_alignment_premise_expands_in_source_spelling() {
@@ -4117,10 +4117,10 @@ theorem pure_arithmetic_producer(n: int32) {
 }
 
 // The join's exported fact must remain writable after proof-local resolution:
-// the old metadata made this valid snapshot rewrite expand to a literal `…`.
+// the old metadata made this valid state rewrite expand to a literal `…`.
 #[test]
 #[ignore = "nightly: 1.2s in the parallel gate"]
-fn branch_interface_model_pointer_snapshot_rewrite_expands_and_rechecks() {
+fn branch_interface_model_pointer_state_rewrite_expands_and_rechecks() {
     let (source, c) = mdtest_sources("mdtests/branch_interface_keeps_model_pointer_names.md");
     let c = c
         .iter()
@@ -4224,7 +4224,7 @@ fn callback_branch_ground_premises_verify_expand_and_recheck() {
 
 #[test]
 #[ignore = "nightly: 0.7s in the parallel gate"]
-fn serialized_loop_premises_reject_a_changed_snapshot_or_polarity() {
+fn serialized_loop_premises_reject_a_changed_state_or_polarity() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("mdtests/loop_stable_invariant_export.md");
     let fixture = crate::cli::read_mdtest(&path).unwrap();
@@ -4297,10 +4297,7 @@ fn return_population_proofs_expand_without_effect_clauses() {
             "population_cleanup_consumes_whole_quantity.md",
             vec!["cleanup"],
         ),
-        (
-            "resource_count_predicate_snapshot.md",
-            vec!["object_retain"],
-        ),
+        ("resource_count_predicate_state.md", vec!["object_retain"]),
         (
             "resource_pattern_counts_cross_contracts.md",
             vec!["pool_checkout", "pool_return", "pool_roundtrip"],
@@ -4494,7 +4491,7 @@ unsigned long read_pair(unsigned long *p) {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by expansion_batch_21")]
-fn program_entry_typed_dereference_snapshots_expand_and_reverify() {
+fn program_entry_typed_dereference_states_expand_and_reverify() {
     for (interface_type, suffix) in [("unsigned int", "u32"), ("unsigned long", "u64")] {
         let c_source =
             format!("{interface_type} bump({interface_type} *p) {{ *p += 1; return *p; }}");
@@ -4659,7 +4656,7 @@ fn contract_refinement_expands_ordinary_helper_proofs() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by expansion_batch_23")]
-fn unsigned_narrowing_snapshot_expansion_reverifies() {
+fn unsigned_narrowing_state_expansion_reverifies() {
     let c_source = "struct state { unsigned long value; }; unsigned int take(struct state *p) { unsigned int result = p->value; p->value += 1; return result; }";
     let click_source = r#"
         verifying "take.c";
@@ -5884,7 +5881,7 @@ fn smart_apply_surfaces_a_framed_comparison_after_an_immutable_call() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by expansion_batch_29")]
-fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
+fn smart_apply_preserves_statement_states_in_explicit_premises() {
     let c_source = r#"
             int32 decrement(int32* p) {
                 p[0] = 0;
@@ -5941,13 +5938,13 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
 
     let expanded =
         expand_c_tactic_source_at(click_source, &[("decrement.c", c_source)], line, column)
-            .expect("the snapshot theorem application should expand");
+            .expect("the state theorem application should expand");
     assert!(
         expanded.contains("at(region(0).entry, p[0]) == 1;"),
         "{expanded}"
     );
     verify_c_sources(&expanded, &[("decrement.c", c_source)])
-        .expect("the explicit snapshot premises should check");
+        .expect("the explicit state premises should check");
 }
 
 #[test]
@@ -5986,7 +5983,7 @@ fn source_expansion_preserves_proof_marks() {
     assert!(expanded.contains("mark before_increment;"));
     assert!(!expanded.contains("solve();"));
     verify_c_sources(&expanded, &[("increment.c", c_source)])
-        .expect("the expansion should check through the named snapshot");
+        .expect("the expansion should check through the named state");
 }
 
 #[test]
@@ -6167,7 +6164,7 @@ fn post_execution_store_transport_expands_from_the_recorded_store_equation() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by expansion_batch_30")]
-fn statement_snapshots_support_complete_loadability_propositions() {
+fn statement_states_support_complete_loadability_propositions() {
     let c_source = r#"
             int32 store_second_return_first(int32 p[2]) {
                 p[1] = 9;
@@ -6175,7 +6172,7 @@ fn statement_snapshots_support_complete_loadability_propositions() {
             }
         "#;
     let click_source = r#"
-            verifying "snapshot_loadable.c";
+            verifying "state_loadable.c";
 
             int32 store_second_return_first(int32 p[2]) {
                 owns p[0..2];
@@ -6196,13 +6193,13 @@ fn statement_snapshots_support_complete_loadability_propositions() {
             }
         "#;
 
-    verify_c_sources(click_source, &[("snapshot_loadable.c", c_source)])
-        .expect("a complete viewability proposition should lower and transport from a snapshot");
+    verify_c_sources(click_source, &[("state_loadable.c", c_source)])
+        .expect("a complete viewability proposition should lower and transport from a state");
 }
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by expansion_batch_30")]
-fn statement_snapshots_preserve_declared_resource_argument_types() {
+fn statement_states_preserve_declared_resource_argument_types() {
     let c_source = r#"
             int32 preserve_owner(int32* owner) {
                 return owner[0];
@@ -6213,7 +6210,7 @@ fn statement_snapshots_preserve_declared_resource_argument_types() {
                 owns owner[0..1];
             }
 
-            verifying "snapshot_resource.c";
+            verifying "state_resource.c";
 
             int32 preserve_owner(int32* owner) {
                 owns owner_cell(owner);
@@ -6232,7 +6229,7 @@ fn statement_snapshots_preserve_declared_resource_argument_types() {
             }
         "#;
 
-    verify_c_sources(click_source, &[("snapshot_resource.c", c_source)])
+    verify_c_sources(click_source, &[("state_resource.c", c_source)])
         .expect("a historical resource proposition should retain declared argument types");
 }
 
@@ -13036,7 +13033,7 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
             .contains("expanded execution branch condition does not match the checked C branch")
             || error
                 .message()
-                .contains("no state snapshot was recorded for `statement(2).entry`"),
+                .contains("no symbolic state was recorded for `statement(2).entry`"),
         "the checked Proof split should reject the tamper directly: {error:?}"
     );
 }
@@ -13134,7 +13131,7 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
             .contains("does not match the checked C branch")
             || error
                 .message()
-                .contains("no state snapshot was recorded for `statement(2).entry`"),
+                .contains("no symbolic state was recorded for `statement(2).entry`"),
         "the Proof-owned C split should reject the corruption directly: {error:?}"
     );
 }
@@ -13409,7 +13406,7 @@ fn early_return_postcondition_path_selection_expands_and_reverifies() {
 
 #[test]
 #[ignore = "nightly: 1.4s in the parallel gate"]
-fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
+fn state_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
     for (filename, function, claim, retained_step, corrupted_step) in [
         (
             "execute_expands_certified_post_call_fact.md",
@@ -13980,7 +13977,7 @@ fn branch_continuation_claims_retain_their_selected_outcome_step() {
         let expanded = expand_c_claim_source(click_source, &c_sources, function, claim)
             .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
         // The selected outcome step is the one `have` closed by an explicit
-        // arithmetic certificate over the snapshot-anchored premises the
+        // arithmetic certificate over the state-anchored premises the
         // branch exported.
         let retained = arithmetic_certificate_have_blocks(&expanded);
         let [retained] = retained.as_slice() else {
@@ -14310,7 +14307,7 @@ fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_pro
 
     let expanded = expand_function_proof_source(click_source, &sources, "shifted_copy")
         .expect("the retained quantified transport should expand");
-    // The goal's own entry snapshot would carry the whole quantified fact
+    // The goal's own entry state would carry the whole quantified fact
     // in one frame (`quantified_old_transport_expands_to_one_quantified_frame`),
     // so the proof introduces the binder and its guard itself: the
     // expansion must then name the introduced `k`.
@@ -14387,7 +14384,7 @@ fn quantified_old_transport_expands_to_one_quantified_frame() {
 
     let expanded = expand_function_proof_source(click_source, &sources, "shifted_copy")
         .expect("the retained quantified transport should expand");
-    // The entry snapshot of the goal is a reflexive fact, and the quantified
+    // The entry state of the goal is a reflexive fact, and the quantified
     // frame carries it across the loop's checked write set in one step.
     assert!(
         expanded.contains("transport(at(function.entry, forall (k: int32) { 0 <= k and k < n implies src[k] == old(src[k]) }), forall (k: int32) { 0 <= k and k < n implies src[k] == old(src[k]) })"),
@@ -14711,7 +14708,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
         "#;
     let click_source = r#"
             verifying "preserve.c";
-            verifying "snapshot.c";
+            verifying "retained_state.c";
 
             resource one(p: int32*) {
                 owns p[0..1];
@@ -14740,7 +14737,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
         "#;
     let have_offset = click_source
         .find("have at(region(1).entry")
-        .expect("proof should contain the selected snapshot have");
+        .expect("proof should contain the selected state have");
     let line = click_source[..have_offset]
         .bytes()
         .filter(|byte| *byte == b'\n')
@@ -14755,12 +14752,12 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
 
     let c_sources = [
         ("preserve.c", preserve_c_source),
-        ("snapshot.c", pipeline_c_source),
+        ("retained_state.c", pipeline_c_source),
     ];
     let expanded = expand_c_tactic_source_at(click_source, &c_sources, line, column)
-        .expect("the snapshot have should expand");
+        .expect("the state have should expand");
     assert!(expanded.contains("known();"), "{expanded}");
-    verify_c_sources(&expanded, &c_sources).expect("the expanded snapshot have should check");
+    verify_c_sources(&expanded, &c_sources).expect("the expanded state have should check");
 }
 
 #[test]
@@ -16732,7 +16729,7 @@ fn a_consumed_arm_instance_equation_is_cited_at_entry_after_its_unfold() {
         expand_c_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the closing solve should expand");
     // Shared model closure can now close this equality by `known()`. If
-    // a rewrite is emitted, it must still use the readable entry snapshot.
+    // a rewrite is emitted, it must still use the readable entry state.
     assert!(!expanded.contains("rewrite(t.model,"), "{expanded}");
     assert!(
         expanded.contains("known();")
@@ -17255,7 +17252,7 @@ fn normalize_using_int32_loads_expands_and_rechecks() {
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
     let source = fixture.click_source.as_deref().unwrap();
-    verify_c_sources(source, &c_sources).expect("same-snapshot int32 loads should verify");
+    verify_c_sources(source, &c_sources).expect("same-state int32 loads should verify");
     let expanded = expand_c_claim_source(source, &c_sources, "keep", ContractProofClaim::Ensure(0))
         .expect("load congruence should expand");
     assert!(expanded.contains("normalize() using"));
@@ -19326,7 +19323,7 @@ fn whole_global_objects_keep_their_extent_and_field_types() {
 /// Qualified pointer slots must select the same memory in fresh, expanded,
 /// and retained proofs, including entry reads after a store.
 #[test]
-#[ignore = "nightly: checks global and static pointer snapshots across proof modes"]
+#[ignore = "nightly: checks global and static pointer states across proof modes"]
 fn qualified_pointer_slots_keep_selected_memory_in_all_proof_modes() {
     for (fixture, functions) in [
         (
@@ -19334,7 +19331,7 @@ fn qualified_pointer_slots_keep_selected_memory_in_all_proof_modes() {
             &["clear_slot"][..],
         ),
         (
-            "mdtests/qualified_pointer_global_store_keeps_old_snapshot.md",
+            "mdtests/qualified_pointer_global_store_keeps_old_state.md",
             &["exchange_global", "exchange_static"][..],
         ),
     ] {
@@ -19677,7 +19674,7 @@ fn packed_pointer_cast_contracts_survive_expansion_and_retained_verification() {
 
 #[test]
 #[ignore = "nightly: array-bound call across expansion and retained verification"]
-fn call_step_keeps_snapshot_bound_through_expansion_and_retained_check() {
+fn call_step_keeps_state_bound_through_expansion_and_retained_check() {
     let (source, sources) = mdtest_sources("mdtests/call_step_retains_old_array_bound.md");
     let sources = sources
         .iter()
@@ -21548,7 +21545,7 @@ test_batches! {
     ],
     expansion_batch_21: [
         composite_uint64_range_expansion_preserves_type,
-        program_entry_typed_dereference_snapshots_expand_and_reverify,
+        program_entry_typed_dereference_states_expand_and_reverify,
         program_entry_expansion_reverifies,
         program_entry_collects_data_only_private_and_uncalled_local_storage,
     ],
@@ -21559,7 +21556,7 @@ test_batches! {
         contract_refinement_expands_ordinary_helper_proofs,
     ],
     expansion_batch_23: [
-        unsigned_narrowing_snapshot_expansion_reverifies,
+        unsigned_narrowing_state_expansion_reverifies,
         selected_post_execution_solve_waits_for_its_surface_closer,
         selected_post_execution_solve_keeps_the_surviving_execution_branch,
         returning_malloc_result_expands_to_checkable_statement_steps,
@@ -21597,13 +21594,13 @@ test_batches! {
     expansion_batch_29: [
         selected_post_execution_smart_apply_uses_exact_path_premises,
         smart_apply_surfaces_a_framed_comparison_after_an_immutable_call,
-        smart_apply_preserves_statement_snapshots_in_explicit_premises,
+        smart_apply_preserves_statement_states_in_explicit_premises,
         source_expansion_preserves_proof_marks,
     ],
     expansion_batch_30: [
         post_execution_store_transport_expands_from_the_recorded_store_equation,
-        statement_snapshots_support_complete_loadability_propositions,
-        statement_snapshots_preserve_declared_resource_argument_types,
+        statement_states_support_complete_loadability_propositions,
+        statement_states_preserve_declared_resource_argument_types,
         source_expander_locates_frontier_local_have_proofs,
     ],
     expansion_batch_31: [

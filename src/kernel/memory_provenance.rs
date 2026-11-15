@@ -156,9 +156,9 @@ pub(in crate::kernel) fn record_transport_cell_walk(
             "hop limit reached"
         } else {
             match stop {
-                CellWalkStop::CommonSnapshot => "common snapshot reached",
+                CellWalkStop::CommonState => "common state reached",
                 CellWalkStop::RetainedValue => "retained typed value before cache forgetting",
-                CellWalkStop::OldestRecorded => "oldest recorded snapshot reached",
+                CellWalkStop::OldestRecorded => "oldest recorded state reached",
                 CellWalkStop::Affected => "step affects the queried bytes",
                 CellWalkStop::NotShownSeparate => "step not proved separate from the queried bytes",
             }
@@ -251,10 +251,10 @@ pub(crate) fn canonical_program_memory_for_pointer_load(
     canonical_memory_for_pointer_load(memory, pointer)
 }
 
-/// Constructs the pointer-observable snapshot used by atomic-load
+/// Constructs the pointer-observable state used by atomic-load
 /// canonicalization and retains the exact producer-known projection edge.
 /// The edge is separate from the ordinary memory DAG because the interned
-/// result may be shared by projections of several source snapshots.
+/// result may be shared by projections of several source states.
 /// The memory a load of a value of `bytes` at `pointer`, an enum's or a
 /// type parameter's, names: the
 /// point the cell was last written, projected to the cell, as an integer
@@ -575,10 +575,10 @@ fn pointers_match_for_resource_check(
 
 /// Assumption-free canonical form of a whole memory: every cell key and
 /// value canonicalizes its embedded loads. Forms of the same memory
-/// produced from different memory snapshots compare equal when their
+/// produced from different memory states compare equal when their
 /// difference is representational.
 pub(crate) fn canonical_memory_deep(memory: &Memory) -> Memory {
-    // Assumption-free and deterministic; keyed by interned snapshot identity.
+    // Assumption-free and deterministic; keyed by interned state identity.
     let key = crate::kernel::intern_memory_ref(memory);
     if let Some(hit) = DEEP_MEMORY_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
@@ -730,11 +730,11 @@ fn cell_version_point(
     pointer: &Pointer,
     bytes: u32,
 ) -> Option<SharedMemory> {
-    crate::kernel::resource_tracker::last_same_point(
+    crate::kernel::resource_tracker::last_same_version_point(
         crate::kernel::resource_tracker::TrackedResource::Cell { pointer, bytes },
-        &crate::kernel::resource_tracker::ProgramPoint::at(memory),
+        &crate::kernel::resource_tracker::VersionPoint::at(memory),
     )
-    .map(|point| point.snapshot().clone())
+    .map(|point| point.shared_memory().clone())
 }
 
 /// Deep-canonical memory equality; see [`canonical_memory_deep`].
@@ -858,36 +858,36 @@ enum CheckedLoadEqualityEvidence {
     /// Both loads resolve to one cell by the execution-recorded memory DAG.
     MemoryDag(AtomicMemoryLoadEqualityEvidence),
     /// The two source-level load terms have congruent addresses, and their
-    /// recorded origin snapshots are structurally identical at that cell.
+    /// recorded origin states are structurally identical at that cell.
     /// Keeping both endpoints and the selected offset proof makes this a
     /// finite checked path rather than a request to rediscover pointer
     /// equality during proof-object validation.
-    OriginDirectSnapshot {
+    OriginDirectState {
         left: OriginLoadEndpoint,
         right: OriginLoadEndpoint,
         offset: PointerOffsetCongruenceEvidence,
     },
-    /// Equal-width scalar reads at one execution or explicitly named snapshot,
+    /// Equal-width scalar reads at one execution or explicitly named state,
     /// with exact pointer equality retained as their address witness. The source load
     /// names remain distinct, so explicit proof rewrites keep their addresses.
-    OriginAliasedSnapshot {
+    OriginAliasedState {
         left: OriginLoadEndpoint,
         right: OriginLoadEndpoint,
         alias: Box<Proposition>,
         alias_path: Option<Vec<(Pointer, Pointer)>>,
-        snapshots: Option<Box<CheckedLoadEquality>>,
-        /// Named endpoints use only a shared defining snapshot, never a
+        retained_states: Option<Box<CheckedLoadEquality>>,
+        /// Named endpoints use only a shared defining state, never a
         /// first-observed origin or a call-event correspondence.
-        named_snapshot: bool,
+        named_program_point: bool,
     },
     /// The two source-level load terms meet along the recorded memory DAG
-    /// when viewed at their original execution snapshots.
+    /// when viewed at their original execution states.
     OriginMemoryDag {
         left: OriginLoadEndpoint,
         right: OriginLoadEndpoint,
         equality: AtomicMemoryLoadEqualityEvidence,
     },
-    /// One exact effect-summary fact connects the two original snapshots,
+    /// One exact effect-summary fact connects the two original states,
     /// and each mutable range carries its selected local proof of
     /// disjointness from the loaded pointer.
     OriginEffectSummary {
@@ -937,7 +937,7 @@ impl OriginLoadEndpoint {
         })
     }
 
-    /// The exact selected snapshot, independently of the observed origin.
+    /// The exact selected state, independently of the observed origin.
     fn for_named_term(term: &MachineTerm) -> Option<Self> {
         let read = crate::kernel::eval::scalar_read_observation(
             crate::kernel::MachineOperandView::Legacy(term),
@@ -1267,7 +1267,7 @@ impl CheckedLoadEquality {
         }
         // Prefer the named-memory DAG: its work is proportional to the two
         // selected derivation paths. Deep canonicalization is a complete
-        // structural fallback, but can walk unrelated snapshot cells.
+        // structural fallback, but can walk unrelated state cells.
         let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
         let dag_evidence = with_extended_dag_bridging(|| {
             atomic_memory_load_equality_evidence(left, right, assumptions)
@@ -1381,7 +1381,7 @@ impl CheckedLoadEquality {
                 ),
                 assumptions,
             ),
-            CheckedLoadEqualityEvidence::OriginDirectSnapshot {
+            CheckedLoadEqualityEvidence::OriginDirectState {
                 left,
                 right,
                 offset,
@@ -1408,16 +1408,16 @@ impl CheckedLoadEquality {
                         assumptions,
                     )
             }
-            CheckedLoadEqualityEvidence::OriginAliasedSnapshot {
+            CheckedLoadEqualityEvidence::OriginAliasedState {
                 left,
                 right,
                 alias,
                 alias_path,
-                snapshots,
-                named_snapshot,
+                retained_states,
+                named_program_point,
             } => {
-                let endpoints_match = if *named_snapshot {
-                    snapshots.is_none()
+                let endpoints_match = if *named_program_point {
+                    retained_states.is_none()
                         && OriginLoadEndpoint::for_named_term(&self.left).as_ref() == Some(left)
                         && OriginLoadEndpoint::for_named_term(&self.right).as_ref() == Some(right)
                 } else {
@@ -1426,7 +1426,7 @@ impl CheckedLoadEquality {
                 };
                 endpoints_match
                     && left.kind == right.kind
-                    && match snapshots {
+                    && match retained_states {
                         None => left.memory == right.memory,
                         Some(equality) => {
                             let MachineTerm::MemoryLoad(memory, pointer, kind) = &equality.left
@@ -1572,8 +1572,8 @@ impl CheckedLoadEquality {
             CheckedLoadEqualityEvidence::MemoryDag(evidence) => Some(evidence),
             CheckedLoadEqualityEvidence::Canonical
             | CheckedLoadEqualityEvidence::OriginStoredValue { .. }
-            | CheckedLoadEqualityEvidence::OriginDirectSnapshot { .. }
-            | CheckedLoadEqualityEvidence::OriginAliasedSnapshot { .. }
+            | CheckedLoadEqualityEvidence::OriginDirectState { .. }
+            | CheckedLoadEqualityEvidence::OriginAliasedState { .. }
             | CheckedLoadEqualityEvidence::OriginMemoryDag { .. }
             | CheckedLoadEqualityEvidence::OriginEffectSummary { .. }
             | CheckedLoadEqualityEvidence::SameCheckedCallEvent(_) => None,
@@ -1620,7 +1620,7 @@ pub(crate) fn checked_atomic_load_equality(
 /// The recorded-edge subset used by broad fact matching. Canonicalizing an
 /// arbitrary failed term pair here would turn a local lookup back into
 /// speculative whole-term work; origin matching below owns its direct
-/// structural snapshot rule separately.
+/// structural state rule separately.
 pub(crate) fn checked_recorded_atomic_load_equality(
     left: &MachineTerm,
     right: &MachineTerm,
@@ -1757,7 +1757,7 @@ pub(crate) fn checked_stored_origin_operand_equality(
     false
 }
 
-/// Select a finite equality witness for two loads at the snapshots where the
+/// Select a finite equality witness for two loads at the states where the
 /// execution first observed them. This is the evidence-producing replacement
 /// for the former recursive origin fallback in `memory_loads_proven_equal`.
 pub(crate) fn checked_origin_load_equality(
@@ -1768,15 +1768,15 @@ pub(crate) fn checked_origin_load_equality(
     let Some(_query) = CheckedOriginLoadEqualityGuard::enter(left, right) else {
         return false;
     };
-    // Equal names are definitionally one snapshot. Address congruence at
-    // that snapshot does not require connecting first-observed origins,
+    // Equal names are definitionally one state. Address congruence at
+    // that state does not require connecting first-observed origins,
     // which may belong to disconnected execution arms.
     let named_endpoints = OriginLoadEndpoint::for_named_term(left)
         .zip(OriginLoadEndpoint::for_named_term(right))
         .filter(|(left, right)| {
             left.memory == right.memory && left.pointer.block != right.pointer.block
         });
-    let named_snapshot = named_endpoints.is_some();
+    let named_program_point = named_endpoints.is_some();
     let Some((left_endpoint, right_endpoint)) = named_endpoints.or_else(|| {
         OriginLoadEndpoint::for_observed_term(left)
             .zip(OriginLoadEndpoint::for_observed_term(right))
@@ -1808,7 +1808,7 @@ pub(crate) fn checked_origin_load_equality(
                     Some(path)
                 };
                 {
-                    let snapshots = if left_endpoint.memory == right_endpoint.memory {
+                    let retained_states = if left_endpoint.memory == right_endpoint.memory {
                         None
                     } else {
                         let mut selected = None;
@@ -1841,13 +1841,13 @@ pub(crate) fn checked_origin_load_equality(
                     retain_checked_load_equality(CheckedLoadEquality {
                         left: left.clone(),
                         right: right.clone(),
-                        evidence: CheckedLoadEqualityEvidence::OriginAliasedSnapshot {
+                        evidence: CheckedLoadEqualityEvidence::OriginAliasedState {
                             left: left_endpoint.clone(),
                             right: right_endpoint.clone(),
                             alias: Box::new(alias),
                             alias_path,
-                            snapshots,
-                            named_snapshot,
+                            retained_states,
+                            named_program_point,
                         },
                     });
                     return true;
@@ -1856,7 +1856,7 @@ pub(crate) fn checked_origin_load_equality(
         }
         return false;
     }
-    // The arms below compare the two origin snapshots' cell maps, and a cell
+    // The arms below compare the two origin states' cell maps, and a cell
     // map does not record the stores it dropped. Ask the history about the
     // endpoints this comparison is about to take as equal.
     if left_endpoint.pointer == right_endpoint.pointer
@@ -1883,7 +1883,7 @@ pub(crate) fn checked_origin_load_equality(
                 &left_endpoint.pointer,
             )
         })
-        .map(|offset| CheckedLoadEqualityEvidence::OriginDirectSnapshot {
+        .map(|offset| CheckedLoadEqualityEvidence::OriginDirectState {
             left: left_endpoint.clone(),
             right: right_endpoint.clone(),
             offset,
@@ -2137,7 +2137,7 @@ impl AtomicMemoryLoadEqualityEvidence {
     /// proofs return false instead of invoking a solver.
     pub(super) fn checks(&self, proposition: &Proposition, assumptions: &PureFactContext) -> bool {
         // Both equality widths, because what this evidence proves is
-        // width-independent: that the two snapshots hold one version of the
+        // width-independent: that the two states hold one version of the
         // cell at one address. How many bytes the C access reads is the
         // walk's own input, taken from the load registry on both the
         // construction and the checking side, not something the goal's
@@ -2758,7 +2758,7 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
 /// **Why a composition fact survives the step it is used across.** What the
 /// two members yield is a claim about *addresses*, and an address is a value.
 /// The ranges are spelled with pointer terms whose loads carry their own
-/// snapshot, so each denotes one fixed address however far the proof has
+/// state, so each denotes one fixed address however far the proof has
 /// moved on; a store cannot move the bytes a range named, and consuming,
 /// transferring or freeing a resource does not make two address ranges that
 /// were disjoint coincide. The composition is therefore not being read as a
@@ -2770,7 +2770,7 @@ pub(in crate::kernel) fn typed_store_separated_ranges_evidence(
 /// where a typed `separate(..)` is spent today: composition facts are path
 /// facts, and the two naming walks must not read one, because their answers
 /// are embedded in a term's name and memoized across every path that reaches
-/// the same interned snapshot. Both walks pass `PureFactContext::new()`
+/// the same interned state. Both walks pass `PureFactContext::new()`
 /// (`resource_tracker::cell_source_for_naming` and the block-version walk in
 /// `resource_tracker::mod`), so an empty composition set is what this
 /// function is handed there and it can decide nothing; on the querying route
@@ -2975,15 +2975,15 @@ pub(crate) fn pointer_read_has_stored_value(
 /// Canonical load projections retain all potentially observable scalar bytes
 /// (up to MAX_SCALAR_ACCESS_BYTES). Reuse the producer's retained source for
 /// a complete pointer read, whose eight bytes fit that projection, so its
-/// selected memory history is available without rebuilding either snapshot.
+/// selected memory history is available without rebuilding either state.
 fn complete_pointer_read_source(read: &LoadedPointerView) -> SharedMemory {
     canonical_load_projection_source(&read.defining_memory, &read.defining_address)
         .unwrap_or_else(|| read.defining_memory.clone())
 }
 
 /// Whether two reads at addresses the caller proved equal see the bytes of
-/// one cell source. Reads of one snapshot are one read. Each may also be a
-/// projection of a different snapshot, which it agrees with at its own cell.
+/// one cell source. Reads of one state are one read. Each may also be a
+/// projection of a different state, which it agrees with at its own cell.
 /// Compare their retained sources using only immediate checked transitions;
 /// longer preservation arguments must be supplied as explicit equalities.
 pub(in crate::kernel) fn pointer_reads_see_one_cell_source(
@@ -3263,7 +3263,7 @@ pub(crate) fn pointer_read_has_recorded_value(
         })
 }
 
-/// Compare complete typed reads in one producer-retained snapshot using only
+/// Compare complete typed reads in one producer-retained state using only
 /// the selected address equality. This adds neither memory transport nor
 /// permission to read the cell.
 fn pointer_reads_share_recorded_cell(
@@ -3308,7 +3308,7 @@ pub(in crate::kernel) fn checked_pointer_read_endpoint(
 }
 
 /// [`checked_pointer_read_endpoint`] when the checked walk ends at a stored
-/// complete pointer, rather than at an older snapshot's read of the cell.
+/// complete pointer, rather than at an older state's read of the cell.
 pub(in crate::kernel) fn checked_pointer_read_stored_value(
     read: &Pointer,
     assumptions: &PureFactContext,
@@ -3579,14 +3579,14 @@ pub(super) fn heap_allocation_proven_separate_from_pointer(
 ///
 /// This is stage 4 of `docs/internals/memory-dag.md`, and it is
 /// wired in *ahead* of the canonicalizing comparisons rather than beside
-/// them. Where those take two embedded snapshots, deep-canonicalize both and
+/// them. Where those take two embedded states, deep-canonicalize both and
 /// compare the results structurally, this follows named edges and compares
 /// arena ids, so the common case — two forms of one cell separated only
 /// by stores that provably missed it — costs a short walk instead of a deep
 /// term rewrite.
 ///
 /// A missing result means "the DAG did not answer". Derivations are not
-/// guaranteed to connect every pair of snapshots, so callers may try another
+/// guaranteed to connect every pair of states, so callers may try another
 /// exact evidence source.
 pub(super) fn memory_load_equality_evidence_at(
     left_memory: &SharedMemory,
@@ -3595,7 +3595,7 @@ pub(super) fn memory_load_equality_evidence_at(
     kind: LoadKind,
     assumptions: &PureFactContext,
 ) -> Option<MemoryDagLoadEqualityEvidence> {
-    if let Some(common) = one_snapshot_equality_evidence(left_memory, right_memory) {
+    if let Some(common) = one_state_equality_evidence(left_memory, right_memory) {
         return Some(common);
     }
     let walks = LoadCellWalks::run(left_memory, right_memory, pointer, kind, assumptions)?;
@@ -3639,8 +3639,8 @@ fn retained_cell_names_load(
     value == crate::kernel::canonical_form_of_load(memory.clone(), pointer.clone(), kind)
 }
 
-/// The equality two identical snapshots have without walking anything.
-fn one_snapshot_equality_evidence(
+/// The equality two identical states have without walking anything.
+fn one_state_equality_evidence(
     left_memory: &SharedMemory,
     right_memory: &SharedMemory,
 ) -> Option<MemoryDagLoadEqualityEvidence> {
@@ -3661,7 +3661,7 @@ fn one_snapshot_equality_evidence(
 /// cell is answered from.
 ///
 /// Both halves of the answer come off the same traversal. The nodes the walks
-/// reached say whether the two snapshots hold *one* version of the cell; the
+/// reached say whether the two states hold *one* version of the cell; the
 /// reasons they stopped say whether they hold two *different* versions. A
 /// caller that wanted only the first used to walk twice over — once here and
 /// once for the stored-value arm beside it — and the history's refutation was
@@ -3686,7 +3686,7 @@ impl LoadCellWalks {
     ) -> Option<Self> {
         let left_bytes = crate::kernel::load_term_access_width(left_memory, pointer, kind);
         let right_bytes = crate::kernel::load_term_access_width(right_memory, pointer, kind);
-        // A shared snapshot already fixes one version of the cell. Reuse the
+        // A shared state already fixes one version of the cell. Reuse the
         // typed two-sided frame walk so a cold query never follows history
         // older than both endpoints. Writes and unresolved steps retain the
         // existing source/value and refutation routes below.
@@ -3708,15 +3708,15 @@ impl LoadCellWalks {
                     pointer,
                     left_bytes,
                     cell,
-                    CellWalkStop::CommonSnapshot,
+                    CellWalkStop::CommonState,
                     None,
                 );
             }
             return Some(Self {
                 left,
                 right,
-                left_stop: CellWalkStop::CommonSnapshot,
-                right_stop: CellWalkStop::CommonSnapshot,
+                left_stop: CellWalkStop::CommonState,
+                right_stop: CellWalkStop::CommonState,
                 kind,
             });
         }
@@ -3768,14 +3768,14 @@ impl LoadCellWalks {
     }
 
     /// Whether a recorded step that provably acts on this access's bytes
-    /// stands between the two snapshots.
+    /// stands between the two states.
     ///
     /// A walk stops on such a step having proved something, not having given
     /// up: the cell one step older is a different *version* of this cell. Two
     /// loads separated by one of those are not one value by any structural
-    /// route, whatever the snapshots' cell maps happen to have kept. The
+    /// route, whatever the states' cell maps happen to have kept. The
     /// exhaustion and unclassified stops prove nothing and leave every other
-    /// route to speak. A common-snapshot stop instead establishes equality.
+    /// route to speak. A common-state stop instead establishes equality.
     fn cross_an_affecting_step(&self) -> bool {
         self.left_stop == CellWalkStop::Affected || self.right_stop == CellWalkStop::Affected
     }
@@ -3786,7 +3786,7 @@ impl LoadCellWalks {
     ///
     /// One side's walk may land on a `Store` whose recorded value IS the
     /// other side verbatim — the common case for a load-caching store
-    /// (`cells[p] := load(older, p)`): the newer snapshot's cell literally
+    /// (`cells[p] := load(older, p)`): the newer state's cell literally
     /// pins the older form. That is still a pure history answer (the value
     /// comes off a derivation edge, compared structurally), so it stays
     /// inside the exact-facts-plus-edges determinism boundary.
@@ -3843,7 +3843,7 @@ impl LoadCellWalks {
 
 /// Compare exact sources or one checked predecessor per named endpoint.
 /// Longer preservation chains require explicit equalities; this operation
-/// must not discover intermediate snapshots by following memory history.
+/// must not discover intermediate states by following memory history.
 fn typed_reads_share_memory_source(
     left: &SharedMemory,
     right: &SharedMemory,
@@ -3942,7 +3942,7 @@ pub(super) fn typed_read_has_same_memory_source(
 /// Beyond the node-identity comparison, one side's walk may land on a
 /// `Store` whose recorded value IS the other side verbatim — the common case
 /// for a load-caching store (`cells[p] := load(older, p)`): the newer
-/// snapshot's cell literally pins the older form. That is still a pure
+/// state's cell literally pins the older form. That is still a pure
 /// DAG answer (the value comes off a derivation edge, compared structurally),
 /// so it stays inside the exact-facts-plus-edges determinism boundary.
 pub(crate) fn atomic_loads_equal_along_memory_derivations(
@@ -3986,23 +3986,23 @@ pub(super) fn atomic_memory_load_equality_evidence(
 /// What the recorded history says about two loads of one cell at one address.
 ///
 /// The three answers are the three a history can give, and the middle one is
-/// the one a snapshot comparison cannot reconstruct. A cell map records what
-/// is *known* at a snapshot, not what *happened* to it: a store drops the
+/// the one a state comparison cannot reconstruct. A cell map records what
+/// is *known* at a state, not what *happened* to it: a store drops the
 /// cell it partly overwrites, and the naming projection discards what it
-/// leaves behind, so two snapshots a store separates can be cell-identical.
+/// leaves behind, so two states a store separates can be cell-identical.
 /// Absence of a differing cell is therefore never evidence that no store
 /// happened. The history has the store either way.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::kernel) enum LoadHistory {
-    /// The two snapshots hold one version of the cell, with this evidence.
+    /// The two states hold one version of the cell, with this evidence.
     OneVersion(AtomicMemoryLoadEqualityEvidence),
     /// A recorded step that provably acts on this access's bytes stands
-    /// between the two snapshots, so they hold two different versions of it.
+    /// between the two states, so they hold two different versions of it.
     /// No structural route may call the two loads equal; a stated or assumed
     /// equality fact still can, and is consulted before this ever is.
     DifferentVersions,
     /// The bounded history query decides neither. Explicit facts can still
-    /// establish equality; matching snapshot representations cannot.
+    /// establish equality; matching state representations cannot.
     Undecided,
 }
 
@@ -4018,10 +4018,10 @@ pub(in crate::kernel) fn recorded_load_history(
     kind: LoadKind,
     assumptions: &PureFactContext,
 ) -> LoadHistory {
-    // The same (snapshot, snapshot, pointer) triple is asked thousands of
+    // The same (state, state, pointer) triple is asked thousands of
     // times per proof. A proven equality stays true as new first-wins DAG
     // edges are recorded: the edges only add faithful derivations of already
-    // existing snapshots. Cache those positive answers independently of the
+    // existing states. Cache those positive answers independently of the
     // derivation generation. The other two answers only mean "not connected
     // yet" and "not separated yet": a new edge can extend a walk that had run
     // out of history, so both remain generation-scoped and are retried after
@@ -4046,7 +4046,7 @@ pub(in crate::kernel) fn recorded_load_history(
         return LoadHistory::OneVersion(evidence);
     }
     let derivation_generation = memory_derivation_generation();
-    // A completed refusal concerns the unordered pair of snapshots. Keep
+    // A completed refusal concerns the unordered pair of states. Keep
     // positive witnesses oriented, but share the negative history question
     // when another route asks it in the opposite direction.
     let unproven_key = memo_key.as_ref().map(|key| {
@@ -4108,7 +4108,7 @@ fn recorded_load_history_uncached(
     kind: LoadKind,
     assumptions: &PureFactContext,
 ) -> LoadHistory {
-    if let Some(common) = one_snapshot_equality_evidence(left_memory, right_memory) {
+    if let Some(common) = one_state_equality_evidence(left_memory, right_memory) {
         return LoadHistory::OneVersion(AtomicMemoryLoadEqualityEvidence::SameCell(common));
     }
     let Some(walks) = LoadCellWalks::run(left_memory, right_memory, pointer, kind, assumptions)
@@ -4139,7 +4139,7 @@ fn recorded_load_history_uncached(
 /// certificate's separation facts; every crossed edge remains justified by
 /// exact facts and the bounded DAG walk.
 /// The form this context decides for one load: the integer a store or
-/// snapshot cell provides, or else the load of the oldest snapshot the walk
+/// state cell provides, or else the load of the oldest state the walk
 /// proves the cell unchanged from, named by the assumption-free naming walk
 /// so that facts spelled with that older name apply exactly.
 pub(crate) fn resolve_load_along_memory_derivations(
@@ -4173,7 +4173,7 @@ pub(crate) fn resolve_load_along_memory_derivations(
 
 /// Rewrites `proposition` with each registered load variable replaced by the
 /// form [`resolve_load_along_memory_derivations`] decides for it from its
-/// origin snapshot under `assumptions`. Returns `None` when nothing changes.
+/// origin state under `assumptions`. Returns `None` when nothing changes.
 /// Work is one bounded DAG query per load variable of the proposition;
 /// nothing else is visited.
 pub(crate) fn resolve_prerequisite_loads_along_memory_derivations(
@@ -4279,7 +4279,7 @@ thread_local! {
         std::collections::HashMap<DagLoadEqualityMemoKey, AtomicMemoryLoadEqualityEvidence>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     /// The two answers that are not an equality, keyed by derivation
-    /// generation: `true` is a store between the snapshots, `false` is a
+    /// generation: `true` is a store between the states, `false` is a
     /// history that decides nothing.
     static DAG_LOAD_EQUALITY_UNPROVEN_MEMO: std::cell::RefCell<
         std::collections::HashMap<(u64, DagLoadEqualityMemoKey), bool>,
@@ -4289,7 +4289,7 @@ thread_local! {
 const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;
 
 /// Searches the finite graph of recorded effects connecting two memory
-/// snapshots, regardless of what the effects wrote. Used for properties that
+/// states, regardless of what the effects wrote. Used for properties that
 /// survive writes, such as loadability of a still-present range.
 pub(crate) fn memories_connected_by_effects(
     before: &Memory,
@@ -4398,7 +4398,7 @@ fn memory_load_is_directly_unchanged(
         return true;
     }
     // An effect that starts at `before` itself: those filed under it, not
-    // every proposition fact. Its other end may still be any snapshot that
+    // every proposition fact. Its other end may still be any state that
     // directly matches `after` for this load.
     assumptions
         .memory_effect_facts_naming(before)
@@ -4493,11 +4493,11 @@ pub(in crate::kernel) fn memories_directly_match_for_pointer_load(
     if memories_match_for_pointer_load(left, right, pointer) {
         return true;
     }
-    // Two snapshots that name the cell by one version hold the same
+    // Two states that name the cell by one version hold the same
     // cell: every hop the naming walk crossed is a write proven (without
     // assumptions) to miss the cell. This is how a fact carried unchanged
     // through earlier steps, and so still named at its mint version, meets an
-    // effect summary whose `before` is the later live snapshot.
+    // effect summary whose `before` is the later live state.
     if !pointer.block.is_local_block()
         && let (Some(left_version), Some(right_version)) = (
             cell_version_point(
@@ -4536,7 +4536,7 @@ pub(in crate::kernel) fn memories_directly_match_for_pointer_load(
     }
     // Every arm below decides whether the cell's *address* is a different
     // address from the load's, and that is not the question this function
-    // asks: it is deciding whether the two snapshots hold one value for this
+    // asks: it is deciding whether the two states hold one value for this
     // load, and a cell at `p + 1` holding one byte is a different address
     // from `p` while being the second byte a four-byte read there returns.
     // `1a3b2701` put the byte question in front of the three sibling
@@ -4572,7 +4572,7 @@ pub(in crate::kernel) fn memories_directly_match_for_pointer_load(
         })
 }
 
-/// The cells the two snapshots disagree about that a load in `block` could be
+/// The cells the two states disagree about that a load in `block` could be
 /// reading: its own block, and every other block not proven distinct from it.
 /// A differently spelled block is not a different object, so the caller must
 /// still discharge each of these cells by offset or by separation evidence.
@@ -4592,7 +4592,7 @@ fn differing_cell_pointers_possibly_aliasing(
 
 /// Whether `materialized` holds, at `pointer`, exactly the `kind` read of
 /// `pointer` that `symbolic` holds: a cell whose value is that read, taken
-/// from a snapshot that agrees with `symbolic` there.
+/// from a state that agrees with `symbolic` there.
 ///
 /// The cell answers for the read only when it is the read: the value is of
 /// the read's kind and is itself a load of that kind. A cell of another width
@@ -4951,7 +4951,7 @@ pub(crate) fn clear_provenance_memos() {
 pub(crate) fn clear_canonical_form_caches() {
     DEEP_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
     ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().clear());
-    // The resource tracker's per-snapshot version memos are canonical-form
+    // The resource tracker's per-state version memos are canonical-form
     // caches too: they answer which point a term's name embeds.
     crate::kernel::resource_tracker::clear_version_memos();
 }
@@ -5133,7 +5133,7 @@ enum AtomicCanonicalizationTask<'a> {
     },
 }
 
-/// The integer a snapshot's own cell at `pointer` gives a `kind` read there,
+/// The integer a state's own cell at `pointer` gives a `kind` read there,
 /// when the cell is exactly that read and holds something other than `load`
 /// itself. A cell of another kind holds other bytes or another number than
 /// the read returns, so it answers nothing.
@@ -5275,8 +5275,8 @@ fn wide_read_observations_have_value(
     // Wide reads do not enter the int32 congruence graph. Two spellings of
     // one address can nevertheless read the same eight bytes: first check
     // the selected pointer equality, then retain both reads' memory history.
-    // A cached read may name an earlier snapshot than its surface expression,
-    // so a shared current snapshot is sufficient but not necessary.
+    // A cached read may name an earlier state than its surface expression,
+    // so a shared current state is sufficient but not necessary.
     if let (
         Some(MachineTerm::MemoryLoad(left_memory, left_pointer, LoadKind::Bits64)),
         Some(MachineTerm::MemoryLoad(right_memory, right_pointer, LoadKind::Bits64)),
@@ -5353,11 +5353,11 @@ fn wide_read_observations_have_value(
                             "64-hop query limit reached"
                         } else {
                             match stop {
-                                CellWalkStop::CommonSnapshot => "common snapshot reached",
+                                CellWalkStop::CommonState => "common state reached",
                                 CellWalkStop::RetainedValue => {
                                     "retained typed value before cache forgetting"
                                 }
-                                CellWalkStop::OldestRecorded => "oldest recorded snapshot reached",
+                                CellWalkStop::OldestRecorded => "oldest recorded state reached",
                                 CellWalkStop::Affected => "step affects the read's bytes",
                                 CellWalkStop::NotShownSeparate => {
                                     "step not proved separate from the read"
@@ -5497,12 +5497,12 @@ pub(crate) fn read_is_of_a_recorded_store(
 }
 
 /// Deep, assumption-free canonical form for a term: every load resolves its
-/// cached cell or canonicalizes its snapshot and pointer, at every depth,
+/// cached cell or canonicalizes its state and pointer, at every depth,
 /// including inside conditionals, folds, and pointer offsets. Two forms
-/// of the same value produced from different memory snapshots canonicalize
+/// of the same value produced from different memory states canonicalize
 /// identically whenever the difference is representational. The walk is
 /// over the term and the values its loads resolve to, each recorded before
-/// the snapshot that holds it, so it is finite with no depth cut.
+/// the state that holds it, so it is finite with no depth cut.
 pub(super) fn canonicalize_atomic_loads_deep(term: &MachineTerm) -> MachineTerm {
     let mut tasks = vec![AtomicCanonicalizationTask::Visit(term)];
     let mut results = Vec::new();
@@ -5528,10 +5528,10 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &MachineTerm) -> MachineTerm 
                                 .or_else(|| cell_integer_for_read(memory, pointer, kind, term));
                         let Some(mut value) = resolved else {
                             // Name the cell by its version before restricting
-                            // the snapshot: the restriction is a fresh intern
+                            // the state: the restriction is a fresh intern
                             // with no derivation, so a version walk over it
                             // could not cross anything. Walking the original
-                            // snapshot lets two loads of one unwritten cell at
+                            // state lets two loads of one unwritten cell at
                             // different points share one canonical form.
                             let version = cell_version_point(
                                 memory,
@@ -5552,7 +5552,7 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &MachineTerm) -> MachineTerm 
                         };
 
                         // A materialized cell may itself contain a load from
-                        // another snapshot. Follow that root-load chain here
+                        // another state. Follow that root-load chain here
                         // rather than recursively entering one Rust frame per
                         // cell. Composite recorded values re-enter the normal
                         // structural worklist below.
@@ -5740,7 +5740,7 @@ pub(super) fn canonicalize_atomic_loads_deep(term: &MachineTerm) -> MachineTerm 
                 | PointerOffsetTerm::Int64Scaled { value, .. }
                     if value.shared_operand().is_some() =>
                 {
-                    // A shared index retains its chosen read snapshots. Its
+                    // A shared index retains its chosen read states. Its
                     // stored values are comparison evidence, not address syntax.
                     offset_results.push(offset.clone());
                 }
@@ -5924,7 +5924,7 @@ pub(super) fn canonicalize_pointer_loads(pointer: &Pointer) -> Pointer {
                 | PointerOffsetTerm::Int64Scaled { value, .. }
                     if value.shared_operand().is_some() =>
                 {
-                    // A shared index retains its chosen read snapshots. Its
+                    // A shared index retains its chosen read states. Its
                     // stored values are comparison evidence, not address syntax.
                     results.push(offset.clone());
                 }
@@ -6074,7 +6074,7 @@ mod condition_fact_graph_equivalence_tests {
     }
 
     #[test]
-    fn condition_fact_operands_use_graph_with_snapshot_scope() {
+    fn condition_fact_operands_use_graph_with_state_scope() {
         let _session = crate::kernel::VerificationSession::enter();
         let before = crate::kernel::intern_memory(Memory::new().with_block("fact-graph", 8));
         let pointer = |index| Pointer {
@@ -6217,7 +6217,7 @@ pub(crate) fn certified_store_equations(
             }
             // The store record establishes the value of this exact read.
             // Publish its registered version name, the same term logical
-            // lowering constructs at the post-store snapshot. The private
+            // lowering constructs at the post-store state. The private
             // store record retains the raw memory relation; no history or
             // ambient fact search is needed to name its read.
             let read = crate::kernel::canonical_form_of_load(
@@ -6697,7 +6697,7 @@ fn transport_framed_atomic_condition(
         });
     }
     Some(match condition {
-        // Do not claim a snapshot bridge through an opaque algebraic value.
+        // Do not claim a state bridge through an opaque algebraic value.
         ConditionTerm::PointerValueEqual(left, right) => ConditionTerm::PointerValueEqual(
             Box::new(transport_framed_atomic_pointer_value(
                 left,
@@ -6797,7 +6797,7 @@ fn transport_framed_atomic_pointer(
     {
         // Numeric pointer reconstruction is a pure function of its complete
         // word. Carry loads inside that word across the same checked frame
-        // as offset loads; cloning the block would retain the old snapshot.
+        // as offset loads; cloning the block would retain the old state.
         Pointer::integer_address(transport_framed_atomic_bitvector(bits, after, assumptions)?).block
     } else {
         pointer.block.clone()
@@ -6868,14 +6868,14 @@ fn transport_framed_atomic_bitvector(
         MachineTerm::Variable(variable) => {
             // A load variable transports as the load it represents:
             // when frame evidence rewrites that load to the post-effect
-            // snapshot, the fact is rewritten with the post-point load
+            // state, the fact is rewritten with the post-point load
             // variable. Content-addressed construction gives the same variable
-            // to any later lowering at that snapshot. A defining equation
+            // to any later lowering at that state. A defining equation
             // in the ambient assumptions carries the mint-time form,
-            // whose live snapshot the frame checks can actually relate to
+            // whose live state the frame checks can actually relate to
             // `after`; the registry's canonicalized form is the
             // fallback.
-            // The registry's origin is the first live snapshot the variable
+            // The registry's origin is the first live state the variable
             // was minted from: DAG-connected and cell-comparable to `after`,
             // which is what the frame checks below relate.
             let named_load =
@@ -7281,7 +7281,7 @@ fn normalize_exact_memory_loads_in_bitvector_iterative(
                         let MachineTerm::MemoryLoad(memory, pointer, kind) = &load else {
                             unreachable!()
                         };
-                        // The snapshot's own cell answers only a read of its
+                        // The state's own cell answers only a read of its
                         // kind: an `int32` cell is not a byte read's value.
                         let resolved = match memory
                             .known_value(pointer)
@@ -7378,14 +7378,14 @@ mod exact_load_normalization_tests {
         })
     }
 
-    /// A snapshot's own cell answers a load term only when the cell is that
+    /// A state's own cell answers a load term only when the cell is that
     /// read: a word cell is not the value of a byte read at its address, and
     /// a signed byte cell is not the value of an unsigned byte read. Every
-    /// route that resolves a load against the snapshot it names — exact-load
+    /// route that resolves a load against the state it names — exact-load
     /// normalization, the deep canonical form, and the materialized-load
     /// frame — asks the same question, so one table pins all of them.
     #[test]
-    fn a_snapshot_cell_answers_only_a_read_of_its_own_kind() {
+    fn a_state_cell_answers_only_a_read_of_its_own_kind() {
         use crate::kernel::LoadKind;
         let pointer = Pointer {
             block: "kind-checked-cell".into(),
@@ -7676,7 +7676,7 @@ pub(super) fn condition_with_canonicalized_loads(
 
 /// Never-inlined endpoint matcher for the effect arms: the direct-unchanged
 /// check participates in transport recursion where added frame bytes
-/// overflow the stack. The fact's snapshot handles may differ from the
+/// overflow the stack. The fact's state handles may differ from the
 /// effect's endpoints by bookkeeping (materialized cells, recorded locals);
 /// what the chain needs is agreement on the loaded cell, which the
 /// directly-match check decides per pointer with havoc-marker parity.
@@ -7894,7 +7894,7 @@ mod opaque_pointer_frame_tests {
             buffer.clone().offset_by_bytes(4),
             ProgramValue::Int32(7u32.into()),
         ));
-        let read = |snapshot: &SharedMemory| Pointer::loaded_value(snapshot, &field);
+        let read = |retained_state: &SharedMemory| Pointer::loaded_value(retained_state, &field);
         let separation = |header_words: u32| Proposition::ResourceSeparate {
             left: Box::new(Resource::Memory(MemoryRange::new(
                 header.clone(),
@@ -8085,27 +8085,27 @@ mod opaque_pointer_frame_tests {
         );
         let memory =
             memory.without_possible_aliasing_cells(&possible_write, 4, &PureFactContext::new());
-        let snapshot = intern_memory(memory);
+        let retained_state = intern_memory(memory);
         assert!(matches!(
-            snapshot.derivation().as_deref(),
+            retained_state.derivation().as_deref(),
             Some(MemoryDerivation::CellsForgotten { .. })
         ));
-        let read = Pointer::loaded_value(&snapshot, &field);
+        let read = Pointer::loaded_value(&retained_state, &field);
         let context = PureFactContext::new();
         context
             .equality_graph
-            .register_pointer_read_definition(&read, &snapshot, &field);
+            .register_pointer_read_definition(&read, &retained_state, &field);
         assert!(pointer_read_has_recorded_value(&read, &stored, &context));
         let read_from = |memory| {
-            let snapshot = intern_memory(memory);
-            let read = Pointer::loaded_value(&snapshot, &field);
+            let retained_state = intern_memory(memory);
+            let read = Pointer::loaded_value(&retained_state, &field);
             context
                 .equality_graph
-                .register_pointer_read_definition(&read, &snapshot, &field);
+                .register_pointer_read_definition(&read, &retained_state, &field);
             read
         };
         let replacement = Pointer::symbolic(Variable(9_880_203));
-        let changed = read_from(snapshot.memory().clone().store(
+        let changed = read_from(retained_state.memory().clone().store(
             field.clone(),
             ProgramValue::typed_pointer(replacement.clone(), ProgramType::Int32Pointer),
         ));
@@ -8119,7 +8119,7 @@ mod opaque_pointer_frame_tests {
         ));
         for address in [field.clone(), field.offset_by_bytes(4), possible_write] {
             let changed = read_from(
-                snapshot
+                retained_state
                     .memory()
                     .clone()
                     .store(address, ProgramValue::Int32(MachineTerm::constant(7))),
@@ -8396,7 +8396,7 @@ mod opaque_pointer_frame_tests {
         assert!(!diagnostic.equal);
         assert_eq!(diagnostic.expected, wanted);
         assert_eq!(diagnostic.stopped_at.as_ref(), Some(&diagnostic.producer));
-        let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::ambient();
+        let mut labels = crate::surface::proof_diagnostics::render::MemoryStateLabels::ambient();
         let rendered = crate::surface::proof_diagnostics::render::render_read_resolution(
             diagnostic,
             &mut labels,
@@ -8406,10 +8406,7 @@ mod opaque_pointer_frame_tests {
             rendered.contains("equality check: not proved"),
             "{rendered}"
         );
-        assert!(
-            rendered.contains("producer source: snapshot#"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("producer source: state#"), "{rendered}");
         assert!(!rendered.contains("…"), "{rendered}");
         assert!(wide_read_has_recorded_value(&read, &wanted, &context));
     }
@@ -8796,7 +8793,7 @@ mod direct_unchanged_scaling_tests {
             let (connected, work) = crate::instrumentation::measure_deterministic_work(|| {
                 memories_connected_by_effects(&start, &end, &facts)
             });
-            assert!(connected, "two recorded calls connect the snapshots");
+            assert!(connected, "two recorded calls connect the states");
             samples.push((size, work));
         }
         let (_, smallest) = samples[0];
@@ -8807,10 +8804,10 @@ mod direct_unchanged_scaling_tests {
     }
 
     /// The route carrying a loadable fact across recorded effects to a later
-    /// snapshot reads the loadable facts filed under the base's block, not
+    /// state reads the loadable facts filed under the base's block, not
     /// every proposition fact. Across the gate it never proved a fact
     /// another route had not, so this pins its miss: a stated fact at a
-    /// snapshot no effect connects is the one candidate it reads.
+    /// state no effect connects is the one candidate it reads.
     #[test]
     fn carried_loadability_ignores_unrelated_loadable_facts() {
         let mut samples = Vec::new();
@@ -8822,7 +8819,7 @@ mod direct_unchanged_scaling_tests {
                 bytes: MachineTerm::constant(4),
                 wide: false,
             };
-            // The queried snapshot holds no target object, so no other
+            // The queried state holds no target object, so no other
             // route carries the fact.
             let stated = Memory::new().with_block("target", 4);
             let queried = Memory::new();
@@ -8833,7 +8830,7 @@ mod direct_unchanged_scaling_tests {
                 .assume_proposition(loadable(&stated, cell("target")));
             CARRIED_LOADABLE_VISITS.with(|visits| visits.set(0));
             let carried = facts.proves_atomic_without_search(&loadable(&queried, cell("target")));
-            assert!(!carried, "no effect connects the two snapshots");
+            assert!(!carried, "no effect connects the two states");
             samples.push((size, CARRIED_LOADABLE_VISITS.with(std::cell::Cell::get)));
         }
         let (_, smallest) = samples[0];
@@ -8854,7 +8851,7 @@ mod direct_unchanged_scaling_tests {
         for size in [16, 64, 256] {
             let _session = crate::kernel::VerificationSession::enter();
             let target = cell("target");
-            // A call stands between the snapshots: the direct check cannot
+            // A call stands between the states: the direct check cannot
             // match its havoc away, and only the call's effect summary, whose
             // one mutable range is in another object, shows the target cell
             // unchanged.
@@ -9095,7 +9092,7 @@ mod retained_offset_evidence_tests {
     }
 
     #[test]
-    fn retained_offset_read_evidence_keeps_exact_snapshots_and_widths() {
+    fn retained_offset_read_evidence_keeps_exact_states_and_widths() {
         let _session = VerificationSession::enter();
         let read = Pointer {
             block: "retained-offset-source".into(),
@@ -9159,7 +9156,7 @@ mod retained_boolean_dependency_tests {
     use super::*;
 
     #[test]
-    fn common_boolean_memories_keep_snapshot_order_and_call_opacity() {
+    fn common_boolean_memories_keep_state_order_and_call_opacity() {
         use crate::kernel::{BooleanOperandView, KernelTermImport, SharedPureApplication};
         let first = crate::kernel::intern_memory(Memory::new());
         let second = crate::kernel::intern_memory(
@@ -9204,7 +9201,7 @@ mod common_boolean_transport_tests {
     use crate::kernel::{KernelTermExport, KernelTermImport};
 
     #[test]
-    fn common_boolean_transport_matches_native_snapshots_and_constructors() {
+    fn common_boolean_transport_matches_native_states_and_constructors() {
         let _session = crate::kernel::VerificationSession::enter();
         let before = Memory::new()
             .with_block("bool-transport", 8)
@@ -9325,7 +9322,7 @@ mod common_boolean_transport_tests {
 mod common_boolean_read_tests {
     use super::*;
     #[test]
-    fn boolean_reads_keep_snapshot_dependency_order() {
+    fn boolean_reads_keep_state_dependency_order() {
         let _session = crate::kernel::VerificationSession::enter();
         let before = Memory::new()
             .with_block("bool-memory-index", 4)

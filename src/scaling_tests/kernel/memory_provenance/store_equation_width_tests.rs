@@ -1,5 +1,5 @@
 // Naming a store equation's read records the store's width for that one
-// cell and names one read. Neither step visits the other cells the snapshot
+// cell and names one read. Neither step visits the other cells the state
 // holds or the other stores of the step.
 
 fn store_equation_work(unrelated: usize, stores: usize) -> usize {

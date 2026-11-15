@@ -62,7 +62,7 @@ fn identity_casts_preserve_exact_shared_roots_at_every_integer_width() {
 }
 
 #[test]
-fn identity_casts_keep_selected_read_snapshots_distinct() {
+fn identity_casts_keep_selected_read_states_distinct() {
     let _session = VerificationSession::enter();
     let pointer = Pointer::symbolic(Variable(995411));
     let before = crate::kernel::intern_memory(Memory::new());

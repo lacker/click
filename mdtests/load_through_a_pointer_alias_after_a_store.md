@@ -8,7 +8,7 @@ holds exactly as `have p->word == 5` does.
 
 The read through `id` stays a read at `id`: lowering does not respell it
 through the pointer equality (lowering is fact-stable). The equality graph
-equates a read with the value its snapshot stores at an equal address under
+equates a read with the value its state stores at an equal address under
 another spelling, so the read meets the store through `p`.
 
 ```c filename=arm_identity_loaded.c

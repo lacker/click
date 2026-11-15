@@ -9,8 +9,8 @@ pub(in crate::surface) fn lower_outcome_proposition(
     proposition: &ClickProposition,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<Proposition, String> {
-    let recorded_snapshots = RecordedSnapshots::new();
-    lower_outcome_proposition_with_recorded_snapshots(
+    let recorded_states = RecordedStates::new();
+    lower_outcome_proposition_with_recorded_states(
         parameter_binding,
         pre_state,
         post_state,
@@ -18,7 +18,7 @@ pub(in crate::surface) fn lower_outcome_proposition(
         available_pure_facts,
         proposition,
         spec_definitions,
-        &recorded_snapshots,
+        &recorded_states,
     )
 }
 
@@ -39,12 +39,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_auxiliary_facts(
         proposition,
         assumptions,
         ContractEnvironment::new(&values, &array_refs),
-        FixedStateFrame::new(
-            pre_state,
-            post_state,
-            Some(result),
-            &RecordedSnapshots::new(),
-        ),
+        FixedStateFrame::new(pre_state, post_state, Some(result), &RecordedStates::new()),
         spec_definitions,
         FixedStateLoweringOptions::default(),
     )
@@ -80,18 +75,13 @@ pub(in crate::surface) fn lower_outcome_proposition_with_assumptions(
         proposition,
         assumptions,
         ContractEnvironment::new(&values, &array_refs),
-        FixedStateFrame::new(
-            pre_state,
-            post_state,
-            Some(result),
-            &RecordedSnapshots::new(),
-        ),
+        FixedStateFrame::new(pre_state, post_state, Some(result), &RecordedStates::new()),
         spec_definitions,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
+pub(in crate::surface) fn lower_outcome_proposition_with_recorded_states(
     parameter_binding: ParameterBinding<'_>,
     pre_state: &ExecutionState,
     post_state: &ExecutionState,
@@ -99,7 +89,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
     available_pure_facts: &(impl PropositionSource + ?Sized),
     proposition: &ClickProposition,
     spec_definitions: SpecDefinitions<'_>,
-    recorded_snapshots: &RecordedSnapshots,
+    recorded_states: &RecordedStates,
 ) -> Result<Proposition, String> {
     let values = parameter_values(parameter_binding).map_err(|error| error.message)?;
     let array_refs =
@@ -109,7 +99,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
         proposition,
         &assumptions,
         ContractEnvironment::new(&values, &array_refs),
-        FixedStateFrame::new(pre_state, post_state, Some(result), recorded_snapshots),
+        FixedStateFrame::new(pre_state, post_state, Some(result), recorded_states),
         spec_definitions,
     )
 }

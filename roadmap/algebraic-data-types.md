@@ -45,7 +45,7 @@ in-order node list. Unfold consumes the parent; no named open handle remains.
   Small mutually recursive models should fold only with justified finite
   descent, complete ownership, and the selected body's facts. Do not eagerly
   traverse an unknown model. Coordinate with the resource-algebra issue.
-- **Field snapshots.** Capture a newly constructed symbolic model at a named
+- **Field states.** Capture a newly constructed symbolic model at a named
   proof point, unfold its owner, and reuse the captured value in a later fold.
   Preserve capture-time meaning without a live handle; reject stale memory
   claims and unjustified replacement fields.
@@ -72,10 +72,10 @@ in-order node list. Unfold consumes the parent; no named open handle remains.
   List, append, and membership instead of their separate representation.
   Preserve [sequence-transform](../examples/sequence-transform/README.md)
   proofs, including order and multiplicity.
-- **Memory-range snapshots.** Project a readable symbolic typed range to an
-  exact snapshot List without enumeration. Reject missing readability
+- **Memory-range states.** Project a readable symbolic typed range to an
+  exact state List without enumeration. Reject missing readability
   and claims that ignore writes; preserve provenance through old and named
-  snapshots.
+  states.
 
 ## Violated invariant and acceptance criteria
 

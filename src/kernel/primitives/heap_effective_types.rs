@@ -18,7 +18,7 @@
 //! or a single symbolic one. Every operation touches the entries of the one
 //! block it names, positioned in O(log n).
 
-use super::{Pointer, PointerBlock, PointerOffsetTerm, ProgramValue, SnapshotMap};
+use super::{HashedOrdMap, Pointer, PointerBlock, PointerOffsetTerm, ProgramValue};
 use crate::kernel::effective_type::CAccessClass;
 
 /// The widest scalar a store writes, which bounds how far before a store an
@@ -30,7 +30,7 @@ const MAX_CELL_WIDTH: i64 = 16;
 pub(crate) struct HeapEffectiveTypes {
     /// Cell start to its width, class and the value the store wrote.
     /// Invariant: within one block, entries are pairwise disjoint.
-    entries: SnapshotMap<Pointer, HeapEffectiveType>,
+    entries: HashedOrdMap<Pointer, HeapEffectiveType>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -54,7 +54,7 @@ impl HeapEffectiveTypes {
     }
 
     /// Equality of two records derived from `base`; see
-    /// [`SnapshotMap::eq_relative_to`].
+    /// [`HashedOrdMap::eq_relative_to`].
     pub(crate) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
         self.entries.eq_relative_to(&other.entries, &base.entries)
     }

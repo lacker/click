@@ -629,7 +629,7 @@ fn signed_defined_certificates_keep_shared_operands_and_source_bounds() {
 }
 
 #[test]
-fn arithmetic_read_atoms_keep_snapshot_identity_without_scanning_storage() {
+fn arithmetic_read_atoms_keep_state_identity_without_scanning_storage() {
     use crate::kernel::{LoadKind, Memory, ProgramValue, Variable, intern_memory};
     let mut samples = Vec::new();
     for size in [8, 64, 512] {

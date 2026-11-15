@@ -2,7 +2,7 @@
 
 A helper that returns an aggregate loaded through a pointer should expose a
 fresh aggregate result whose scalar and nested fields equal the source
-snapshot, without turning the source pointer into an alias of the result.
+state, without turning the source pointer into an alias of the result.
 
 ```c filename=struct_aggregate_return_postcondition.c
 struct inner {

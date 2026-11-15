@@ -1,4 +1,4 @@
-//! Obligation focus, outcome snapshots, and exit queries.
+//! Obligation focus, outcome states, and exit queries.
 
 use super::*;
 
@@ -38,7 +38,7 @@ impl<'a> Proof<'a> {
     /// as [`describe_execution_statement_site`] spells a stepped statement, or
     /// nothing when the path recorded no statement.
     ///
-    /// This is diagnostics only. The statement is the one whose snapshot the
+    /// This is diagnostics only. The statement is the one whose state the
     /// path recorded last, read from the presentation data the outcome
     /// already carries.
     ///
@@ -57,7 +57,7 @@ impl<'a> Proof<'a> {
                 Obligation::FunctionOutcome(outcome) if outcome.path_index == path_index => {
                     Some(describe_last_statement_site(
                         &context.constants.source_layout,
-                        &outcome.data.presentation.recorded_snapshots,
+                        &outcome.data.presentation.recorded_states,
                     ))
                 }
                 _ => None,
@@ -65,11 +65,11 @@ impl<'a> Proof<'a> {
             .unwrap_or_default()
     }
 
-    pub(in crate::surface::proof) fn focused_outcome_snapshot(
+    pub(in crate::surface::proof) fn focused_outcome_state(
         &self,
     ) -> Result<FunctionOutcome, ClickError> {
         let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
-            return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
+            return Err(self.step_error("an outcome state requires a focused outcome goal"));
         };
         let value = (*goal.data.core.result).clone();
         let state = (*goal.data.core.state).clone();
@@ -102,8 +102,8 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("return counts have no checked execution outcome"));
         };
-        self.with_outcome_snapshot(&crate::kernel::function_body_with_return_counts(
-            &self.focused_outcome_snapshot()?,
+        self.with_outcome_state(&crate::kernel::function_body_with_return_counts(
+            &self.focused_outcome_state()?,
             outcome,
         ))
     }
@@ -131,7 +131,7 @@ impl<'a> Proof<'a> {
         {
             return Err(self.step_error("outcome refresh cannot change the checked result"));
         }
-        self.with_outcome_snapshot(&root.focused_outcome_snapshot()?)
+        self.with_outcome_state(&root.focused_outcome_state()?)
     }
 
     pub(in crate::surface::proof) fn apply_outcome_contract_resources(
@@ -166,7 +166,7 @@ impl<'a> Proof<'a> {
             })?
             .apply_resource_transition(
                 pre_state,
-                self.focused_outcome_snapshot()?,
+                self.focused_outcome_state()?,
                 self.facts().assumptions(),
             )
             .map_err(|message| {
@@ -174,7 +174,7 @@ impl<'a> Proof<'a> {
                     "could not apply checked contract resource effect: {message}"
                 ))
             })?;
-        let updated = self.with_outcome_snapshot(&outcome)?;
+        let updated = self.with_outcome_state(&outcome)?;
         let Some(Obligation::FunctionOutcome(goal)) = updated.focused_obligation() else {
             unreachable!("the resource transition preserves its outcome obligation")
         };
@@ -232,7 +232,7 @@ impl<'a> Proof<'a> {
                                     .frontier
                                     .execution_start_state(&execution.core.state)
                             }),
-                        &self.focused_outcome_snapshot()?,
+                        &self.focused_outcome_state()?,
                         None,
                         false,
                     );
@@ -253,7 +253,7 @@ impl<'a> Proof<'a> {
                                 .frontier
                                 .execution_start_state(&execution.core.state)
                         });
-                    let guard_post_state = match self.focused_outcome_snapshot() {
+                    let guard_post_state = match self.focused_outcome_state() {
                         Ok(FunctionOutcome::Return { state, .. }) => {
                             // Function exits restore caller locals. Rebind the
                             // callee parameters before lowering a guard, whose
@@ -309,36 +309,38 @@ impl<'a> Proof<'a> {
                         .frontier
                         .execution_start_state(&execution.core.state)
                 }),
-            &self.focused_outcome_snapshot()?,
+            &self.focused_outcome_state()?,
             guard_active,
             guard_deferred,
         )
     }
 
-    /// Updates the focused branch outcome goal's immutable result/state snapshot
+    /// Updates the focused branch outcome goal's immutable result/state state
     /// after a separately checked resource transition.
-    fn with_outcome_snapshot(&self, outcome: &FunctionOutcome) -> Result<Self, ClickError> {
+    fn with_outcome_state(&self, outcome: &FunctionOutcome) -> Result<Self, ClickError> {
         let (value, state) = match outcome {
             FunctionOutcome::Return { value, state } | FunctionOutcome::Throw { value, state } => {
                 (value, state)
             }
-            _ => return Err(self.step_error("an outcome snapshot requires a completed outcome")),
+            _ => {
+                return Err(self.step_error("an outcome state requires a completed outcome"));
+            }
         };
         let outcome_data = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => goal.data.as_ref(),
             Some(Obligation::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
-                self.step_error("an outcome snapshot requires a result-aware proposition goal")
+                self.step_error("an outcome state requires a result-aware proposition goal")
             })?,
             _ => {
-                return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
+                return Err(self.step_error("an outcome state requires a focused outcome goal"));
             }
         };
         let mut data = outcome_data.clone();
         if data.core.is_exceptional != matches!(outcome, FunctionOutcome::Throw { .. }) {
-            return Err(self.step_error("an outcome snapshot cannot change its outcome family"));
+            return Err(self.step_error("an outcome state cannot change its outcome family"));
         }
         // Resource-producing post-execution tactics can replace the outcome
-        // state after this goal was derived. Carry that persistent snapshot
+        // state after this goal was derived. Carry that persistent state
         // root forward; otherwise later
         // checked fixed-state operations lower resource counts against the stale
         // pre-fold state. ExecutionState's components are shared immutable roots, so
@@ -639,7 +641,7 @@ impl<'a> Proof<'a> {
             context.resource_environment,
             context.parameter_binding(),
             pre_state,
-            &self.focused_outcome_snapshot()?,
+            &self.focused_outcome_state()?,
             self.facts().clone(),
             context.spec_definitions,
             context.claim_label,
@@ -672,7 +674,7 @@ impl<'a> Proof<'a> {
             .execution()
             .ok_or_else(|| self.step_error("outcome lost its execution"))?;
         let mut facts = self.facts().clone();
-        let outcome = self.focused_outcome_snapshot()?;
+        let outcome = self.focused_outcome_state()?;
         for case in &execution.presentation.case_assumptions {
             let FunctionOutcome::Return { value, state } = &outcome else {
                 return Err(self.step_error("proof-level `if` requires a return outcome"));
@@ -680,7 +682,7 @@ impl<'a> Proof<'a> {
             let fact = if let Some(fact) = &case.fact {
                 fact.clone()
             } else {
-                let condition = lower_outcome_proposition_with_recorded_snapshots(
+                let condition = lower_outcome_proposition_with_recorded_states(
                     context.parameter_binding(),
                     execution
                         .core
@@ -691,7 +693,7 @@ impl<'a> Proof<'a> {
                     &facts,
                     &case.condition,
                     context.spec_definitions,
-                    &execution.presentation.recorded_snapshots,
+                    &execution.presentation.recorded_states,
                 )
                 .map_err(|message| self.step_error(message))?;
                 if case.value {
@@ -873,7 +875,7 @@ impl<'a> Proof<'a> {
     ///
     /// Each outcome goal owns its path's result value, post-outcome C state,
     /// and fact context (the frontier's facts extended by only that path's
-    /// own facts), and borrows the frontier's snapshot by identity for
+    /// own facts), and borrows the frontier's state by identity for
     /// lowering. A path proved non-returning contributes no goal. The
     /// returned handle addresses the first outcome goal; `focus` reaches its
     /// siblings. Result and effect continuations consume these goals
@@ -911,9 +913,9 @@ impl<'a> Proof<'a> {
             .as_ref()
             .filter(|edges| edges.len() == checked.paths().len());
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
-        let frontier_snapshot = branch_state.execution.clone();
+        let frontier_state = branch_state.execution.clone();
         let frontier_unfolds = branch_state.unfolded_predicates.clone();
-        let frontier_anchor = frontier_snapshot
+        let frontier_anchor = frontier_state
             .as_ref()
             .and_then(|execution| frontier_premise_anchor(execution));
         let requirement_surfaces = match self.context.as_ref() {
@@ -1018,9 +1020,7 @@ impl<'a> Proof<'a> {
                         describe_function_outcome(path.outcome(), context.parameter_binding()),
                         describe_last_statement_site(
                             &context.constants.source_layout,
-                            &execution
-                                .provenance_for_outcome(path_index)
-                                .recorded_snapshots,
+                            &execution.provenance_for_outcome(path_index).recorded_states,
                         ),
                     )));
                 }
@@ -1061,8 +1061,8 @@ impl<'a> Proof<'a> {
                 });
                 facts = facts.with_kernel_checked_fact(fact.proposition().clone());
             }
-            let outcome_execution = frontier_snapshot.as_ref().map(|snapshot| {
-                let mut opened = snapshot.as_ref().clone();
+            let outcome_execution = frontier_state.as_ref().map(|retained_state| {
+                let mut opened = retained_state.as_ref().clone();
                 opened
                     .core
                     .open_return_outcome(path_index, &outcome_core, &facts);
@@ -1076,10 +1076,10 @@ impl<'a> Proof<'a> {
                         outcome_core,
                         OutcomeProofPresentation {
                             surface_propositions: provenance.surface_propositions,
-                            recorded_snapshots: provenance.recorded_snapshots,
+                            recorded_states: provenance.recorded_states,
                             // A returned path of a summarized loop states its
                             // facts over the loop's iteration identities,
-                            // which the loop's exit snapshot binds; the
+                            // which the loop's exit state binds; the
                             // frontier's own anchor is wherever the
                             // continuing path last stepped.
                             premise_anchor: execution
@@ -1329,9 +1329,9 @@ impl<'a> Proof<'a> {
 /// path recorded none or the layout has no site for it.
 fn describe_last_statement_site(
     layout: &crate::surface::lowering::SourceExecutionLayout,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
 ) -> String {
-    snapshots
+    retained_states
         .latest_statement()
         .and_then(|statement_index| layout.site(statement_index))
         .map(|site| format!("\n  C statement at {}: `{}`", site.location(), site.text()))
@@ -1341,8 +1341,8 @@ fn describe_last_statement_site(
 /// The premise anchor of an execution frontier: the entry of the last
 /// executed statement (or the most recent recorded program point), with an
 /// exit marker mapped to the matching recorded entry. Premises established
-/// across one statement use its entry snapshot as their stable Surface Click
-/// spelling; a retained Proof may carry the equivalent exit snapshot as its most
+/// across one statement use its entry state as their stable Surface Click
+/// spelling; a retained Proof may carry the equivalent exit state as its most
 /// recent provenance marker. Outcomes and mid-execution judgments
 /// anchor their premises by this one law.
 pub(in crate::surface::proof) fn frontier_premise_anchor(
@@ -1356,16 +1356,16 @@ pub(in crate::surface::proof) fn frontier_premise_anchor(
         .or_else(|| {
             execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .keys_newest_first()
                 .find_map(|selector| match selector {
-                    SnapshotSelector::ProgramPoint(point) => Some(point.clone()),
-                    SnapshotSelector::Mark(_) => None,
+                    ProgramPointSelector::ProgramPoint(point) => Some(point.clone()),
+                    ProgramPointSelector::Mark(_) => None,
                 })
         })?;
-    // A loop's exit snapshot is the state the loop rule's paths are stated
+    // A loop's exit state is the state the loop rule's paths are stated
     // over: the head's fresh identities for everything the body writes. Its
-    // entry snapshot predates them, so a premise over a returned path's
+    // entry state predates them, so a premise over a returned path's
     // identities could not be spelled there. A statement's exit, by
     // contrast, is read at its entry as before.
     if anchor.kind != ProgramPointKind::Exit
@@ -1378,11 +1378,7 @@ pub(in crate::surface::proof) fn frontier_premise_anchor(
         kind: ProgramPointKind::Entry,
     };
     Some(
-        if execution
-            .presentation
-            .recorded_snapshots
-            .contains_key(&entry)
-        {
+        if execution.presentation.recorded_states.contains_key(&entry) {
             entry
         } else {
             anchor

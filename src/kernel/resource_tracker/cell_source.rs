@@ -18,7 +18,7 @@ use crate::kernel::{CompareRelation, MachineIntegerType, StoredMemoryValue};
 /// Where the memory DAG says the cell at a pointer came from: the
 /// select-over-store answer to "what does this cell hold after these
 /// stores", read off the write history execution recorded rather than
-/// reconstructed by canonicalizing and deep-comparing snapshot values.
+/// reconstructed by canonicalizing and deep-comparing state values.
 ///
 /// Both variants name the node the walk stopped at, and both denote the same
 /// thing — the value of loading the pointer *in that node*. That is what
@@ -59,11 +59,11 @@ pub(crate) enum MemoryDagCell {
 /// either side of that step are not one value by any structural route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::kernel) enum CellWalkStop {
-    /// The paired walks met at the same snapshot; its older history is irrelevant.
-    CommonSnapshot,
+    /// The paired walks met at the same state; its older history is irrelevant.
+    CommonState,
     /// A cache-only forgetting edge retains the queried typed value in its input.
     RetainedValue,
-    /// The walk reached a snapshot with no recorded derivation: the oldest
+    /// The walk reached a state with no recorded derivation: the oldest
     /// point the recorded history reaches.
     OldestRecorded,
     /// The step the walk stopped at provably acts on this access's bytes.
@@ -980,7 +980,7 @@ impl MemoryDagCell {
     /// `pointer`, when it pins one down.
     ///
     /// A stored value starts at the read's address by construction
-    /// ([`write_supplies_read`]); it, and a cell the stopping snapshot
+    /// ([`write_supplies_read`]); it, and a cell the stopping state
     /// materialized at this exact address, answer only when the read of
     /// `kind` returns exactly that value ([`LoadKind::reads_value`]). A value
     /// of another width holds other bytes than the read returns, and one of
@@ -1522,10 +1522,10 @@ pub(in crate::kernel) fn retirement_inside_its_call_havoc(step: &MemoryDerivatio
 /// keep `base`'s forget mark rather than marking itself forgotten from
 /// `base` ([`Memory::mark_forgotten_from`]).
 ///
-/// The mark exists so a snapshot that dropped knowledge cannot re-intern as
+/// The mark exists so a state that dropped knowledge cannot re-intern as
 /// the one it forgot from, or as anything older. A retirement inside its
 /// call's havoc ([`retirement_inside_its_call_havoc`]) is, for every cell
-/// value, the same memory as that havoc's snapshot: the dropped cells of the
+/// value, the same memory as that havoc's state: the dropped cells of the
 /// allocation hold the havoc's post-call values, and the other dropped cells
 /// are untouched. Keeping the havoc's mark is what makes the
 /// content-addressed load names (the projections
@@ -1534,7 +1534,7 @@ pub(in crate::kernel) fn retirement_inside_its_call_havoc(step: &MemoryDerivatio
 ///
 /// Re-interning is still ruled out. The result carries the havoc's marker
 /// block, whose identity is the call's fresh variable, so it cannot equal any
-/// snapshot from before the call. It can equal the havoc snapshot itself only
+/// state from before the call. It can equal the havoc state itself only
 /// when the retirement dropped nothing, and then the dropped edge lost
 /// nothing either: the havoc, the next edge down, stops every cell and every
 /// block question the retirement would have stopped for this allocation.
@@ -1611,7 +1611,7 @@ fn range_structurally_covers_allocation(
 /// back as a four-byte load inside which it landed. The kernel has no rule
 /// that extracts a narrower read from a wider write or assembles a wider read
 /// from a narrower one, so anything other than an exact match pins nothing;
-/// the read is then whatever the produced snapshot holds there.
+/// the read is then whatever the produced state holds there.
 ///
 /// The walk is asked about an access width, the recorded one at the read's
 /// address, and this check decides on that width alone. The read's own kind,
@@ -1656,7 +1656,7 @@ pub(in crate::kernel) fn memory_dag_cell_source_with_stop(
     assumptions: &PureFactContext,
     cross_loop_havoc: bool,
 ) -> Option<(MemoryDagCell, CellWalkStop)> {
-    // Inspect the selected snapshot and one immediate transition only.
+    // Inspect the selected state and one immediate transition only.
     // Longer preservation arguments must be written as certificate links.
     let _lookup = CellLookupGuard::enter(memory, pointer)?;
     Some(memory_dag_cell_source_walk(
@@ -1670,7 +1670,7 @@ pub(in crate::kernel) fn memory_dag_cell_source_with_stop(
 }
 
 /// A locally bounded read-value query. Reaching the limit preserves only the
-/// stopping snapshot's own cell; it never assumes that an unchecked hop frames
+/// stopping state's own cell; it never assumes that an unchecked hop frames
 /// the read. This prevents a simple normalization from scanning a whole path.
 pub(in crate::kernel) fn memory_dag_cell_source_with_hop_limit(
     memory: &SharedMemory,
@@ -1735,7 +1735,7 @@ fn memory_dag_cell_source_walk_inner(
     };
     let mut current = memory.clone();
     let mut path = Vec::new();
-    // The walk ends at a snapshot with no derivation: ids strictly
+    // The walk ends at a state with no derivation: ids strictly
     // decrease along `base`, so every chain is finite.
     loop {
         // Forgetting cached cells changes knowledge, not bytes. An exact
@@ -1877,7 +1877,7 @@ fn memory_dag_cell_source_walk_inner(
     }
 }
 
-/// Compare just the two paths back to their nearest common snapshot. Arena
+/// Compare just the two paths back to their nearest common state. Arena
 /// ids decrease on every edge, so walking the newer endpoint finds that
 /// common ancestor without inspecting its history. Every hop carries the
 /// same local typed certificate as an ordinary read-preservation query.
@@ -2340,7 +2340,7 @@ mod cache_independence_tests {
                 "one transition must not cross the whole history"
             );
             assert_eq!(
-                super::super::cell_last_same_point(&after, &address, 4),
+                super::super::cell_last_same_version_point(&after, &address, 4),
                 Some(before.clone())
             );
             let (warm, warm_stop) = query();

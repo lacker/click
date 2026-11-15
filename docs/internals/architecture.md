@@ -73,7 +73,7 @@ back into the driver are frozen in the
 [dependency inventory](https://github.com/clicklang/click/blob/master/build_support/proof_search_edges.tsv); the split
 does not yet establish search-free explicit operations. A proof shape no driver
 accepts is a terminal error, never a reason to run a second engine.
-`ExecutionProofState` is the typed execution snapshot inside a `Proof`: the
+`ExecutionProofState` is the typed execution state inside a `Proof`: the
 frontier, path state, and surface record it owns are the execution model, and
 the only cursor it carries is where a source tactic's expansion is being
 captured.
@@ -91,7 +91,7 @@ normalization premises.
 
 One body-independent contract interface carries a function's typed
 parameters and result, proof binders, pure requirements and guarantees,
-normalized resource clauses with their access, transfer role, and snapshot,
+normalized resource clauses with their access, transfer role, and state,
 composite definitions, and predicate unfoldings. Verified functions, external
 assumptions, named callback contracts, and execution theorems all apply
 through it; their evidence stays distinct (a callback fact is tied to an exact

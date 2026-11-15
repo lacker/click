@@ -2,7 +2,7 @@
 
 This differs from `extract_algebraic_existential_implication.md` only in the
 bound variable's name. Both propositions mean the same thing. The antecedent
-is also available exactly, and there is no C state or memory snapshot.
+is also available exactly, and there is no C state or memory state.
 
 ```click
 theorem extract_algebraic_existential_alpha(flag: int32) {

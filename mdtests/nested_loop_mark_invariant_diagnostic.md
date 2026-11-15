@@ -1,4 +1,4 @@
-# Loop invariants explain the supported entry snapshot
+# Loop invariants explain the supported entry state
 
 ```c filename=r.c
 int count(void) {

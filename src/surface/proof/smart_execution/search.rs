@@ -540,7 +540,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 pre_state,
                 &execution.core.state,
                 None,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             ),
             &execution.presentation.surface_propositions,
             context.spec_definitions,
@@ -700,7 +700,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             pre_state: fixed_state.pre_state,
             post_state: fixed_state.state,
             result: fixed_state.result,
-            recorded_snapshots: fixed_state.recorded_snapshots,
+            recorded_states: fixed_state.recorded_states,
             integer_values: &integer_values,
             pointer_element_widths: parameter_pointer_element_widths(parameter_binding.parameters),
         };
@@ -839,13 +839,13 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 continue;
             }
 
-            // Reuse the established snapshot-surface search for execution
+            // Reuse the established state-surface search for execution
             // proofs, with availability answered by persistent indexes. The
             // matched fact above comes from the requirement's shape bucket,
-            // so sibling terms carrying different memory snapshots remain
+            // so sibling terms carrying different memory states remain
             // visible without rebuilding the complete ambient fact vector.
             // The returned form still has to survive `apply_step` below.
-            let mut snapshot_surface_error = None;
+            let mut program_point_surface_error = None;
             if let ProofContext::Execution(context) = search_input.context.as_ref() {
                 let execution = search_input
                     .execution()
@@ -869,7 +869,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                         }
                         continue;
                     }
-                    Err(error) => snapshot_surface_error = Some(error),
+                    Err(error) => program_point_surface_error = Some(error),
                 }
             }
 
@@ -926,7 +926,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                         "theorem application `{}` has no checked surface form for exact premise `{}`{}",
                         application.name,
                         crate::surface::proof_diagnostics::render::render_proposition(&requirement),
-                        snapshot_surface_error
+                        program_point_surface_error
                             .as_ref()
                             .map(|error| format!(": {}", error.raw_summary()))
                             .unwrap_or_default(),
@@ -979,7 +979,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             }
         }
         let state = ExecutionState::new().with_memory(context.theorem_context.memory.clone());
-        let recorded_snapshots = RecordedSnapshots::new();
+        let recorded_states = RecordedStates::new();
         let algebraic_values = application
             .arguments
             .iter()
@@ -1009,7 +1009,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             pre_state: &state,
             post_state: &state,
             result: None,
-            recorded_snapshots: &recorded_snapshots,
+            recorded_states: &recorded_states,
             integer_values: &integer_values,
             pointer_element_widths: BTreeMap::new(),
         };
@@ -1107,7 +1107,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 )
             }) || !search_input.facts().contains(&lowered)
             {
-                // `Debug` on a kernel proposition dumps the memory snapshots
+                // `Debug` on a kernel proposition dumps the memory states
                 // and algebraic schemas it is indexed by; the reader needs the
                 // clause and the fact it instantiates to.
                 return Err(search_input.step_error(format!(
@@ -1229,7 +1229,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                         context.pre_state,
                         context.post_state,
                         context.result,
-                        context.recorded_snapshots,
+                        context.recorded_states,
                     ),
                     spec_definitions,
                     &BTreeSet::new(),
@@ -1282,7 +1282,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                         context.pre_state,
                         context.post_state,
                         context.result,
-                        context.recorded_snapshots,
+                        context.recorded_states,
                     ),
                     spec_definitions,
                 )
@@ -1374,7 +1374,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     context.pre_state,
                     context.post_state,
                     context.result,
-                    context.recorded_snapshots,
+                    context.recorded_states,
                 ),
                 spec_definitions,
             )
@@ -1401,7 +1401,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     context.pre_state,
                     context.post_state,
                     context.result,
-                    context.recorded_snapshots,
+                    context.recorded_states,
                 ),
                 spec_definitions,
             )

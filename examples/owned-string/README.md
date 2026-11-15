@@ -42,7 +42,7 @@ content cell. `owned_string_pop_preserves_first` verifies through that modular
 contract that popping a string of length at least two preserves its first
 element.
 
-The pipeline also demonstrates why call-entry snapshots sometimes need to be
+The pipeline also demonstrates why call-entry states sometimes need to be
 named explicitly in a proof. Push establishes the new element at the old
 length; the sidecar spells that old length as
 `at(region(3).entry, owner->len)` before deriving the concrete index. This

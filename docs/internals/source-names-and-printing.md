@@ -76,7 +76,7 @@ from anywhere else: `source_click_proposition` writes Click source,
 `refusal_click_proposition` a refusal, which alone may print presentation-only
 text such as an `(unsigned)` order. Source output therefore spells every
 proposition, including one nested in a conditional expression, as source.
-Expression, place and snapshot formatters are shared with diagnostics; those
+Expression, place and state formatters are shared with diagnostics; those
 formatters preserve source syntax.
 
 Source text has one printer. Expansion writes a proposition through
@@ -86,15 +86,15 @@ from (`SurfacePropositionMap::surface`) and printed there. The kernel-fact print
 `render_proposition` (`proof_diagnostics/render.rs` with `render/surface.rs`),
 is the diagnostic extension of it, for facts a person reads in a refusal or a
 `--trace-proof` trace. It prints a kernel `Proposition` directly, so it can
-show what a Click proposition cannot: a read's width, snapshot and address,
-report-local snapshot labels, and the kernel spelling of a fact with no Click
+show what a Click proposition cannot: a read's width, state and address,
+report-local state labels, and the kernel spelling of a fact with no Click
 form. Its modes are explicit (`Mode::Source`, `Exact`, `ExactIdentity`), and
 no expansion path calls it, so its output never reaches generated source.
 
-Predicate diagnostics retain each array argument's memory snapshot. An array
+Predicate diagnostics retain each array argument's memory state. An array
 read at entry prints as `old(src)`, a recorded state as `at(copied, src)`, and
 the current state as `src`. Only the predicate's implicit logical resource
-state is omitted; two array arguments with different snapshots remain distinct.
+state is omitted; two array arguments with different states remain distinct.
 
 Canonical library names in a generated fragment are rewritten only at parser
 token spans. A matching string or comment is left untouched. Name queries read
@@ -105,8 +105,8 @@ A written code region resolves through `CodeRegionRef::resolve`, both in
 annotation lowering and in proof execution. A loop label binds once per
 execution path, through the structural clause of the `loop as label` that
 declared it; a second `loop as label` at another loop is refused. A recorded
-snapshot is one entry per program point. The snapshot map keeps the labels the
-path gave its loops, files a loop's snapshot under its first label, and reads
+state is one entry per program point. The state map keeps the labels the
+path gave its loops, files a loop's state under its first label, and reads
 `loop(N)`, that label and any other label of the loop as the same entry, so
 expansion still cites the label the proof wrote.
 

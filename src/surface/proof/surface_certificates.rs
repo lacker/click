@@ -28,7 +28,7 @@ pub(super) fn surface_logical_children(
             }
             // Match finite_sequence_equality's pairwise balanced tree. The
             // written comparison names the whole tree; its children retain
-            // element spellings, including each operand's snapshot.
+            // element spellings, including each operand's state.
             let mut level = left
                 .into_iter()
                 .zip(right)
@@ -73,10 +73,10 @@ pub(super) fn surface_logical_children(
     }
 }
 
-/// Flatten only explicit sequence syntax. Snapshot wrappers apply to each
+/// Flatten only explicit sequence syntax. Memory state wrappers apply to each
 /// element; no value evaluation or fact-dependent simplification participates.
 fn written_sequence_elements(expression: &ContractExpression) -> Option<Vec<ContractExpression>> {
-    let mut pending = vec![(expression, Vec::<Option<SnapshotSelector>>::new())];
+    let mut pending = vec![(expression, Vec::<Option<ProgramPointSelector>>::new())];
     let mut elements = Vec::new();
     while let Some((expression, selectors)) = pending.pop() {
         crate::instrumentation::record_deterministic_work(1);
@@ -419,7 +419,7 @@ fn plan_explicit_universal_conclusion_discharge(
         // A loop-exit universal invariant fact is written through an
         // `at(point, ...)` wrapper; peel it here and restore it on the
         // substituted transport source so the source lowers at the same
-        // snapshot the premise denotes.
+        // state the premise denotes.
         let (premise_selector, premise_forall) = match premise_surface {
             ClickProposition::At {
                 selector,
@@ -458,7 +458,7 @@ fn plan_explicit_universal_conclusion_discharge(
         premises: Some(using_surfaces.to_vec()),
     }];
     if let Some((source, target)) = transport_closure {
-        if let Some((historical, current)) = comparison_snapshot_expression_pair(&source, &target) {
+        if let Some((historical, current)) = comparison_state_expression_pair(&source, &target) {
             let reflexive = ClickProposition::Comparison {
                 left: historical.clone(),
                 operator: ComparisonOperator::Equal,
@@ -504,9 +504,9 @@ fn plan_explicit_universal_conclusion_discharge(
 }
 
 /// Finds the comparison operand written as the same expression at a named
-/// snapshot and at the current state. An equality bridge for that operand can
+/// state and at the current state. An equality bridge for that operand can
 /// then carry the surrounding comparison by an ordinary checked rewrite.
-fn comparison_snapshot_expression_pair(
+fn comparison_state_expression_pair(
     source: &ClickProposition,
     target: &ClickProposition,
 ) -> Option<(ContractExpression, ContractExpression)> {
@@ -772,7 +772,7 @@ pub(super) fn plan_explicit_le_and_neq_implies_lt(
 
 /// Select the written separation for a single named statement's read equality.
 /// Selection is syntactic and bounded by the explicit premises. The driver
-/// checks the selected footprint's landing snapshot before invoking preserve.
+/// checks the selected footprint's landing state before invoking preserve.
 pub(super) fn single_statement_preservation_premise(
     source: &ClickProposition,
     target: &ClickProposition,
@@ -809,7 +809,7 @@ fn preservation_read(
     if left != right {
         return None;
     }
-    let (historical, current) = comparison_snapshot_expression_pair(source, target)?;
+    let (historical, current) = comparison_state_expression_pair(source, target)?;
     // Preserve is the read-observation axiom. Constant equalities and
     // arithmetic expressions use their existing ordinary reasoning routes.
     if !matches!(current, ContractExpression::ResourceField(_))
@@ -826,7 +826,7 @@ fn preservation_read(
     }
     let ContractExpression::At {
         selector:
-            SnapshotSelector::ProgramPoint(ProgramPointRef {
+            ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region,
                 kind: ProgramPointKind::Entry,
             }),
@@ -868,7 +868,7 @@ pub(super) fn statement_preservation_steps(
         }
         includes_start |= region == &start;
         let at = |kind| ContractExpression::At {
-            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: region.clone(),
                 kind,
             }),
@@ -893,7 +893,7 @@ pub(super) fn statement_preservation_steps(
     Some(steps)
 }
 
-/// Carry a comparison whose read operands change snapshot. All selected
+/// Carry a comparison whose read operands change state. All selected
 /// footprints remain ordinary preservation steps; no ambient premise discovery.
 pub(super) fn comparison_preservation_steps(
     source: &ClickProposition,
@@ -919,7 +919,7 @@ pub(super) fn implication_preservation_steps(
     let mut pending = vec![(source, target, None)];
     let mut seen = std::collections::HashSet::new();
     let mut pairs = Vec::new();
-    while let Some((source, target, snapshot)) = pending.pop() {
+    while let Some((source, target, retained_state)) = pending.pop() {
         crate::instrumentation::record_deterministic_work(1);
         match (source, target) {
             (
@@ -928,20 +928,20 @@ pub(super) fn implication_preservation_steps(
                     proposition,
                 },
                 _,
-            ) if snapshot.is_none() => {
+            ) if retained_state.is_none() => {
                 pending.push((proposition.as_ref(), target, Some(selector)));
             }
             (ClickProposition::And(sl, sr), ClickProposition::And(tl, tr))
             | (ClickProposition::Or(sl, sr), ClickProposition::Or(tl, tr))
             | (ClickProposition::Implies(sl, sr), ClickProposition::Implies(tl, tr)) => {
-                pending.push((sr.as_ref(), tr.as_ref(), snapshot));
-                pending.push((sl.as_ref(), tl.as_ref(), snapshot));
+                pending.push((sr.as_ref(), tr.as_ref(), retained_state));
+                pending.push((sl.as_ref(), tl.as_ref(), retained_state));
             }
             (ClickProposition::Not(source), ClickProposition::Not(target)) => {
-                pending.push((source.as_ref(), target.as_ref(), snapshot));
+                pending.push((source.as_ref(), target.as_ref(), retained_state));
             }
             (ClickProposition::Comparison { .. }, ClickProposition::Comparison { .. }) => {
-                let historical = match snapshot {
+                let historical = match retained_state {
                     Some(selector) => ClickProposition::At {
                         selector: selector.clone(),
                         proposition: Box::new(source.clone()),
@@ -1047,8 +1047,8 @@ fn comparison_preservation_reads(
     source: &ClickProposition,
     target: &ClickProposition,
 ) -> Option<Vec<(ContractExpression, ContractExpression)>> {
-    // Distribute only a comparison's written snapshot. Literal integers are
-    // snapshot-independent; every other operand keeps its explicit snapshot.
+    // Distribute only a comparison's written state. Literal integers are
+    // state-independent; every other operand keeps its explicit state.
     // Retain the original source below, so ordinary `known` checks connect
     // the written fact to the rewritten goal without a new trusted rule.
     let distributed;
@@ -1106,7 +1106,7 @@ fn comparison_preservation_reads(
     ) {
         return None;
     }
-    let pairs = if let Some(pair) = comparison_snapshot_expression_pair(comparison, target) {
+    let pairs = if let Some(pair) = comparison_state_expression_pair(comparison, target) {
         vec![pair]
     } else {
         let ClickProposition::Comparison {
@@ -1213,25 +1213,25 @@ pub(super) fn conjunction_projection_preservation_steps(
     let mut pending = vec![(source, None)];
     let mut leaves = std::collections::HashMap::new();
     let mut conjunction = false;
-    while let Some((proposition, snapshot)) = pending.pop() {
+    while let Some((proposition, retained_state)) = pending.pop() {
         crate::instrumentation::record_deterministic_work(1);
         match proposition {
             ClickProposition::And(left, right) => {
                 conjunction = true;
-                pending.push((right.as_ref(), snapshot));
-                pending.push((left.as_ref(), snapshot));
+                pending.push((right.as_ref(), retained_state));
+                pending.push((left.as_ref(), retained_state));
             }
             ClickProposition::At {
                 selector,
                 proposition,
-            } if snapshot.is_none() => {
+            } if retained_state.is_none() => {
                 pending.push((proposition.as_ref(), Some(selector)));
             }
             ClickProposition::Comparison { .. } => {
-                if let Some(snapshot) = snapshot {
+                if let Some(retained_state) = retained_state {
                     // One selected witness. Failure of its ordinary proof does
-                    // not retry another snapshot or discover extra premises.
-                    leaves.entry(proposition).or_insert(snapshot);
+                    // not retry another state or discover extra premises.
+                    leaves.entry(proposition).or_insert(retained_state);
                 }
             }
             _ => {}
@@ -1252,9 +1252,9 @@ pub(super) fn conjunction_projection_preservation_steps(
                 pending.push(Some(left));
             }
             Some(target @ ClickProposition::Comparison { .. }) => {
-                let snapshot = leaves.get(target)?;
+                let retained_state = leaves.get(target)?;
                 let source = ClickProposition::At {
-                    selector: (*snapshot).clone(),
+                    selector: (*retained_state).clone(),
                     proposition: Box::new(target.clone()),
                 };
                 shape.push(Some(selected.len()));
@@ -1281,7 +1281,7 @@ pub(super) fn conjunction_preservation_steps(
         Visit(
             &'a ClickProposition,
             &'a ClickProposition,
-            Option<&'a SnapshotSelector>,
+            Option<&'a ProgramPointSelector>,
         ),
         Join,
     }
@@ -1290,7 +1290,7 @@ pub(super) fn conjunction_preservation_steps(
     let mut shape = Vec::new();
     while let Some(task) = pending.pop() {
         crate::instrumentation::record_deterministic_work(1);
-        let Task::Visit(source, target, snapshot) = task else {
+        let Task::Visit(source, target, retained_state) = task else {
             shape.push(None);
             continue;
         };
@@ -1299,7 +1299,7 @@ pub(super) fn conjunction_preservation_steps(
             proposition,
         } = source
         {
-            if snapshot.is_some() {
+            if retained_state.is_some() {
                 return None;
             }
             pending.push(Task::Visit(proposition, target, Some(selector)));
@@ -1307,10 +1307,10 @@ pub(super) fn conjunction_preservation_steps(
             (source, target)
         {
             pending.push(Task::Join);
-            pending.push(Task::Visit(sr, tr, snapshot));
-            pending.push(Task::Visit(sl, tl, snapshot));
+            pending.push(Task::Visit(sr, tr, retained_state));
+            pending.push(Task::Visit(sl, tl, retained_state));
         } else {
-            let source = match snapshot {
+            let source = match retained_state {
                 Some(selector) => ClickProposition::At {
                     selector: selector.clone(),
                     proposition: Box::new(source.clone()),
@@ -4763,13 +4763,13 @@ pub(super) fn plan_explicit_increment_lower_bound(
     None
 }
 
-pub(super) fn comparison_snapshot_variants(
+pub(super) fn comparison_state_variants(
     proposition: &ClickProposition,
-    selectors: &[SnapshotSelector],
+    selectors: &[ProgramPointSelector],
 ) -> Option<Vec<ClickProposition>> {
     if let ClickProposition::Not(body) = proposition {
         return Some(
-            comparison_snapshot_variants(body, selectors)?
+            comparison_state_variants(body, selectors)?
                 .into_iter()
                 .map(|variant| ClickProposition::Not(Box::new(variant)))
                 .collect(),
@@ -4783,7 +4783,7 @@ pub(super) fn comparison_snapshot_variants(
     } = proposition
     {
         return Some(
-            comparison_snapshot_variants(body, selectors)?
+            comparison_state_variants(body, selectors)?
                 .into_iter()
                 .map(|body| ClickProposition::ForAll {
                     click_type: interface_type.clone(),
@@ -4795,11 +4795,11 @@ pub(super) fn comparison_snapshot_variants(
         );
     }
     if let ClickProposition::Implies(left, right) = proposition {
-        let mut variants = comparison_snapshot_variants(right, selectors)?
+        let mut variants = comparison_state_variants(right, selectors)?
             .into_iter()
             .map(|right| ClickProposition::Implies(left.clone(), Box::new(right)))
             .collect::<Vec<_>>();
-        if let Some(left_variants) = comparison_snapshot_variants(left, selectors) {
+        if let Some(left_variants) = comparison_state_variants(left, selectors) {
             variants.extend(
                 left_variants
                     .into_iter()
@@ -4809,8 +4809,8 @@ pub(super) fn comparison_snapshot_variants(
         return Some(variants);
     }
     if let ClickProposition::Or(left, right) = proposition {
-        let left_variants = comparison_snapshot_variants(left, selectors)?;
-        let right_variants = comparison_snapshot_variants(right, selectors)?;
+        let left_variants = comparison_state_variants(left, selectors)?;
+        let right_variants = comparison_state_variants(right, selectors)?;
         let mut variants = vec![proposition.clone()];
         let mut push = |left: ClickProposition, right: ClickProposition| {
             let candidate = ClickProposition::Or(Box::new(left), Box::new(right));
@@ -4831,14 +4831,14 @@ pub(super) fn comparison_snapshot_variants(
     }
     if let ClickProposition::And(left, right) = proposition {
         let mut variants = Vec::new();
-        if let Some(right_variants) = comparison_snapshot_variants(right, selectors) {
+        if let Some(right_variants) = comparison_state_variants(right, selectors) {
             variants.extend(
                 right_variants
                     .into_iter()
                     .map(|right| ClickProposition::And(left.clone(), Box::new(right))),
             );
         }
-        if let Some(left_variants) = comparison_snapshot_variants(left, selectors) {
+        if let Some(left_variants) = comparison_state_variants(left, selectors) {
             variants.extend(
                 left_variants
                     .into_iter()
@@ -4847,12 +4847,12 @@ pub(super) fn comparison_snapshot_variants(
         }
         return (!variants.is_empty()).then_some(variants);
     }
-    // A predicate call names its memory snapshot only through its array-ref
-    // arguments, so the snapshot is selected by wrapping the arguments —
+    // A predicate call names its memory state only through its array-ref
+    // arguments, so the state is selected by wrapping the arguments —
     // uniformly, the way the recorded-form search in
     // `checked_surface_fact_in_state_with_assumptions` already does. Wrapping
     // a value argument is harmless: it evaluates to the same value in every
-    // selected snapshot where it is synthesizable at, and a wrapping that
+    // selected state where it is synthesizable at, and a wrapping that
     // does not lower is discarded by the caller's `check`.
     if let ClickProposition::PredicateCall { name, arguments } = proposition {
         let call = |wrap: &dyn Fn(&ContractExpression) -> ContractExpression| {
@@ -4889,8 +4889,8 @@ pub(super) fn comparison_snapshot_variants(
     else {
         return None;
     };
-    let at_snapshot =
-        |expression: &ContractExpression, selector: &SnapshotSelector| ContractExpression::At {
+    let at_program_point =
+        |expression: &ContractExpression, selector: &ProgramPointSelector| ContractExpression::At {
             selector: selector.clone(),
             expression: Box::new(expression.clone()),
         };
@@ -4903,10 +4903,15 @@ pub(super) fn comparison_snapshot_variants(
         .then(|| ContractExpression::Old(Box::new(left.clone())));
     let old_right = (!matches!(right, ContractExpression::Old(_)))
         .then(|| ContractExpression::Old(Box::new(right.clone())));
-    let snapshot_pairs = selectors
+    let state_pairs = selectors
         .iter()
         .rev()
-        .map(|selector| (at_snapshot(left, selector), at_snapshot(right, selector)))
+        .map(|selector| {
+            (
+                at_program_point(left, selector),
+                at_program_point(right, selector),
+            )
+        })
         .collect::<Vec<_>>();
     let mut variants = Vec::new();
     let mut push = |left, right| {
@@ -4925,10 +4930,10 @@ pub(super) fn comparison_snapshot_variants(
     if let (Some(old_left), Some(old_right)) = (&old_left, &old_right) {
         push(old_left.clone(), old_right.clone());
     }
-    for (snapshot_left, snapshot_right) in &snapshot_pairs {
-        push(snapshot_left.clone(), right.clone());
-        push(left.clone(), snapshot_right.clone());
-        push(snapshot_left.clone(), snapshot_right.clone());
+    for (state_left, state_right) in &state_pairs {
+        push(state_left.clone(), right.clone());
+        push(left.clone(), state_right.clone());
+        push(state_left.clone(), state_right.clone());
     }
 
     let mut left_variants = vec![left.clone()];
@@ -4939,9 +4944,9 @@ pub(super) fn comparison_snapshot_variants(
     if let Some(old_right) = old_right {
         right_variants.push(old_right);
     }
-    for (snapshot_left, snapshot_right) in snapshot_pairs {
-        left_variants.push(snapshot_left);
-        right_variants.push(snapshot_right);
+    for (state_left, state_right) in state_pairs {
+        left_variants.push(state_left);
+        right_variants.push(state_right);
     }
     for left in left_variants {
         for right in &right_variants {
@@ -4973,7 +4978,7 @@ pub(super) fn lower_surface_candidate_in_state_with_assumptions(
             view.old_reference_state(state),
             state,
             None,
-            view.recorded_snapshots,
+            view.recorded_states,
         ),
         spec_definitions,
     )

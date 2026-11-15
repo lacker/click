@@ -83,7 +83,7 @@ impl Clone for ProofCertificateBuilder {
 #[derive(Clone, Default)]
 pub(super) struct SurfaceRecord {
     /// The statement entry the most recent step recorded, which later
-    /// snapshot-qualified facts resolve against.
+    /// state-qualified facts resolve against.
     pub(super) last_step_entry: Option<ProgramPointRef>,
     /// The parameter point (`R.parameter(name)`) the most recent call step
     /// recorded: a step that prepares a call proves the call's requirements
@@ -1153,7 +1153,7 @@ pub(super) fn surface_branch_skeleton(steps: &[ProofStep]) -> Vec<ProofStep> {
     }]
 }
 
-/// Repeated guards need their original execution points: their snapshots
+/// Repeated guards need their original execution points: their states
 /// can denote different iterations by the time execution has returned.
 pub(super) fn surface_has_repeated_branch_conditions(steps: &[ProofStep]) -> bool {
     let mut pending = vec![steps];
@@ -1802,14 +1802,14 @@ pub(super) fn post_execution_tactic_timing(
 }
 
 /// The execution data that lowering and fixed-state proofs read: the frontier,
-/// the recorded snapshots, the surface spellings, the effect
+/// the recorded states, the surface spellings, the effect
 /// facts, and the state `old(...)` resolves to. Owners build it from
 /// wherever they keep those fields, so consumers do not depend on the
 /// check bag's layout.
 #[derive(Clone, Copy)]
 pub(super) struct ExecutionView<'a> {
     pub(super) frontier: &'a ExecutionFrontier,
-    pub(super) recorded_snapshots: &'a RecordedSnapshots,
+    pub(super) recorded_states: &'a RecordedStates,
     pub(super) surface_propositions: &'a SurfacePropositionMap,
     pub(super) effect_facts: &'a ExecutionFacts,
     function_entry_state: Option<&'a ExecutionState>,
@@ -1854,13 +1854,13 @@ impl<'a> ExecutionView<'a> {
     pub(super) fn new(
         frontier: &'a ExecutionFrontier,
         effect_facts: &'a ExecutionFacts,
-        recorded_snapshots: &'a RecordedSnapshots,
+        recorded_states: &'a RecordedStates,
         surface_propositions: &'a SurfacePropositionMap,
         function_entry_state: Option<&'a ExecutionState>,
     ) -> Self {
         ExecutionView {
             frontier,
-            recorded_snapshots,
+            recorded_states,
             surface_propositions,
             effect_facts,
             function_entry_state,

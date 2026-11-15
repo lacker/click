@@ -1,4 +1,4 @@
-# Typed dereferences retain snapshots
+# Typed dereferences retain states
 
 ```c filename=main.c
 unsigned int bump(unsigned int *p) { *p += 1; return *p; }

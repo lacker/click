@@ -2164,8 +2164,8 @@ fn sequential_early_return_tactics(
     }
     fn continues_after_return(proof_if: &ProofIf, returns: &BTreeSet<usize>) -> bool {
         let early_return = matches!(
-            super::proof::surface_snapshot_selector(&proof_if.condition),
-            Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
+            super::proof::surface_program_point_selector(&proof_if.condition),
+            Some(ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(index), kind: ProgramPointKind::Entry,
             })) if returns.contains(&index)
         );

@@ -1,7 +1,7 @@
 # Control: resource-published pointer loads at the same address
 
 Unfolding owns one pointer cell and proves its parameter equal to the model
-identity. No C read, write, recursive resource, or snapshot transport is involved.
+identity. No C read, write, recursive resource, or state transport is involved.
 This control compares two reads through the original parameter.
 
 ```c filename=resource_pointer_load_alias.c

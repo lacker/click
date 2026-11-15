@@ -333,7 +333,7 @@ impl<'a> Proof<'a> {
         source: &ProofMatch,
         state: &ExecutionState,
         query: &ProofFacts,
-        snapshots: &RecordedSnapshots,
+        retained_states: &RecordedStates,
     ) -> Result<crate::kernel::AlgebraicTerm, ClickError> {
         let execution = self
             .execution()
@@ -366,7 +366,7 @@ impl<'a> Proof<'a> {
             BTreeMap::new(),
             context.old_reference_state(&execution.core.frontier, state),
             state,
-            snapshots,
+            retained_states,
             context.spec_definitions,
         )
         .map_err(|message| {
@@ -502,7 +502,7 @@ impl<'a> Proof<'a> {
                 BTreeMap::new(),
                 context.old_reference_state(&execution.core.frontier, &execution.core.state),
                 &execution.core.state,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
                 context.spec_definitions,
             )
             .map_err(|message| {

@@ -36,10 +36,10 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
     let tactic_name = proof_context.step_tactic_name;
     let loop_step_policy = LoopStepPolicy::EnterBody;
     // Resuming from a completed branch region reaches this statement without
-    // recording its entry snapshot. Later facts may still name this boundary.
+    // recording its entry state. Later facts may still name this boundary.
     record_current_statement_entry(
         &execution.core.frontier,
-        &mut execution.presentation.recorded_snapshots,
+        &mut execution.presentation.recorded_states,
         state,
         function_block,
         function,
@@ -63,7 +63,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
                 &case.condition,
                 assumptions,
                 ParameterBinding::new(parsed_function.parameters(), arguments),
-                FixedStateFrame::new(&pre_state, state, None, &execution.presentation.recorded_snapshots),
+                FixedStateFrame::new(&pre_state, state, None, &execution.presentation.recorded_states),
                 SpecDefinitions::new(predicate_environment, click_function_environment),
             )
             .map_err(|message| {
@@ -126,7 +126,7 @@ pub(in crate::surface::proof) fn check_statement_step_with_policy(
             policy,
             // A step transports nothing: the kernel keeps the names of cells it
             // proves unwritten from the whole context, and ambient facts are
-            // restored below at their original snapshots.
+            // restored below at their original states.
             loop_step_policy,
             selected_context,
         )

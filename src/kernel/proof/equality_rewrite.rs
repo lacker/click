@@ -273,7 +273,7 @@ pub(crate) fn reverse_equality(equality: &Proposition) -> Option<Proposition> {
 }
 
 // Equality substitution cares about lexical variables, not the contents of
-// immutable snapshots. The shared checked collector also sees variables in
+// immutable states. The shared checked collector also sees variables in
 // pure-function arguments and registered load addresses.
 fn rewrite_equality_variables(equality: &Proposition) -> Result<BTreeSet<Variable>, String> {
     let mut collector =
@@ -718,12 +718,12 @@ fn rewrite_through_load_variable(
     if !crate::kernel::is_load_variable(variable) {
         return None;
     }
-    // Rewrite the address at the snapshot where this load was observed.
-    // Its canonical snapshot may be a projected placeholder: it preserves
+    // Rewrite the address at the state where this load was observed.
+    // Its canonical state may be a projected placeholder: it preserves
     // the original cell's value, but need not preserve a different address
     // exposed by the equality. The current epoch's origin retains that
     // execution history, just as it does for checked load transport.
-    // Without a live origin, keep the variable's defining snapshot.
+    // Without a live origin, keep the variable's defining state.
     let (memory, pointer) = crate::kernel::registered_load_origin_for_variable(variable)
         .or_else(|| crate::kernel::registered_load_for_variable(variable))?;
     let kind = crate::kernel::registered_load_kind_for_variable(variable)?;
@@ -841,7 +841,7 @@ fn rewrite_through_loaded_pointer_block(
 /// terms missed by the structural address rewrite. A whole symbolic pointer
 /// uses capture-avoiding variable substitution; other pointer equalities use
 /// exact matching and refuse internal binders whose scope is unsupported.
-/// Neither path searches an ambient proof state or changes load snapshots.
+/// Neither path searches an ambient proof state or changes load states.
 fn pointer_congruence_rewrite(
     goal: &Proposition,
     left: &Pointer,
@@ -857,7 +857,7 @@ fn pointer_congruence_rewrite(
         crate::kernel::proof::term_rewrite::TermRewrite::for_pointer_exact(left, right)
     };
     // Integer machine observations retain reads as registered variables.
-    // Rewrite their selected addresses, keeping the exact snapshot and kind,
+    // Rewrite their selected addresses, keeping the exact state and kind,
     // just as the native-condition path does for the same pointer equality.
     rewrite.enable_registered_load_resolution();
     let rewritten = rewrite.proposition(goal);
@@ -909,7 +909,7 @@ impl From<AtomicRewriteRefusal> for String {
 
 // Address annotations describe a producer's object class, not the bits
 // observed by a numeric equality. Keep the pointer and mask themselves
-// exact; no pointer-value or memory-snapshot identity is substituted.
+// exact; no pointer-value or memory-state identity is substituted.
 fn same_address_observation(left: MachineOperandView<'_>, right: MachineOperandView<'_>) -> bool {
     fn pointer(term: MachineOperandView<'_>) -> Option<&Pointer> {
         match term {
@@ -1086,7 +1086,7 @@ fn rewrite_term(term: &MachineTerm, from: &MachineTerm, to: &MachineTerm) -> Mac
                     .collect(),
             }
         }
-        // The memory snapshot is fixed, but its address is an ordinary
+        // The memory state is fixed, but its address is an ordinary
         // expression: exact equality substitution is congruent there too.
         MachineTerm::MemoryLoad(_, pointer, _) => rewrite_read_address(
             term,
@@ -1659,7 +1659,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
             } => Proposition::MemoryLoadable {
                 // Same-block pointer equalities use offsets rather than the
                 // PointerEqual carrier. Substitute the selected address while
-                // retaining the exact snapshot and readable byte extent.
+                // retaining the exact state and readable byte extent.
                 memory: memory.clone(),
                 base: Pointer {
                     block: base.block.clone(),
@@ -1842,7 +1842,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
         // displacement. An equality of the bases therefore also rewrites the
         // address of that access, with the same displacement on the right.
         // Match one structural suffix; do not search the ambient pointer
-        // equalities or change the memory snapshot of a load.
+        // equalities or change the memory state of a load.
         fn offset_after_base(
             address: &PointerOffsetTerm,
             base: &PointerOffsetTerm,
@@ -2009,7 +2009,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 wide,
             } => {
                 Proposition::MemoryLoadable {
-                    // Clone only shared snapshot roots. Equality changes the
+                    // Clone only shared state roots. Equality changes the
                     // selected address, never the memory or view extent.
                     memory: memory.clone(),
                     base: rewrite_pointer(base),
@@ -2258,7 +2258,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
             }
             IntegerTerm::PureFunctionApplication(application) => {
                 // Rewrite scalar arguments, preserving captured array memory
-                // and its element type. No snapshot contents are traversed.
+                // and its element type. No state contents are traversed.
                 let arguments = application
                     .arguments()
                     .iter()
@@ -2757,7 +2757,7 @@ mod tests {
                 .unwrap()
                 .proposition(),
             &wanted,
-            "the displaced read retains the original snapshot"
+            "the displaced read retains the original state"
         );
     }
 
@@ -3619,13 +3619,13 @@ mod tests {
     }
 
     #[test]
-    fn integer_equality_rewrite_keeps_snapshot_identity_and_checks_work_budget() {
+    fn integer_equality_rewrite_keeps_state_identity_and_checks_work_budget() {
         let _session = VerificationSession::enter();
         let pointer = Pointer {
-            block: "integer-rewrite-snapshot".into(),
+            block: "integer-rewrite-retained_state".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let before = Memory::new().with_block("integer-rewrite-snapshot", 8);
+        let before = Memory::new().with_block("integer-rewrite-retained_state", 8);
         let after = before.clone().store(
             pointer.clone(),
             ProgramValue::Int64(MachineTerm::int64_constant(9)),
@@ -3812,7 +3812,7 @@ mod tests {
     // Both widths use the same corresponding-leaf checker. A write, a
     // different read kind, address, or operator cannot stand in for that leaf.
     #[test]
-    fn compound_read_rewrite_checks_snapshots_kinds_and_operators() {
+    fn compound_read_rewrite_checks_states_kinds_and_operators() {
         let _session = crate::kernel::VerificationSession::enter();
         for wide in [false, true] {
             let pointer = Pointer {

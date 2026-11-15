@@ -1927,7 +1927,7 @@ mod tests {
         };
         assert_eq!(arguments[0], read_root);
         let KernelTermNode::PointerRead { memory, .. } = arguments[0].node() else {
-            panic!("snapshot read")
+            panic!("state read")
         };
         assert_eq!(memory, &crate::kernel::intern_memory_ref(&source_memory));
         let address = Memory::local_pointer("pointer_step_cell");

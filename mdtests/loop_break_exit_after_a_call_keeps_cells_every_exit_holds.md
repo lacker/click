@@ -1,4 +1,4 @@
-# A fresh post-loop snapshot keeps the cells every exit holds
+# A fresh post-loop state keeps the cells every exit holds
 
 The loop of
 [`loop_break_exit_ordinary_join_keeps_post_loop_read.md`](loop_break_exit_ordinary_join_keeps_post_loop_read.md),

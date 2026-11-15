@@ -36,5 +36,5 @@ cargo nextest run --lib --test rust_import -E 'test(charon_scalar_) | test(charo
 
 This closes `rust-arrays` in the unchanged-fixture inventory. The subsequent
 array-value increments corrected its misleading signature diagnostic and added
-compact borrowed snapshots; `rust-array-values` now verifies unchanged too.
+compact borrowed states; `rust-array-values` now verifies unchanged too.
 Current fixture parity is 10/16 (62.5%), with 14/16 (87.5%) importing.

@@ -36,7 +36,7 @@ fn smaller(a: u32, b: u32) -> u32 {
     verified.unwrap_or_else(|error| panic!("{error:?}"));
     assert!(
         work < 250_000,
-        "concrete min/max witness searched unrelated snapshots: {work} units"
+        "concrete min/max witness searched unrelated retained_states: {work} units"
     );
     let invalid = witness.replace("ensures result == 1u32;", "ensures result == 2u32;");
     assert_ne!(witness, invalid);

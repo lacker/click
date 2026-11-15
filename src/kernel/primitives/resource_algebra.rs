@@ -8,7 +8,7 @@ use crate::kernel::{CompareRelation, MachineCastSpelling, MachineIntegerType, Ov
 mod observable;
 
 /// A proof-aware composition query in progress on this thread. Bridging a
-/// query's snapshot form to a carrier entry can itself ask whether a
+/// query's state form to a carrier entry can itself ask whether a
 /// pointer survived a call havoc, which is served by the same composition,
 /// so queries nest. A query met again while it runs is a cycle through the
 /// facts and proves nothing on that path, noted as a truncation so the memo
@@ -1211,24 +1211,24 @@ fn memory_footprint_for_fact(fact: &ResourceFact) -> ResourceMemoryFootprint {
     if let Some(range) = fact.memory_range() {
         let mut ranges = vec![range.clone()];
         let mut uncertain = false;
-        let mut source_snapshot = None;
+        let mut source_memory_state = None;
         collect_memory_load_ranges(
             &range.base().offset,
             &mut ranges,
             &mut uncertain,
-            &mut source_snapshot,
+            &mut source_memory_state,
         );
         collect_memory_load_ranges_from_term(
             range.bound_terms().0,
             &mut ranges,
             &mut uncertain,
-            &mut source_snapshot,
+            &mut source_memory_state,
         );
         collect_memory_load_ranges_from_term(
             range.bound_terms().1,
             &mut ranges,
             &mut uncertain,
-            &mut source_snapshot,
+            &mut source_memory_state,
         );
         if uncertain {
             return ResourceMemoryFootprint::Unknown;
@@ -1258,13 +1258,13 @@ fn collect_memory_load_ranges(
     offset: &PointerOffsetTerm,
     ranges: &mut Vec<MemoryRange>,
     uncertain: &mut bool,
-    source_snapshot: &mut Option<MemorySnapshotIdentity>,
+    source_memory_state: &mut Option<MemoryStateIdentity>,
 ) {
     collect_memory_load_work(
         [MemoryLoadFootprintWork::Offset(offset, 0)],
         ranges,
         uncertain,
-        source_snapshot,
+        source_memory_state,
     );
 }
 
@@ -1280,13 +1280,13 @@ fn collect_memory_load_ranges_from_term(
     term: &MachineTerm,
     ranges: &mut Vec<MemoryRange>,
     uncertain: &mut bool,
-    source_snapshot: &mut Option<MemorySnapshotIdentity>,
+    source_memory_state: &mut Option<MemoryStateIdentity>,
 ) {
     collect_memory_load_work(
         [MemoryLoadFootprintWork::Term(term, 0)],
         ranges,
         uncertain,
-        source_snapshot,
+        source_memory_state,
     );
 }
 
@@ -1294,7 +1294,7 @@ fn collect_memory_load_work<'a>(
     initial: impl IntoIterator<Item = MemoryLoadFootprintWork<'a>>,
     ranges: &mut Vec<MemoryRange>,
     uncertain: &mut bool,
-    source_snapshot: &mut Option<MemorySnapshotIdentity>,
+    source_memory_state: &mut Option<MemoryStateIdentity>,
 ) {
     let mut work = initial.into_iter().collect::<Vec<_>>();
     let mut shared_seen = std::collections::HashSet::new();
@@ -1365,7 +1365,7 @@ fn collect_memory_load_work<'a>(
                 }
                 match term {
                     MachineTerm::MemoryLoad(memory, pointer, kind) => {
-                        // The checked source snapshot's cell gives the loaded
+                        // The checked source state's cell gives the loaded
                         // scalar's ABI width, and the read is never narrower
                         // than its own kind; absent evidence is ambiguous.
                         let Some(value) = memory.memory().known_value(pointer) else {
@@ -1377,12 +1377,12 @@ fn collect_memory_load_work<'a>(
                             *uncertain = true;
                             continue;
                         }
-                        let snapshot = MemorySnapshotIdentity::of(memory.memory());
-                        if source_snapshot.is_some_and(|previous| previous != snapshot) {
+                        let retained_state = MemoryStateIdentity::of(memory.memory());
+                        if source_memory_state.is_some_and(|previous| previous != retained_state) {
                             *uncertain = true;
                             continue;
                         }
-                        *source_snapshot = Some(snapshot);
+                        *source_memory_state = Some(retained_state);
                         ranges.push(MemoryRange::new_with_element_width(
                             pointer.as_ref().clone(),
                             MachineTerm::constant(0),
@@ -1565,20 +1565,22 @@ impl ResourceContext {
         context
     }
 
-    pub(in crate::kernel) fn memory_input_facts(&self) -> &SnapshotMap<ResourceFact, ()> {
+    pub(in crate::kernel) fn memory_input_facts(&self) -> &HashedOrdMap<ResourceFact, ()> {
         &self.storage.index.memory_facts
     }
 
     /// The owned facts of resources other than memory, each once.
-    pub(in crate::kernel) fn owned_non_memory_input_facts(&self) -> &SnapshotMap<ResourceFact, ()> {
+    pub(in crate::kernel) fn owned_non_memory_input_facts(
+        &self,
+    ) -> &HashedOrdMap<ResourceFact, ()> {
         &self.storage.index.owned_non_memory_facts
     }
 
-    pub(in crate::kernel) fn flat_owned_memory_ranges(&self) -> &SnapshotMap<MemoryRange, ()> {
+    pub(in crate::kernel) fn flat_owned_memory_ranges(&self) -> &HashedOrdMap<MemoryRange, ()> {
         &self.storage.index.owned_memory_ranges
     }
 
-    /// Whether two resource snapshots are the exact same persistent value.
+    /// Whether two resource states are the exact same persistent value.
     ///
     /// Proof joins use this constant-time identity check to retain a resource
     /// context that was untouched in every arm without enumerating it.
@@ -1645,7 +1647,7 @@ impl ResourceContext {
             || (right_owned && direct(ResourceFact::View(left.clone())))
     }
 
-    /// Whether this snapshot contains the exact named representation.
+    /// Whether this state contains the exact named representation.
     /// This does not use proof-aware entailment; representation-sensitive
     /// rewrites need the entry itself, not an entailed cached projection.
     pub(crate) fn contains_exact_representation(&self, fact: &ResourceFact) -> bool {
@@ -1820,9 +1822,9 @@ impl ResourceContext {
                 self = self.with_loan_dependency(occurrence, binding.clone());
             }
         }
-        // Folded expansions retain the snapshot at which their body was
+        // Folded expansions retain the state at which their body was
         // constructed. They must travel with the authority, not be rebuilt
-        // against the retained C snapshot on the next unfold.
+        // against the retained C state on the next unfold.
         for (occurrence, _, expansion) in before
             .storage
             .expansions_by_support_occurrence
@@ -1854,7 +1856,7 @@ impl ResourceContext {
             .map_or(0, PersistentSet::len)
     }
 
-    /// Whether this snapshot was obtained by persistent resource mutations
+    /// Whether this state was obtained by persistent resource mutations
     /// from `ancestor`.
     pub(crate) fn descends_from(&self, ancestor: &Self) -> bool {
         self.changed_facts_since(ancestor).is_some()
@@ -3029,7 +3031,7 @@ impl ResourceContext {
 
     /// The owned folded composites with their multiplicity, as one
     /// content-hashed persistent map.
-    pub(in crate::kernel) fn owned_composite_facts(&self) -> &SnapshotMap<ResourceFact, usize> {
+    pub(in crate::kernel) fn owned_composite_facts(&self) -> &HashedOrdMap<ResourceFact, usize> {
         &self.storage.index.owned_composite_facts
     }
 
@@ -3204,7 +3206,7 @@ impl ResourceContext {
     }
 
     /// Necessary-shape candidates for proof-aware direct resource matching.
-    /// Snapshot-insensitive matching cannot change a pointer block, resource
+    /// MemoryState-insensitive matching cannot change a pointer block, resource
     /// family, composite/token name, or arity, so unrelated facts need not
     /// enter the expensive memory-resolution comparator.
     pub(in crate::kernel) fn direct_match_candidates(
@@ -4115,7 +4117,7 @@ impl ResourceContext {
     /// loop-head havoc is a generalization over the visits the invariants
     /// describe, not a write, so it keeps the fact; the loop rule frames out
     /// a fact its body does not hold (`loops.rs`). The walk visits the
-    /// derivation steps between the two snapshots and, per step, only the
+    /// derivation steps between the two states and, per step, only the
     /// facts filed under the written block.
     pub(crate) fn invalidate_iterated_facts(
         self,
@@ -4127,15 +4129,15 @@ impl ResourceContext {
         {
             return self;
         }
-        // The two snapshots differ only in cells written on the derivation
+        // The two states differ only in cells written on the derivation
         // paths from their nearest common ancestor. Interning is first-wins
         // on equal content, so `after` may carry the recorded history of an
-        // earlier, content-equal snapshot that never passed through `before`;
+        // earlier, content-equal state that never passed through `before`;
         // walking `after` alone would then visit stores that are not this
         // transition's and miss the ones on `before`'s side. Arena ids
         // strictly decrease along a derivation, so stepping whichever side
         // is younger meets the common ancestor. A store that leaves the cell
-        // holding the same value in both snapshots changes nothing either
+        // holding the same value in both states changes nothing either
         // side reads.
         let mut before_side = crate::kernel::intern_memory_ref(before);
         let mut after_side = crate::kernel::intern_memory_ref(after);
@@ -4534,7 +4536,7 @@ impl ResourceContext {
     /// `range`, as its entry and its own range.
     ///
     /// One block bucket, structural containment only: this cannot re-enter
-    /// snapshot or alias reasoning. Two lookups decide the composition law
+    /// state or alias reasoning. Two lookups decide the composition law
     /// for a pair without materializing any pair.
     fn owned_memory_member_containing(
         &self,
@@ -4663,7 +4665,7 @@ impl ResourceContext {
 
     /// Non-recursive projection for memory-resolution fast paths. It uses
     /// only block indexing and structural containment, so it cannot re-enter
-    /// snapshot or alias reasoning.
+    /// state or alias reasoning.
     ///
     /// Each side is looked up in its own block's bucket. Two owned members of
     /// one valid composition hold disjoint *bytes* — the partition invariant
@@ -5530,7 +5532,7 @@ impl ResourceContext {
         self
     }
 
-    /// Adds observation projections while recording the memory snapshot and
+    /// Adds observation projections while recording the memory state and
     /// exact footprint used to derive each one.  This is the memory-aware
     /// counterpart to the legacy support-only API used by call packaging.
     pub(crate) fn unchecked_with_supported_facts_from_occurrence_with_memory(
@@ -5563,13 +5565,13 @@ impl ResourceContext {
                 .get(&support_occurrence)
                 .is_some_and(|entry| self.fact(*entry) == support)
         );
-        let memory_snapshot = MemorySnapshotIdentity::of(memory);
+        let memory_state_identity = MemoryStateIdentity::of(memory);
         let mut inserted = Vec::new();
         for fact in facts {
             debug_assert!(fact.is_view());
             let entry = self.storage.next_entry_id;
             let metadata = ResourceSupportMetadata {
-                memory_snapshot,
+                memory_state_identity,
                 footprint: memory_footprint_for_fact(&fact),
             };
             self.insert_fact_with_support_occurrence_and_metadata(
@@ -5679,7 +5681,7 @@ impl ResourceContext {
 
     /// Return every cached expansion attached to an exact support occurrence.
     /// Fact-only lookup is intentionally plural: equal authorities may carry
-    /// distinct folded snapshots and silently selecting one would discard the
+    /// distinct folded states and silently selecting one would discard the
     /// other authority's evidence.
     pub(crate) fn cached_supported_expansions(
         &self,
@@ -5812,7 +5814,7 @@ impl ResourceContext {
     ///
     /// The exact core projection is the forward index into the support
     /// relation. This avoids comparing every same-shaped resource through
-    /// snapshot equality merely to rediscover a folded resource's already
+    /// state equality merely to rediscover a folded resource's already
     /// certified body.
     pub(crate) fn cached_support_exposing_fact(
         &self,
@@ -6193,7 +6195,7 @@ impl ResourceContext {
     ///
     /// Composite expansion checks its children together before caching the
     /// group. Rechecking child/child pairs when that expansion is later
-    /// installed can recursively rediscover snapshot and range separation
+    /// installed can recursively rediscover state and range separation
     /// through an unrelated call history. Only a conflict with the existing
     /// caller frame is new information at installation time.
     pub(crate) fn try_compose_certified_group_into_valid_context_delaying_normalization(
@@ -6547,7 +6549,7 @@ impl ResourceContext {
         // Exact ownership of a non-memory resource includes its exact
         // view. The resource-key index already erases access mode and owned
         // quantity, so answer this common core-projection query without
-        // entering proof-aware memory/snapshot entailment.
+        // entering proof-aware memory/state entailment.
         if fact.is_view()
             && fact.memory_range().is_none()
             && self
@@ -8187,7 +8189,7 @@ enum ResourceNormalizationKey {
     MemoryStart(MemoryBaseRoot, bool, SharedMachineIntegerTerm),
     MemoryEnd(MemoryBaseRoot, bool, SharedMachineIntegerTerm),
     // Native adjacency retains the exact base and width plus a compact,
-    // snapshot-sensitive endpoint fingerprint. These keys only propose pairs;
+    // state-sensitive endpoint fingerprint. These keys only propose pairs;
     // the existing merge rule remains authoritative (including collisions).
     MemoryNativeStart(Pointer, u32, bool, WideNormalizationEndpointKey),
     MemoryNativeEnd(Pointer, u32, bool, WideNormalizationEndpointKey),
@@ -9275,7 +9277,7 @@ mod zero_quantity_graph_tests {
     }
 
     #[test]
-    fn zero_ownership_uses_graph_with_snapshot_scope() {
+    fn zero_ownership_uses_graph_with_state_scope() {
         let _session = crate::kernel::VerificationSession::enter();
         let before = crate::kernel::intern_memory(Memory::new().with_block("zero-quantity", 8));
         let pointer = |index| Pointer {
@@ -10179,7 +10181,7 @@ fn owned_cell_access_uses_transitive_graph_address_equality() {
 
 /// Range endpoints compare like ordinary terms, and additionally two loads
 /// of one pointer are equal when the pointed-to cell is provably unchanged
-/// between their snapshots — a range written through metadata loads then
+/// between their states — a range written through metadata loads then
 /// survives writes to unrelated cells.
 fn range_endpoint_terms_equal(
     left: &MachineTerm,
@@ -10253,7 +10255,7 @@ fn range_endpoint_views_equal(
 
 /// Pointer bases compare with the same load bridging as range endpoints:
 /// two forms of one loaded base pointer are equal when the loaded cell
-/// is provably unchanged between their snapshots.
+/// is provably unchanged between their states.
 fn pointer_bases_equal_with_load_bridging(
     left: &Pointer,
     right: &Pointer,
@@ -11686,7 +11688,7 @@ pub(in crate::kernel) fn split_memory_range(
     }
     // Prefer the held range's own start form when the required base is
     // provably that address. A merely structural delta can contain an
-    // equivalent load from a later memory snapshot; retaining it would create
+    // equivalent load from a later memory state; retaining it would create
     // a symbolic zero-length residue when the required range exhausts the
     // beginning of `available`.
     let available_start_pointer = available.start_pointer();
@@ -12681,7 +12683,7 @@ mod support_removal_tests {
     }
 
     #[test]
-    fn memory_load_footprints_use_checked_snapshot_widths() {
+    fn memory_load_footprints_use_checked_state_widths() {
         let short_pointer = Pointer {
             block: "typed-loads".into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -12731,7 +12733,7 @@ mod support_removal_tests {
     }
 
     #[test]
-    fn memory_load_footprints_reject_mixed_source_snapshots() {
+    fn memory_load_footprints_reject_mixed_source_states() {
         let pointer = Pointer {
             block: "mixed-loads".into(),
             offset: PointerOffsetTerm::Constant(0),

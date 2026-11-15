@@ -10,8 +10,8 @@ pub(super) fn bindings() -> AlphaBindings {
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
-        snapshot_aware: true,
-        raw_snapshot_load_seen: false,
+        state_aware: true,
+        raw_state_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         pointer_load_stack: BTreeSet::new(),
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn common_fold_keys_preserve_snapshot_identity() {
+    fn common_fold_keys_preserve_state_identity() {
         let _session = crate::kernel::VerificationSession::enter();
         let memory = crate::kernel::Memory::new();
         let pointer = Pointer::symbolic(Variable(101));

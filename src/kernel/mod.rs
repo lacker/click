@@ -327,13 +327,13 @@ mod tests;
 thread_local! {
     static VERIFICATION_SESSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Counts the fresh sessions started on this thread, so state retained
-    /// past a session (a reusable surface verification session's snapshots)
+    /// past a session (a reusable surface verification session's states)
     /// can tell whether a later fresh session replaced the tables it names.
     static VERIFICATION_SESSION_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// The generation of this thread's current kernel tables: it advances each
-/// time an outermost `VerificationSession` starts fresh. Snapshots and other
+/// time an outermost `VerificationSession` starts fresh. Memory states and other
 /// arena ids minted under one generation are meaningless under another, so a
 /// caller that keeps kernel-derived state after its session ends compares
 /// this value before reusing that state.
@@ -359,12 +359,12 @@ pub struct VerificationSessionState {
 /// One verification's worth of kernel thread-local state.
 ///
 /// The kernel keeps per-thread tables that are correct only within one
-/// verification: the memory arena (snapshot ids and their DAG derivations;
-/// interning dedups by content, so a later verification's snapshot with the
+/// verification: the memory arena (state ids and their DAG derivations;
+/// interning dedups by content, so a later verification's state with the
 /// same content — a call havoc of a same-named callee, say — would inherit
 /// the first verification's derivation and its mutable ranges), the load
 /// registry (names are content-addressed, but their origins are live
-/// snapshots of the arena that minted them), and the memo tables keyed by
+/// states of the arena that minted them), and the memo tables keyed by
 /// arena ids or by fact-set content. Entering a session at the outermost
 /// verification boundary starts a fresh arena and empties every such table,
 /// so two verifications on one thread are as independent as two threads.
@@ -459,7 +459,7 @@ impl VerificationSession {
     /// cache, so a check starts from exactly what the capture's holder built
     /// and nothing an earlier check interned, named, or memoized remains.
     ///
-    /// Without this, each check on a reusable session leaves its snapshots'
+    /// Without this, each check on a reusable session leaves its states'
     /// storage pinned, its load names registered, and its memo entries
     /// cached, and the tables grow with every check. Anything created after
     /// the capture is meaningless after a restore; the holder keeps only
@@ -494,7 +494,7 @@ impl VerificationSession {
 
     /// Whether this entry started the session (and so cleared the kernel's
     /// tables), as opposed to joining an enclosing one. Callers holding
-    /// their own per-verification caches of kernel snapshots clear them on
+    /// their own per-verification caches of kernel states clear them on
     /// a fresh session.
     pub fn is_fresh(&self) -> bool {
         self.fresh

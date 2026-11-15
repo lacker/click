@@ -1,4 +1,4 @@
-# Checked input facts retain their pre-call read snapshot
+# Checked input facts retain their pre-call read state
 
 The call accepts the disjunction from the known input value. The input
 proposition remains true of that old read, and cannot establish the same

@@ -1410,7 +1410,7 @@ fn cast_program_value_to_type_with_integer_origin(
 }
 
 /// The undefined behavior of operating on `value` when it is a pointer into
-/// an allocation the current snapshot has freed.
+/// an allocation the current state has freed.
 ///
 /// C11 6.2.4p2 makes a pointer's value indeterminate when its pointee's
 /// lifetime ends, and Annex J.2 lists using such a value as undefined. Reading

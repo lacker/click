@@ -1,6 +1,6 @@
 # a write to another object does not restore a forgotten store
 
-A field write to an unrelated object follows the pruning store, so the snapshot
+A field write to an unrelated object follows the pruning store, so the state
 the read happens at is not the one the forget produced. The store to `a[i]` is
 still the step that may have changed `a[m]`, and it is what the refusal names.
 

@@ -64,7 +64,7 @@ A function boundary retains the resource bindings checked at entry. If C clears
 received; it is not evaluated again against the cleared field. Entry observations
 remain historical, and current observations use the checked exit population.
 Folding an ordinary named memory resource retains the pure body facts checked
-at that snapshot, including facts transported across a disjoint helper call.
+at that state, including facts transported across a disjoint helper call.
 It does not retain the body's exclusive memory ownership as a separate resource.
 
 The nested-overconsumption fixture checks that a consumption beyond the
@@ -308,7 +308,7 @@ the declared custody; it supplies no arbitrary exact entry total. A checked
 control invariant tying a C field to the count supplies an opaque entry total,
 with a certified lower bound from the members owned on entry. Initialization,
 retain, and conditional release apply their checked changes to that total.
-Contract snapshots retain the entry total, and checked empty retirement retains
+Contract states retain the entry total, and checked empty retirement retains
 an immutable final zero without restoring update permission.
 
 An exact member with a private owned-memory body may be born or spent under

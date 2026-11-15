@@ -150,7 +150,7 @@ impl Gen {
                 SpecExpression::PointerCoercion(Box::new(self.expr(d)), ProgramType::UInt8Pointer)
             }
             5 => SpecExpression::Cast(Box::new(self.expr(d)), ProgramType::Int32),
-            6 => SpecExpression::LoopEntrySnapshot(Box::new(self.expr(d))),
+            6 => SpecExpression::LoopEntryState(Box::new(self.expr(d))),
             7 => SpecExpression::If {
                 condition: Box::new(self.prop(d)),
                 then_branch: Box::new(self.expr(d)),

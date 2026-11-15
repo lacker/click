@@ -197,7 +197,7 @@ The cast relationship uses its own full-value origin index, with
 exact support and scoped withdrawal, independently of the numeric equality
 graph. Reading through equal storage addresses may identify a complete word
 read; equating the loaded numbers may not. Carry producer-issued full-value
-facts through calls, snapshots and proof expansion. Never re-walk or validate
+facts through calls, states and proof expansion. Never re-walk or validate
 a producer's output in the same session.
 
 ## Required controls

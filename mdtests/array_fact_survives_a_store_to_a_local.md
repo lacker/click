@@ -2,7 +2,7 @@
 
 `i = i + 1` writes a local cell, in a block of its own. Nothing a function of
 `a` can observe changes across it, so the argument `icount` folds over names
-the same snapshot on both sides of the step and the fact is still the fact.
+the same state on both sides of the step and the fact is still the fact.
 This is what a plain `a[0] == 5` has always done here; the array argument now
 does it too.
 

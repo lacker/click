@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn guard_ingredient_confines_its_transitive_wrappers() {
         use crate::kernel::{
-            Pointer, ProgramExpression, ProgramValue, ResourceQuantity, ResourceSnapshot,
+            Pointer, ProgramExpression, ProgramValue, ResourceQuantity, ResourceStateSource,
             ResourceTerm, ResourceTransferRole,
         };
         let guard = ResourceSpec::new(
@@ -218,12 +218,12 @@ mod tests {
                 mutex: Box::new(ProgramExpression::Value(ProgramValue::pointer(
                     Pointer::null(),
                 ))),
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap();
         let inner =

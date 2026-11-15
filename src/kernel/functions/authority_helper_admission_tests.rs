@@ -67,12 +67,12 @@ fn quantity_exchange_net_certification_scales_beside_unrelated_populations() {
                     schema: ResourceFieldSchema::new(vec![]).unwrap(),
                 }),
                 population_arity: None,
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap();
         let consumed = ResourceSpec::new(
@@ -80,7 +80,7 @@ fn quantity_exchange_net_certification_scales_beside_unrelated_populations() {
             ResourceAccessMode::Own,
             ResourceQuantity::Count(crate::kernel::program_expression::int32_literal(amount)),
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap();
         let produced = ResourceSpec::new(
@@ -88,7 +88,7 @@ fn quantity_exchange_net_certification_scales_beside_unrelated_populations() {
             ResourceAccessMode::Own,
             ResourceQuantity::Count(crate::kernel::program_expression::int32_literal(amount - 1)),
             ResourceTransferRole::Produce,
-            ResourceSnapshot::Post,
+            ResourceStateSource::Post,
         )
         .unwrap();
         let function = program_function(
@@ -391,7 +391,7 @@ fn assumed_authority_contracts_preserve_named_identity_without_lifecycle_rights(
         schema.clone(),
         member.clone(),
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     interface.resource_requires.push(named.clone());
@@ -430,7 +430,7 @@ fn assumed_authority_contracts_preserve_named_identity_without_lifecycle_rights(
             schema,
             member,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap(),
     );
@@ -453,12 +453,12 @@ fn companion_interface(member_family: &str) -> FunctionContractInterface {
                 resource: Box::new(member.clone()),
                 schema: ResourceFieldSchema::new(vec![]).unwrap(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let memory = ResourceSpec::owned_memory(MemorySegment::new(
@@ -477,7 +477,7 @@ fn companion_interface(member_family: &str) -> FunctionContractInterface {
             vec![ProgramType::Int32Pointer],
         ),
         ResourceTransferRole::Produce,
-        ResourceSnapshot::Post,
+        ResourceStateSource::Post,
     )
     .unwrap();
     program_function(
@@ -538,12 +538,12 @@ fn member_move_admission_requires_two_scoped_authorities_and_one_unchanged_membe
                     )),
                     schema: ResourceFieldSchema::new(vec![]).unwrap(),
                 }),
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap()
     };
@@ -604,12 +604,12 @@ fn family_exchange_admission_requires_both_exact_authorities_and_one_effect_each
                     schema: ResourceFieldSchema::new(vec![]).unwrap(),
                 }),
                 population_arity: arity,
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap()
     };
@@ -695,12 +695,12 @@ fn four_effect_exchange_admission_checks_every_scope_quantity_and_exact_identity
                     resource: Box::new(member(family, anchor, false)),
                     schema: ResourceFieldSchema::new(vec![]).unwrap(),
                 }),
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap()
     };
@@ -757,7 +757,7 @@ fn four_effect_exchange_admission_checks_every_scope_quantity_and_exact_identity
             original.access(),
             ResourceQuantity::Count(crate::kernel::program_expression::int32_literal(2)),
             original.role(),
-            original.snapshot(),
+            original.state_source(),
         )
         .unwrap();
         assert!(!authority_supports_resource_contract(&nonunit));
@@ -802,12 +802,12 @@ fn two_control_births_require_each_scope_return_and_unit_effect() {
                 resource: Box::new(composite("slot", "p")),
                 schema: ResourceFieldSchema::new(vec![]).unwrap(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let definition = |name: &str| {
@@ -860,7 +860,7 @@ fn two_control_births_require_each_scope_return_and_unit_effect() {
             old.access(),
             ResourceQuantity::Count(crate::kernel::program_expression::int32_literal(2)),
             old.role(),
-            old.snapshot(),
+            old.state_source(),
         )
         .unwrap();
         assert!(authority_two_control_births(&nonunit).is_none());

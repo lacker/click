@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn contract_identity_includes_resource_arguments() {
         use crate::kernel::{
-            ResourceAccessMode, ResourceFamily, ResourceSnapshot, ResourceSpec,
+            ResourceAccessMode, ResourceFamily, ResourceSpec, ResourceStateSource,
             ResourceTransferRole,
         };
         let spec = ResourceSpec::declared(
@@ -358,7 +358,7 @@ mod tests {
             vec![],
             vec![],
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap();
         let first = spec.clone().with_resource_arguments(vec![Variable(1)]);
@@ -368,7 +368,7 @@ mod tests {
                 crate::kernel::ProgramExpression::Value(int32(1)),
                 first.clone(),
                 ResourceTransferRole::Borrow,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
             )
             .is_err()
         );

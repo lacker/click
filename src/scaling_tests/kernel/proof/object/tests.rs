@@ -166,7 +166,7 @@ fn invariant_bundle_closure_checks_retained_evidence_and_context_locally() {
     };
     type TestProof =
         ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ProofExecutionState<()>>;
-    // One entry state: every snapshot below must be the very same state,
+    // One entry state: every state below must be the very same state,
     // creation ledger included.
     let entry = ExecutionState::new().with_population_creation_tracking();
     let root = |facts: ProofFacts, core: ExecutionProofCore| -> TestProof {
@@ -215,7 +215,7 @@ fn invariant_bundle_closure_checks_retained_evidence_and_context_locally() {
         .with_fact(Proposition::Predicate {
             name: "invariant".into(),
             arguments: vec![Term::ExecutionState(Box::new(
-                entry.resource_state_snapshot(),
+                entry.resource_state_source(),
             ))],
         });
         let core = ExecutionProofCore::at_entry(
@@ -288,7 +288,7 @@ fn invariant_bundle_closure_checks_retained_evidence_and_context_locally() {
                 .is_err()
         );
         let mut stale = core.clone();
-        // Even an equal-valued replacement snapshot is not the saved one.
+        // Even an equal-valued replacement state is not the saved one.
         stale.state = ExecutionState::new()
             .with_population_creation_tracking()
             .into();

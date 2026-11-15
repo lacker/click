@@ -3,7 +3,7 @@
 Byte-pointer parameters use the shared external-address block. Their equality
 is a same-block offset equality, which must rewrite a readable-view address
 just as a distinct-block pointer equality does. The rewrite retains the memory
-snapshot and byte extent; the equality supplies no read authority by itself.
+state and byte extent; the equality supplies no read authority by itself.
 
 ```c filename=alias-view.c
 int32 f(const uint8* bytes, const uint8* cursor) { return 0; }

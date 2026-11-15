@@ -27,7 +27,7 @@ execution already knew.
 
 - The `SharedCMemory` arena (dense `u32` ids, already the `Eq`/`Hash`
   identity) *is* the name supply.
-- Alongside each id we record how the snapshot was produced:
+- Alongside each id we record how the state was produced:
   `CMemoryDerivation` edge such as `Store`, `LoopHavoc`, `CallHavoc`,
   `BlockDeclared`, `HeapAllocationPending`, `HeapAllocated`, or `HeapFreed`,
   each naming its
@@ -79,7 +79,7 @@ arm, restoring the pre-arc path exactly. Default on; the A/B handle.
    `with_call_memory_havoc`); kernel tests pin the DAG shape.
 2. **`c_memory_load_is_unchanged` DAG arm** — walks `after` down to
    `before` per the edge rules. Its leverage is histories the *net
-   snapshot diff* cannot express (e.g. crossing a call-havoc marker
+   state diff* cannot express (e.g. crossing a call-havoc marker
    that changes the block set); a single distinct store never needed it.
 3. **(2a) `old(...)` gets a name.** Certificate validation resolved `old`
    positionally (region execution-start); the kernel lowering names
@@ -98,20 +98,20 @@ arm, restoring the pre-arc path exactly. Default on; the A/B handle.
    refuses longer order chains), and
    `PropositionDerivationRule::UpperBoundSplit` (assumed `k <= b`
    splits a goal into `k < b` / `k == b`; goal-side, so no cross-
-   snapshot fact matching; INT_MAX wrap is vacuously sound; depth 1).
+   state fact matching; INT_MAX wrap is vacuously sound; depth 1).
    Moved every remaining corpus member off the invariant closer.
 5. **(4) `memory_dag_cell_source`** — resolves one pointer against a
-   snapshot by walking derivation edges backwards; undecidable hops
+   state by walking derivation edges backwards; undecidable hops
    stop and report the node, so two lookups compare by arena identity.
-   Relates *sibling* snapshots through a common ancestor (two disjoint
+   Relates *sibling* states through a common ancestor (two disjoint
    call havocs), which value bridging refuses outright. Wired ahead of
-   snapshot comparison in `memory_loads_proven_equal`,
+   state comparison in `memory_loads_proven_equal`,
    `bitvector_terms_equal_for_memory_resolution`, both `proves` paths.
 6. **(5) The measured verdict.** field_derived **487 s → 198 s**
    (2.46x), confirmed twice over: flag A/B on one binary (198 vs 592)
    and same-flag across the commit (487 vs 198). That is the member
    the original design brief named as the cost target. Two value-bridging
-   snapshot-equality scans retired (92 lines) — honestly recorded as
+   state-equality scans retired (92 lines) — honestly recorded as
    unreachable, not DAG-superseded (green with the flag off too).
 
 **Why bubble_sort3 was immune to this arc** (three measurements, keep
@@ -134,12 +134,12 @@ issues rather than treated as reasons to extend the DAG globally.
 The heap slice adds `HeapAllocationPending`, `HeapAllocated`, and `HeapFreed`
 edges. Successful allocation and free record the fresh/retired allocation
 identity and exact, possibly symbolic extent. Consumers treat those two as
-lifetime-changing boundaries: they may preserve unrelated snapshots, but must
+lifetime-changing boundaries: they may preserve unrelated states, but must
 never transport a load through the affected allocation as though allocation
 or deallocation were an ordinary store. `HeapAllocationPending` records the
 unresolved symbolic base and extent but changes no program-visible storage, so
 the scoped loadability walk may cross it for every preexisting address. The
-success edge starts at that pending snapshot. Failure removes the metadata and
+success edge starts at that pending state. Failure removes the metadata and
 structurally returns to the already-interned pre-allocation memory identity;
 recording a backward edge there would violate the DAG's parent-before-child
 invariant and is unnecessary.
@@ -152,7 +152,7 @@ nobody had recorded:
 - `BlockDeclared` — recorded by `CMemory::with_block`, NEVER for havoc
   marker blocks (`havoc:` / `call-havoc:` prefixes): a with_block-spelled
   marker must keep behaving like havoc
-  (`conditions_equal_modulo_proven_snapshots_needs_frame_evidence`
+  (`conditions_equal_modulo_proven_states_needs_frame_evidence`
   caught exactly this during development).
 - `CellsForgotten` — recorded by `without_possible_aliasing_cells`, the
   write-path prune: same state, cache-forgetting only. The case-split
@@ -176,7 +176,7 @@ matters for the same reason: the hop distinctness runs under
 enclosing query's budget (fuel-coupled spellings must check).
 
 Session 1's displacement worry (first-wins letting a BlockDeclared /
-CellsForgotten edge shadow a Store edge on content-equal snapshots) has
+CellsForgotten edge shadow a Store edge on content-equal states) has
 not bitten: both gate passes green in both DAG modes.
 
 The initial implementation made owned-string take 5m26s to reach its next
@@ -185,7 +185,7 @@ in a generation-independent positive cache (only negative answers are retried
 after an edge is added); four-byte loadability checks rank bounded
 structure/DAG-matching ranges ahead of unrelated same-block ranges; and
 certificate minimization declines optional general search over deeply nested
-terms carrying memory snapshots. The same run now reaches the separate certificate-spelling
+terms carrying memory states. The same run now reaches the separate certificate-spelling
 frontier in about 10.4s. The regression test keeps several misleading
 same-block loadability ranges alongside the owned-string symbolic buffer range.
 
@@ -225,7 +225,7 @@ prover, so neither situation changed.
   execution facts, not effect summaries; no effect.
 - From `claude/forall-extension-wip` (all rejected, session 1):
   `forall_fact_extends_bound_by_one` (fact-side final-index matching
-  fails on exactly the snapshot drift this arc addresses — the
+  fails on exactly the state drift this arc addresses — the
   goal-side UpperBoundSplit is the working replacement);
   `equality_graph_terms_match_with_facts` (right shape, pays
   value-bridging cost inside the hot equality graph);

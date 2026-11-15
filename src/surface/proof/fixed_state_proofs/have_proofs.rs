@@ -415,7 +415,7 @@ pub(in crate::surface) fn lower_fixed_state_proposition_retaining_requirements(
         algebraic_values.cloned().unwrap_or_default(),
         integer_values,
         fixed_state.result,
-        fixed_state.recorded_snapshots,
+        fixed_state.recorded_states,
         spec_definitions,
         opaque_click_functions.cloned().unwrap_or_default(),
         pointer_element_widths,)?;
@@ -582,7 +582,7 @@ pub(in crate::surface) fn capture_fixed_state_native_expression_with_guards(
         algebraic_values,
         integer_values,
         fixed_state.result,
-        fixed_state.recorded_snapshots,
+        fixed_state.recorded_states,
         spec_definitions,
         opaque_click_functions.clone(),
         BTreeMap::new(),
@@ -664,7 +664,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_integer_expression_with_gua
             states.current_values,
             integer_values,
             fixed_state.result,
-            fixed_state.recorded_snapshots,
+            fixed_state.recorded_states,
             spec_definitions,
             BTreeSet::new(),
             BTreeMap::new(),
@@ -684,7 +684,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_integer_expression_with_gua
     .map_err(|refusal| {
         let (names, arguments) =
             crate::surface::diagnostics::value_naming_tables(contract_environment.values);
-        let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
+        let mut labels = crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(
             ParameterBinding::new(&names, &arguments),
         );
         crate::surface::proof_diagnostics::render::describe_spec_capture_refusal_labeled(
@@ -746,7 +746,7 @@ pub(in crate::surface) fn capture_fixed_state_algebraic_expression_with_values(
         states.current_values,
         algebraic_values,
         fixed_state.result,
-        fixed_state.recorded_snapshots,
+        fixed_state.recorded_states,
         spec_definitions,
         BTreeSet::new(),
         BTreeMap::new(),
@@ -761,7 +761,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     pre_state: &ExecutionState,
     state: &ExecutionState,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<crate::kernel::AlgebraicTerm, String> {
     let states = FixedStateLowering::for_expression_values(
@@ -779,7 +779,7 @@ pub(in crate::surface::proof) fn capture_fixed_state_algebraic_value(
         states.current_values,
         algebraic_values,
         None,
-        snapshots,
+        retained_states,
         spec_definitions,
         BTreeSet::new(),
         BTreeMap::new(),
@@ -802,7 +802,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
     contract_environment: ContractEnvironment<'_>,
     pre_state: &ExecutionState,
     state: &ExecutionState,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<
     (
@@ -827,7 +827,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 states.entry_values,
                 states.current_values,
                 None,
-                snapshots,
+                retained_states,
                 spec_definitions,
                 BTreeSet::new(),
                 BTreeMap::new(),
@@ -852,7 +852,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 states.entry_values,
                 states.current_values,
                 None,
-                snapshots,
+                retained_states,
                 spec_definitions,
                 BTreeSet::new(),
             )?;
@@ -876,7 +876,7 @@ pub(in crate::surface::proof) fn capture_resource_field_initializer(
                 states.current_values,
                 BTreeMap::new(),
                 None,
-                snapshots,
+                retained_states,
                 spec_definitions,
                 BTreeSet::new(),
                 BTreeMap::new(),
@@ -1001,7 +1001,7 @@ fn evaluate_program_expression_with_binding_policy(
         states.entry_values,
         states.current_values,
         result,
-        &RecordedSnapshots::new(),
+        &RecordedStates::new(),
         SpecDefinitions::new(
             &PredicateEnvironment::new(&[]),
             &ClickFunctionEnvironment::new(&[]),
@@ -1053,7 +1053,7 @@ fn evaluate_program_expression_with_binding_policy(
 /// The array reference a proof-side expression names: a parameter's own
 /// reference when the expression is that name, otherwise the pointer the
 /// kernel evaluates the expression to, in the memory of the state the
-/// expression reads (`old(...)` the entry, `at(...)` its snapshot), with the
+/// expression reads (`old(...)` the entry, `at(...)` its state), with the
 /// element type the expression's array reference declares.
 pub(in crate::surface) fn evaluate_fixed_state_array_ref_through_kernel(
     expression: &ContractExpression,
@@ -1089,13 +1089,11 @@ pub(in crate::surface) fn evaluate_fixed_state_array_ref_through_kernel(
     };
     let memory = match expression {
         ContractExpression::Old(_) => fixed_state.pre_state.memory().clone(),
-        ContractExpression::At { selector, .. } => selected_snapshot_state(
-            selector,
-            fixed_state.pre_state,
-            fixed_state.recorded_snapshots,
-        )?
-        .memory()
-        .clone(),
+        ContractExpression::At { selector, .. } => {
+            selected_program_state(selector, fixed_state.pre_state, fixed_state.recorded_states)?
+                .memory()
+                .clone()
+        }
         _ => fixed_state.state.memory().clone(),
     };
     let element_type = contract_array_ref_element_type(contract_environment.array_refs, expression)
@@ -1125,7 +1123,7 @@ fn refuse_impossible_loads(
         )
     }) {
         // `Debug` on a loadability obligation prints the whole memory
-        // snapshot it is indexed by; the bounded sentence names the base and
+        // state it is indexed by; the bounded sentence names the base and
         // width, which is what the reader has to fix.
         return Err(format!(
             "the proposition reads memory that is not viewable here: {}",

@@ -988,8 +988,8 @@ pub(in crate::kernel) fn count_fold_split_parts_match(
 /// the Integer side. Its alpha key gives bound occurrences structural ordinals
 /// and free occurrences their own identity, so the two can never match; it
 /// restores an enclosing binding when a nested fold's body ends, so shadowing
-/// is handled; and it carries a load's snapshot into the key, so two folds over
-/// different snapshots of one array are never equated. Anything short of
+/// is handled; and it carries a load's state into the key, so two folds over
+/// different states of one array are never equated. Anything short of
 /// `Some(true)`, including the `None` it returns on an unsupported node or an
 /// exhausted work budget, is a refusal here.
 ///
@@ -1058,9 +1058,9 @@ pub(in crate::kernel) fn range_fold_terms_alpha_equivalent(
 /// whether the two re-indexed folds are the same term up to their binders,
 /// and that question already has one checked answer in the kernel:
 /// [`crate::kernel::proof::fact_keys::integer_terms_alpha_equivalent`]. Its
-/// snapshot-aware alpha key is what keeps a memory-reading body honest --- a
-/// load carries its snapshot identity into the key, so two folds over
-/// different snapshots of one array are never equated --- and it refuses an
+/// state-aware alpha key is what keeps a memory-reading body honest --- a
+/// load carries its state identity into the key, so two folds over
+/// different states of one array are never equated --- and it refuses an
 /// opaque pure-function application or an algebraic match rather than
 /// guessing at their binder occurrences. Anything short of `Some(true)`,
 /// including the `None` it returns when its own work budget runs out, is a

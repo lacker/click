@@ -169,7 +169,7 @@ fn integrated_use_planner_reserves_and_recovers_without_scanning_the_frame() {
                 mutex: Pointer::symbolic(Variable(100)),
             })),
             role: ResourceTransferRole::Borrow,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: Some(0),
             selected_mutex_source: None,

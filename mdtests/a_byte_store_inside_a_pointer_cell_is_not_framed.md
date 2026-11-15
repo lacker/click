@@ -37,5 +37,5 @@ int32* stale_pointer_read(int32** q) {
 ```
 
 ```expect
-fail: unclosed goal: result == old(q[0]); the two sides read the same address in different memory snapshots (`result` reads the outcome state, `old(q[0])` reads function entry)
+fail: unclosed goal: result == old(q[0]); the two sides read the same address in different memory states (`result` reads the outcome state, `old(q[0])` reads function entry)
 ```

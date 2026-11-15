@@ -16,7 +16,7 @@ theorem adler_result_widen(word: uint32) {
 }
 
 // Instantiate the result premises with the independently checked C and Rust
-// contracts. The arrays are their entry snapshots, not their live buffers.
+// contracts. The arrays are their entry retained_states, not their live buffers.
 theorem adler_c_rust_results(c_bytes: uint8[], rust_bytes: uint8[], length: uint64, initial_a: Integer, initial_b: Integer, c_result: uint64, rust_result: uint32) {
  requires 0 <= initial_a;
  requires initial_a <= 65520;

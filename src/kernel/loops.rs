@@ -2220,7 +2220,7 @@ fn join_loop_exit_paths(
     }
     // Pinning equations describe only the successor's abstracted components.
     // Keep their weaker disjunction independently of historical path guards:
-    // a guard can mention an iteration value no successor snapshot names.
+    // a guard can mention an iteration value no successor state names.
     let successor_equations = exits
         .iter()
         .map(|exit| exit.successor_equations.clone())
@@ -2836,7 +2836,7 @@ fn indexed_loop_exit_load_equality(
     }
 }
 
-fn is_loop_exit_snapshot_marker(block: &PointerBlock) -> bool {
+fn is_loop_exit_state_marker(block: &PointerBlock) -> bool {
     block.is_havoc_block() || block.is_call_havoc_block() || block.starts_with("call-write-set:")
 }
 
@@ -3131,7 +3131,7 @@ fn loop_exit_local_arguments(
     };
     let ResourceTerm::Composite {
         arguments,
-        argument_snapshots,
+        argument_state_sources,
         ..
     } = spec.term()
     else {
@@ -3142,7 +3142,7 @@ fn loop_exit_local_arguments(
         .enumerate()
         .map(|(position, expression)| {
             crate::instrumentation::record_deterministic_work(1);
-            if argument_snapshots.get(position) != Some(&ResourceSnapshot::Current) {
+            if argument_state_sources.get(position) != Some(&ResourceStateSource::Current) {
                 return None;
             }
             // A numeric address is a pure projection of the declared local.
@@ -3366,7 +3366,7 @@ fn abstract_loop_exit_initialization(
     uninitialized
 }
 
-/// Joins automatic-storage records and call snapshot epochs when they differ.
+/// Joins automatic-storage records and call state epochs when they differ.
 ///
 /// A path that called a function with a local holds a tombstone for that
 /// local's ended block, a forget mark from retiring its cell, and a larger
@@ -3381,15 +3381,15 @@ fn abstract_loop_exit_initialization(
 ///   gets an identity no exit has used. The branch join takes the same
 ///   maximum. A smaller counter would reissue an ended block's identity.
 /// - **Call epochs: common history plus one fresh marker.** Branch-local
-///   havoc and checked write-set markers describe different snapshots, not
+///   havoc and checked write-set markers describe different states, not
 ///   physical blocks. Retain their common history and mint one new epoch,
 ///   avoiding a union that each residual check would have to scan.
-/// - **Snapshot identity: fresh.** A forget mark says a memory is not known
+/// - **Memory state identity: fresh.** A forget mark says a memory is not known
 ///   to be the memory it forgot from. When the exits' marks differ, the
 ///   successor's memory keeps only what every exit agrees on (the cells the
 ///   join has already made common) and is marked as forgetting from a
-///   snapshot minted here when forget marks or call epochs differ, which no
-///   exit's memory and no earlier snapshot
+///   state minted here when forget marks or call epochs differ, which no
+///   exit's memory and no earlier state
 ///   is, with no derivation recorded. A load after the loop of a cell the
 ///   successor does not hold is therefore related to no load before or
 ///   inside the loop. That relation is what this gives up.
@@ -3427,7 +3427,7 @@ fn join_loop_exit_storage_bookkeeping(
     for state in exits {
         for change in state.memory.blocks.diff(&successor.memory.blocks) {
             crate::instrumentation::record_deterministic_work(1);
-            if is_loop_exit_snapshot_marker(change.key()) {
+            if is_loop_exit_state_marker(change.key()) {
                 marker_delta.insert(change.key().clone());
             }
         }
@@ -3446,7 +3446,7 @@ fn join_loop_exit_storage_bookkeeping(
         let ended = exits
             .iter()
             .flat_map(|state| state.memory.forgotten.ended_local_blocks.iter().cloned())
-            .collect::<crate::kernel::SnapshotSet<_>>();
+            .collect::<crate::kernel::HashedOrdSet<_>>();
         std::sync::Arc::make_mut(&mut memory.forgotten).ended_local_blocks = ended;
         let marker = variables.next_in(budget).map_err(exhausted_identities)?;
         if markers_differ {
@@ -3851,7 +3851,7 @@ fn loop_exit_residual_difference(
             .blocks
             .diff(&seated.memory.blocks)
             .map(|change| change.key().clone())
-            .filter(is_loop_exit_snapshot_marker)
+            .filter(is_loop_exit_state_marker)
             .collect::<Vec<_>>();
         for key in changes {
             crate::instrumentation::record_deterministic_work(1);
@@ -5802,7 +5802,7 @@ fn capture_loop_entry_memory_specs(
             captured.push(spec.clone());
             continue;
         };
-        if spec.snapshot() != ResourceSnapshot::Entry
+        if spec.state_source() != ResourceStateSource::Entry
             || spec.guard().is_some()
             || segment.guard().is_some()
         {
@@ -7405,7 +7405,7 @@ pub(super) fn collect_loop_effect_check_obligations(
                             .ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
                 )
             });
-            // The cell is read at the kind it holds; a cell neither snapshot
+            // The cell is read at the kind it holds; a cell neither state
             // types stays a candidate.
             let Some(kind) = after_state
                 .memory()
@@ -8166,9 +8166,9 @@ fn assume_invariant_checks_explained(
                     continue;
                 };
                 // A loop invariant is an explicit induction hypothesis at the
-                // fresh loop-top snapshot. Even when the entry assumptions can
+                // fresh loop-top state. Even when the entry assumptions can
                 // derive it, retain the lowered proposition itself: the facts
-                // used for that derivation may belong to an earlier snapshot
+                // used for that derivation may belong to an earlier state
                 // and are not a substitute for this loop's hypothesis after
                 // havoc.
                 let mut invariant_propositions = invariant_propositions.clone();
@@ -8616,7 +8616,7 @@ fn checked_owned_entry_footprint(resources: &ResourceContext) -> Option<Vec<Memo
 
 /// Check the write set that the loop-head abstraction is about to erase
 /// against the active stable-view footprint.  An unknown write set is a
-/// barrier: silently turning it into a fresh snapshot would discard the only
+/// barrier: silently turning it into a fresh state would discard the only
 /// evidence that a loan protects its bytes.
 fn validate_loop_havoc_stable_loans(
     ledger: &super::loans::LoanLedger,

@@ -81,7 +81,7 @@ fn old_collect_body_reads(
         SpecExpression::PureFunctionApplication { arguments, .. } => {
             old_collect_argument_body_reads(arguments, bound, reads)
         }
-        SpecExpression::LoopEntrySnapshot(_) => Err(UninspectedForm("a loop-entry snapshot")),
+        SpecExpression::LoopEntryState(_) => Err(UninspectedForm("a loop-entry state")),
         SpecExpression::MemoryLoad { pointer, .. } => {
             reads.memory = true;
             old_collect_body_reads(pointer, bound, reads)
@@ -208,7 +208,7 @@ fn old_collect_argument_body_reads(
                     reads,
                 )?
             }
-            // An array reference carries its own snapshot as an argument;
+            // An array reference carries its own state as an argument;
             // only the pointer expression is a read of this body's scope.
             SpecPureFunctionArgument::Value(value)
             | SpecPureFunctionArgument::ArrayRef { pointer: value, .. } => {

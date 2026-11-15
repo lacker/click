@@ -10,7 +10,7 @@ closing `solve` composes the three.
 
 Its equality-rewrite chain used to keep only the first rewrite that changed
 the goal and continue from it; here that was an alias rewrite at the other
-snapshot, from which no further link closed, so `solve` reported that
+state, from which no further link closed, so `solve` reported that
 `first->arena` may have changed. Each link now keeps up to four
 goal-changing rewrites: the first continues the chain and each other gets a
 one-link closing probe, so the order in which candidates were found no

@@ -116,8 +116,8 @@ impl<'a> StatedSite<'a> {
     /// its source name. A name a machine value in scope also has is left
     /// out: which of the two the source name denotes there is not this
     /// report's to say.
-    fn labels(&self) -> render::SnapshotLabels {
-        let mut labels = render::SnapshotLabels::ambient();
+    fn labels(&self) -> render::MemoryStateLabels {
+        let mut labels = render::MemoryStateLabels::ambient();
         for (name, value) in self
             .integer_values
             .into_iter()
@@ -183,11 +183,11 @@ struct SpelledCondition {
 /// machinery, which is what turns an argument-memory offset back into
 /// `p[hi - 1..hi]`; the cell it names is that range's base and start. An
 /// overflow guard names its own operation. Anything else falls back to the
-/// bounded printer, which never dumps the snapshot a term is indexed by.
+/// bounded printer, which never dumps the state a term is indexed by.
 fn spell_condition(
     condition: &Proposition,
     site: &StatedSite<'_>,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> SpelledCondition {
     let surface = site.spell_proposition(condition);
     let spelled = surface.as_ref().map_or_else(
@@ -359,7 +359,7 @@ fn spelled_alone(expression: &ContractExpression) -> String {
 /// `Integer` conversion.
 fn conversion_bound(
     condition: &ConditionTerm,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> Option<(&'static str, String, String)> {
     let (side, value, bound) = match condition {
         ConditionTerm::IntegerGreaterEqual(value, bound) => ("lower", value, bound),
@@ -460,7 +460,7 @@ fn load_definition_cell(condition: &Proposition) -> Option<&Pointer> {
 fn consulted_premises(
     assumptions: &PureFactContext,
     site: &StatedSite<'_>,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> (Vec<String>, usize) {
     let (premises, total) = assumptions.diagnostic_fact_sample(PREMISE_LIMIT, 0);
     let shown = premises
@@ -486,7 +486,7 @@ fn loadability_explanation(
     missing: &Proposition,
     assumptions: &PureFactContext,
     site: &StatedSite<'_>,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> Option<String> {
     let Proposition::MemoryLoadable { base, bytes, .. } = missing else {
         return None;

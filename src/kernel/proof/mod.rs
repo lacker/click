@@ -10,7 +10,7 @@ mod branches;
 pub(crate) mod equality_rewrite;
 mod execution;
 pub(crate) mod preservation;
-// `kernel::reasoning` and `kernel::api` reach the snapshot-aware alpha
+// `kernel::reasoning` and `kernel::api` reach the state-aware alpha
 // identity here for the range-fold congruences, the same way they reach
 // `term_rewrite`.
 pub(in crate::kernel) mod fact_keys;
@@ -51,9 +51,9 @@ pub(crate) use execution::{CheckedReturnSeed, OutcomeForkArm};
 #[allow(unused_imports)]
 pub(crate) use fact_keys::propositions_are_alpha_equal;
 pub(crate) use fact_keys::{
-    PropositionIdentityKey, QuantifiedEquivalenceKey, SnapshotBlindPropositionKey,
-    proposition_identity_key, proposition_identity_key_declines_shape,
-    quantified_equivalence_index_key, snapshot_blind_proposition_key,
+    MemoryErasedPropositionKey, PropositionIdentityKey, QuantifiedEquivalenceKey,
+    memory_erased_proposition_key, proposition_identity_key,
+    proposition_identity_key_declines_shape, quantified_equivalence_index_key,
 };
 #[cfg(test)]
 pub(crate) use fact_keys::{alpha_proposition_key_visits, reset_alpha_proposition_key_visits};

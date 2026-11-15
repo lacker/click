@@ -45,8 +45,8 @@ If the report does not explain the premises, rerun the command under
 `To get a trace:` (`click verify --trace-proof PROOF SIDECAR`, optionally with
 `--trace-to LINE`). Read its `failed check` section.
 
-A goal about memory (any `transport`, frame, or `read<...>(snapshot#N, ...)`
-goal) depends on its `snapshot#N` and `value#N` labels: write down the legend
+A goal about memory (any `transport`, frame, or `read<...>(state#N, ...)`
+goal) depends on its `state#N` and `value#N` labels: write down the legend
 line that defines each label the goal uses. Two spellings of one C address
 (`p` and `g + 16 bytes`, or a read at entry and a read in the loop) are often
 the whole story. Otherwise ignore the legend.

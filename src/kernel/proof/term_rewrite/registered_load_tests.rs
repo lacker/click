@@ -264,7 +264,7 @@ fn checked_registered_load_rewrite_remints_nested_direct_offset() {
 }
 
 #[test]
-fn checked_integer_binding_rewrites_registered_load_at_exact_snapshot() {
+fn checked_integer_binding_rewrites_registered_load_at_exact_state() {
     let memory = memory();
     let source = Variable(3_240_000);
     let pointer = Pointer {
@@ -298,10 +298,7 @@ fn checked_integer_binding_rewrites_registered_load_at_exact_snapshot() {
     let (rewritten_memory, rewritten_pointer, kind) =
         machine.operand_view().read().expect("structural read");
     assert_eq!(kind, crate::kernel::LoadKind::Int32);
-    assert_eq!(
-        rewritten_memory, &memory,
-        "the proof snapshot must stay exact"
-    );
+    assert_eq!(rewritten_memory, &memory, "the proof state must stay exact");
     assert_eq!(
         rewritten_pointer.offset,
         PointerOffsetTerm::Constant(36),

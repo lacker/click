@@ -17,7 +17,7 @@ fn retained(format: T, term: &MachineTerm) -> KernelTerm {
     KernelTerm::retained_machine_operand(format, MachineOperandView::Legacy(term))
 }
 // Preserve the retained identity when the native rewrite reports no change.
-// Native leaves can carry snapshot authority not used by native equality;
+// Native leaves can carry state authority not used by native equality;
 // retaining the original on that path also matches the native observation rule.
 fn rewrite_retained_leaf(
     term: &KernelTerm,
@@ -1072,8 +1072,8 @@ mod tests {
         let native = sum(memory.clone(), MachineTerm::constant(1).into());
         let root = retained(T::Int32, &native);
         let to = MachineTerm::Variable(Variable(1006432));
-        for (snapshot, hit) in [(memory, true), (later, false)] {
-            let source = sum(snapshot, MachineTerm::uint32_constant(1).into());
+        for (retained_state, hit) in [(memory, true), (later, false)] {
+            let source = sum(retained_state, MachineTerm::uint32_constant(1).into());
             assert_ne!(native, source);
             let expected = super::super::rewrite_term(&native, &source, &to);
             assert_eq!(expected, if hit { to.clone() } else { native.clone() });

@@ -21,7 +21,7 @@
 //! Every operation touches the entries of the one block it names (O(log n)
 //! to position plus the entries it merges or visits), never unrelated blocks.
 
-use super::{AliasCandidates, Pointer, PointerBlock, PointerOffsetTerm, SnapshotMap};
+use super::{AliasCandidates, HashedOrdMap, Pointer, PointerBlock, PointerOffsetTerm};
 
 /// See the module comment.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -29,7 +29,7 @@ pub(crate) struct InitializedBytes {
     /// Start pointer to byte length. Invariant: within one block, the
     /// constant-offset entries are pairwise disjoint and non-adjacent, and
     /// every length is nonzero.
-    entries: SnapshotMap<Pointer, u32>,
+    entries: HashedOrdMap<Pointer, u32>,
 }
 
 fn constant_start(block: &PointerBlock, offset: i64) -> Pointer {
@@ -45,14 +45,14 @@ impl InitializedBytes {
         self.entries.len()
     }
 
-    /// The entries as a snapshot map, for the generic observable-entry and
+    /// The entries as a state map, for the generic observable-entry and
     /// relative-equality comparisons.
-    pub(crate) fn as_map(&self) -> &SnapshotMap<Pointer, u32> {
+    pub(crate) fn as_map(&self) -> &HashedOrdMap<Pointer, u32> {
         &self.entries
     }
 
     /// Equality of two records derived from `base`; see
-    /// [`SnapshotMap::eq_relative_to`].
+    /// [`HashedOrdMap::eq_relative_to`].
     pub(crate) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
         self.entries.eq_relative_to(&other.entries, &base.entries)
     }
@@ -112,7 +112,7 @@ impl InitializedBytes {
 
     /// Records that the `byte_width` bytes at `pointer` are initialized.
     /// Returns whether the record changed: recording bytes it already covers
-    /// leaves it (and so the snapshot's content) exactly as it was.
+    /// leaves it (and so the state's content) exactly as it was.
     pub(crate) fn record(&mut self, pointer: &Pointer, byte_width: u32) -> bool {
         if byte_width == 0 {
             return false;
@@ -237,7 +237,7 @@ impl InitializedBytes {
         if self.entries.ptr_eq(&other.entries) || self.entries == other.entries {
             return self.clone();
         }
-        let mut result = SnapshotMap::new();
+        let mut result = HashedOrdMap::new();
         let mut visited = 0usize;
         for (pointer, length) in self.entries.iter() {
             visited += 1;

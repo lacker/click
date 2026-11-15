@@ -6920,7 +6920,7 @@ impl Parser {
         }
         let saved = self.position;
         self.position += 2;
-        if let Ok(selector) = self.parse_snapshot_selector()
+        if let Ok(selector) = self.parse_program_point_selector()
             && self.peek() == Some(&Token::Comma)
             && let Some(Token::Ident(name)) = self.peek_next()
             && let Some((identity, _)) = self.names.resource_bindings.get(name)
@@ -8346,9 +8346,9 @@ impl Parser {
 
         if self.peek_ident() == Some("changes_only") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            let before = self.parse_snapshot_selector()?;
+            let before = self.parse_program_point_selector()?;
             self.expect(Token::Comma)?;
-            let after = self.parse_snapshot_selector()?;
+            let after = self.parse_program_point_selector()?;
             let mut resources = Vec::new();
             while self.peek() == Some(&Token::Comma) {
                 self.position += 1;
@@ -8365,16 +8365,17 @@ impl Parser {
         if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
             let start = self.position;
             self.position += 2;
-            let proposition_at_snapshot = self.parse_snapshot_selector().and_then(|selector| {
-                self.expect(Token::Comma)?;
-                let proposition = self.parse_proposition()?;
-                self.expect(Token::RParen)?;
-                Ok(ClickProposition::At {
-                    selector,
-                    proposition: Box::new(proposition),
-                })
-            });
-            if proposition_at_snapshot.is_ok()
+            let proposition_at_program_point =
+                self.parse_program_point_selector().and_then(|selector| {
+                    self.expect(Token::Comma)?;
+                    let proposition = self.parse_proposition()?;
+                    self.expect(Token::RParen)?;
+                    Ok(ClickProposition::At {
+                        selector,
+                        proposition: Box::new(proposition),
+                    })
+                });
+            if proposition_at_program_point.is_ok()
                 && !matches!(
                     self.peek(),
                     Some(
@@ -8407,11 +8408,11 @@ impl Parser {
                 if let Ok(ClickProposition::At {
                     selector,
                     proposition,
-                }) = &proposition_at_snapshot
+                }) = &proposition_at_program_point
                 {
-                    self.refuse_result_in_snapshot_proposition(selector, proposition)?;
+                    self.refuse_result_in_program_point_proposition(selector, proposition)?;
                 }
-                return proposition_at_snapshot;
+                return proposition_at_program_point;
             }
             self.position = start;
         }
@@ -9954,11 +9955,11 @@ impl Parser {
             NameKind::ProofBinder,
             bindings.iter().map(|(name, _)| name.clone()),
         );
-        // The snapshot is independent of the newly bound variables, so
+        // The state is independent of the newly bound variables, so
         // `exists x. at(S, P(x))` is stated at the source as
         // `at(S, exists x. P(x))`. This preserves the exact fact identity of
         // an existential recorded at a past program point.
-        let (snapshot, body) = match body {
+        let (program_point, body) = match body {
             ClickProposition::At {
                 selector,
                 proposition,
@@ -9974,7 +9975,7 @@ impl Parser {
                 written_name: None,
                 body: Box::new(body),
             });
-        let proposition = match snapshot {
+        let proposition = match program_point {
             Some(selector) => ClickProposition::At {
                 selector,
                 proposition: Box::new(proposition),
@@ -13969,7 +13970,7 @@ impl Parser {
 
     /// Finds the struct layout reached by a contract expression, retaining
     /// the layout through an entry-state or recorded-state wrapper. The
-    /// pointer value may come from another snapshot while a later field load
+    /// pointer value may come from another state while a later field load
     /// still reads the surrounding state.
     fn contract_expression_struct_name(&self, expression: &ContractExpression) -> Option<String> {
         match expression {
@@ -15501,17 +15502,17 @@ impl Parser {
             self.position += 2;
             let expression = self.parse_contract_expression()?;
             self.expect(Token::RParen)?;
-            self.refuse_result_in_snapshot_expression(None, &expression)?;
+            self.refuse_result_in_program_point_expression(None, &expression)?;
             return Ok(ContractExpression::Old(Box::new(expression)));
         }
 
         if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            let selector = self.parse_snapshot_selector()?;
+            let selector = self.parse_program_point_selector()?;
             self.expect(Token::Comma)?;
             let expression = self.parse_contract_expression()?;
             self.expect(Token::RParen)?;
-            self.refuse_result_in_snapshot_expression(Some(&selector), &expression)?;
+            self.refuse_result_in_program_point_expression(Some(&selector), &expression)?;
             return Ok(ContractExpression::At {
                 selector,
                 expression: Box::new(expression),
@@ -15625,7 +15626,7 @@ impl Parser {
             }
             // The operand remains authoritative during spec lowering. A
             // historical pointer selects an address, while this load uses
-            // the surrounding clause's memory snapshot.
+            // the surrounding clause's memory state.
             let pointer = ProgramExpression::Value(int32(0));
             return Ok(ContractExpression::CUnary {
                 operand: Box::new(source_pointer),
@@ -16173,58 +16174,58 @@ impl Parser {
         })
     }
 
-    /// Refuses `result` in a snapshot that precedes the return; see
-    /// [`snapshot_can_name_result`]. Kept out of the recursive parser frame,
+    /// Refuses `result` in a state that precedes the return; see
+    /// [`program_point_can_name_result`]. Kept out of the recursive parser frame,
     /// like the other helpers here.
     #[inline(never)]
-    fn refuse_result_in_snapshot_expression(
+    fn refuse_result_in_program_point_expression(
         &self,
-        selector: Option<&SnapshotSelector>,
+        selector: Option<&ProgramPointSelector>,
         expression: &ContractExpression,
     ) -> Result<(), ClickError> {
         let mut names = BTreeSet::new();
         collect_current_contract_expression_variables(expression, &mut names);
-        self.refuse_result_in_snapshot(selector, names.contains("result"))
+        self.refuse_result_in_program_point(selector, names.contains("result"))
     }
 
     #[inline(never)]
-    fn refuse_result_in_snapshot_proposition(
+    fn refuse_result_in_program_point_proposition(
         &self,
-        selector: &SnapshotSelector,
+        selector: &ProgramPointSelector,
         proposition: &ClickProposition,
     ) -> Result<(), ClickError> {
-        self.refuse_result_in_snapshot(Some(selector), proposition_names_result(proposition))
+        self.refuse_result_in_program_point(Some(selector), proposition_names_result(proposition))
     }
 
-    fn refuse_result_in_snapshot(
+    fn refuse_result_in_program_point(
         &self,
-        selector: Option<&SnapshotSelector>,
+        selector: Option<&ProgramPointSelector>,
         names_result: bool,
     ) -> Result<(), ClickError> {
-        if !names_result || snapshot_can_name_result(selector) {
+        if !names_result || program_point_can_name_result(selector) {
             return Ok(());
         }
-        let snapshot = match selector {
+        let point_form = match selector {
             None => "old(...)".to_string(),
             Some(selector) => format!(
                 "at({}, ...)",
-                diagnostics::describe_snapshot_selector(selector)
+                diagnostics::describe_program_point_selector(selector)
             ),
         };
         Err(self.error(format!(
-            "`result` cannot be named inside `{snapshot}`: that snapshot precedes the \
+            "`result` cannot be named inside `{point_form}`: that program point precedes the \
              return, where `result` does not exist yet; state the claim about `result` \
-             outside the snapshot, or at `function.exit`"
+             outside that `at` or `old` expression, or at `function.exit`"
         )))
     }
 
-    fn parse_snapshot_selector(&mut self) -> Result<SnapshotSelector, ClickError> {
+    fn parse_program_point_selector(&mut self) -> Result<ProgramPointSelector, ClickError> {
         if let (Some(Token::Ident(name)), Some(Token::Comma)) = (self.peek(), self.peek_next()) {
             let name = name.clone();
             self.position += 1;
-            return Ok(SnapshotSelector::Mark(name));
+            return Ok(ProgramPointSelector::Mark(name));
         }
-        Ok(SnapshotSelector::ProgramPoint(
+        Ok(ProgramPointSelector::ProgramPoint(
             self.parse_program_point_ref()?,
         ))
     }
@@ -17647,20 +17648,19 @@ mod integer_quantifier_parser_tests {
     }
 
     #[test]
-    fn snapshot_of_pure_call_can_continue_into_comparison() {
+    fn state_of_pure_call_can_continue_into_comparison() {
         let source = r#"
             function identity(x: int32) -> int32 { x }
-            theorem snapshot_call(x: int32) {
+            theorem state_call(x: int32) {
                 ensures x == x by {
                     have at(saved, identity(x)) == at(saved, 1) by { known(); }
                     known();
                 }
             }
         "#;
-        Parser::new(source)
-            .unwrap()
-            .parse_file_items()
-            .expect("an expression snapshot must not parse as a proposition snapshot");
+        Parser::new(source).unwrap().parse_file_items().expect(
+            "an expression at a program point must not parse as a proposition at that point",
+        );
     }
 }
 
@@ -17991,7 +17991,7 @@ mod rewrite_syntax_tests {
     use super::*;
 
     #[test]
-    fn rewrite_endpoints_round_trip_with_nested_arguments_and_snapshots() {
+    fn rewrite_endpoints_round_trip_with_nested_arguments_and_states() {
         for source in [
             "rewrite(x, y);",
             "rewrite(y, x);",

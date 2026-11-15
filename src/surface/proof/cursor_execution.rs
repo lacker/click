@@ -47,7 +47,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         surface_fact,
                         concrete_facts.assumptions(),
                         parameter_binding,
-                        FixedStateFrame::new(proof_context.old_reference_state(&execution.core.frontier, state), state, None, &execution.presentation.recorded_snapshots),
+                        FixedStateFrame::new(proof_context.old_reference_state(&execution.core.frontier, state), state, None, &execution.presentation.recorded_states),
                         SpecDefinitions::new(predicate_environment, click_function_environment),
                     )
                     .map_err(|message| {
@@ -142,16 +142,16 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     let mut abstract_state = abstraction.state;
     let mut join_kernel_variable_mark = abstraction.next_kernel_variable;
 
-    // Branch abstraction discards incidental source-boundary snapshots, but
+    // Branch abstraction discards incidental source-boundary states, but
     // an explicit proof mark is a deliberate historical dependency. Preserve
     // marks that were common to every continuing arm.
     execution
         .presentation
-        .recorded_snapshots
-        .retain(|selector, _| matches!(selector, SnapshotSelector::Mark(_)));
+        .recorded_states
+        .retain(|selector, _| matches!(selector, ProgramPointSelector::Mark(_)));
     execution
         .presentation
-        .recorded_snapshots
+        .recorded_states
         .insert(target.clone(), abstract_state.clone());
     execution.presentation.case_assumptions.clear();
     execution.core.execution_abstraction = true;
@@ -203,8 +203,8 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                 &abstract_state,
                 // Each arm checked these argument reads above, before the
                 // state was abstracted. Re-express the already-established
-                // interface at its fresh join snapshot; do not demand the
-                // concrete snapshot's initialization facts a second time.
+                // interface at its fresh join state; do not demand the
+                // concrete state's initialization facts a second time.
                 &concrete_facts
                     .assumptions()
                     .clone()
@@ -273,7 +273,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     abstract_state = abstract_state.with_resource_context(exported_resources.clone());
     execution
         .presentation
-        .recorded_snapshots
+        .recorded_states
         .insert(target.clone(), abstract_state.clone());
 
     for (assertion, written) in assertions.iter().zip(written_assertions) {
@@ -285,7 +285,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     surface_fact,
                     &exported_pure_facts,
                     parameter_binding,
-                    FixedStateFrame::new(&old_reference, &abstract_state, None, &execution.presentation.recorded_snapshots),
+                    FixedStateFrame::new(&old_reference, &abstract_state, None, &execution.presentation.recorded_states),
                     SpecDefinitions::new(predicate_environment, click_function_environment),
                 )
                 .map_err(|message| {
@@ -320,7 +320,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     abstract_state = abstract_state.with_resource_context(exported_resources);
     execution
         .presentation
-        .recorded_snapshots
+        .recorded_states
         .insert(target.clone(), abstract_state.clone());
     *state = abstract_state;
     // The abstraction issued identities from the execution's one counter, and
@@ -561,7 +561,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
             ExecutionView::new(
                 &execution.core.frontier,
                 &execution.core.effect_facts,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
                 &execution.presentation.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
@@ -604,8 +604,8 @@ pub(super) fn execute_branch_step_from_frontier_position(
         )));
     };
 
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
@@ -626,7 +626,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
             if take_then { "true" } else { "false" }
         });
         // The path facts of an undecided C condition carry the whole memory
-        // snapshot each load reads. Spelling them in the bounded source
+        // state each load reads. Spelling them in the bounded source
         // vocabulary keeps the useful part -- which condition each arm
         // assumes -- without the repeated `Memory` dump.
         let paths = condition_transitions
@@ -738,7 +738,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
             })?;
         execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_effect(execution.core.last_footprint.as_ref());
         execution.core.state = state.clone().into();
         for exited in proof_context
@@ -747,8 +747,8 @@ pub(super) fn execute_branch_step_from_frontier_position(
             .exited_branch_regions(skip_index)
             .to_vec()
         {
-            record_statement_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_statement_program_state(
+                &mut execution.presentation.recorded_states,
                 function_block,
                 exited,
                 ProgramPointKind::Exit,
@@ -794,7 +794,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
     }
     record_current_statement_entry(
         &execution.core.frontier,
-        &mut execution.presentation.recorded_snapshots,
+        &mut execution.presentation.recorded_states,
         &execution.core.state,
         function_block,
         function,
@@ -846,15 +846,15 @@ fn execute_concrete_loop_head_step(
         unreachable!("concrete loop stepping requires a while statement");
     };
 
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    record_loop_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_loop_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         loop_index,
         ProgramPointKind::Entry,
@@ -932,7 +932,7 @@ fn execute_concrete_loop_head_step(
                 })?;
             execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .record_effect(execution.core.last_footprint.as_ref());
         }
         let loop_head = match remaining {
@@ -959,8 +959,8 @@ fn execute_concrete_loop_head_step(
         execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: body.into(),
         };
-        record_statement_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_statement_program_state(
+            &mut execution.presentation.recorded_states,
             function_block,
             execution.core.frontier.next_statement_index,
             ProgramPointKind::Entry,
@@ -1041,8 +1041,8 @@ fn execute_concrete_loop_head_step(
         execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: (*body).into(),
         };
-        record_statement_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_statement_program_state(
+            &mut execution.presentation.recorded_states,
             function_block,
             execution.core.frontier.next_statement_index,
             ProgramPointKind::Entry,
@@ -1073,18 +1073,18 @@ fn execute_concrete_loop_head_step(
         })?;
     execution
         .presentation
-        .recorded_snapshots
+        .recorded_states
         .record_effect(execution.core.last_footprint.as_ref());
     execution.core.state = current_state.clone().into();
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         statement_index,
         ProgramPointKind::Exit,
         current_state.clone(),
     );
-    record_loop_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_loop_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         loop_index,
         ProgramPointKind::Exit,
@@ -1098,8 +1098,8 @@ fn execute_concrete_loop_head_step(
         .exited_branch_regions(statement_index)
         .to_vec()
     {
-        record_statement_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_statement_program_state(
+            &mut execution.presentation.recorded_states,
             function_block,
             exited,
             ProgramPointKind::Exit,
@@ -1123,8 +1123,8 @@ fn execute_concrete_loop_head_step(
     execution.core.frontier.position = FrontierPosition::StatementEntry {
         remaining: remaining.into(),
     };
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         execution.core.frontier.next_statement_index,
         ProgramPointKind::Entry,
@@ -1201,15 +1201,15 @@ pub(super) fn next_top_level_statement_from_frontier_position(
     }
 }
 
-pub(super) fn record_loop_program_snapshot_state(
-    recorded_snapshots: &mut RecordedSnapshots,
+pub(super) fn record_loop_program_state(
+    recorded_states: &mut RecordedStates,
     function_block: &FunctionBlock,
     loop_index: usize,
     kind: ProgramPointKind,
     state: ExecutionState,
 ) {
-    record_code_region_program_snapshot_state(
-        recorded_snapshots,
+    record_code_region_program_state(
+        recorded_states,
         function_block,
         CodeRegion::Loop(loop_index),
         kind,
@@ -1217,15 +1217,15 @@ pub(super) fn record_loop_program_snapshot_state(
     );
 }
 
-pub(super) fn record_statement_program_snapshot_state(
-    recorded_snapshots: &mut RecordedSnapshots,
+pub(super) fn record_statement_program_state(
+    recorded_states: &mut RecordedStates,
     function_block: &FunctionBlock,
     statement_index: usize,
     kind: ProgramPointKind,
     state: ExecutionState,
 ) {
-    record_code_region_program_snapshot_state(
-        recorded_snapshots,
+    record_code_region_program_state(
+        recorded_states,
         function_block,
         CodeRegion::Statement(statement_index),
         kind,
@@ -1233,8 +1233,8 @@ pub(super) fn record_statement_program_snapshot_state(
     );
 }
 
-pub(super) fn record_code_region_program_snapshot_state(
-    recorded_snapshots: &mut RecordedSnapshots,
+pub(super) fn record_code_region_program_state(
+    recorded_states: &mut RecordedStates,
     function_block: &FunctionBlock,
     region: CodeRegion,
     kind: ProgramPointKind,
@@ -1249,13 +1249,13 @@ pub(super) fn record_code_region_program_snapshot_state(
                 .into_iter()
                 .filter_map(StructuralClause::label)
             {
-                recorded_snapshots.label_loop(index, label);
+                recorded_states.label_loop(index, label);
             }
             CodeRegionRef::Loop(index)
         }
         CodeRegion::Statement(index) => CodeRegionRef::Region(index),
     };
-    recorded_snapshots.insert(
+    recorded_states.insert(
         ProgramPointRef {
             region: point_region,
             kind,
@@ -1264,38 +1264,38 @@ pub(super) fn record_code_region_program_snapshot_state(
     );
 }
 
-pub(super) const SNAPSHOT_ANNOTATION_DEPTH_LIMIT: usize = 32;
+pub(super) const PROGRAM_POINT_ANNOTATION_DEPTH_LIMIT: usize = 32;
 
-pub(super) fn surface_at_snapshot<K: RecordedSnapshotKey + ?Sized>(
+pub(super) fn surface_at_program_point<K: RecordedStateKey + ?Sized>(
     surface: &ClickProposition,
     key: &K,
 ) -> Result<ClickProposition, ClickError> {
     let selector = key.to_selector();
-    annotate_surface_at_snapshot(surface, &selector, SnapshotAnnotation::Reread)
+    annotate_surface_at_program_point(surface, &selector, ProgramPointAnnotation::Reread)
 }
 
 /// Freeze a case selector at its checked frontier without retargeting explicit
-/// snapshots or `old` expressions already carried by the selector.
-pub(super) fn surface_frozen_at_snapshot<K: RecordedSnapshotKey + ?Sized>(
+/// states or `old` expressions already carried by the selector.
+pub(super) fn surface_frozen_at_program_point<K: RecordedStateKey + ?Sized>(
     surface: &ClickProposition,
     key: &K,
 ) -> Result<ClickProposition, ClickError> {
-    annotate_surface_at_snapshot(surface, &key.to_selector(), SnapshotAnnotation::Freeze)
+    annotate_surface_at_program_point(surface, &key.to_selector(), ProgramPointAnnotation::Freeze)
 }
 
 #[derive(Clone, Copy)]
-enum SnapshotAnnotation {
+enum ProgramPointAnnotation {
     Freeze,
-    /// Re-read every operand in the selected snapshot, replacing an existing `at`
+    /// Re-read every operand in the selected state, replacing an existing `at`
     /// selector: fact transport across a statement re-reads the source
     /// form at the statement's exit, having proved the cells unchanged.
     Reread,
 }
 
-fn annotate_surface_at_snapshot(
+fn annotate_surface_at_program_point(
     surface: &ClickProposition,
-    selector: &SnapshotSelector,
-    annotation: SnapshotAnnotation,
+    selector: &ProgramPointSelector,
+    annotation: ProgramPointAnnotation,
 ) -> Result<ClickProposition, ClickError> {
     if matches!(
         surface,
@@ -1322,47 +1322,48 @@ fn annotate_surface_at_snapshot(
         ),
         _ => false,
     };
-    let expression_at_snapshot = |expression: &ContractExpression| match (annotation, expression) {
-        (_, ContractExpression::Old(_))
-        | (SnapshotAnnotation::Freeze, ContractExpression::At { .. }) => expression.clone(),
-        (_, literal) if integer_literal(literal) => literal.clone(),
-        (SnapshotAnnotation::Reread, ContractExpression::At { expression, .. }) => {
-            ContractExpression::At {
-                selector: selector.clone(),
-                expression: expression.clone(),
+    let expression_at_program_point =
+        |expression: &ContractExpression| match (annotation, expression) {
+            (_, ContractExpression::Old(_))
+            | (ProgramPointAnnotation::Freeze, ContractExpression::At { .. }) => expression.clone(),
+            (_, literal) if integer_literal(literal) => literal.clone(),
+            (ProgramPointAnnotation::Reread, ContractExpression::At { expression, .. }) => {
+                ContractExpression::At {
+                    selector: selector.clone(),
+                    expression: expression.clone(),
+                }
             }
-        }
-        (_, expression) => ContractExpression::At {
-            selector: selector.clone(),
-            expression: Box::new(expression.clone()),
-        },
-    };
+            (_, expression) => ContractExpression::At {
+                selector: selector.clone(),
+                expression: Box::new(expression.clone()),
+            },
+        };
     // Construct one node outside the traversal frame. In debug builds these
     // by-value syntax temporaries are large; retaining them on every recursive
     // visit used tens of KiB per level inside an already nested proof planner.
     #[inline(never)]
     fn rebuild(
         proposition: &ClickProposition,
-        expression_at_snapshot: &impl Fn(&ContractExpression) -> ContractExpression,
-        selector: &SnapshotSelector,
+        expression_at_program_point: &impl Fn(&ContractExpression) -> ContractExpression,
+        selector: &ProgramPointSelector,
         completed: &mut Vec<ClickProposition>,
     ) -> ClickProposition {
-        let mut child = || Box::new(completed.pop().expect("visited snapshot child"));
+        let mut child = || Box::new(completed.pop().expect("visited state child"));
         match proposition {
             ClickProposition::Comparison {
                 left,
                 operator,
                 right,
             } => ClickProposition::Comparison {
-                left: expression_at_snapshot(left),
+                left: expression_at_program_point(left),
                 operator: *operator,
-                right: expression_at_snapshot(right),
+                right: expression_at_program_point(right),
             },
             ClickProposition::FloatClassification {
                 expression,
                 classification,
             } => ClickProposition::FloatClassification {
-                expression: expression_at_snapshot(expression),
+                expression: expression_at_program_point(expression),
                 classification: *classification,
             },
             ClickProposition::Defined { .. } => ClickProposition::At {
@@ -1406,8 +1407,8 @@ fn annotate_surface_at_snapshot(
             ClickProposition::RangeAll {
                 start, end, item, ..
             } => ClickProposition::RangeAll {
-                start: expression_at_snapshot(start),
-                end: expression_at_snapshot(end),
+                start: expression_at_program_point(start),
+                end: expression_at_program_point(end),
                 item: item.clone(),
                 written_item: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
@@ -1415,8 +1416,8 @@ fn annotate_surface_at_snapshot(
             ClickProposition::RangeAny {
                 start, end, item, ..
             } => ClickProposition::RangeAny {
-                start: expression_at_snapshot(start),
-                end: expression_at_snapshot(end),
+                start: expression_at_program_point(start),
+                end: expression_at_program_point(end),
                 item: item.clone(),
                 written_item: proposition.written_quantifier_name().map(str::to_string),
                 body: child(),
@@ -1424,7 +1425,7 @@ fn annotate_surface_at_snapshot(
             ClickProposition::PredicateCall { name, arguments } => {
                 ClickProposition::PredicateCall {
                     name: name.clone(),
-                    arguments: arguments.iter().map(expression_at_snapshot).collect(),
+                    arguments: arguments.iter().map(expression_at_program_point).collect(),
                 }
             }
             ClickProposition::ChangesOnly { .. }
@@ -1443,7 +1444,7 @@ fn annotate_surface_at_snapshot(
         if visited {
             let rebuilt = rebuild(
                 proposition,
-                &expression_at_snapshot,
+                &expression_at_program_point,
                 selector,
                 &mut completed,
             );
@@ -1451,9 +1452,9 @@ fn annotate_surface_at_snapshot(
             continue;
         }
         crate::instrumentation::record_deterministic_work(1);
-        if depth >= SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
+        if depth >= PROGRAM_POINT_ANNOTATION_DEPTH_LIMIT {
             return Err(ClickError::new(
-                "Surface Click snapshot annotation exceeded its structural depth bound",
+                "Surface Click state annotation exceeded its structural depth bound",
             ));
         }
         pending.push((proposition, depth, true));
@@ -1475,16 +1476,16 @@ fn annotate_surface_at_snapshot(
         }
     }
     debug_assert_eq!(completed.len(), 1);
-    Ok(completed.pop().expect("visited snapshot root"))
+    Ok(completed.pop().expect("visited state root"))
 }
 
-/// Returns a snapshot selector explicitly carried by a proposition produced
-/// by [`surface_at_snapshot`]. Callers must still
+/// Returns a program point selector explicitly carried by a proposition produced
+/// by [`surface_at_program_point`]. Callers must still
 /// re-lower any newly anchored form and check that it denotes the exact
 /// retained kernel fact.
-pub(in crate::surface) fn surface_snapshot_selector(
+pub(in crate::surface) fn surface_program_point_selector(
     surface: &ClickProposition,
-) -> Option<SnapshotSelector> {
+) -> Option<ProgramPointSelector> {
     let expression_site = |expression: &ContractExpression| match expression {
         ContractExpression::At { selector, .. } => Some(selector.clone()),
         _ => None,
@@ -1498,11 +1499,11 @@ pub(in crate::surface) fn surface_snapshot_selector(
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            surface_snapshot_selector(left).or_else(|| surface_snapshot_selector(right))
+            surface_program_point_selector(left).or_else(|| surface_program_point_selector(right))
         }
         ClickProposition::Not(body)
         | ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. } => surface_snapshot_selector(body),
+        | ClickProposition::Exists { body, .. } => surface_program_point_selector(body),
         ClickProposition::RangeAll {
             start, end, body, ..
         }
@@ -1510,7 +1511,7 @@ pub(in crate::surface) fn surface_snapshot_selector(
             start, end, body, ..
         } => expression_site(start)
             .or_else(|| expression_site(end))
-            .or_else(|| surface_snapshot_selector(body)),
+            .or_else(|| surface_program_point_selector(body)),
         ClickProposition::PredicateCall { arguments, .. } => {
             arguments.iter().find_map(expression_site)
         }
@@ -1624,7 +1625,7 @@ pub(super) fn route_throw_to_handler(
         })?;
         execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_effect(execution.core.last_footprint.as_ref());
         execution
             .presentation
@@ -1658,8 +1659,8 @@ pub(super) fn route_throw_to_handler(
         remaining: handler_source,
     };
     execution.core.frontier.next_statement_index = handler.handler_first_index;
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         handler.handler_first_index,
         ProgramPointKind::Entry,
@@ -1950,8 +1951,8 @@ pub(super) fn apply_prepared_call_outcome_transition(
         .core
         .advance_kernel_variable_mark(prepared.next_kernel_variable)
         .map_err(|message| ClickError::new(format!("{transition_label}: {message}")))?;
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         prepared.statement_index,
         ProgramPointKind::Entry,
@@ -1982,7 +1983,7 @@ pub(super) fn apply_prepared_call_outcome_transition(
         })?;
     execution
         .presentation
-        .recorded_snapshots
+        .recorded_states
         .record_effect(execution.core.last_footprint.as_ref());
     append_execution_effect_facts(
         &mut execution.core.effect_facts,
@@ -1999,8 +2000,8 @@ pub(super) fn apply_prepared_call_outcome_transition(
             ));
         }
     };
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         prepared.statement_index,
         ProgramPointKind::Exit,
@@ -2102,8 +2103,8 @@ pub(super) fn apply_prepared_call_outcome_transition(
             execution.core.frontier.position = FrontierPosition::StatementEntry {
                 remaining: remaining.into(),
             };
-            record_statement_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_statement_program_state(
+                &mut execution.presentation.recorded_states,
                 function_block,
                 execution.core.frontier.next_statement_index,
                 ProgramPointKind::Entry,
@@ -2267,7 +2268,7 @@ fn execute_step_from_frontier_position_selecting_path(
             ExecutionView::new(
                 &execution.core.frontier,
                 &execution.core.effect_facts,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
                 &execution.presentation.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
@@ -2449,7 +2450,7 @@ fn execute_step_from_frontier_position_selecting_path(
 
     // The surface step for this statement is written from the proof state
     // *before* the statement runs. Its own check establishes this
-    // statement's entry snapshots only while re-executing it, so construction
+    // statement's entry states only while re-executing it, so construction
     // must see the program points exactly as they were before these entry
     // recordings: points the recording adds or overwrites here are presented
     // at their prior value (or absence) while the step is written.
@@ -2457,16 +2458,16 @@ fn execute_step_from_frontier_position_selecting_path(
     if let Some(loop_index) = loop_index {
         construction_regions.push(CodeRegion::Loop(loop_index));
     }
-    record_statement_program_snapshot_state(
-        &mut execution.presentation.recorded_snapshots,
+    record_statement_program_state(
+        &mut execution.presentation.recorded_states,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
     if let Some(loop_index) = loop_index {
-        record_loop_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_loop_program_state(
+            &mut execution.presentation.recorded_states,
             function_block,
             loop_index,
             ProgramPointKind::Entry,
@@ -2818,8 +2819,8 @@ fn execute_step_from_frontier_position_selecting_path(
             );
         execution.presentation.call_outcome_edges = call_outcome_edges;
         if let (Some(loop_index), Some(exit_state)) = (loop_index, loop_return_exit_state) {
-            record_loop_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_loop_program_state(
+                &mut execution.presentation.recorded_states,
                 function_block,
                 loop_index,
                 ProgramPointKind::Exit,
@@ -3190,7 +3191,7 @@ fn execute_step_from_frontier_position_selecting_path(
     if let (Some(loop_index), Some(iterations)) = (loop_index, &transition.loop_iterations) {
         execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_loop_iterations(loop_index, iterations);
     }
 
@@ -3217,7 +3218,7 @@ fn execute_step_from_frontier_position_selecting_path(
     if loop_index.is_some() {
         execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_effect(statement_footprint.as_ref());
     }
     if let Some(parent) = loop_return_parent {
@@ -3274,7 +3275,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 })?;
         }
     }
-    // A direct memory-snapshot transport needs no surface `transport`
+    // A direct memory-state transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
     // later proof step. Record that form during both planning and
     // explicit certificate validation; otherwise check immediately forgets
@@ -3295,7 +3296,7 @@ fn execute_step_from_frontier_position_selecting_path(
             .cloned()
             .collect::<Vec<_>>();
         for surface in surfaces {
-            let exit_surface = surface_at_snapshot(&surface, &exit_point)?;
+            let exit_surface = surface_at_program_point(&surface, &exit_point)?;
             execution
                 .presentation
                 .surface_propositions
@@ -3324,11 +3325,11 @@ fn execute_step_from_frontier_position_selecting_path(
             };
             let at =
                 |point: &ProgramPointRef, expression: ContractExpression| ContractExpression::At {
-                    selector: SnapshotSelector::ProgramPoint(point.clone()),
+                    selector: ProgramPointSelector::ProgramPoint(point.clone()),
                     expression: Box::new(expression),
                 };
             // The neutral pointer addition makes the Index use the outer
-            // exit snapshot's memory while its base and index retain their
+            // exit state's memory while its base and index retain their
             // entry values.
             let exit_load = if let ContractExpression::Index(base, index) = left {
                 ContractExpression::Index(
@@ -3378,8 +3379,8 @@ fn execute_step_from_frontier_position_selecting_path(
     if let Some(loop_index) = loop_index
         && let StatementOutcome::Normal(state) = &outcome
     {
-        record_loop_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_loop_program_state(
+            &mut execution.presentation.recorded_states,
             function_block,
             loop_index,
             ProgramPointKind::Exit,
@@ -3427,7 +3428,7 @@ fn execute_step_from_frontier_position_selecting_path(
     }
     execution
         .presentation
-        .recorded_snapshots
+        .recorded_states
         .record_effect(execution.core.last_footprint.as_ref());
     if let Some(statement_exit_state) = match &outcome {
         StatementOutcome::Normal(state)
@@ -3439,8 +3440,8 @@ fn execute_step_from_frontier_position_selecting_path(
         StatementOutcome::UndefinedBehavior(_) | StatementOutcome::RuntimeError(_) => None,
         StatementOutcome::VerificationDiverges => None,
     } {
-        record_statement_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_statement_program_state(
+            &mut execution.presentation.recorded_states,
             function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -3448,11 +3449,11 @@ fn execute_step_from_frontier_position_selecting_path(
         );
         execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .record_read_events(statement_index, &execution_pure_facts);
         if let Some(parameters) = &transition.call_parameters {
-            record_statement_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_statement_program_state(
+                &mut execution.presentation.recorded_states,
                 function_block,
                 statement_index,
                 ProgramPointKind::Parameters,
@@ -3468,14 +3469,14 @@ fn execute_step_from_frontier_position_selecting_path(
         {
             execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .record_call_result(statement_index, Some(result.clone()));
         }
         if let Some(loop_index) = loop_index
             && !matches!(outcome, StatementOutcome::Normal(_))
         {
-            record_loop_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_loop_program_state(
+                &mut execution.presentation.recorded_states,
                 function_block,
                 loop_index,
                 ProgramPointKind::Exit,
@@ -3504,8 +3505,8 @@ fn execute_step_from_frontier_position_selecting_path(
                 .exited_branch_regions(statement_index)
                 .to_vec()
             {
-                record_statement_program_snapshot_state(
-                    &mut execution.presentation.recorded_snapshots,
+                record_statement_program_state(
+                    &mut execution.presentation.recorded_states,
                     function_block,
                     exited,
                     ProgramPointKind::Exit,
@@ -3526,8 +3527,8 @@ fn execute_step_from_frontier_position_selecting_path(
                     execution.core.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
-                    record_statement_program_snapshot_state(
-                        &mut execution.presentation.recorded_snapshots,
+                    record_statement_program_state(
+                        &mut execution.presentation.recorded_states,
                         function_block,
                         execution.core.frontier.next_statement_index,
                         ProgramPointKind::Entry,
@@ -3538,8 +3539,8 @@ fn execute_step_from_frontier_position_selecting_path(
                     // The region's boundary state is also the entry state of
                     // its statically known continuation, exactly as the arm
                     // recorded it when continuations were popped at runtime.
-                    record_statement_program_snapshot_state(
-                        &mut execution.presentation.recorded_snapshots,
+                    record_statement_program_state(
+                        &mut execution.presentation.recorded_states,
                         function_block,
                         source_region.continuation_node,
                         ProgramPointKind::Entry,
@@ -3636,9 +3637,9 @@ fn execute_step_from_frontier_position_selecting_path(
                     && matches!(outcome, StatementOutcome::Return { .. })
                 {
                     // Those facts are stated over the loop's iteration
-                    // identities. The loop's exit snapshot, recorded above
+                    // identities. The loop's exit state, recorded above
                     // from this returned state, binds them; the statement's
-                    // entry snapshot, where premises are otherwise read,
+                    // entry state, where premises are otherwise read,
                     // predates the head's havoc and cannot spell them.
                     execution.presentation.surface_record.last_step_entry = Some(ProgramPointRef {
                         region: CodeRegionRef::Loop(loop_index),
@@ -3718,8 +3719,8 @@ fn execute_step_from_frontier_position_selecting_path(
                         })
                 })
                 .unwrap_or(target.statement_index);
-            record_statement_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_statement_program_state(
+                &mut execution.presentation.recorded_states,
                 function_block,
                 target_statement_index,
                 ProgramPointKind::Entry,
@@ -3843,7 +3844,7 @@ fn execute_step_from_frontier_position_selecting_path(
         .presentation
         .record_generated_load_source_events(&generated_load_source_events);
     // Standalone fact-transport steps are written against the post-statement
-    // state, so their construction runs after the statement's exit snapshots
+    // state, so their construction runs after the statement's exit states
     // are in place. Each transport adds its target to the certificate-visible
     // certificate facts, and finishing the transports retires the stale
     // pre-statement sources, mirroring what the certificate's own check
@@ -3885,7 +3886,7 @@ fn record_completed_continuation_exits(frontier: &mut ExecutionFrontier) {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_current_statement_entry(
     frontier: &ExecutionFrontier,
-    recorded_snapshots: &mut RecordedSnapshots,
+    recorded_states: &mut RecordedStates,
     state: &ExecutionState,
     function_block: &FunctionBlock,
     function: &ProgramFunction,
@@ -3906,8 +3907,8 @@ pub(super) fn record_current_statement_entry(
             return Ok(())
         }
     };
-    record_statement_program_snapshot_state(
-        recorded_snapshots,
+    record_statement_program_state(
+        recorded_states,
         function_block,
         frontier.next_statement_index,
         ProgramPointKind::Entry,
@@ -4429,7 +4430,7 @@ pub(super) fn describe_statement_head(statement: &ProgramStatement) -> String {
             describe_program_expression(target),
             count,
             if *copy {
-                " by snapshot copy"
+                " by state copy"
             } else {
                 " by repetition"
             }
@@ -4468,7 +4469,7 @@ pub(super) fn describe_statement_head(statement: &ProgramStatement) -> String {
 mod cursor_sequence_tests {
     use super::*;
 
-    fn snapshot_test_leaf(name: String) -> ClickProposition {
+    fn state_test_leaf(name: String) -> ClickProposition {
         ClickProposition::Comparison {
             left: ContractExpression::CBinding(name),
             operator: ComparisonOperator::Equal,
@@ -4480,24 +4481,24 @@ mod cursor_sequence_tests {
         surface: ClickProposition,
     ) -> (Result<ClickProposition, ClickError>, usize) {
         std::thread::Builder::new()
-            .name("snapshot-annotation-small-stack".into())
+            .name("program-point-annotation-small-stack".into())
             .stack_size(256 * 1024)
             .spawn(move || {
                 crate::instrumentation::measure_deterministic_work(|| {
-                    annotate_surface_at_snapshot(
+                    annotate_surface_at_program_point(
                         &surface,
-                        &SnapshotSelector::Mark("chosen".into()),
-                        SnapshotAnnotation::Reread,
+                        &ProgramPointSelector::Mark("chosen".into()),
+                        ProgramPointAnnotation::Reread,
                     )
                 })
             })
             .unwrap()
             .join()
-            .expect("snapshot annotation must not retain large recursive frames")
+            .expect("state annotation must not retain large recursive frames")
     }
 
     #[test]
-    fn snapshot_annotation_leaves_the_int64_minimum_unanchored() {
+    fn state_annotation_leaves_the_int64_minimum_unanchored() {
         let observed = ContractExpression::Call {
             name: "to_integer".into(),
             arguments: vec![ContractExpression::CBinding("q".into())],
@@ -4510,9 +4511,10 @@ mod cursor_sequence_tests {
             operator: ComparisonOperator::LessEqual,
             right: observed.clone(),
         };
-        let selector = SnapshotSelector::Mark("chosen".into());
+        let selector = ProgramPointSelector::Mark("chosen".into());
         let annotated =
-            annotate_surface_at_snapshot(&surface, &selector, SnapshotAnnotation::Reread).unwrap();
+            annotate_surface_at_program_point(&surface, &selector, ProgramPointAnnotation::Reread)
+                .unwrap();
         assert_eq!(
             annotated,
             ClickProposition::Comparison {
@@ -4532,7 +4534,8 @@ mod cursor_sequence_tests {
             right: observed,
         };
         let ClickProposition::Comparison { left, .. } =
-            annotate_surface_at_snapshot(&surface, &selector, SnapshotAnnotation::Reread).unwrap()
+            annotate_surface_at_program_point(&surface, &selector, ProgramPointAnnotation::Reread)
+                .unwrap()
         else {
             panic!("a comparison stays a comparison");
         };
@@ -4546,9 +4549,9 @@ mod cursor_sequence_tests {
     }
 
     #[test]
-    fn snapshot_annotation_depth_is_stack_safe_and_bounded() {
-        for depth in [7, 15, 23, SNAPSHOT_ANNOTATION_DEPTH_LIMIT - 1] {
-            let mut surface = snapshot_test_leaf("current".into());
+    fn state_annotation_depth_is_stack_safe_and_bounded() {
+        for depth in [7, 15, 23, PROGRAM_POINT_ANNOTATION_DEPTH_LIMIT - 1] {
+            let mut surface = state_test_leaf("current".into());
             for _ in 0..depth {
                 surface = ClickProposition::Not(Box::new(surface));
             }
@@ -4568,14 +4571,14 @@ mod cursor_sequence_tests {
             assert!(matches!(
                 left,
                 ContractExpression::At {
-                    selector: SnapshotSelector::Mark(_),
+                    selector: ProgramPointSelector::Mark(_),
                     ..
                 }
             ));
             assert!(matches!(right, ContractExpression::Old(_)));
         }
-        let mut too_deep = snapshot_test_leaf("current".into());
-        for _ in 0..SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
+        let mut too_deep = state_test_leaf("current".into());
+        for _ in 0..PROGRAM_POINT_ANNOTATION_DEPTH_LIMIT {
             too_deep = ClickProposition::Not(Box::new(too_deep));
         }
         let (result, work) = annotate_on_small_stack(too_deep);
@@ -4585,14 +4588,14 @@ mod cursor_sequence_tests {
                 .message()
                 .contains("structural depth bound")
         );
-        assert_eq!(work, SNAPSHOT_ANNOTATION_DEPTH_LIMIT + 1);
+        assert_eq!(work, PROGRAM_POINT_ANNOTATION_DEPTH_LIMIT + 1);
     }
 
     #[test]
-    fn snapshot_annotation_work_is_linear_and_preserves_operand_order() {
+    fn state_annotation_work_is_linear_and_preserves_operand_order() {
         for leaves in [8, 16, 32, 64] {
             let mut level = (0..leaves)
-                .map(|index| snapshot_test_leaf(index.to_string()))
+                .map(|index| state_test_leaf(index.to_string()))
                 .collect::<Vec<_>>();
             while level.len() > 1 {
                 let mut children = level.into_iter();
@@ -4615,7 +4618,7 @@ mod cursor_sequence_tests {
                     }
                     ClickProposition::Comparison { left, .. } => {
                         let ContractExpression::At { expression, .. } = left else {
-                            panic!("the comparison must read the selected snapshot");
+                            panic!("the comparison must read the selected state");
                         };
                         assert_eq!(
                             expression.as_ref(),

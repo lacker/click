@@ -1,14 +1,14 @@
-//! Logical Boolean reads retain exact snapshots and shared addresses. The
+//! Logical Boolean reads retain exact states and shared addresses. The
 //! selected native descriptor is a lazy adapter for remaining native carriers.
 use super::*;
 
-pub type KernelBooleanRead = KernelSnapshotRead;
+pub type KernelBooleanRead = KernelMemoryRead;
 
 impl KernelTerm {
     pub(crate) fn boolean_read(memory: SharedMemory, address: SharedPointerAddress) -> Self {
         Self::intern(
             KernelType::Bool,
-            KernelTermNode::BoolRead(KernelSnapshotRead::new(memory, address)),
+            KernelTermNode::BoolRead(KernelMemoryRead::new(memory, address)),
         )
     }
     /// Explicit native read-leaf boundary, shared by diagnostics and stored-cell
@@ -37,7 +37,7 @@ impl KernelTerm {
 mod tests {
     use super::*;
     #[test]
-    fn boolean_reads_keep_snapshot_identity_and_exact_source() {
+    fn boolean_reads_keep_state_identity_and_exact_source() {
         let _session = crate::kernel::VerificationSession::enter();
         let before = Memory::new()
             .with_block("bool-read", 1)
@@ -102,7 +102,7 @@ mod tests {
         );
     }
     #[test]
-    fn boolean_reads_preserve_native_substitution_snapshots_and_addresses() {
+    fn boolean_reads_preserve_native_substitution_states_and_addresses() {
         let _session = crate::kernel::VerificationSession::enter();
         let memory = intern_memory(Memory::new().with_block("bool-memory", 4).store(
             Memory::global_pointer("bool-memory"),

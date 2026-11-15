@@ -1,4 +1,4 @@
-# `old(n)` and every snapshot read a reassigned parameter's entry value
+# `old(n)` and every state read a reassigned parameter's entry value
 
 The body reassigns its parameter. In a contract, `old(n)` has always meant
 the value `n` was passed. In a proof script it did not: `old` moved the memory

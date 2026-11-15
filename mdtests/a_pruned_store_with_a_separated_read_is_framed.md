@@ -2,7 +2,7 @@
 
 The positive twin of
 [`a_pruned_store_is_not_forgotten.md`](a_pruned_store_is_not_forgotten.md).
-Marking the snapshot the dropped cell came from must not cost the proof that
+Marking the state the dropped cell came from must not cost the proof that
 does hold: with `m` stated distinct from both written indexes, the walk crosses
 the store to `a[j]`, crosses the forget, crosses the store to `a[i]`, and
 reaches function entry.

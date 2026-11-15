@@ -74,7 +74,7 @@ fn unsigned_congruence_propagates_late_aliases_without_injectivity_or_signed_coe
 }
 
 #[test]
-fn unsigned_congruence_keeps_load_snapshots_and_widths_distinct() {
+fn unsigned_congruence_keeps_load_states_and_widths_distinct() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("unsigned", 4));
     let pointer = Pointer {
@@ -169,7 +169,7 @@ fn fact_transport_uses_graph_int32_congruence_without_the_legacy_index() {
 }
 
 #[test]
-fn fact_transport_uses_registered_load_congruence_only_in_one_snapshot() {
+fn fact_transport_uses_registered_load_congruence_only_in_one_state() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("int32", 16));
     let pointer = |index| Pointer {
@@ -202,7 +202,7 @@ fn fact_transport_uses_registered_load_congruence_only_in_one_snapshot() {
 }
 
 #[test]
-fn resolved_four_byte_load_uses_graph_value_equality_but_keeps_snapshot_scope() {
+fn resolved_four_byte_load_uses_graph_value_equality_but_keeps_state_scope() {
     let _session = VerificationSession::enter();
     let pointer = Pointer {
         block: "resolved-int32".into(),
@@ -273,7 +273,7 @@ fn resolved_four_byte_load_uses_graph_value_equality_but_keeps_snapshot_scope() 
 }
 
 #[test]
-fn two_resolved_four_byte_loads_compare_values_with_snapshot_scope() {
+fn two_resolved_four_byte_loads_compare_values_with_state_scope() {
     let _session = VerificationSession::enter();
     let pointer = |offset| Pointer {
         block: "two-resolved-int32".into(),
@@ -336,7 +336,7 @@ fn two_resolved_four_byte_loads_compare_values_with_snapshot_scope() {
 }
 
 #[test]
-fn direct_composite_int32_argument_uses_graph_with_snapshot_scope() {
+fn direct_composite_int32_argument_uses_graph_with_state_scope() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("resource-value", 8));
     let pointer = |index| Pointer {
@@ -382,7 +382,7 @@ fn direct_composite_int32_argument_uses_graph_with_snapshot_scope() {
 }
 
 #[test]
-fn resource_instance_int32_field_uses_graph_with_snapshot_scope() {
+fn resource_instance_int32_field_uses_graph_with_state_scope() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("instance-value", 8));
     let pointer = |index| Pointer {
@@ -441,7 +441,7 @@ fn resource_instance_int32_field_uses_graph_with_snapshot_scope() {
 }
 
 #[test]
-fn certification_uses_graph_int32_equality_with_snapshot_scope() {
+fn certification_uses_graph_int32_equality_with_state_scope() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("certified-int32", 8));
     let pointer = |index| Pointer {
@@ -482,7 +482,7 @@ fn certification_uses_graph_int32_equality_with_snapshot_scope() {
 }
 
 #[test]
-fn reordered_sum_matches_graph_equal_load_addends_in_one_snapshot() {
+fn reordered_sum_matches_graph_equal_load_addends_in_one_state() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("int32", 16));
     let pointer = |index| Pointer {
@@ -589,7 +589,7 @@ fn int32_restriction_and_contradiction_preserve_support() {
 }
 
 #[test]
-fn int32_load_identity_keeps_snapshots_separate() {
+fn int32_load_identity_keeps_states_separate() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("int32", 8));
     let pointer = Pointer::symbolic(Variable(40));

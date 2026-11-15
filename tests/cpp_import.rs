@@ -9732,7 +9732,7 @@ int32 write_seven(int32* slot) {
  owns slot[0..1]; ensures slot[0] == 7; ensures result == 7;
 }
 int32 second(int32 a, int32 b, int32 c) { ensures result == b; }
-int32 effectful_inner(int32* slot, int32 snapshot) {
+int32 effectful_inner(int32* slot, int32 saved_value) {
  owns slot[0..1]; ensures slot[0] == 7; ensures result == 7;
 }
 "#,
@@ -10953,7 +10953,7 @@ fn compiler_assumptions_preserve_conditional_execution_and_constant_reachability
 
 #[test]
 #[ignore = "nightly: 6s in the parallel gate"]
-fn isolated_nested_calls_snapshot_field_siblings_in_every_scalar_context() {
+fn isolated_nested_calls_state_field_siblings_in_every_scalar_context() {
     let cpp = include_str!("fixtures/cpp-verification/return-call/field-siblings.cpp");
     for (selected, outer, slot, claim) in [
         ("field_first", "first", "a", "box.value"),
@@ -10987,7 +10987,7 @@ fn isolated_nested_calls_snapshot_field_siblings_in_every_scalar_context() {
             fs::write(&path, &hostile).unwrap();
             let parsed = read_click_project(&path, &hostile).unwrap();
             verify_program_prepared_project(&parsed, &import)
-                .expect_err("field snapshots need authority and cannot prove false results");
+                .expect_err("field states need authority and cannot prove false results");
         }
     }
 }

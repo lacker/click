@@ -73,7 +73,7 @@ pub(super) struct TheoremApplicationContext<'a> {
     pub(super) pre_state: &'a ExecutionState,
     pub(super) post_state: &'a ExecutionState,
     pub(super) result: Option<&'a ProgramValue>,
-    pub(super) recorded_snapshots: &'a RecordedSnapshots,
+    pub(super) recorded_states: &'a RecordedStates,
     pub(super) integer_values:
         &'a crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     /// Physical pointee widths for C parameters in the caller's scope.  A
@@ -240,7 +240,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             &proposition,
             lowering_assumptions,
             ContractEnvironment::new(&values, &array_refs),
-            FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
+            FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_states),
             spec_definitions,
             FixedStateLoweringOptions {
                 algebraic_values: Some(&algebraic_values),
@@ -418,7 +418,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
             &conclusion,
             lowering_assumptions,
             ContractEnvironment::new(&values, &array_refs),
-            FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_snapshots),
+            FixedStateFrame::new(&pre_state, &post_state, None, context.recorded_states),
             spec_definitions,
             FixedStateLoweringOptions {
                 algebraic_values: Some(&algebraic_values),
@@ -466,7 +466,7 @@ pub(super) fn describe_unavailable_theorem_requirement(
     lowered: &Proposition,
 ) -> String {
     // Substitute the actual written arguments rather than asking a kernel
-    // load to recover the state selector the author already supplied. A
+    // load to recover the program point selector the author already supplied. A
     // native comparison keeps its observations, so the instantiation reads
     // back as the requirement: `100u64 < a` at `a = n - k` is not the
     // Integer comparison `100u64 < n - k`.
@@ -581,7 +581,7 @@ fn instantiate_integer_range_fold_theorem_application(
             context.pre_state,
             context.post_state,
             context.result,
-            context.recorded_snapshots,
+            context.recorded_states,
         ),
         spec_definitions,
     )
@@ -743,7 +743,7 @@ fn instantiate_population_member_count_zero(
                     context.pre_state,
                     context.post_state,
                     context.result,
-                    context.recorded_snapshots,
+                    context.recorded_states,
                 ),
                 spec_definitions,
                 &BTreeSet::new(),
@@ -988,7 +988,7 @@ fn theorem_application_argument_type(
             context.pre_state,
             context.post_state,
             context.result,
-            context.recorded_snapshots,
+            context.recorded_states,
         ),
         spec_definitions,
     ) {
@@ -1037,7 +1037,7 @@ fn evaluate_native_theorem_argument(
             context.pre_state,
             context.post_state,
             context.result,
-            context.recorded_snapshots,
+            context.recorded_states,
         ),
         spec_definitions,
         opaque_click_functions,
@@ -1102,7 +1102,7 @@ pub(super) fn theorem_application_bindings(
                             context.pre_state,
                             context.post_state,
                             context.result,
-                            context.recorded_snapshots,
+                            context.recorded_states,
                         ),
                         spec_definitions,
                     )?,
@@ -1138,7 +1138,7 @@ pub(super) fn theorem_application_bindings(
                     context.pre_state,
                     context.post_state,
                     context.result,
-                    context.recorded_snapshots,
+                    context.recorded_states,
                 ),
                 spec_definitions,
             )?;
@@ -1256,7 +1256,7 @@ pub(super) fn theorem_application_bindings(
                     context.pre_state,
                     context.post_state,
                     context.result,
-                    context.recorded_snapshots,
+                    context.recorded_states,
                 ),
                 spec_definitions,
             )?;
@@ -1762,7 +1762,7 @@ theorem nested_count(value: int32) {
     }
 
     #[test]
-    fn integer_theorem_arguments_capture_current_entry_snapshot_and_result_values() {
+    fn integer_theorem_arguments_capture_current_entry_state_and_result_values() {
         let parsed = crate::surface::parser::parse_file_items(
             "theorem reflexive(z: Integer) { ensures z == z by solve(); }",
         )
@@ -1775,8 +1775,11 @@ theorem nested_count(value: int32) {
         let algebraic = BTreeMap::new();
         let integers = crate::persistent::PersistentMap::default();
         let result = int32(11u32);
-        let mut snapshots = RecordedSnapshots::default();
-        snapshots.insert(SnapshotSelector::Mark("before".into()), pre_state.clone());
+        let mut retained_states = RecordedStates::default();
+        retained_states.insert(
+            ProgramPointSelector::Mark("before".into()),
+            pre_state.clone(),
+        );
         let context = TheoremApplicationContext {
             values: &values,
             array_refs: &arrays,
@@ -1784,7 +1787,7 @@ theorem nested_count(value: int32) {
             pre_state: &pre_state,
             post_state: &post_state,
             result: Some(&result),
-            recorded_snapshots: &snapshots,
+            recorded_states: &retained_states,
             integer_values: &integers,
             pointer_element_widths: BTreeMap::new(),
         };
@@ -1794,7 +1797,7 @@ theorem nested_count(value: int32) {
             (ContractExpression::Old(Box::new(x.clone())), 7),
             (
                 ContractExpression::At {
-                    selector: SnapshotSelector::Mark("before".into()),
+                    selector: ProgramPointSelector::Mark("before".into()),
                     expression: Box::new(x),
                 },
                 7,
@@ -2043,7 +2046,7 @@ pub(super) fn theorem_resource_argument_bindings(
                 context.pre_state,
                 context.post_state,
                 context.result,
-                context.recorded_snapshots,
+                context.recorded_states,
             ),
             spec_definitions,
             FixedStateLoweringOptions {

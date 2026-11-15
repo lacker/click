@@ -299,7 +299,7 @@ struct ConciseClaimProgress {
 }
 
 /// The retained verification session lives on a thread of its own. Its
-/// verified environment names snapshots in the kernel's thread-local tables,
+/// verified environment names states in the kernel's thread-local tables,
 /// and every expansion, cold reverification, and re-expansion the audit runs
 /// between session checks starts fresh tables on its own thread. Sharing the
 /// audit thread let those runs replace the session's tables, so a rewrite

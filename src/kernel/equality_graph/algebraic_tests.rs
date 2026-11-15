@@ -310,7 +310,7 @@ fn scalar_constant_conflicts_preserve_machine_widths() {
 }
 
 #[test]
-fn scalar_read_conflicts_require_the_same_snapshot() {
+fn scalar_read_conflicts_require_the_same_state() {
     let _session = crate::kernel::VerificationSession::enter();
     let p = Pointer {
         block: "cell".into(),

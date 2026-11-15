@@ -714,7 +714,7 @@ impl PureFactContext {
                 // Pointer conditions are already in their canonical structural
                 // form: `simplify_condition_under_assumptions` only clones
                 // them. Avoid cloning and then deeply comparing symbolic
-                // pointer terms (which may embed whole memory snapshots)
+                // pointer terms (which may embed whole memory states)
                 // before routing to the dedicated pointer decision rules.
                 if matches!(
                     condition,
@@ -1765,7 +1765,7 @@ impl PureFactContext {
     }
 
     /// Query wrapping int32 value equality maintained by the trusted graph.
-    /// This performs no fact-component walk, arithmetic search, or snapshot
+    /// This performs no fact-component walk, arithmetic search, or state
     /// transport. `false` means unknown. Equal residues establish exact byte
     /// offsets only through the separate offset judgment's no-wrap guards.
     pub(in crate::kernel) fn int32_values_known_equal(
@@ -1985,7 +1985,7 @@ impl PureFactContext {
             crate::kernel::eval::scalar_read_observation(MachineOperandView::Legacy(right))?;
         let (left_memory, left_pointer, left_kind) = (left.memory, left.pointer, left.kind);
         let (right_memory, right_pointer, right_kind) = (right.memory, right.pointer, right.kind);
-        // Congruence retains the exact snapshot and read kind.
+        // Congruence retains the exact state and read kind.
         if left_memory != right_memory
             || left_kind != right_kind
             || left_pointer.block != right_pointer.block
@@ -2431,7 +2431,7 @@ impl PureFactContext {
 
     /// Read a settled constant from the equality class, or resolve its
     /// conditional members. Unregistered arithmetic folds from its operands.
-    /// Do not search other snapshots for equal loads here: a missing relation
+    /// Do not search other states for equal loads here: a missing relation
     /// must be established before this fast checking query.
     fn constant_class_resolution(
         &self,
@@ -3699,7 +3699,7 @@ mod shared_offset_evidence_tests {
     }
 
     #[test]
-    fn shared_offset_evidence_keeps_read_snapshots_and_shared_premises() {
+    fn shared_offset_evidence_keeps_read_states_and_shared_premises() {
         let _session = crate::kernel::VerificationSession::enter();
         let pointer = crate::kernel::Memory::global_pointer("offset-evidence");
         let memory = crate::kernel::Memory::new().with_block("offset-evidence", 4);

@@ -952,7 +952,7 @@ fn mutable_frame_transports_load_across_certified_effect_chain() {
     };
     // The transported load is the `int32` at offset zero. Say so: a
     // width-less load stands in eight bytes, which the first write at offset
-    // four overlaps, and the two snapshots then do not agree about it.
+    // four overlaps, and the two states then do not agree about it.
     crate::kernel::eval::declare_load_access_width(&preserved, 4);
     let before = Memory::new();
     let middle = before.clone().store(first_write.clone(), int32(1));
@@ -1306,7 +1306,7 @@ fn direct_resource_match_uses_exact_field_load_equalities() {
 }
 
 #[test]
-fn memory_range_endpoint_match_uses_graph_loads_in_one_snapshot() {
+fn memory_range_endpoint_match_uses_graph_loads_in_one_state() {
     let _session = crate::kernel::VerificationSession::enter();
     let before = crate::kernel::intern_memory(Memory::new().with_block("range", 16));
     let pointer = |index| Pointer {
@@ -2215,7 +2215,7 @@ fn simple_pointer_equality_composes_interleaved_aliases_in_the_graph() {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Variable(Variable(120)),
     };
-    let snapshot_pointer = Pointer {
+    let state_pointer = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Variable(Variable(121)),
     };
@@ -2227,12 +2227,12 @@ fn simple_pointer_equality_composes_interleaved_aliases_in_the_graph() {
         .assume_condition(
             ConditionTerm::pointer_offset_equal(
                 final_pointer.offset.clone(),
-                snapshot_pointer.offset.clone(),
+                state_pointer.offset.clone(),
             ),
             true,
         )
         .assume_condition(
-            ConditionTerm::pointer_equal(snapshot_pointer, local_pointer.clone()),
+            ConditionTerm::pointer_equal(state_pointer, local_pointer.clone()),
             true,
         )
         .assume_condition(
@@ -2396,7 +2396,7 @@ fn constant_field_offset_is_disjoint_from_earlier_constant_range() {
 }
 
 #[test]
-fn bounded_separation_uses_order_fact_across_equivalent_snapshots() {
+fn bounded_separation_uses_order_fact_across_equivalent_states() {
     let owner = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(MachineTerm::Variable(Variable(102)), 4),
@@ -2590,7 +2590,7 @@ fn memory_load_equality_does_not_ignore_loop_havoc_identity() {
 
     assert!(
         !crate::kernel::search::ProofSearch::proves(&(PureFactContext::new()), &equality),
-        "a havoced snapshot requires explicit frame evidence"
+        "a havoced state requires explicit frame evidence"
     );
 }
 
@@ -3532,7 +3532,7 @@ fn count_shaped_range_fold_split_is_proven_equal() {
     ));
 }
 
-/// An `Integer`-carrier fold over an array cell, with the memory snapshot the
+/// An `Integer`-carrier fold over an array cell, with the memory state the
 /// body reads left open.
 fn integer_array_fold(
     memory: &Memory,
@@ -3672,7 +3672,7 @@ fn integer_range_fold_endpoint_congruence_rejects_a_free_binder_occurrence() {
 }
 
 #[test]
-fn integer_range_fold_endpoint_congruence_requires_one_memory_snapshot() {
+fn integer_range_fold_endpoint_congruence_requires_one_memory_state() {
     let cell = Pointer {
         block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -3686,7 +3686,7 @@ fn integer_range_fold_endpoint_congruence_requires_one_memory_snapshot() {
         PureFactContext::new().assume_condition(ConditionTerm::equal(a.clone(), b.clone()), true);
 
     // Equal endpoints and the same body shape, but the two bodies read
-    // different snapshots of the same array. The fold values may genuinely
+    // different states of the same array. The fold values may genuinely
     // differ, so the congruence must not fire.
     let left = integer_array_fold(&before, lo.clone(), a.clone(), Variable(133), Variable(134));
     let across_a_write =
@@ -3699,12 +3699,12 @@ fn integer_range_fold_endpoint_congruence_requires_one_memory_snapshot() {
         )
     ));
 
-    // The same pair at one snapshot is equated, so the refusal above is the
-    // snapshot check and not some other mismatch.
-    let same_snapshot = integer_array_fold(&before, lo, b, Variable(135), Variable(136));
+    // The same pair at one state is equated, so the refusal above is the
+    // state check and not some other mismatch.
+    let same_state = integer_array_fold(&before, lo, b, Variable(135), Variable(136));
     assert!(crate::kernel::search::ProofSearch::proves(
         &(assumptions),
-        &Proposition::ConditionIs(ConditionTerm::integer_equal(left, same_snapshot), true,)
+        &Proposition::ConditionIs(ConditionTerm::integer_equal(left, same_state), true,)
     ));
 }
 
@@ -3940,12 +3940,12 @@ fn one_exact_pointer_equality_resolves_an_unresolved_pointer_and_nothing_else_do
 
 /// The recorded history behind
 /// `mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md`, asked of the
-/// snapshot comparison that fact transport uses: `x = 5`, then `q = echo(&x)`
+/// state comparison that fact transport uses: `x = 5`, then `q = echo(&x)`
 /// binding an unresolved pointer into a local, then `x = 1`.
 ///
-/// The two snapshots either side of `x = 1` differ in one cell, and that cell
+/// The two states either side of `x = 1` differ in one cell, and that cell
 /// is in a `local:` block. The comparison used to drop every such cell before
-/// asking anything, so it called the two snapshots agreed about a load through
+/// asking anything, so it called the two states agreed about a load through
 /// the returned pointer — which is `&x`, the very address the store wrote. The
 /// cells it keeps are now the ones `observable_by_load` keeps, so the answer
 /// comes from `pointers_proven_distinct_for_memory_resolution` for every block
@@ -3985,7 +3985,7 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
         .store(x.clone(), crate::kernel::api::int32(1));
 
     assert!(
-        !memory_snapshots_proven_equal_at_pointer(&after_binding, &after_store, &symbolic, &bare),
+        !memory_states_proven_equal_at_pointer(&after_binding, &after_store, &symbolic, &bare),
         "a store to `x` must not be framed away for a load through a pointer \
          nothing resolves: the pointer may be `&x`"
     );
@@ -3994,17 +3994,17 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
     // a store can name that is not the read's own is proven distinct from a
     // local, so the per-cell check answers those on its first rung.
     assert!(
-        memory_snapshots_proven_equal_at_pointer(&after_binding, &after_store, &argument, &bare),
+        memory_states_proven_equal_at_pointer(&after_binding, &after_store, &argument, &bare),
         "memory the caller passed in cannot be this function's own local"
     );
     assert!(
-        memory_snapshots_proven_equal_at_pointer(&after_binding, &after_store, &global, &bare),
+        memory_states_proven_equal_at_pointer(&after_binding, &after_store, &global, &bare),
         "two differently named declared objects are two objects"
     );
 
     // And the tracker's walk stops at that same store, which is the step the
     // refusal names.
-    let point = crate::kernel::resource_tracker::ProgramPoint::at(
+    let point = crate::kernel::resource_tracker::VersionPoint::at(
         &crate::kernel::intern_memory_ref(&after_store),
     );
     let stop = crate::kernel::resource_tracker::last_same(
@@ -4022,7 +4022,7 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
     );
 }
 
-/// What a snapshot comparison with **no load pointer** may drop.
+/// What a state comparison with **no load pointer** may drop.
 ///
 /// `memories_proven_equal_for_memory_resolution` and its certification twin
 /// `memories_definitionally_equal` are whole-state equalities: neither is
@@ -4038,11 +4038,11 @@ fn a_store_to_a_local_is_not_framed_away_for_an_unresolved_pointer() {
 /// comparisons must answer that identically because they are one rule.
 ///
 /// The last pair is the order-path caller's question, which does have a
-/// pointer and now asks it: two snapshots differing in an address-taken local
+/// pointer and now asks it: two states differing in an address-taken local
 /// are not one state for a load through a pointer nothing resolves, and two
 /// differing only in a local no pointer can reach are.
 #[test]
-fn a_pointerless_snapshot_equality_drops_only_a_local_no_pointer_can_reach() {
+fn a_pointerless_state_equality_drops_only_a_local_no_pointer_can_reach() {
     use crate::kernel::api::contract_certification::memories_definitionally_equal;
 
     let at = |block: PointerBlock| Pointer {
@@ -4080,7 +4080,7 @@ fn a_pointerless_snapshot_equality_drops_only_a_local_no_pointer_can_reach() {
     );
     assert!(
         memories_proven_equal_for_memory_resolution(&before, &wrote_hidden, &bare),
-        "an object no pointer value designates cannot tell two snapshots apart"
+        "an object no pointer value designates cannot tell two states apart"
     );
     assert!(
         !memories_definitionally_equal(&before, &wrote_addressed, &bare),
@@ -4106,11 +4106,11 @@ fn a_pointerless_snapshot_equality_drops_only_a_local_no_pointer_can_reach() {
 
     // And the caller that does have a pointer now asks about it.
     assert!(
-        !memory_snapshots_proven_equal_at_pointer(&before, &wrote_addressed, &symbolic, &bare),
+        !memory_states_proven_equal_at_pointer(&before, &wrote_addressed, &symbolic, &bare),
         "the pointer may be `&addressed`"
     );
     assert!(
-        memory_snapshots_proven_equal_at_pointer(&before, &wrote_hidden, &symbolic, &bare),
+        memory_states_proven_equal_at_pointer(&before, &wrote_hidden, &symbolic, &bare),
         "no pointer value designates `hidden`"
     );
 
@@ -4446,7 +4446,7 @@ fn the_entry_partition_pairs_a_transferred_clause_only_with_a_borrowed_one() {
     let clause = |fact: ResourceFact, role: ResourceTransferRole| CheckedResourceFact {
         fact,
         role,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,
@@ -5310,10 +5310,10 @@ fn assumptions_reject_forall_based_on_a_shadowed_prefix_index() {
 }
 
 #[test]
-fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
+fn added_composition_carrier_keeps_state_premise_work_bounded() {
     // The lazy-separation monotonicity requirement: adding a valid compact
     // composition carrier must not break, or meaningfully slow, an already
-    // provable snapshot premise. Pinned by the bounded-pool regression where
+    // provable state premise. Pinned by the bounded-pool regression where
     // a fifth carrier turned an exact-premise check into context-wide
     // repeated range derivation.
     let target = Pointer {
@@ -5572,9 +5572,9 @@ fn wrapped_index_sum_does_not_decide_pointer_offsets_equal() {
 }
 
 #[test]
-fn quantified_load_witness_does_not_certify_loadability_in_a_freed_snapshot() {
+fn quantified_load_witness_does_not_certify_loadability_in_a_freed_state() {
     // A universal fact about `load(live, p + k)` witnesses that `p + j` is
-    // loadable in `live` (its guard covers `j`), but not in a snapshot where
+    // loadable in `live` (its guard covers `j`), but not in a state where
     // the block is gone.
     let block: PointerBlock = "heap:witness".into();
     let live = Memory::new().with_block(block.clone(), 4);
@@ -5652,7 +5652,7 @@ fn quantified_load_witness_does_not_certify_loadability_in_a_freed_snapshot() {
 #[test]
 fn freed_external_allocation_is_not_still_available() {
     // `free` keeps the `ExternalArgument` block, so availability must also
-    // compare which allocations each snapshot has freed.
+    // compare which allocations each state has freed.
     let base = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::scaled_int32_node(MachineTerm::Variable(Variable(93_503)), 4),
@@ -6824,23 +6824,23 @@ mod membership_needs_an_unwrapped_difference {
     }
 }
 
-/// The three assumption-carrying snapshot comparisons decide whether two
-/// snapshots agree about one load. Their cell filter is
+/// The three assumption-carrying state comparisons decide whether two
+/// states agree about one load. Their cell filter is
 /// `PointerBlock::observable_by_load`; the filter on the `blocks` extent map
 /// beside it was a block-name shortcut, `!block.starts_with("local:")`, which
 /// dropped every local's extent from the comparison and never looked at the
 /// retirement tombstones at all.
-mod snapshot_object_agreement {
+mod state_object_agreement {
     use super::*;
     use crate::kernel::primitives::{
         clear_never_address_taken_locals, set_never_address_taken_locals,
     };
-    use crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer;
+    use crate::kernel::reasoning::memory_states_proven_equal_at_pointer;
     use std::collections::BTreeSet;
 
     /// A pointer the verifier cannot resolve to a named object: `&a` handed to
     /// a callee and returned is spelled like this, so it may designate the
-    /// local whose extent the two snapshots disagree about.
+    /// local whose extent the two states disagree about.
     fn unresolved_pointer() -> Pointer {
         Pointer {
             block: PointerBlock::Symbolic(Variable(94_100)),
@@ -6863,7 +6863,7 @@ mod snapshot_object_agreement {
     }
 
     fn agree(left: &Memory, right: &Memory) -> bool {
-        memory_snapshots_proven_equal_at_pointer(
+        memory_states_proven_equal_at_pointer(
             left,
             right,
             &unresolved_pointer(),
@@ -6871,7 +6871,7 @@ mod snapshot_object_agreement {
         )
     }
 
-    /// A local whose lifetime has ended in one snapshot and not the other, and
+    /// A local whose lifetime has ended in one state and not the other, and
     /// a local whose *cells* differ across the end: both are differences a
     /// load through a pointer that may designate it can see. The tombstone is
     /// the only record left once the cells are gone, and none of the four
@@ -6926,7 +6926,7 @@ mod snapshot_object_agreement {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Constant(0),
         };
-        assert!(memory_snapshots_proven_equal_at_pointer(
+        assert!(memory_states_proven_equal_at_pointer(
             &stored,
             &ended,
             &argument,
@@ -7000,9 +7000,9 @@ fn memory_resolution_requires_the_loaded_cell_width() {
             Some(uint16(7))
         );
     }
-    let snapshot = crate::kernel::intern_memory(memory);
+    let retained_state = crate::kernel::intern_memory(memory);
     let narrow = crate::kernel::eval::load_variable_for_exact_cell(
-        &snapshot,
+        &retained_state,
         &stored,
         crate::kernel::LoadKind::UInt16,
         2,
@@ -7014,7 +7014,7 @@ fn memory_resolution_requires_the_loaded_cell_width() {
     // The shared load name conservatively widens when another access is
     // recorded; it can no longer resolve through the narrow stored cell.
     let wide = crate::kernel::eval::load_variable_for_exact_cell(
-        &snapshot,
+        &retained_state,
         &stored,
         crate::kernel::LoadKind::Int32,
         4,
@@ -7579,7 +7579,7 @@ fn a_cached_parameter_partition_does_not_hide_aliases_or_wide_cells() {
             .known_value(&q),
         reference.known_value(&q)
     );
-    // A different resource snapshot no longer owns the cached object.
+    // A different resource state no longer owns the cached object.
     let less = PureFactContext::new().assume_proposition(Proposition::ResourceComposition(
         ResourceContext::new().unchecked_with_fact(own_memory_fact(p.clone(), 0, 1)),
     ));
@@ -7959,15 +7959,15 @@ fn a_token_inside_memory_finds_its_separation_without_scanning() {
     );
 }
 
-/// Snapshot equality for a load matches memories up to the load's pointer,
+/// Memory state equality for a load matches memories up to the load's pointer,
 /// so every effect fact is a candidate, but no other proposition fact is.
 /// It once scanned every proposition fact; a miss now costs the same
 /// however many unrelated facts are held.
 #[test]
-fn snapshot_equality_ignores_unrelated_propositions() {
+fn state_equality_ignores_unrelated_propositions() {
     let _session = crate::kernel::VerificationSession::enter();
     let target = Pointer {
-        block: "snapshot-target".into(),
+        block: "retained_state-target".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let before = Memory::new()
@@ -7989,7 +7989,7 @@ fn snapshot_equality_ignores_unrelated_propositions() {
             let mut assumptions = PureFactContext::new().assume_proposition(summary.clone());
             for index in 0..unrelated {
                 let unrelated = Pointer {
-                    block: format!("snapshot-unrelated-{index}").into(),
+                    block: format!("retained_state-unrelated-{index}").into(),
                     offset: PointerOffsetTerm::Constant(0),
                 };
                 assumptions = assumptions.assume_proposition(Proposition::ResourceContains {
@@ -7998,11 +7998,11 @@ fn snapshot_equality_ignores_unrelated_propositions() {
                 });
             }
             // The first query warms per-session caches; measure the second.
-            assumptions.memory_snapshots_directly_proven_equal_for_memory_resolution(
+            assumptions.memory_states_directly_proven_equal_for_memory_resolution(
                 &before, &after, &target,
             );
             let (equal, work) = crate::instrumentation::measure_deterministic_work(|| {
-                assumptions.memory_snapshots_directly_proven_equal_for_memory_resolution(
+                assumptions.memory_states_directly_proven_equal_for_memory_resolution(
                     &before, &after, &target,
                 )
             });
@@ -8013,7 +8013,7 @@ fn snapshot_equality_ignores_unrelated_propositions() {
     assert!(work[0] > 0);
     assert!(
         work.windows(2).all(|pair| pair[0] == pair[1]),
-        "unrelated facts changed the snapshot equality miss's work: {work:?}"
+        "unrelated facts changed the state equality miss's work: {work:?}"
     );
 }
 

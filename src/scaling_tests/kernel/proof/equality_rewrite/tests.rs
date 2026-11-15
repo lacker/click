@@ -6,7 +6,7 @@ use super::*;
 use crate::kernel::CompareRelation;
 
 #[test]
-fn pointer_rewrite_integer_reads_preserves_snapshot_kind_and_scales() {
+fn pointer_rewrite_integer_reads_preserves_state_kind_and_scales() {
     for same_block in [false, true] {
         let mut samples = Vec::new();
         for size in [4u64, 16, 64, 256] {
@@ -53,7 +53,7 @@ fn pointer_rewrite_integer_reads_preserves_snapshot_kind_and_scales() {
             ));
             let target = read(&memory, &q, LoadKind::UInt8);
             let later = memory.clone().store(q.clone(), crate::kernel::uint8(99));
-            let other_snapshot = read(&later, &q, LoadKind::UInt8);
+            let other_memory_state = read(&later, &q, LoadKind::UInt8);
             let other_kind = read(&memory, &q, LoadKind::Int8);
             let mut work = 0;
             for ty in [
@@ -76,7 +76,7 @@ fn pointer_rewrite_integer_reads_preserves_snapshot_kind_and_scales() {
                 assert_ne!(
                     checked.proposition(),
                     &integer_equality(
-                        observation(other_snapshot.clone()),
+                        observation(other_memory_state.clone()),
                         IntegerTerm::constant_i64(0)
                     )
                 );
@@ -105,10 +105,10 @@ fn pointer_rewrite_integer_reads_preserves_snapshot_kind_and_scales() {
 
 /// Rewriting a field owner changes a typed read's address, not the
 /// loaded value's legacy storage-relative offset. Exercise cold reads
-/// with growing unrelated snapshots and premises, plus ordinary indexing.
+/// with growing unrelated states and premises, plus ordinary indexing.
 #[test]
 #[ignore = "nightly: 0.7s in the parallel gate"]
-fn pointer_read_rewrite_preserves_value_snapshot_and_scales() {
+fn pointer_read_rewrite_preserves_value_state_and_scales() {
     let mut samples = Vec::new();
     for size in [16u64, 64, 256, 1024] {
         let _session = crate::kernel::VerificationSession::enter();
@@ -190,7 +190,7 @@ fn pointer_read_rewrite_preserves_value_snapshot_and_scales() {
         assert_eq!(read(&later, &alias_address), replacement);
         assert!(!context.pointers_known_equal(actual, &replacement));
         // A read created after the store must rewrite to the new pointer,
-        // while the previously rewritten read above retains its snapshot.
+        // while the previously rewritten read above retains its state.
         let stored_goal = Proposition::ConditionIs(
             ConditionTerm::pointer_equal(read(&later, &address), replacement.clone()),
             true,
@@ -530,7 +530,7 @@ fn same_block_pointer_view_rewrite_preserves_extent_and_selected_work() {
             facts.check_equality_rewrite(&goal, &cited).unwrap()
         });
         let Proposition::MemoryLoadable {
-            memory: snapshot,
+            memory: retained_state,
             base,
             bytes,
             ..
@@ -538,7 +538,10 @@ fn same_block_pointer_view_rewrite_preserves_extent_and_selected_work() {
         else {
             panic!("viewability changed kind")
         };
-        assert_eq!(snapshot.diagnostic_identity(), memory.diagnostic_identity());
+        assert_eq!(
+            retained_state.diagnostic_identity(),
+            memory.diagnostic_identity()
+        );
         assert_eq!(base.block, PointerBlock::ExternalArgument);
         assert_eq!(
             base.offset,
@@ -551,7 +554,7 @@ fn same_block_pointer_view_rewrite_preserves_extent_and_selected_work() {
 }
 
 #[test]
-fn pointer_view_rewrite_preserves_snapshot_extent_and_ambient_scaling() {
+fn pointer_view_rewrite_preserves_state_extent_and_ambient_scaling() {
     let _session = crate::kernel::VerificationSession::enter();
     let source = Pointer::symbolic(Variable(192_910));
     let target = Pointer::symbolic(Variable(192_911));
@@ -585,7 +588,7 @@ fn pointer_view_rewrite_preserves_snapshot_extent_and_ambient_scaling() {
             facts.check_equality_rewrite(&goal, &cited).unwrap()
         });
         let Proposition::MemoryLoadable {
-            memory: snapshot,
+            memory: retained_state,
             base,
             bytes,
             wide: false,
@@ -593,7 +596,10 @@ fn pointer_view_rewrite_preserves_snapshot_extent_and_ambient_scaling() {
         else {
             panic!("viewability changed kind")
         };
-        assert_eq!(snapshot.diagnostic_identity(), memory.diagnostic_identity());
+        assert_eq!(
+            retained_state.diagnostic_identity(),
+            memory.diagnostic_identity()
+        );
         assert_eq!(base, &target);
         assert_eq!(bytes, &extent);
         costs.push(work);
@@ -602,7 +608,7 @@ fn pointer_view_rewrite_preserves_snapshot_extent_and_ambient_scaling() {
 }
 
 #[test]
-fn pointer_rewrite_enters_scalar_calls_and_preserves_scope_and_snapshots() {
+fn pointer_rewrite_enters_scalar_calls_and_preserves_scope_and_states() {
     let variable = Variable(920);
     let source = Pointer::symbolic(variable);
     let target = Pointer::symbolic(Variable(921));
@@ -715,7 +721,7 @@ fn checked_rewrite_does_not_scan_or_rebuild_ambient_facts() {
 }
 
 #[test]
-fn rewrite_capture_collection_does_not_visit_snapshot_contents() {
+fn rewrite_capture_collection_does_not_visit_state_contents() {
     let free = Variable(41);
     let address = Variable(42);
     let mut costs = Vec::new();
@@ -750,7 +756,7 @@ fn rewrite_capture_collection_does_not_visit_snapshot_contents() {
 }
 
 #[test]
-fn rewrite_integer_application_endpoint_keeps_byte_snapshot_and_ignores_its_contents() {
+fn rewrite_integer_application_endpoint_keeps_byte_state_and_ignores_its_contents() {
     let index = MachineTerm::Variable(Variable(47));
     let replacement = MachineTerm::constant(9);
     let equality = Proposition::ConditionIs(
@@ -1042,8 +1048,8 @@ fn pointer_read_chain_rewrites_share_hits_and_misses() {
 #[test]
 fn pointer_read_chain_rewrites_ignore_surrounding_storage() {
     for native in [false, true] {
-        // A nonempty snapshot makes legacy reads register their definitions
-        // in the naming graph; the empty snapshot takes a cheaper path. Compare
+        // A nonempty state makes legacy reads register their definitions
+        // in the naming graph; the empty state takes a cheaper path. Compare
         // nonempty sizes to isolate growth, without warming any target read.
         let samples = [1, 16, 64, 256]
             .map(|cells| pointer_read_chain_rewrite_work(16, 1, cells, native, true));

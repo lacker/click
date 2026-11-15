@@ -29,12 +29,12 @@ int literal_siblings(int value) noexcept {
     return first(echo(value), int(kTwo), int(sizeof(int)));
 }
 int write_seven(int* slot) noexcept { *slot = 7; return *slot; }
-int effectful_inner(int* slot, int snapshot) noexcept {
-    return second(snapshot, write_seven(slot), 3);
+int effectful_inner(int* slot, int saved_value) noexcept {
+    return second(saved_value, write_seven(slot), 3);
 }
 int local_sibling(int* slot, int value) noexcept {
-    int snapshot = value;
-    return first(snapshot, write_seven(slot), 3);
+    int saved_value = value;
+    return first(saved_value, write_seven(slot), 3);
 }
 template<bool RoundDown>
 long EvaluateTemplate(long fee, int at_size, int divisor) noexcept {

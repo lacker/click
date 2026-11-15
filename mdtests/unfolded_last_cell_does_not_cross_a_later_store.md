@@ -1,7 +1,7 @@
-# an unfolded last cell is about the snapshot it was unfolded at
+# an unfolded last cell is about the state it was unfolded at
 
 `peel(icount(a, 0, i + 1)) using { ... }` reads the written cell out of the
-snapshot the store produced, so its equation is about that snapshot. A second
+state the store produced, so its equation is about that state. A second
 store to the same cell makes a new one, and the equation does not carry over.
 
 ```c filename=unfolded_last_cell_does_not_cross_a_later_store.c

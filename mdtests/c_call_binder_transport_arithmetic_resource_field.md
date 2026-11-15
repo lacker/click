@@ -1,4 +1,4 @@
-# Post-call resource fields retain their checked snapshot
+# Post-call resource fields retain their checked state
 
 An exact resource-field equality produced by a transported call remains
 source-expressible when it is cited by an arithmetic proof at the call exit.

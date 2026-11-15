@@ -3101,7 +3101,7 @@ fn expand_declared_resource_proposition(
 ) -> Result<ClickProposition, ClickError> {
     enum Frame {
         Visit(ClickProposition),
-        BuildAt(SnapshotSelector),
+        BuildAt(ProgramPointSelector),
         BuildAnd,
         BuildOr,
         BuildNot,
@@ -3262,7 +3262,7 @@ fn expand_declared_resource_proposition(
                 expanded.push(ClickProposition::Not(Box::new(body)));
             }
             Frame::BuildAt(selector) => {
-                let proposition = expanded.pop().expect("expanded snapshot proposition");
+                let proposition = expanded.pop().expect("expanded state proposition");
                 expanded.push(ClickProposition::At {
                     selector,
                     proposition: Box::new(proposition),

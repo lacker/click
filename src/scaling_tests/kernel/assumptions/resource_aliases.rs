@@ -149,7 +149,7 @@ fn selected_read_validity_and_kept_frames_ignore_large_alias_classes() {
 }
 
 #[test]
-fn read_validity_snapshot_buckets_keep_exact_hits_and_bounded_misses() {
+fn read_validity_state_buckets_keep_exact_hits_and_bounded_misses() {
     let mut samples = Vec::new();
     for size in [8u64, 32, 128] {
         let _session = crate::kernel::VerificationSession::enter();
@@ -182,7 +182,7 @@ fn read_validity_snapshot_buckets_keep_exact_hits_and_bounded_misses() {
         });
         samples.push(work);
     }
-    eprintln!("read validity snapshot buckets: {samples:?}");
+    eprintln!("read validity state buckets: {samples:?}");
     assert!(
         samples.iter().all(|work| *work <= samples[0] + 32),
         "{samples:?}"

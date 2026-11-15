@@ -2,7 +2,7 @@
 
 This isolates the shared memory checker used by Rust field borrows. Updating a guard's
 saved field to 42 must be observed by its cleanup through the stored pointer.
-This pins the alias/snapshot part of the checker gap; call-havoc cache
+This pins the alias/state part of the checker gap; call-havoc cache
 invalidation has a separate kernel regression. The ordinary nested Rust Guard
 source remains covered by the Rust import integration regression.
 

@@ -1171,14 +1171,14 @@ fn guarded_implication_lookup_is_keyed_by_consequent_operands() {
     }
 }
 
-/// Substituting a quantifier's binder into a snapshot it does not occur in
-/// rewrites the snapshot once; every later substitution of that variable into
-/// that snapshot is a memo hit, whatever the replacement.
+/// Substituting a quantifier's binder into a state it does not occur in
+/// rewrites the state once; every later substitution of that variable into
+/// that state is a memo hit, whatever the replacement.
 #[test]
-fn snapshot_substitution_of_an_absent_variable_is_memoized() {
+fn state_substitution_of_an_absent_variable_is_memoized() {
     let mut memory = Memory::new();
     for index in 0..64 {
-        memory = memory.with_block(format!("snapshot-memo-{index}"), 4);
+        memory = memory.with_block(format!("retained_state-memo-{index}"), 4);
     }
     let absent = Variable(434_000);
     let (_, first) = crate::instrumentation::measure_deterministic_work(|| {
@@ -1197,7 +1197,7 @@ fn snapshot_substitution_of_an_absent_variable_is_memoized() {
     });
     assert!(
         first >= 64,
-        "the first substitution walks the snapshot: {first}"
+        "the first substitution walks the state: {first}"
     );
     assert!(second <= 2, "the repeat is a memo hit: {second}");
 }
@@ -1728,7 +1728,7 @@ fn finite_forall_requested_prefix_has_constant_work_across_domain_sizes() {
 }
 
 #[test]
-fn equality_aware_pointer_fact_queries_ignore_unrelated_facts_and_old_snapshots() {
+fn equality_aware_pointer_fact_queries_ignore_unrelated_facts_and_old_states() {
     let target = Pointer::symbolic_function(Variable(122_000));
     let alias = Pointer::symbolic_function(Variable(122_001));
     let fact = |pointer: Pointer, state: ExecutionState| Proposition::Predicate {
@@ -1752,7 +1752,7 @@ fn equality_aware_pointer_fact_queries_ignore_unrelated_facts_and_old_snapshots(
                 ExecutionState::new(),
             ));
             // Same predicate and pointer, but different memory versions must
-            // not turn a selected query into a scan of snapshot history.
+            // not turn a selected query into a scan of state history.
             context = context.assume_proposition(fact(
                 target.clone(),
                 ExecutionState::new()

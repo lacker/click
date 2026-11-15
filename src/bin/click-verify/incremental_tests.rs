@@ -247,7 +247,7 @@ fn untracked_headers_cannot_attest_incomplete_baselines() {
 
 #[test]
 #[ignore = "nightly: 0.8s in the parallel gate"]
-fn attestation_uses_verified_header_snapshot_after_files_change() {
+fn attestation_uses_verified_header_state_after_files_change() {
     let project = header_project(true);
     project.commit();
     project.write("cap.h", "#define CAP 1\n");

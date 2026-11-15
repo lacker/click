@@ -61,7 +61,7 @@ impl SharedPointerOffset {
     }
 
     /// A fixed input pair shares one traversal. The callback selects raw or
-    /// smart reconstruction and the caller's lexical/snapshot rewrite policy.
+    /// smart reconstruction and the caller's lexical/state rewrite policy.
     pub(crate) fn try_map_pair<E>(
         roots: &[Self; 2],
         mut map: impl FnMut(&Self, KernelPointerOffset) -> Result<Self, E>,
@@ -93,7 +93,7 @@ impl SharedPointerOffset {
     }
 
     /// Resource-read collection historically visits each Add right-first;
-    /// variable and snapshot readers use left-first. Preserve the caller's order.
+    /// variable and state readers use left-first. Preserve the caller's order.
     pub(crate) fn visit_pair_in_order(
         roots: &[Self; 2],
         right_first: bool,

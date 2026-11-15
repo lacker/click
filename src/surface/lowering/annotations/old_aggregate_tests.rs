@@ -35,7 +35,7 @@ fn lower_name(
 ) -> Result<SpecExpression, String> {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let (lowerer, _) = fixed_state_elaboration(
         BTreeMap::new(),
         BTreeMap::new(),
@@ -43,7 +43,7 @@ fn lower_name(
         BTreeMap::new(),
         BTreeMap::new(),
         None,
-        &snapshots,
+        &retained_states,
         SpecDefinitions::new(&predicates, &functions),
         BTreeSet::new(),
         BTreeMap::new(),

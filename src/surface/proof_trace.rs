@@ -7,7 +7,7 @@ use crate::kernel::{CompareRelation, MachineIntegerType};
 use crate::kernel::{ConditionTerm, MachineTerm, Pointer, Proposition, SharedMemory};
 use crate::source::SourcePosition;
 use crate::surface::proof_diagnostics::ProofDiagnosticState;
-use crate::surface::proof_diagnostics::render::{self, SnapshotLabels};
+use crate::surface::proof_diagnostics::render::{self, MemoryStateLabels};
 use std::any::Any;
 use std::cell::{LazyCell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -168,7 +168,7 @@ pub(super) struct TraceForgottenCell {
 }
 
 /// Values observed at one accepted load statement. The retained theorem's
-/// entry state supplies the snapshot; the outcome supplies the produced value.
+/// entry state supplies the state; the outcome supplies the produced value.
 pub(super) struct TraceLoad {
     pub target: String,
     pub value: crate::kernel::ProgramValue,
@@ -177,10 +177,10 @@ pub(super) struct TraceLoad {
 }
 
 impl TraceLoad {
-    fn append(&self, output: &mut String, labels: &mut SnapshotLabels, indent: &str) {
-        let snapshot = labels.snapshot_name(self.memory.memory());
+    fn append(&self, output: &mut String, labels: &mut MemoryStateLabels, indent: &str) {
+        let retained_state = labels.memory_state_name(self.memory.memory());
         let identity =
-            |value: &crate::kernel::ProgramValue, labels: &mut SnapshotLabels| match value {
+            |value: &crate::kernel::ProgramValue, labels: &mut MemoryStateLabels| match value {
                 crate::kernel::ProgramValue::Pointer(pointer) => {
                     labels.pointer_value_name(pointer.pointer())
                 }
@@ -189,7 +189,7 @@ impl TraceLoad {
         let value = identity(&self.value, labels);
         let address = identity(&self.address, labels);
         output.push_str(&format!(
-            "\n{indent}produces {} = {value}\n{indent}read: at({snapshot}, load_function_pointer({address}))",
+            "\n{indent}produces {} = {value}\n{indent}read: load_function_pointer({address}) in {retained_state}",
             trace_text(&self.target, 240),
         ));
     }
@@ -210,25 +210,21 @@ pub(super) struct TraceFact {
 }
 
 /// Source spelling recovered against the read's own state. The memory is
-/// retained until report rendering so unnamed snapshots share report labels.
+/// retained until report rendering so unnamed states share report labels.
 #[derive(Clone)]
 pub(super) struct PointerTraceView {
     pub text: String,
-    pub snapshot: Option<(SharedMemory, Option<String>)>,
+    pub retained_state: Option<(SharedMemory, Option<String>)>,
 }
 
 impl PointerTraceView {
-    fn point(&self, labels: &mut SnapshotLabels) -> Option<String> {
-        self.snapshot.as_ref().map(|(memory, name)| {
-            name.clone()
-                .unwrap_or_else(|| labels.snapshot_name(memory.memory()))
-        })
-    }
-
-    fn render(&self, labels: &mut SnapshotLabels) -> String {
+    fn render(&self, labels: &mut MemoryStateLabels) -> String {
         let text = trace_text(&self.text, 240);
-        match self.point(labels) {
-            Some(point) => format!("at({}, {text})", trace_text(&point, 128)),
+        match &self.retained_state {
+            Some((_, Some(point))) => format!("at({}, {text})", trace_text(point, 128)),
+            Some((memory, None)) => {
+                format!("{text} in {}", labels.memory_state_name(memory.memory()))
+            }
             None => text,
         }
     }
@@ -292,7 +288,7 @@ impl ChildArgumentTrace {
         }
     }
 
-    fn value(&self, pointer: &Pointer, labels: &mut SnapshotLabels) -> String {
+    fn value(&self, pointer: &Pointer, labels: &mut MemoryStateLabels) -> String {
         if let Some(view) = self.views.get(pointer) {
             view.render(labels)
         } else if pointer == &Pointer::null() {
@@ -301,21 +297,21 @@ impl ChildArgumentTrace {
             pointer_definition(pointer)
         {
             format!(
-                "at({}, pointer_read(address {}))",
-                labels.snapshot_name(memory.memory()),
-                labels.pointer_value_name(&address)
+                "pointer_read(address {}, memory {})",
+                labels.pointer_value_name(&address),
+                labels.memory_state_name(memory.memory())
             )
         } else {
             labels.pointer_value_name(pointer)
         }
     }
 
-    pub(super) fn append_to(&self, trace: &mut String, labels: &mut SnapshotLabels) {
+    pub(super) fn append_to(&self, trace: &mut String, labels: &mut MemoryStateLabels) {
         let comparison = self.render(labels);
         trace.push_str(&comparison);
     }
 
-    pub(super) fn render(&self, labels: &mut SnapshotLabels) -> String {
+    pub(super) fn render(&self, labels: &mut MemoryStateLabels) -> String {
         let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
         let actual = self.value(&self.actual, labels);
         let required = self.value(&self.required, labels);
@@ -342,7 +338,7 @@ impl ChildArgumentTrace {
                 "\n    selection is diagnostic guidance, not an explanation of why equality failed",
             );
         }
-        output.push_str("\n    defining snapshots identify original reads; different snapshots alone do not establish unequal values");
+        output.push_str("\n    defining memory states identify original reads; different states alone do not establish unequal values");
         output
     }
 }
@@ -598,7 +594,7 @@ fn record_retained_path(
 pub(super) fn render(
     claim: &str,
     lineage: &[TracePathNode],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     tactic_location: &dyn Fn(&[usize]) -> Option<(String, SourcePosition)>,
     branch_arm: &dyn Fn(&[usize], &SourcePosition) -> Option<usize>,
     have_body_contains: &dyn Fn(&[usize], &SourcePosition) -> bool,
@@ -633,7 +629,7 @@ pub(super) fn render(
                 .iter()
                 .filter(|path| path.claim == claim)
             {
-                let mut path_labels = SnapshotLabels::default();
+                let mut path_labels = MemoryStateLabels::default();
                 if let Some(names) = &path.names {
                     names.register_names(&mut path_labels);
                 }
@@ -662,7 +658,7 @@ pub(super) fn render(
 /// certification. A target inside one path selects that path; without a
 /// target, the first accepted path is a representative execution route.
 pub(crate) fn render_accepted(
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     tactic_location: &dyn Fn(&str, &[usize]) -> Option<(String, SourcePosition)>,
     branch_arm: &dyn Fn(&str, &[usize], &SourcePosition) -> Option<usize>,
     have_body_contains: &dyn Fn(&str, &[usize], &SourcePosition) -> bool,
@@ -700,10 +696,10 @@ pub(crate) fn render_accepted(
                 have_body_contains(&path.claim, indices, position)
             };
             let mut path_labels = if path.completed {
-                SnapshotLabels::default()
+                MemoryStateLabels::default()
             } else {
                 // The rejected fact was printed before this prefix. Its
-                // snapshot and value identities must remain the same here.
+                // state and value identities must remain the same here.
                 labels.clone()
             };
             if let Some(names) = &path.names {
@@ -753,7 +749,7 @@ pub(crate) fn render_accepted(
 fn render_lineage(
     capture: &Capture,
     lineage: &[TracePathNode],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     tactic_location: &dyn Fn(&[usize]) -> Option<(String, SourcePosition)>,
     branch_arm: &dyn Fn(&[usize], &SourcePosition) -> Option<usize>,
     have_body_contains: &dyn Fn(&[usize], &SourcePosition) -> bool,
@@ -816,7 +812,7 @@ fn append_path(
     output: &mut String,
     capture: &Capture,
     lineage: &[TracePathNode],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     tactic_location: &dyn Fn(&[usize]) -> Option<(String, SourcePosition)>,
     branch_arm: &dyn Fn(&[usize], &SourcePosition) -> Option<usize>,
     have_body_contains: &dyn Fn(&[usize], &SourcePosition) -> bool,
@@ -1249,7 +1245,7 @@ fn source_same(position: &SourcePosition, target: &SourcePosition) -> bool {
 fn append_read_equalities(
     output: &mut String,
     equalities: &[TraceFact],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     indent: &str,
 ) {
     let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
@@ -1264,7 +1260,7 @@ fn append_read_equalities(
 fn append_added_facts(
     output: &mut String,
     facts: &[TraceFact],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     indent: &str,
 ) {
     let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
@@ -1279,7 +1275,7 @@ fn append_added_facts(
     }
 }
 
-pub(super) fn append_legend(trace: &mut String, labels: &mut SnapshotLabels) {
+pub(super) fn append_legend(trace: &mut String, labels: &mut MemoryStateLabels) {
     let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     let legend = labels.trace_legend();
     if legend.is_empty() {
@@ -1313,7 +1309,7 @@ mod tests {
         let fact = TraceFact {
             kernel: Proposition::ConditionIs(ConditionTerm::pointer_equal(read, target), true),
         };
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         let mut ordinary = String::new();
         append_added_facts(
             &mut ordinary,
@@ -1331,13 +1327,13 @@ mod tests {
         );
         let mut report = format!("{ordinary}{admitted}");
         append_legend(&mut report, &mut labels);
-        assert!(report.contains("pointer read at snapshot#1"), "{report}");
+        assert!(report.contains("pointer read at state#1"), "{report}");
         assert!(report.contains("function `callback`"), "{report}");
     }
 
     #[test]
     fn legend_preserves_long_trace_and_line_boundaries() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.pointer_value_name(&Pointer::null());
         let mut text = "é".repeat(64 * 1024);
         text.push_str("\nfailed child argument comparison\nrequired: value#1");
@@ -1366,16 +1362,16 @@ mod tests {
                 true,
             ),
         });
-        let mut labels = SnapshotLabels::default();
-        // A proof-local name must not hide the read's defining snapshot.
+        let mut labels = MemoryStateLabels::default();
+        // A proof-local name must not hide the read's defining state.
         labels.immutable_pointer_name(&a, "saved");
         let mut report = String::new();
         append_added_facts(&mut report, &facts, &mut labels, "  ");
         assert!(report.contains("adds: value#1 = value#2"), "{report}");
         assert!(report.contains("adds: value#3 = value#2"), "{report}");
         append_legend(&mut report, &mut labels);
-        assert!(report.contains("snapshot#1"), "{report}");
-        assert!(report.contains("snapshot#2"), "{report}");
+        assert!(report.contains("state#1"), "{report}");
+        assert!(report.contains("state#2"), "{report}");
         let comparison = ChildArgumentTrace {
             child: "sibling".into(),
             index: 0,
@@ -1387,7 +1383,7 @@ mod tests {
         .render(&mut labels);
         assert!(comparison.contains("supplied: value#2"), "{comparison}");
         assert!(
-            comparison.contains("required: at(snapshot#2, pointer_read(address value#4))"),
+            comparison.contains("required: pointer_read(address value#4, memory state#2)"),
             "{comparison}"
         );
         assert!(
@@ -1395,7 +1391,7 @@ mod tests {
             "{comparison}"
         );
         assert!(comparison.contains("potentially relevant"));
-        assert!(comparison.contains("different snapshots alone do not establish unequal values"));
+        assert!(comparison.contains("different states alone do not establish unequal values"));
         assert!(!comparison.contains("Missing:"));
         let comparison = ChildArgumentTrace {
             child: "λ".repeat(64 * 1024),
@@ -1494,7 +1490,7 @@ mod tests {
             state: Some(std::sync::Arc::new(State(earlier.clone()))),
         };
         let ordinary = render_terminal_message("missing", &diagnostic, &[]);
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         let context = render_trace_context_labeled(&diagnostic, &[], &mut labels);
         let mut added = String::new();
         append_added_facts(
@@ -1508,7 +1504,7 @@ mod tests {
             .find_map(|l| l.strip_prefix("goal: "))
             .unwrap();
         assert!(
-            goal.contains("read<Bits64>(snapshot#1, pointer=value#1)"),
+            goal.contains("read<Bits64>(state#1, pointer=value#1)"),
             "{goal}"
         );
         // The ordinary report spells the same read in source terms, one
@@ -1517,7 +1513,7 @@ mod tests {
             .lines()
             .find_map(|l| l.trim_start().strip_prefix("goal: "))
             .unwrap();
-        assert!(!ordinary_goal.contains("snapshot#"), "{ordinary}");
+        assert!(!ordinary_goal.contains("state#"), "{ordinary}");
         assert!(
             ordinary.contains(&format!("required: {ordinary_goal}")),
             "{ordinary}"
@@ -1528,7 +1524,7 @@ mod tests {
         );
         assert!(added.contains(&format!("adds: {goal}")), "{added}");
         assert!(
-            added.contains("read<Bits64>(snapshot#2, pointer=value#1)"),
+            added.contains("read<Bits64>(state#2, pointer=value#1)"),
             "{added}"
         );
         assert!(
@@ -1550,7 +1546,7 @@ mod tests {
     }
 
     #[test]
-    fn trace_and_goal_share_snapshot_labels_without_conflating_distinct_memories() {
+    fn trace_and_goal_share_state_labels_without_conflating_distinct_memories() {
         with_proof_trace("f", || {
             let first = Memory::default();
             let second = Memory::new().with_block("different", 1);
@@ -1589,7 +1585,7 @@ mod tests {
                     history_stops: Vec::new(),
                 },
             );
-            let mut labels = SnapshotLabels::default();
+            let mut labels = MemoryStateLabels::default();
             let goal =
                 render::render_internal_proposition_labeled(&loadable_at(first), &mut labels);
             let trace = render(
@@ -1606,15 +1602,15 @@ mod tests {
                 None,
             )
             .unwrap();
-            assert!(goal.contains("snapshot#1"), "{goal}");
+            assert!(goal.contains("state#1"), "{goal}");
             assert!(trace.matches("adds: viewable(").count() == 2, "{trace}");
-            assert!(trace.contains("snapshot#2"), "{trace}");
+            assert!(trace.contains("state#2"), "{trace}");
             assert!(
-                trace.contains("checked transport source: viewable(memory=snapshot#1"),
+                trace.contains("checked transport source: viewable(memory=state#1"),
                 "{trace}"
             );
             assert!(
-                trace.contains("checked transport target: viewable(memory=snapshot#2"),
+                trace.contains("checked transport target: viewable(memory=state#2"),
                 "{trace}"
             );
         });
@@ -1637,7 +1633,12 @@ mod tests {
             ),
         };
         let mut output = String::new();
-        append_added_facts(&mut output, &[fact], &mut SnapshotLabels::default(), "  ");
+        append_added_facts(
+            &mut output,
+            &[fact],
+            &mut MemoryStateLabels::default(),
+            "  ",
+        );
         assert!(output.contains("adds:"), "{output}");
         assert!(!output.contains("no exact Click spelling"), "{output}");
         assert!(output.len() < 1024, "{output}");
@@ -1688,7 +1689,7 @@ mod tests {
                         selected_arm: None,
                     },
                 ],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &|_| None,
                 &|_, _| None,
                 &|_, _| false,
@@ -1737,7 +1738,7 @@ mod tests {
                 },
                 TraceFact { kernel: defining },
             ],
-            &mut SnapshotLabels::default(),
+            &mut MemoryStateLabels::default(),
             "  ",
         );
         assert_eq!(output, "\n  adds: true");
@@ -1824,7 +1825,7 @@ mod tests {
                     node: 5,
                     selected_arm: None,
                 }],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &|_| Some(("tactic@1".into(), SourcePosition::new(1, 1))),
                 &|_, _| Some(0),
                 &|_, _| false,
@@ -1844,7 +1845,7 @@ mod tests {
                     node: 5,
                     selected_arm: None,
                 }],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &|_| Some(("tactic@1".into(), SourcePosition::new(1, 1))),
                 &|_, _| None,
                 &|_, _| false,
@@ -1920,7 +1921,7 @@ mod tests {
                     node: 1,
                     selected_arm: None,
                 }],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &|_| None,
                 &|_, _| None,
                 &|_, _| false,
@@ -1940,7 +1941,7 @@ mod tests {
                     node: 1,
                     selected_arm: None,
                 }],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &|path| match path {
                     [2] => Some(("tactic@2".into(), SourcePosition::new(2, 1))),
                     [2, 1] => Some(("tactic@3".into(), SourcePosition::new(3, 1))),
@@ -2031,7 +2032,7 @@ mod tests {
             assert!(report.contains("accepted"), "{report}");
             assert!(report.contains("label definitions"), "{report}");
             assert!(report.contains("value#1 ="), "{report}");
-            assert!(report.contains("snapshot#1 ="), "{report}");
+            assert!(report.contains("state#1 ="), "{report}");
             assert!(report.contains("initial empty memory"), "{report}");
             assert!(!report.contains("abandoned candidate"), "{report}");
             assert!(!report.contains(": mark"), "{report}");
@@ -2041,7 +2042,7 @@ mod tests {
                     node: 3,
                     selected_arm: None,
                 }],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &|_| Some(("tactic@2".into(), SourcePosition::new(2, 1))),
                 &|_, _| None,
                 &|_, _| false,
@@ -2075,7 +2076,7 @@ mod tests {
             let target = SourcePosition::new(3, 1);
             assert!(
                 render_accepted(
-                    &mut SnapshotLabels::default(),
+                    &mut MemoryStateLabels::default(),
                     &|_, path| locate(path),
                     &|_, _, _| None,
                     &|_, _, _| false,
@@ -2087,7 +2088,7 @@ mod tests {
             let unfinished = render(
                 "f.contract",
                 &[],
-                &mut SnapshotLabels::default(),
+                &mut MemoryStateLabels::default(),
                 &locate,
                 &|_, _| None,
                 &|_, _| false,
@@ -2107,7 +2108,7 @@ mod tests {
                 Box::new(()),
                 None,
             );
-            let mut shared_labels = SnapshotLabels::default();
+            let mut shared_labels = MemoryStateLabels::default();
             let rejected_address = Pointer::symbolic(crate::kernel::Variable(987_771));
             shared_labels.immutable_pointer_name(&rejected_address, "rejected_fact_address");
             shared_labels.pointer_value_name(&rejected_address);

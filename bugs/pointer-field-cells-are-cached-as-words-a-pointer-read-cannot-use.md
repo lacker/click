@@ -14,13 +14,13 @@ including designation and extent. Scalar load handles no longer double as
 pointer parameters in symbolic arrays.
 
 Composite fields and ranges take their canonical typed observations from the
-same selected naming snapshot. Function-pointer fields retain their scalar
+same selected naming state. Function-pointer fields retain their scalar
 function-name carrier. These distinctions preserve callback entry assumptions,
 repeated borrowed-resource unfolds, and nested reads used by transport proofs;
 the existing full Markdown and example corpora cover those cases. Logical
-pointer reads consult the selected snapshot's complete cached observation
+pointer reads consult the selected state's complete cached observation
 before following its byte identity, so a checked loop frame does not lose a
-restored pointer value when observation-only snapshots are skipped.
+restored pointer value when observation-only states are skipped.
 
 Regression coverage checks complete pointer cells, cached/ordinary read identity,
 upper-half writes, wrong read provenance, and no-write witnesses for pointer
@@ -56,7 +56,7 @@ A read of a pointer field that no step writes has one name before and after a
 call that does not touch it. Since #1806 every C pointer read is an 8-byte
 `LoadedPointer` read. Unfolding a composite resource still caches each pointer
 field as two 4-byte `Int32` words
-(`materialize_composite_resource_cells_from_snapshot` in
+(`materialize_composite_resource_cells_from_state` in
 `src/surface/proof/resources.rs`: "Pointer fields keep the int32 words this
 projection uses everywhere"). That rule fit the removed storage-relative
 encoding, whose pointer read was a 4-byte word load. An 8-byte read cannot be
@@ -84,11 +84,11 @@ Before #1806 both sides lowered to one term and `normalize()` closed it.
 What happens:
 
 - At `transplant`, the read of `child->rb_right` takes its name from the cell
-  cached at unfold, named at the entry snapshot.
+  cached at unfold, named at the entry state.
 - The call keeps `child->rb_right` in its retained frame. By design it forgets
   the cached cell (`CallHavocCellRule::KeptByCaller`), and a later load is named
   across the call edge.
-- That naming walk (`cell_last_same_point`, assumption-free) reaches the
+- That naming walk (`cell_last_same_version_point`, assumption-free) reaches the
   pre-call state, finds only the two 4-byte halves, and keeps walking. It stops
   at the earlier store `rb_set_parent(tmp, successor)` through `node->rb_left`,
   which it cannot separate from `child + 8` without facts.

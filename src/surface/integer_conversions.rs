@@ -916,7 +916,7 @@ theorem refuted(a: Integer, b: Integer, c: Integer, d: Integer) {
         }
     }
     #[test]
-    fn legacy_integer_cast_identity_preserves_field_views_and_snapshot_observations() {
+    fn legacy_integer_cast_identity_preserves_field_views_and_state_observations() {
         for (field, destination, lower, upper) in [
             ("fee", "uint64", "0", "8589934591"),
             ("size", "uint32", "1", "2147483647"),

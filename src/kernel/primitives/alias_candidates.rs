@@ -1,4 +1,4 @@
-//! The entries of a pointer-keyed snapshot collection that an access into
+//! The entries of a pointer-keyed state collection that an access into
 //! one block can alias.
 //!
 //! Every memory map and heap collection in a `Memory` is keyed by a
@@ -53,12 +53,12 @@
 //! entry a search over the whole collection would.
 
 use super::{
-    Pointer, PointerBlock, PointerOffsetTerm, ProgramType, SnapshotMap, SnapshotSet, Variable,
+    HashedOrdMap, HashedOrdSet, Pointer, PointerBlock, PointerOffsetTerm, ProgramType, Variable,
 };
 use std::hash::Hash;
 use std::ops::Bound;
 
-/// A snapshot-collection key whose ordering is by pointer block first.
+/// A state-collection key whose ordering is by pointer block first.
 pub(crate) trait BlockKeyed: Ord + Clone {
     fn key_block(&self) -> &PointerBlock;
     /// The smallest key of this type whose block is `block`.
@@ -163,7 +163,7 @@ impl BlockInterval {
 
     fn entries<'a, K: BlockKeyed, V>(
         &'a self,
-        map: &'a SnapshotMap<K, V>,
+        map: &'a HashedOrdMap<K, V>,
     ) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
         let lower = self.start.as_ref().map_or(Bound::Unbounded, |start| {
             Bound::Included(K::first_key_of(start))
@@ -178,7 +178,7 @@ impl BlockInterval {
 
     fn elements<'a, K: BlockKeyed>(
         &'a self,
-        set: &'a SnapshotSet<K>,
+        set: &'a HashedOrdSet<K>,
     ) -> impl Iterator<Item = &'a K> + 'a {
         let lower = self.start.as_ref().map_or(Bound::Unbounded, |start| {
             Bound::Included(K::first_key_of(start))
@@ -393,7 +393,7 @@ impl AliasCandidates {
     /// position plus the entries visited.
     pub(crate) fn entries<'a, K: BlockKeyed, V>(
         &'a self,
-        map: &'a SnapshotMap<K, V>,
+        map: &'a HashedOrdMap<K, V>,
     ) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
         self.intervals
             .iter()
@@ -403,7 +403,7 @@ impl AliasCandidates {
     /// The candidate elements of `set`, ascending.
     pub(crate) fn elements<'a, K: BlockKeyed>(
         &'a self,
-        set: &'a SnapshotSet<K>,
+        set: &'a HashedOrdSet<K>,
     ) -> impl Iterator<Item = &'a K> + 'a {
         self.intervals
             .iter()
@@ -417,7 +417,7 @@ impl AliasCandidates {
     /// unit per candidate visited.
     pub(crate) fn retain_map<K: BlockKeyed + Hash, V: Clone + Hash>(
         &self,
-        map: &mut SnapshotMap<K, V>,
+        map: &mut HashedOrdMap<K, V>,
         mut keep: impl FnMut(&K, &V) -> bool,
     ) {
         let mut visited = 0usize;
@@ -441,7 +441,7 @@ impl AliasCandidates {
     /// Returns the entries and the number of entries read.
     pub(crate) fn entries_outside<'a, K: BlockKeyed, V>(
         &'a self,
-        map: &'a SnapshotMap<K, V>,
+        map: &'a HashedOrdMap<K, V>,
         kept: &[(K, K)],
     ) -> (Vec<(&'a K, &'a V)>, usize) {
         let inside = |key: &K| {
@@ -491,7 +491,7 @@ impl AliasCandidates {
     /// unit per entry read.
     pub(crate) fn retain_map_outside<K: BlockKeyed + Hash, V: Clone + Hash>(
         &self,
-        map: &mut SnapshotMap<K, V>,
+        map: &mut HashedOrdMap<K, V>,
         kept: &[(K, K)],
         mut keep: impl FnMut(&K, &V) -> bool,
     ) {
@@ -510,7 +510,7 @@ impl AliasCandidates {
     /// [`Self::retain_map`] for a set.
     pub(crate) fn retain_set<K: BlockKeyed + Hash>(
         &self,
-        set: &mut SnapshotSet<K>,
+        set: &mut HashedOrdSet<K>,
         mut keep: impl FnMut(&K) -> bool,
     ) {
         let mut visited = 0usize;
@@ -532,7 +532,7 @@ impl AliasCandidates {
     /// unit per candidate visited.
     pub(crate) fn any_entry<K: BlockKeyed, V>(
         &self,
-        map: &SnapshotMap<K, V>,
+        map: &HashedOrdMap<K, V>,
         mut found: impl FnMut(&K, &V) -> bool,
     ) -> bool {
         let mut visited = 0usize;
@@ -547,7 +547,7 @@ impl AliasCandidates {
     /// [`Self::any_entry`] for a set.
     pub(crate) fn any_element<K: BlockKeyed>(
         &self,
-        set: &SnapshotSet<K>,
+        set: &HashedOrdSet<K>,
         mut found: impl FnMut(&K) -> bool,
     ) -> bool {
         let mut visited = 0usize;
@@ -602,8 +602,8 @@ mod tests {
         ]
     }
 
-    fn cells_of(blocks: &[PointerBlock]) -> SnapshotMap<Pointer, u32> {
-        let mut map = SnapshotMap::new();
+    fn cells_of(blocks: &[PointerBlock]) -> HashedOrdMap<Pointer, u32> {
+        let mut map = HashedOrdMap::new();
         for (index, block) in blocks.iter().enumerate() {
             for offset in [0, 4, 8] {
                 map.insert(

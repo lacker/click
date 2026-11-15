@@ -8,7 +8,7 @@ entry, and the declared invariant gives only `0 <= i`.
 Nothing in the loop head says `i != 0`. The C `if` does, and the body took its
 else arm, so the closer may name it: a branch the path took is as written as
 the loop guard is. The back edge's closer records each branch condition where the
-path decided it, at that statement's entry snapshot, and names it beside the
+path decided it, at that statement's entry state, and names it beside the
 invariants and the guard — a fixed, small list per path, not a search over the
 facts in scope. Here the cells the condition read are unchanged since iteration
 entry, so the premise is cited in the iteration-entry spelling the invariant

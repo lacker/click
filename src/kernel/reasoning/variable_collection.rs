@@ -35,7 +35,7 @@ fn visit_machine_operand_carrier_leaves_selected(
         return;
     };
     // A root atom needs no DAG summary. Keep the native collector's one-leaf
-    // cost, including its current registry and snapshot handling.
+    // cost, including its current registry and state handling.
     if let Some(variable) = operand.variable() {
         if !include_variables {
             return;
@@ -109,7 +109,7 @@ fn visit_machine_operand_carrier_leaves_selected(
 
 /// Existing native leaf collectors can inspect a selected read descriptor or
 /// opaque leaf without expanding the surrounding shared arithmetic DAG.
-/// Each collector retains its own registry, snapshot and binder rules.
+/// Each collector retains its own registry, state and binder rules.
 pub(in crate::kernel) fn visit_machine_operand_scoped_leaves(
     operand: MachineOperandView<'_>,
     visit: impl FnMut(MachineOperandView<'_>),
@@ -272,8 +272,8 @@ thread_local! {
     static CONNECTION_BLOCKS: std::cell::RefCell<Option<BTreeSet<PointerBlock>>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Explicit values and addresses a fact names; snapshot contents are not
-/// dependencies merely because two propositions carry the same snapshot.
+/// Explicit values and addresses a fact names; state contents are not
+/// dependencies merely because two propositions carry the same state.
 pub(crate) fn collect_atomic_connection_keys(
     proposition: &Proposition,
 ) -> BTreeSet<AtomicConnectionKey> {
@@ -314,18 +314,18 @@ fn collecting_connection_variables() -> bool {
     CONNECTION_VARIABLES.with(std::cell::Cell::get)
 }
 
-/// How far back along a snapshot's derivation
+/// How far back along a state's derivation
 /// [`collect_proposition_frame_variables`] looks for havoc ranges.
 const HAVOC_RANGE_HOPS: usize = 64;
 
 thread_local! {
     static COLLECTING_HAVOC_RANGES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    // Observation origins can lead back to a snapshot whose havoc bounds
+    // Observation origins can lead back to a state whose havoc bounds
     // contain this same read. Each root contributes its bounded range walk
     // once to the current planner collection, including cyclic origins.
-    static FRAME_SNAPSHOTS: std::cell::RefCell<std::collections::HashSet<(u32, u32)>> = Default::default();
+    static FRAME_STATES: std::cell::RefCell<std::collections::HashSet<(u32, u32)>> = Default::default();
     /// Set while [`execution_variable_ceiling`] collects: an interned
-    /// snapshot then contributes only its greatest remembered variable below
+    /// state then contributes only its greatest remembered variable below
     /// the execution ceiling, which is all a ceiling needs.
     static EXECUTION_CEILING_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -334,9 +334,9 @@ thread_local! {
 /// (`ExecutionBudget::KERNEL_VARIABLE_BASE` up to its ceiling) that
 /// `proposition` mentions: what an execution must allocate above for a fresh
 /// identity to name nothing the fact names. It collects as
-/// [`collect_proposition_bitvector_variables`] does, with every snapshot in
+/// [`collect_proposition_bitvector_variables`] does, with every state in
 /// full and no collection mode of the caller's in force, except that a
-/// snapshot contributes only its greatest remembered variable.
+/// state contributes only its greatest remembered variable.
 pub(in crate::kernel) fn proposition_execution_variable_ceiling(
     proposition: &Proposition,
 ) -> Option<Variable> {
@@ -356,9 +356,9 @@ pub(in crate::kernel) fn condition_execution_variable_ceiling(
     .0
 }
 
-/// The ceiling of `proposition`'s written syntax, stopping at each snapshot,
-/// and whether it met one: filing a fact reads syntax, never snapshot
-/// contents, so a fact that names a snapshot has its whole ceiling taken
+/// The ceiling of `proposition`'s written syntax, stopping at each state,
+/// and whether it met one: filing a fact reads syntax, never state
+/// contents, so a fact that names a state has its whole ceiling taken
 /// later, when an execution asks for it.
 ///
 /// A composition fact names a whole resource context, and every step states
@@ -395,7 +395,7 @@ pub(in crate::kernel) fn condition_syntax_execution_variable_ceiling(
 }
 
 /// Collects for a ceiling with every caller mode cleared; `deferral` is
-/// `Some(false)` to stop at snapshots, and the second result says whether
+/// `Some(false)` to stop at states, and the second result says whether
 /// one was met.
 pub(in crate::kernel) fn execution_variable_ceiling(
     deferral: Option<bool>,
@@ -407,14 +407,14 @@ pub(in crate::kernel) fn execution_variable_ceiling(
             EXECUTION_CEILING_ONLY.with(|flag| flag.set(self.0));
             CONNECTION_VARIABLES.with(|flag| flag.set(self.1));
             COLLECTING_HAVOC_RANGES.with(|flag| flag.set(self.2));
-            DEFER_CONDITION_SNAPSHOTS.with(|state| state.set(self.3));
+            DEFER_CONDITION_STATES.with(|state| state.set(self.3));
         }
     }
     let _restore = Restore(
         EXECUTION_CEILING_ONLY.with(|flag| flag.replace(true)),
         CONNECTION_VARIABLES.with(|flag| flag.replace(false)),
         COLLECTING_HAVOC_RANGES.with(|flag| flag.replace(false)),
-        DEFER_CONDITION_SNAPSHOTS.with(|state| state.replace(deferral)),
+        DEFER_CONDITION_STATES.with(|state| state.replace(deferral)),
     );
     let mut variables = BTreeSet::new();
     collect(&mut variables);
@@ -427,12 +427,12 @@ pub(in crate::kernel) fn execution_variable_ceiling(
         .copied();
     (
         ceiling,
-        DEFER_CONDITION_SNAPSHOTS.with(|state| state.get() == Some(true)),
+        DEFER_CONDITION_STATES.with(|state| state.get() == Some(true)),
     )
 }
 
 /// The bitvector variables of `proposition`, with those of the ranges the
-/// calls and loops recently behind each snapshot it loads from wrote.
+/// calls and loops recently behind each state it loads from wrote.
 ///
 /// Like [`collect_proposition_connection_variables`], this is for a planner
 /// choosing which facts a derivation may need.
@@ -444,12 +444,12 @@ pub(crate) fn collect_proposition_frame_variables(
     impl Drop for Scope {
         fn drop(&mut self) {
             COLLECTING_HAVOC_RANGES.with(|flag| flag.set(self.0));
-            FRAME_SNAPSHOTS.with(|seen| *seen.borrow_mut() = std::mem::take(&mut self.1));
+            FRAME_STATES.with(|seen| *seen.borrow_mut() = std::mem::take(&mut self.1));
         }
     }
     let _scope = Scope(
         COLLECTING_HAVOC_RANGES.with(|flag| flag.replace(true)),
-        FRAME_SNAPSHOTS.with(|seen| std::mem::take(&mut *seen.borrow_mut())),
+        FRAME_STATES.with(|seen| std::mem::take(&mut *seen.borrow_mut())),
     );
     collect_proposition_connection_variables(proposition, variables);
 }
@@ -1069,7 +1069,7 @@ pub(in crate::kernel) fn collect_ranking_component_variables(
 /// A quantifier's variable is removed once its body is collected; fold and
 /// match binders are kept. Arguments of every application result type are
 /// visited, including mathematical Integer arguments. A specification memory is an execution
-/// snapshot: its blocks and cells are opaque to lexical variable collection,
+/// state: its blocks and cells are opaque to lexical variable collection,
 /// and only the explicit pointer and expression payloads beside it are
 /// visited.
 fn collect_spec_bitvector_variables(root: SpecNode<'_>, variables: &mut BTreeSet<Variable>) {
@@ -1423,7 +1423,7 @@ fn collect_program_expression_bound_identities(
 
 /// Collects every variable identity in a specification subtree, bound or
 /// free, for freshness. Quantifier, Integer fold and Integer match-arm
-/// binders count; a specification memory is a captured execution snapshot,
+/// binders count; a specification memory is a captured execution state,
 /// not lexical input, so only the explicit pointer and expression payloads
 /// beside it are visited.
 fn collect_spec_bound_identities(
@@ -2014,8 +2014,8 @@ pub(crate) fn resource_context_has_read(
 ) -> bool {
     // Resource-backed reads are loadability checks too: a view retained
     // across an opaque effect may name its bounds with load atoms from the
-    // pre-effect snapshot, while the expression being loaded names the same
-    // cells at the current snapshot. Keep the snapshot-DAG bridge scoped to
+    // pre-effect state, while the expression being loaded names the same
+    // cells at the current state. Keep the state-DAG bridge scoped to
     // this resource-backed access query, just as `proves_memory_loadable`
     // does for proposition-backed loadability facts.
     crate::kernel::api::with_extended_dag_bridging(|| {
@@ -2037,21 +2037,21 @@ fn checked_collection_checkpoint() -> bool {
 }
 
 thread_local! {
-    // Condition-index insertion reads syntax, never snapshot contents. A
-    // snapshot-dependent fact is indexed lazily by the ordinary collector.
-    static DEFER_CONDITION_SNAPSHOTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    // Condition-index insertion reads syntax, never state contents. A
+    // state-dependent fact is indexed lazily by the ordinary collector.
+    static DEFER_CONDITION_STATES: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
-struct ConditionSnapshotDeferral(Option<bool>);
+struct ConditionStateDeferral(Option<bool>);
 
-impl Drop for ConditionSnapshotDeferral {
+impl Drop for ConditionStateDeferral {
     fn drop(&mut self) {
-        DEFER_CONDITION_SNAPSHOTS.with(|state| state.set(self.0));
+        DEFER_CONDITION_STATES.with(|state| state.set(self.0));
     }
 }
 
-fn defer_condition_snapshot() -> bool {
-    DEFER_CONDITION_SNAPSHOTS.with(|state| {
+fn defer_condition_state() -> bool {
+    DEFER_CONDITION_STATES.with(|state| {
         if state.get().is_some() {
             state.set(Some(true));
             true
@@ -2066,7 +2066,7 @@ thread_local! {
 }
 
 /// Equality-source dependencies include byte-offset variables as well as
-/// machine-value variables. Preserve the ordinary snapshot deferral policy.
+/// machine-value variables. Preserve the ordinary state deferral policy.
 pub(in crate::kernel) fn collect_condition_coordinate_index_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
@@ -2081,17 +2081,17 @@ pub(in crate::kernel) fn collect_condition_coordinate_index_variables(
     collect_condition_index_variables(condition, variables)
 }
 
-/// Collect the ordinary condition variables, stopping at each snapshot.
-/// Returns whether a snapshot was encountered. If so, the caller must defer
+/// Collect the ordinary condition variables, stopping at each state.
+/// Returns whether a state was encountered. If so, the caller must defer
 /// the whole fact to the complete collector to preserve its connections.
 pub(in crate::kernel) fn collect_condition_index_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,
 ) -> bool {
-    let prior = DEFER_CONDITION_SNAPSHOTS.with(|state| state.replace(Some(false)));
-    let _scope = ConditionSnapshotDeferral(prior);
+    let prior = DEFER_CONDITION_STATES.with(|state| state.replace(Some(false)));
+    let _scope = ConditionStateDeferral(prior);
     collect_condition_bitvector_variables(condition, variables);
-    DEFER_CONDITION_SNAPSHOTS.with(|state| state.get() == Some(true))
+    DEFER_CONDITION_STATES.with(|state| state.get() == Some(true))
 }
 
 pub(crate) fn collect_condition_bitvector_variables(
@@ -2325,7 +2325,7 @@ fn collect_shared_integer_carrier_variables_seen(
 }
 
 /// Collect mathematical Integer variables nested in a machine term.  Memory
-/// snapshots are intentionally opaque here: only the address payload of a
+/// states are intentionally opaque here: only the address payload of a
 /// load can carry a variable relevant to a lexical substitution, and that
 /// payload is a machine term with no Integer carrier.
 pub(crate) fn collect_bitvector_integer_variables(
@@ -3048,7 +3048,7 @@ fn collect_integer_variables_seen(
                                 .copied(),
                         );
                         // Load names can hide execution ids in their live address
-                        // and snapshot. Resolve just those names with the ordinary
+                        // and state. Resolve just those names with the ordinary
                         // leaf rule, never caching registry-dependent answers.
                         let range = crate::kernel::eval::LOAD_VARIABLE_RANGE;
                         let mut previous = Variable(range.start - 1);
@@ -3068,7 +3068,7 @@ fn collect_integer_variables_seen(
                         if checked_collection_checkpoint() {
                             return;
                         }
-                        // Preserve snapshot deferral, connection and frame modes
+                        // Preserve state deferral, connection and frame modes
                         // by using the ordinary variable-leaf collector.
                         collect_bitvector_variables(&MachineTerm::Variable(*variable), variables);
                     }
@@ -3152,7 +3152,7 @@ fn collect_stored_load_connection_variables(
 ) {
     if collecting_connection_variables() {
         // A written load depends on the value at its exact address,
-        // rather than every value stored in the same snapshot.
+        // rather than every value stored in the same state.
         struct Depth(usize);
         impl Drop for Depth {
             fn drop(&mut self) {
@@ -3194,7 +3194,7 @@ pub(crate) fn collect_bitvector_variables(term: &MachineTerm, variables: &mut BT
                     && let Some((origin, _)) =
                         crate::kernel::eval::registered_load_origin_for_variable(variable)
                 {
-                    // The canonical snapshot may be a jumped placeholder.
+                    // The canonical state may be a jumped placeholder.
                     // Frame dependencies belong to the live origin DAG.
                     collect_shared_memory_bitvector_variables(&origin, variables);
                 }
@@ -3965,7 +3965,7 @@ fn collect_integer_bitvector_capture_variables(
 }
 
 /// Collect C-carrier variables nested in an Integer term without descending
-/// into memory snapshots.  Machine conversions and opaque pure arguments are
+/// into memory states.  Machine conversions and opaque pure arguments are
 /// part of the lexical expression and therefore remain visible to capture
 /// analysis.
 pub(crate) fn collect_integer_capture_bitvector_variables(
@@ -5758,26 +5758,26 @@ fn constant_run_variables(
     shared
 }
 
-/// How many of a snapshot's entries (blocks, concrete cells, runs, union
-/// cells) mention each variable. Persistent, so a snapshot's counts share
+/// How many of a state's entries (blocks, concrete cells, runs, union
+/// cells) mention each variable. Persistent, so a state's counts share
 /// every unchanged node with its derivation base's.
 type VariableCounts = crate::persistent::PersistentMap<Variable, u32>;
 
 thread_local! {
-    /// The variables each interned snapshot mentions, by arena identity, for
+    /// The variables each interned state mentions, by arena identity, for
     /// the whole verification session, as counts per entry.
     ///
-    /// A snapshot's cells hold loads of earlier snapshots, directly or
-    /// through load variables, so the snapshots a collection reaches are a
-    /// DAG, and a later snapshot holds every cell of the history before it.
-    /// Walking each reached snapshot whole per collection made a collection
+    /// A state's cells hold loads of earlier states, directly or
+    /// through load variables, so the states a collection reaches are a
+    /// DAG, and a later state holds every cell of the history before it.
+    /// Walking each reached state whole per collection made a collection
     /// cost the whole memory, and walking the DAG as a tree cost every path
-    /// to each snapshot. Here a snapshot's counts are its derivation base's
+    /// to each state. Here a state's counts are its derivation base's
     /// adjusted by the entries the two differ on, which the persistent maps'
     /// diffs visit without the shared rest, so a store or an allocation costs
-    /// what it changed, and each snapshot is counted once per session.
+    /// what it changed, and each state is counted once per session.
     ///
-    /// The answer is a function of the snapshot's content and of the load
+    /// The answer is a function of the state's content and of the load
     /// registry, which never renames or drops a load variable within a
     /// session, and arena identities are never reused, so remembered counts
     /// cannot go stale. [`clear_shared_memory_variables`] empties the table
@@ -5791,7 +5791,7 @@ thread_local! {
     static HEAP_VARIABLES: std::cell::RefCell<Option<(std::sync::Arc<crate::kernel::primitives::HeapMemory>, VariableCounts)>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Forgets every snapshot's remembered variables; see
+/// Forgets every state's remembered variables; see
 /// [`SHARED_MEMORY_VARIABLES`].
 pub(in crate::kernel) fn clear_shared_memory_variables() {
     SHARED_MEMORY_VARIABLES.with(|table| table.borrow_mut().clear());
@@ -5802,7 +5802,7 @@ fn remembered_memory_variables(memory: &SharedMemory) -> Option<VariableCounts> 
     SHARED_MEMORY_VARIABLES.with(|table| table.borrow().get(&memory.arena_id()).cloned())
 }
 
-/// Establish the input snapshot's index once, before individual C steps.
+/// Establish the input state's index once, before individual C steps.
 pub(in crate::kernel) fn prepare_memory_variable_index(memory: &Memory) {
     let shared = crate::kernel::intern_memory_ref(memory);
     shared_memory_variable_counts(&shared, WholeCount::Charged);
@@ -5823,18 +5823,18 @@ pub(in crate::kernel) fn advance_memory_variable_index(base: &SharedMemory, resu
     }
 }
 
-/// [`collect_memory_bitvector_variables`] of an interned snapshot, counted
+/// [`collect_memory_bitvector_variables`] of an interned state, counted
 /// once per verification session from its derivation base's counts. Counting
-/// charges one unit per entry and per derivation step it visits; a snapshot
+/// charges one unit per entry and per derivation step it visits; a state
 /// already counted is an indexed lookup plus the variables it hands back.
 pub(in crate::kernel) fn collect_shared_memory_bitvector_variables(
     memory: &SharedMemory,
     variables: &mut BTreeSet<Variable>,
 ) {
     if COLLECTING_HAVOC_RANGES.with(std::cell::Cell::get)
-        && FRAME_SNAPSHOTS.with(|seen| seen.borrow_mut().insert(memory.arena_id()))
+        && FRAME_STATES.with(|seen| seen.borrow_mut().insert(memory.arena_id()))
     {
-        // The ranges a call or loop wrote to reach this snapshot: a fact
+        // The ranges a call or loop wrote to reach this state: a fact
         // about one of their bounds is what frames a load across the edge.
         let mut current = memory.clone();
         for _ in 0..HAVOC_RANGE_HOPS {
@@ -5864,43 +5864,43 @@ pub(in crate::kernel) fn collect_shared_memory_bitvector_variables(
             current = derivation.base().clone();
         }
     }
-    if collecting_connection_variables() || defer_condition_snapshot() {
+    if collecting_connection_variables() || defer_condition_state() {
         return;
     }
 
-    extend_with_snapshot_variables(memory, WholeCount::Charged, variables);
+    extend_with_state_variables(memory, WholeCount::Charged, variables);
 }
 
-/// The snapshots a fact set already reserves, while it reserves one more
-/// fact's variables (`proposition_variables_reserving`), and the snapshots
+/// The states a fact set already reserves, while it reserves one more
+/// fact's variables (`proposition_variables_reserving`), and the states
 /// that fact's collection met.
-struct SnapshotReservation {
+struct StateReservation {
     reserved: crate::persistent::PersistentSet<(u32, u32)>,
     met: BTreeSet<(u32, u32)>,
-    /// The snapshots whose bound variables the fact set already reserves,
+    /// The states whose bound variables the fact set already reserves,
     /// and those this fact's collection walked for them.
     bound_reserved: crate::persistent::PersistentSet<(u32, u32)>,
     bound_walked: BTreeSet<(u32, u32)>,
 }
 
-/// The interned snapshots whose variables a fact set already reserves: for
+/// The interned states whose variables a fact set already reserves: for
 /// their free variables (`variables`), and separately for their bound
-/// variables (`bound`). A snapshot reached only through another's loads is
+/// variables (`bound`). A state reached only through another's loads is
 /// counted for its free variables without its bound variables being walked,
 /// so the two are kept apart.
 #[derive(Clone, Default)]
-pub(in crate::kernel) struct ReservedSnapshots {
+pub(in crate::kernel) struct ReservedStates {
     variables: crate::persistent::PersistentSet<(u32, u32)>,
     bound: crate::persistent::PersistentSet<(u32, u32)>,
 }
 
-/// Whether the bound-variable walk of the interned snapshot `identity` can
+/// Whether the bound-variable walk of the interned state `identity` can
 /// be skipped while a fact set reserves a fact's variables
 /// (`proposition_variables_reserving`): the set already reserves its bound
 /// variables, or this fact's collection already walked it. Marks it walked
 /// otherwise. Outside a reservation nothing is skipped.
-pub(in crate::kernel) fn bound_snapshot_already_reserved(identity: (u32, u32)) -> bool {
-    SNAPSHOT_RESERVATION.with(|cell| {
+pub(in crate::kernel) fn bound_state_already_reserved(identity: (u32, u32)) -> bool {
+    STATE_RESERVATION.with(|cell| {
         cell.borrow_mut().as_mut().is_some_and(|reservation| {
             reservation.bound_reserved.contains(&identity)
                 || !reservation.bound_walked.insert(identity)
@@ -5909,14 +5909,14 @@ pub(in crate::kernel) fn bound_snapshot_already_reserved(identity: (u32, u32)) -
 }
 
 thread_local! {
-    /// Set while `proposition_mentions_load_variable` collects: a snapshot
+    /// Set while `proposition_mentions_load_variable` collects: a state
     /// contributes at most one load variable, which is all that question
     /// reads of it.
     static LOAD_PRESENCE_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Collects `proposition`'s variables as `collect_proposition_bitvector_variables`
-/// does, except that each interned snapshot contributes at most one of its
+/// does, except that each interned state contributes at most one of its
 /// load variables: the result names a load variable exactly when the whole
 /// collection does.
 pub(in crate::kernel) fn collect_proposition_variables_for_load_presence(
@@ -5934,27 +5934,27 @@ pub(in crate::kernel) fn collect_proposition_variables_for_load_presence(
 }
 
 thread_local! {
-    static SNAPSHOT_RESERVATION: std::cell::RefCell<Option<SnapshotReservation>> =
+    static STATE_RESERVATION: std::cell::RefCell<Option<StateReservation>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// How far back a snapshot's derivation is followed for one whose
+/// How far back a state's derivation is followed for one whose
 /// variables are already reserved.
-const RESERVED_SNAPSHOT_HOPS: usize = 64;
+const RESERVED_STATE_HOPS: usize = 64;
 
 /// Adds `memory`'s variables, as its remembered counts list them. While a
-/// fact set reserves a fact's variables, a snapshot it already reserves adds
-/// none, and one derived from such a snapshot adds the variables of the
+/// fact set reserves a fact's variables, a state it already reserves adds
+/// none, and one derived from such a state adds the variables of the
 /// entries the two differ on: every variable of `memory` is one of those or
-/// one of the reserved snapshot's, and every one of those is `memory`'s, so
+/// one of the reserved state's, and every one of those is `memory`'s, so
 /// the reserved variables come out as they would from its whole counts.
-fn extend_with_snapshot_variables(
+fn extend_with_state_variables(
     memory: &SharedMemory,
     whole: WholeCount,
     variables: &mut BTreeSet<Variable>,
 ) {
     if LOAD_PRESENCE_ONLY.with(std::cell::Cell::get) {
-        // Whether the snapshot names a load variable is whether its counts
+        // Whether the state names a load variable is whether its counts
         // hold one: the first one stands for them all.
         let counts = shared_memory_variable_counts(memory, whole);
         variables.extend(
@@ -5967,18 +5967,18 @@ fn extend_with_snapshot_variables(
         );
         return;
     }
-    let Some(mut reservation) = SNAPSHOT_RESERVATION.with(|cell| cell.borrow_mut().take()) else {
+    let Some(mut reservation) = STATE_RESERVATION.with(|cell| cell.borrow_mut().take()) else {
         variables.extend(shared_memory_variable_counts(memory, whole).keys().copied());
         return;
     };
     let id = memory.arena_id();
-    let known = |reservation: &SnapshotReservation, id: &(u32, u32)| {
+    let known = |reservation: &StateReservation, id: &(u32, u32)| {
         reservation.reserved.contains(id) || reservation.met.contains(id)
     };
     if !known(&reservation, &id) {
         let mut current = memory.clone();
         let mut reserved_base = None;
-        for _ in 0..RESERVED_SNAPSHOT_HOPS {
+        for _ in 0..RESERVED_STATE_HOPS {
             let Some(derivation) = current.derivation() else {
                 break;
             };
@@ -5992,11 +5992,11 @@ fn extend_with_snapshot_variables(
         reservation.met.insert(id);
         match reserved_base {
             Some(base) => {
-                // The entries' own loads may reach further snapshots; the
+                // The entries' own loads may reach further states; the
                 // reservation stays in force for those.
-                SNAPSHOT_RESERVATION.with(|cell| *cell.borrow_mut() = Some(reservation));
+                STATE_RESERVATION.with(|cell| *cell.borrow_mut() = Some(reservation));
                 variables.extend(variables_entering(base.memory(), memory.memory()));
-                reservation = SNAPSHOT_RESERVATION
+                reservation = STATE_RESERVATION
                     .with(|cell| cell.borrow_mut().take())
                     .expect("the reservation survives its own collection");
             }
@@ -6005,22 +6005,22 @@ fn extend_with_snapshot_variables(
             None => variables.extend(shared_memory_variable_counts(memory, whole).keys().copied()),
         }
     }
-    SNAPSHOT_RESERVATION.with(|cell| *cell.borrow_mut() = Some(reservation));
+    STATE_RESERVATION.with(|cell| *cell.borrow_mut() = Some(reservation));
 }
 
-/// The nearest snapshot `memory` derives from, within
-/// `RESERVED_SNAPSHOT_HOPS` steps, whose bound variables the fact set being
+/// The nearest state `memory` derives from, within
+/// `RESERVED_STATE_HOPS` steps, whose bound variables the fact set being
 /// built already reserves or this fact's collection already walked; `None`
 /// outside a reservation. Its bound variables together with those of the
 /// entries `memory` changes since include all of `memory`'s.
 pub(in crate::kernel) fn bound_reserved_base(
     memory: &crate::kernel::primitives::SharedMemory,
 ) -> Option<crate::kernel::primitives::SharedMemory> {
-    SNAPSHOT_RESERVATION.with(|cell| {
+    STATE_RESERVATION.with(|cell| {
         let reservation = cell.borrow();
         let reservation = reservation.as_ref()?;
         let mut current = memory.clone();
-        for _ in 0..RESERVED_SNAPSHOT_HOPS {
+        for _ in 0..RESERVED_STATE_HOPS {
             let base = current.derivation()?.base().clone();
             let id = base.arena_id();
             if reservation.bound_reserved.contains(&id) || reservation.bound_walked.contains(&id) {
@@ -6089,22 +6089,22 @@ fn variables_entering(base: &Memory, memory: &Memory) -> BTreeSet<Variable> {
 }
 
 /// `proposition_variables(proposition)` for a fact set whose reserved
-/// variables already include every variable of the snapshots `reserved`
+/// variables already include every variable of the states `reserved`
 /// names: the variables to reserve beyond those, with `reserved` extended
-/// by the snapshots the collection met, whose variables the reserved ones
+/// by the states the collection met, whose variables the reserved ones
 /// then include.
 pub(in crate::kernel) fn proposition_variables_reserving(
     proposition: &Proposition,
-    reserved: &mut ReservedSnapshots,
+    reserved: &mut ReservedStates,
 ) -> BTreeSet<Variable> {
-    struct Restore(Option<SnapshotReservation>);
+    struct Restore(Option<StateReservation>);
     impl Drop for Restore {
         fn drop(&mut self) {
-            SNAPSHOT_RESERVATION.with(|cell| *cell.borrow_mut() = self.0.take());
+            STATE_RESERVATION.with(|cell| *cell.borrow_mut() = self.0.take());
         }
     }
-    let previous = SNAPSHOT_RESERVATION.with(|cell| {
-        cell.borrow_mut().replace(SnapshotReservation {
+    let previous = STATE_RESERVATION.with(|cell| {
+        cell.borrow_mut().replace(StateReservation {
             reserved: reserved.variables.clone(),
             met: BTreeSet::new(),
             bound_reserved: reserved.bound.clone(),
@@ -6113,19 +6113,19 @@ pub(in crate::kernel) fn proposition_variables_reserving(
     });
     let restore = Restore(previous);
     let variables = crate::kernel::proposition_variables(proposition);
-    if let Some(reservation) = SNAPSHOT_RESERVATION.with(|cell| cell.borrow_mut().take()) {
-        for snapshot in reservation.met {
-            reserved.variables = reserved.variables.with_value(snapshot);
+    if let Some(reservation) = STATE_RESERVATION.with(|cell| cell.borrow_mut().take()) {
+        for retained_state in reservation.met {
+            reserved.variables = reserved.variables.with_value(retained_state);
         }
-        for snapshot in reservation.bound_walked {
-            reserved.bound = reserved.bound.with_value(snapshot);
+        for retained_state in reservation.bound_walked {
+            reserved.bound = reserved.bound.with_value(retained_state);
         }
     }
     drop(restore);
     variables
 }
 
-/// Whether counting a snapshot of the chain whole is charged; see
+/// Whether counting a state of the chain whole is charged; see
 /// [`collect_memory_bitvector_variables`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WholeCount {
@@ -6138,8 +6138,8 @@ fn shared_memory_variable_counts(memory: &SharedMemory, whole: WholeCount) -> Va
         return counts;
     }
     // The uncounted derivation ancestors, nearest first, up to one already
-    // counted or with no recorded base. The walk is cut at the snapshot's own
-    // size: past that, counting the snapshot whole costs less than counting
+    // counted or with no recorded base. The walk is cut at the state's own
+    // size: past that, counting the state whole costs less than counting
     // its history.
     let limit = memory_entry_count(memory.memory());
     let mut chain = vec![memory.clone()];
@@ -6161,26 +6161,26 @@ fn shared_memory_variable_counts(memory: &SharedMemory, whole: WholeCount) -> Va
         chain.push(base);
     }
     if counted_base.is_none() && chain.len() > limit {
-        // Too long a history: count this snapshot alone, whole.
+        // Too long a history: count this state alone, whole.
         chain.truncate(1);
     }
-    // Oldest first: each snapshot is counted from the one before it.
+    // Oldest first: each state is counted from the one before it.
     let mut previous = counted_base;
-    for snapshot in chain.into_iter().rev() {
+    for retained_state in chain.into_iter().rev() {
         let counts = match &previous {
             Some((base, counts)) => {
-                counts_from_base(counts.clone(), base.memory(), snapshot.memory())
+                counts_from_base(counts.clone(), base.memory(), retained_state.memory())
             }
-            None => counts_whole(snapshot.memory(), whole),
+            None => counts_whole(retained_state.memory(), whole),
         };
         SHARED_MEMORY_VARIABLES.with(|table| {
             table
                 .borrow_mut()
-                .insert(snapshot.arena_id(), counts.clone());
+                .insert(retained_state.arena_id(), counts.clone());
         });
-        previous = Some((snapshot, counts));
+        previous = Some((retained_state, counts));
     }
-    previous.expect("the chain counts at least the snapshot").1
+    previous.expect("the chain counts at least the state").1
 }
 
 fn memory_entry_count(memory: &Memory) -> usize {
@@ -6322,7 +6322,7 @@ fn adjust_run_counts_by_changed_slots(
     true
 }
 
-/// A snapshot's counts from all of its entries; one unit per entry unless
+/// A state's counts from all of its entries; one unit per entry unless
 /// `whole` is [`WholeCount::Uncharged`].
 fn heap_variable_counts(
     heap: &std::sync::Arc<crate::kernel::primitives::HeapMemory>,
@@ -6460,7 +6460,7 @@ fn counts_from_base(mut counts: VariableCounts, base: &Memory, memory: &Memory) 
     counts
 }
 
-/// An interned snapshot a cell's load reaches is walked through
+/// An interned state a cell's load reaches is walked through
 /// [`collect_shared_memory_bitvector_variables`], once per session.
 pub(in crate::kernel) fn collect_memory_bitvector_variables(
     memory: &Memory,
@@ -6469,19 +6469,19 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
     if collecting_connection_variables() {
         return;
     }
-    if defer_condition_snapshot() {
+    if defer_condition_state() {
         return;
     }
 
     // A live state's memory is the interned storage its last derivation
-    // left, so its variables are that snapshot's remembered counts, counted
+    // left, so its variables are that state's remembered counts, counted
     // once per session from its derivation base's: the work of what changed,
     // not of every cell and run slot again on every collection. Where its
-    // history reaches no counted snapshot, one of its chain is counted
+    // history reaches no counted state, one of its chain is counted
     // whole: that is the walk every collection of it made, uncharged, before
     // the counts were kept, and it stays uncharged; the steps back to a
-    // counted snapshot and the entries they changed are charged, as are the
-    // snapshots its cells' loads reach.
+    // counted state and the entries they changed are charged, as are the
+    // states its cells' loads reach.
     if let Some(shared) = crate::kernel::primitives::interned_storage_of(memory) {
         if EXECUTION_CEILING_ONLY.with(std::cell::Cell::get) {
             let counts = shared_memory_variable_counts(&shared, WholeCount::Uncharged);
@@ -6494,16 +6494,16 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables(
             );
             return;
         }
-        extend_with_snapshot_variables(&shared, WholeCount::Uncharged, variables);
+        extend_with_state_variables(&shared, WholeCount::Uncharged, variables);
         return;
     }
     collect_memory_bitvector_variables_whole(memory, variables);
 }
 
 /// [`collect_memory_bitvector_variables`] by visiting every entry of
-/// `memory`, for a snapshot no derivation interned. The counts of
+/// `memory`, for a state no derivation interned. The counts of
 /// [`shared_memory_variable_counts`] are built from the same per-entry
-/// collectors, so the two agree on every snapshot.
+/// collectors, so the two agree on every state.
 pub(in crate::kernel) fn collect_memory_bitvector_variables_whole(
     memory: &Memory,
     variables: &mut BTreeSet<Variable>,
@@ -6511,7 +6511,7 @@ pub(in crate::kernel) fn collect_memory_bitvector_variables_whole(
     if collecting_connection_variables() {
         return;
     }
-    if defer_condition_snapshot() {
+    if defer_condition_state() {
         return;
     }
 

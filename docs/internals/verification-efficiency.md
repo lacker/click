@@ -6,7 +6,7 @@ proofs must remain approximately linear in the amount of C and Click actually
 relevant to the selected proof units.
 
 This is a correctness requirement for the proof-tool boundary. A simple proof
-that becomes unusably slow as unrelated functions, facts, snapshots, or
+that becomes unusably slow as unrelated functions, facts, states, or
 resources are added is a verifier defect, even if it eventually succeeds.
 
 [Verifier design](verifier-design.md) defines the split between the fast part
@@ -53,13 +53,13 @@ modular code, `D` is itself linear in the source and explicit proof.
 `O(log N)` is shorthand for indexed access, not permission to ignore input or
 output size. Reading ten explicit premises costs at least ten operations;
 unfolding a resource with ten members costs at least ten operations. The
-violation is touching the other thousand facts, functions, snapshots, or
+violation is touching the other thousand facts, functions, states, or
 resources that the operation did not name.
 
 Work must also be deterministic. Candidate buckets and index reconstruction
 iterate in admission order (pointer-class fact sources, pointer designations,
 and opaque-extent aliases each retain an admission ordinal); allocation
-addresses and snapshot hash order never decide which candidate a
+addresses and state hash order never decide which candidate a
 short-circuit search tries first, because that changes charged work between
 identical runs. Trace source locations are resolved together in one source
 walk per claim and shared by every step.
@@ -192,7 +192,7 @@ kernel executes the statement with the whole proof context visible, reading
 it through the proof object's persistent indexed `PureFactContext`, and a
 cell the context proves outside the effect keeps its name, with ownership
 consulted by direct lookup only. A fact about a cell it cannot prove
-untouched stays at its pre-step snapshot; an explicit `transport` pays for
+untouched stays at its pre-step state; an explicit `transport` pays for
 anything more. Term comparison performs no frame reasoning. The user-facing
 statement of this rule is
 [What a step carries](../concepts/proof-state.md#what-a-step-carries).
@@ -203,7 +203,7 @@ Other operations follow the same shape:
   producers advance only inserted or removed entries, and queries use
   maintained ownership counts rather than enumerating owners.
 - Fixed-state propositions look up only the local bindings they reference in
-  a recorded snapshot.
+  a recorded state.
 - Logical reads through opaque pointers select an admitted footprint through
   the composition's class and interval indexes, without enumerating pointer
   spellings or scanning composition frames.
@@ -234,7 +234,7 @@ charged to visible semantic output rather than hidden ambient state:
 - Termination height inference reads the forward call closure of the run once
   (see [Termination heights and local descent](#termination-heights-and-local-descent)).
 - An explicit fold read frame (`src/kernel/fold_read_summary.rs`) walks the
-  recorded memory history between the two array snapshots and decides each
+  recorded memory history between the two array states and decides each
   crossed step once from its own write set; the crossed steps are its output
   (`explicit_fold_read_transport_along_a_store_sequence_is_near_linear`).
 - An explicit quantified frame (`src/kernel/quantified_frame.rs`) walks source
@@ -278,7 +278,7 @@ charged to visible semantic output rather than hidden ambient state:
   early-return path's context instead of rebuilding it from its prefix. The
   kernel extends a `CheckedPathContext` at each recorded transition by its
   context's projection diff, admitted case facts, and retained effects, and
-  records it when a statement completes; kernel facts name their snapshots,
+  records it when a statement completes; kernel facts name their states,
   so earlier facts hold at the path's end. A dropped or changed fact, a
   changed reasoning policy or resource composition (a join, `branch
   ensuring`, a heap operation, a call), or a diff larger than the case facts
@@ -397,7 +397,7 @@ The complexity contract implies several design constraints:
 
 - Large immutable environments and proof states need persistent structural
   sharing. A clone used to create one modified view is constant or
-  logarithmic in the shared structure. Memory snapshots are persistent
+  logarithmic in the shared structure. Memory states are persistent
   B-trees with cached content hashes ([Memory derivation DAG](memory-dag.md));
   a fact context's stated propositions are a persistent ordered set; a kernel
   statement sequence is a persistent indexed `ProgramStatementSequence` that stands
@@ -480,26 +480,26 @@ still enumerate candidates: a known violation of the fast-part rule
 [the smart-tactics roadmap item](https://github.com/clicklang/click/blob/master/roadmap/smart-tactics.md)).
 
 Negative memos over memory-DAG walks key on the derivation generation, which
-advances only when an earlier snapshot receives its edge
-(`recording_a_fresh_snapshot_keeps_the_derivation_generation`).
+advances only when an earlier state receives its edge
+(`recording_a_fresh_state_keeps_the_derivation_generation`).
 
 Terms have one canonical identity and state changes are explicit:
 
-- **Stratified derivation edges.** A snapshot's derivation is described in
+- **Stratified derivation edges.** A state's derivation is described in
   its parent's vocabulary; call-havoc footprints are recorded in
   assumption-free canonical form. A frame proof needing another vocabulary
   supplies an explicit `frame using` restatement.
 - **Canonicalize at creation.** A memory load becomes the load variable for
   its cell version where lowering or execution creates it, so condition-fact
   availability is exact canonical-form lookup. Separation facts use a
-  snapshot-independent shape index only to select candidates; the kernel then
+  state-independent shape index only to select candidates; the kernel then
   proves the range relationship from frame evidence. See
   [Canonicalization](canonicalization.md).
 - **Transport facts at statement boundaries.** A statement step carries only
-  facts whose direct frame check succeeds; other cross-snapshot reasoning is
+  facts whose direct frame check succeeds; other cross-state reasoning is
   an explicit `transport`, not a comparator side effect.
-- **Rewrite snapshots by identity.** Substituting a variable visits each
-  interned snapshot once; memoizations are pure functions over interned ids.
+- **Rewrite states by identity.** Substituting a variable visits each
+  interned state once; memoizations are pure functions over interned ids.
 - **A search attempt asks each failed question once.** Inside one attempt
   (`with_closure_failure_memo`) a failed reachability, load-bridge, or
   pointer-distinctness check is remembered by its exact inputs, fact-set
@@ -585,19 +585,19 @@ of byte loads are kept per class and inverted into the byte's class on a rise
 ([byte representation](byte-representation.md#character-reads-of-one-byte-cells)).
 Only a class without a settled constant resolves its conditional members at
 query time; unregistered arithmetic folds from its operands. Constant lookup
-never pairs loads from different snapshots or searches memory history for a
+never pairs loads from different states or searches memory history for a
 constant. Missing relations must already be established in the equality
-context. `constant_queries_ignore_other_snapshot_candidates` covers misses,
-explicit-equality hits and repeated queries as related and unrelated snapshot
+context. `constant_queries_ignore_other_state_candidates` covers misses,
+explicit-equality hits and repeated queries as related and unrelated state
 reads grow; `counter_call_chain_ensure_lowering_stays_flat_per_call` covers
 repeated calls.
 
 The condition-premise oracle follows a persistent variable-to-fact adjacency
 index; each reachable variable and fact is expanded once
 (`connected_condition_selection_scales_linearly_in_chain_and_context`).
-Snapshot-dependent facts can connect to a goal through a variable stored in
-their snapshot, so their entries are deferred until queried and cached after a
-complete construction. The first query pays for every pending snapshot fact
+Memory state-dependent facts can connect to a goal through a variable stored in
+their state, so their entries are deferred until queried and cached after a
+complete construction. The first query pays for every pending state fact
 of the bucket, a known violation of the fast-part rule.
 
 Condition premise search tries single candidates, then candidate pairs that
@@ -623,7 +623,7 @@ The general decision `PureFactContext::decide` is also fast-part checking,
 not search: it selects no premises and tries no alternative rules, and simple
 tactics use it to check a premise (`holds_by_lookup_or_decision`, used by
 `fold`, resource steps, and step certification). Its nested rules can reach
-far: a memory read compares snapshots, and one decision asks others. Each outermost decision runs under a fixed per-query
+far: a memory read compares states, and one decision asks others. Each outermost decision runs under a fixed per-query
 fuel, `DECISION_FUEL_LIMIT` (`with_decision_fuel` in `src/instrumentation.rs`);
 every charged unit spends fuel. A decision that
 exhausts its fuel ends undecided, no memo keeps the answer, and no budget
@@ -759,7 +759,7 @@ not enumerate all other ranges in the block. Adjacent-view checks select a
 suffix at the prefix's endpoint, including an exactly addressed materialized
 cell or dense run span ending at its next hole, instead of pairing ambient
 ranges or enumerating memory cells and runs.
-Candidate snapshots, extents and pointer equality still pass the kernel checks.
+Candidate states, extents and pointer equality still pass the kernel checks.
 Read-defined goals use typed evidence, exact aliases and equality spellings;
 memory separation uses the unordered block-pair bucket. Large buckets at the
 same address and long alias components still need separate growth audits.
@@ -767,7 +767,7 @@ same address and long alias components still need separate growth audits.
 Atom memory-condition matching uses exact/canonical condition keys and keys
 from equality spellings. A miss does not consult the family's entire open-fact
 bucket. A condition requiring a different spelling can be established explicitly
-before the checked operation. Compound-query and carrier/snapshot controls remain.
+before the checked operation. Compound-query and carrier/state controls remain.
 
 Atomic certificate planning keeps persistent syntax adjacency for condition
 and proposition facts, keyed by value variables and explicit pointer blocks;
@@ -802,7 +802,7 @@ repeated-sample comparisons measure the named operation itself
 The scaling suite covers independent axes:
 
 - number of unrelated functions and verified rules;
-- straight-line statements and program-point snapshots in one function;
+- straight-line statements and program-point states in one function;
 - ambient pure and condition facts;
 - surface-to-kernel proposition spellings;
 - resource facts and resource-definition members;

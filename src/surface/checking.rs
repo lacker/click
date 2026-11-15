@@ -340,7 +340,7 @@ pub(super) fn evaluate_witness_tactic_value(
     result: Option<&ProgramValue>,
     assumptions: &PureFactContext,
     spec_definitions: SpecDefinitions<'_>,
-    recorded_snapshots: &RecordedSnapshots,
+    recorded_states: &RecordedStates,
 ) -> Result<ProgramValue, ClickError> {
     let mut active_functions = BTreeSet::new();
     let value = evaluate_contract_expression_with_environment(
@@ -352,7 +352,7 @@ pub(super) fn evaluate_witness_tactic_value(
         assumptions,
         witness.value(),
         spec_definitions,
-        recorded_snapshots,
+        recorded_states,
         &mut active_functions,
     )
     .map_err(|message| {

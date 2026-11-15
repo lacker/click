@@ -4,14 +4,14 @@
 
 use super::*;
 
-/// Collecting the variables of a load counts each snapshot the load reaches
+/// Collecting the variables of a load counts each state the load reaches
 /// once, not once per path to it. Each level of the DAG is reached through
 /// two cells of the level above, so walking it as a tree visited `2^depth`
-/// snapshots, uncharged; depth 32 did not finish.
+/// states, uncharged; depth 32 did not finish.
 #[test]
-fn variable_collection_walks_a_shared_snapshot_dag_once() {
+fn variable_collection_walks_a_shared_state_dag_once() {
     let samples = [8usize, 16, 32, 64].map(|depth| {
-        let load = nested_snapshot_load(depth);
+        let load = nested_state_load(depth);
         crate::kernel::reasoning::variable_collection::clear_shared_memory_variables();
         let ((), work) = crate::instrumentation::measure_deterministic_work(|| {
             let mut variables = BTreeSet::new();
@@ -20,7 +20,7 @@ fn variable_collection_walks_a_shared_snapshot_dag_once() {
         (depth, work)
     });
     for (depth, work) in samples {
-        assert!(work >= depth, "counting a snapshot is charged: {samples:?}");
+        assert!(work >= depth, "counting a state is charged: {samples:?}");
     }
     for pair in samples.windows(2) {
         let ((_, work), (_, next_work)) = (pair[0], pair[1]);
@@ -31,10 +31,10 @@ fn variable_collection_walks_a_shared_snapshot_dag_once() {
     }
 }
 
-/// A snapshot one store past a counted one is counted from that one's
+/// A state one store past a counted one is counted from that one's
 /// variables by the entries the store changed, not by walking every cell:
 /// collecting the variables of a load after the store costs the same beside
-/// 16 to 1024 unrelated cells. Counting each reached snapshot whole made the
+/// 16 to 1024 unrelated cells. Counting each reached state whole made the
 /// collection linear in the unrelated cells, which is what made a round
 /// trip's extra copy grow with the unrelated allocations beside it.
 #[test]

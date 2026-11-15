@@ -14,12 +14,12 @@ fn spec() -> ResourceSpec {
     ResourceSpec::new(
         ResourceTerm::MutexGuard {
             mutex: Box::new(crate::kernel::program_expression::variable("mutex")),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap()
     .with_guard(SpecProposition::Comparison {

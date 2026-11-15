@@ -63,7 +63,7 @@ fn historical_wide_view_bound_reads_the_marked_counter() {
     for extent in [16, 32] {
         let proof = format!(
             r#"
-            verifying "snapshot.c";
+            verifying "retained_state.c";
             uint64 f(const uint8* p, uint32 n) {{
                 requires n == 2u32;
                 views p[0u64..{extent}u64];
@@ -77,19 +77,19 @@ fn historical_wide_view_bound_reads_the_marked_counter() {
             }}
         "#
         );
-        let result = verify_c_sources(&proof, &[("snapshot.c", c)]);
+        let result = verify_c_sources(&proof, &[("retained_state.c", c)]);
         if extent == 16 {
             assert!(result.is_err(), "the saved counter needs 32 bytes, not 16");
         } else {
             result.unwrap();
             let expanded = expand_c_claim_source(
                 &proof,
-                &[("snapshot.c", c)],
+                &[("retained_state.c", c)],
                 "f",
                 ContractProofClaim::Ensure(0),
             )
             .unwrap();
-            verify_c_sources(&expanded, &[("snapshot.c", c)]).unwrap();
+            verify_c_sources(&expanded, &[("retained_state.c", c)]).unwrap();
         }
     }
 }
@@ -113,25 +113,25 @@ fn readonly_scalar_initialization_preserves_address_and_expands() {
 }
 
 #[test]
-// A historical pointer value and the memory snapshot of a load are independent.
+// A historical pointer value and the memory state of a load are independent.
 fn typed_load_through_entry_pointer_reads_current_memory() {
     let source = "void probe(int32* p, int32* q) { *p = 7; p = q; }";
-    let proof = r#"verifying "snapshot.c"; void probe(int32* p, int32* q) {
+    let proof = r#"verifying "retained_state.c"; void probe(int32* p, int32* q) {
         owns p[0..1]; ensures load_int32(old(p)) == 7;
     }"#;
-    verify_c_sources(proof, &[("snapshot.c", source)]).unwrap();
+    verify_c_sources(proof, &[("retained_state.c", source)]).unwrap();
     let expanded = expand_c_claim_source(
         proof,
-        &[("snapshot.c", source)],
+        &[("retained_state.c", source)],
         "probe",
         ContractProofClaim::Ensure(0),
     )
     .unwrap();
-    verify_c_sources(&expanded, &[("snapshot.c", source)]).unwrap();
+    verify_c_sources(&expanded, &[("retained_state.c", source)]).unwrap();
     assert!(
         verify_c_sources(
             &proof.replace("load_int32(old(p))", "old(load_int32(p))"),
-            &[("snapshot.c", source)]
+            &[("retained_state.c", source)]
         )
         .is_err()
     );
@@ -141,18 +141,18 @@ fn typed_load_through_entry_pointer_reads_current_memory() {
 // Pointer-valued historical loads must also keep their operand and print parseable certificates.
 fn typed_pointer_load_through_entry_pointer_expands() {
     let source = "void probe(int32** p, int32* q, int32** r) { *p = q; p = r; }";
-    let proof = r#"verifying "snapshot.c"; void probe(int32** p, int32* q, int32** r) {
+    let proof = r#"verifying "retained_state.c"; void probe(int32** p, int32* q, int32** r) {
         owns p[0..1]; ensures load_int32_pointer(old(p)) == q;
     }"#;
-    verify_c_sources(proof, &[("snapshot.c", source)]).unwrap();
+    verify_c_sources(proof, &[("retained_state.c", source)]).unwrap();
     let expanded = expand_c_claim_source(
         proof,
-        &[("snapshot.c", source)],
+        &[("retained_state.c", source)],
         "probe",
         ContractProofClaim::Ensure(0),
     )
     .unwrap();
-    verify_c_sources(&expanded, &[("snapshot.c", source)]).unwrap();
+    verify_c_sources(&expanded, &[("retained_state.c", source)]).unwrap();
 }
 
 #[test]
@@ -1464,7 +1464,7 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
 
 #[test]
 #[ignore = "nightly: 0.6s in the parallel gate"]
-fn outcome_solve_spells_a_call_postcondition_across_two_snapshots() {
+fn outcome_solve_spells_a_call_postcondition_across_two_states() {
     // `touch` may write both fields and certifies `p->x == old(p->x)`: after
     // each call the caller's `p->x` is a fresh cell related to its previous
     // value only by that certified fact, and no single frontier position
@@ -1529,7 +1529,7 @@ fn outcome_solve_spells_a_call_postcondition_across_two_snapshots() {
         .split("int32 keep_x")
         .nth(1)
         .expect("the expanded source should retain the caller");
-    // The checked frame equation connects the snapshots in the shared graph.
+    // The checked frame equation connects the states in the shared graph.
     assert!(caller_expansion.contains("known();"), "{expanded}");
     verify_c_sources(&expanded, sources)
         .expect("the rewritten caller proof should verify normally");
@@ -3321,7 +3321,7 @@ fn contract_closing_preserves_proposition_identity_through_explicit_proofs() {
 }
 
 #[test]
-fn contract_closing_keeps_snapshot_clauses_as_local_obligations() {
+fn contract_closing_keeps_state_clauses_as_local_obligations() {
     let source = "int unchanged(int x) { return x; }";
     let proof = r#"verifying "closing.c";
         int32 unchanged(int32 x) {

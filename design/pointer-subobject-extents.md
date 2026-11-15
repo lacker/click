@@ -222,7 +222,7 @@ null.
    regressions.
 3. Load congruence over address equality. Reads of one memory at equal
    addresses read one cell, so they are equal values; that grants no
-   permission. Done: the equality graph keys every read by its snapshot and
+   permission. Done: the equality graph keys every read by its state and
    numeric address (see `docs/internals/equality-closure.md`), and
    `mdtests/pointer_loads_equal_after_late_address_equality.md` passes again,
    with a displaced-field variant beside it.
@@ -239,7 +239,7 @@ same-object condition, so that contract `==` meant "same address and same
 object". It is parked on branch `claude/dreamy-darwin-2kvqba-same-object-wip`.
 It needed the object to travel through every tactic, rewrite, load, loop and
 memory transport, and it still left two mdtests and two examples failing on
-reads of one cell across snapshots. Narrowing the C comparison itself needs
+reads of one cell across states. Narrowing the C comparison itself needs
 none of that.
 
 ## Phase C: pointers of unseen formation

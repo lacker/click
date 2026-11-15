@@ -1,4 +1,4 @@
-//! Structural pointer rewriting within one fixed lexical/snapshot scope.
+//! Structural pointer rewriting within one fixed lexical/state scope.
 //! Callers select substitutions; numeric callbacks use the existing scoped
 //! term rewriter. Replacements are simultaneous and are not visited again.
 use super::super::addresses::SharedPointerBlock;

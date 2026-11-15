@@ -77,7 +77,7 @@ fn scalar_array_copy_after_call_captures_unknown_initialized_values_compactly() 
         );
         assert!(after_call.has_initialized_bytes_at(&source, count * 4));
         assert_eq!(after_call.cells.runs_in_block(&source.block).count(), 0);
-        let snapshot = intern_memory_ref(&after_call);
+        let retained_state = intern_memory_ref(&after_call);
         let (copied, work) = crate::instrumentation::measure_deterministic_work(|| {
             after_call
                 .initialize_scalar_array(
@@ -90,7 +90,7 @@ fn scalar_array_copy_after_call_captures_unknown_initialized_values_compactly() 
                 .unwrap()
         });
         let run = copied.cells.runs_in_block(&target.block).next().unwrap();
-        assert_eq!(run.source(), &snapshot);
+        assert_eq!(run.source(), &retained_state);
         assert!(
             matches!(run.value_mode(), crate::kernel::primitives::RunValueMode::Copy {
             source_base
@@ -206,7 +206,7 @@ fn compact_array_regions_copy_and_overwrite_preserve_neighbors_and_scale() {
 }
 
 #[test]
-fn scalar_array_snapshots_preserve_sparse_lanes_without_extent_work() {
+fn scalar_array_states_preserve_sparse_lanes_without_extent_work() {
     let mut samples = Vec::new();
     for count in [8, 1024, 1_000_000] {
         let _session = crate::kernel::VerificationSession::enter();
@@ -250,7 +250,7 @@ fn scalar_array_snapshots_preserve_sparse_lanes_without_extent_work() {
         );
         samples.push((count, work));
     }
-    eprintln!("sparse snapshot copy (length, work): {samples:?}");
+    eprintln!("sparse state copy (length, work): {samples:?}");
     assert!(
         samples.iter().all(|(_, work)| *work <= samples[0].1 + 32),
         "{samples:?}"
@@ -258,7 +258,7 @@ fn scalar_array_snapshots_preserve_sparse_lanes_without_extent_work() {
 }
 
 #[test]
-fn scalar_array_snapshot_region_does_not_scan_unrelated_sibling_cells() {
+fn scalar_array_state_region_does_not_scan_unrelated_sibling_cells() {
     let mut samples = Vec::new();
     for siblings in [1, 64, 2048] {
         let _session = crate::kernel::VerificationSession::enter();

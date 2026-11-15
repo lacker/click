@@ -7,10 +7,10 @@
 //!
 //! The supported fragment includes typed algebraic model equality,
 //! constructor/pure-call congruence, constructor injectivity and distinctness, pointers, affine byte offsets, registered
-//! same-snapshot pointer loads, whole-offset equality, int32 addition,
-//! unsigned division/remainder, bitwise XOR and same-snapshot int32 loads,
+//! same-state pointer loads, whole-offset equality, int32 addition,
+//! unsigned division/remainder, bitwise XOR and same-state int32 loads,
 //! plus uint64 equality with congruence over 64-bit arithmetic, bitwise
-//! operations and same-snapshot 64-bit loads. Mathematical Integer operations,
+//! operations and same-state 64-bit loads. Mathematical Integer operations,
 //! machine integer unary/binary operators, typed conversions and integer-valued
 //! pure-call arguments use these same classes and indexed parent uses.
 //! Pointer and offset queries are typed separately; the offset fragment only
@@ -46,7 +46,7 @@
 //! The index is persistent and append-only. A union relabels every member of
 //! the lighter class (blocks plus application uses), so member lookup is one
 //! map access and each moved block/use is charged to a growing class. Affine
-//! payload work is charged separately. Same-snapshot load signatures propagate
+//! payload work is charged separately. Same-state load signatures propagate
 //! merges iteratively through indexed parent uses, with no nesting cutoff. An
 //! equality between two blocks already in one class adds no base relation.
 //! An explicit equality of pointers in the same block instead joins their
@@ -459,7 +459,7 @@ pub(in crate::kernel) struct EqualityGraph {
     state: std::sync::Mutex<EqualityGraphState>,
     // Definitional term annotations, supplied by typed logical-load producers
     // or retained from certified reads after checked expression evaluation.
-    // They contain no hypotheses, read authority, or snapshot transport. Like term interning, discovery is shared by evaluation
+    // They contain no hypotheses, read authority, or state transport. Like term interning, discovery is shared by evaluation
     // forks; each fork still closes these definitions against its own facts.
     logical_reads: std::sync::Arc<std::sync::Mutex<LogicalPointerReads>>,
     resolve_stored_values: bool,
@@ -603,8 +603,8 @@ impl std::fmt::Debug for EqualityGraph {
     }
 }
 
-/// A signature compares only snapshot identities, block identities and an
-/// interned affine-offset ID. It never compares snapshots or load trees.
+/// A signature compares only state identities, block identities and an
+/// interned affine-offset ID. It never compares states or load trees.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct LoadSignature {
     memory: (u32, u32),
@@ -698,7 +698,7 @@ struct PointerMergeHistory {
 impl EqualityGraph {
     /// Register the exact symbolic pointer value just constructed by a typed
     /// load. This is trusted-kernel term metadata, not an assumed
-    /// equality: the producer supplies the canonical defining snapshot and
+    /// equality: the producer supplies the canonical defining state and
     /// address. Never recover this equation by decoding pointer arithmetic.
     pub(in crate::kernel) fn register_pointer_read_definition(
         &self,
@@ -854,7 +854,7 @@ impl EqualityGraph {
             {
                 continue;
             }
-            // A pointer read equals the pointer its snapshot stores at the
+            // A pointer read equals the pointer its state stores at the
             // read's address (the read-over-write authority): memory records
             // it, so it is term metadata like a definition, never a fact.
             if self.resolve_stored_values
@@ -938,7 +938,7 @@ impl EqualityGraph {
             }
             // Canonical projection is unconditional producer metadata. An
             // exact registry lookup connects the application to its original
-            // snapshot without searching history or inspecting other reads.
+            // state without searching history or inspecting other reads.
             if let Some(load) = application.as_loaded_value()
                 && let Some(source) = crate::kernel::prelude::canonical_load_projection_source(
                     &load.defining_memory,
@@ -1540,10 +1540,10 @@ impl EqualityGraph {
         state.terms.class_root(left) == state.terms.class_root(right)
     }
 
-    /// Ask whether two pointer-typed reads in the same defining snapshot
+    /// Ask whether two pointer-typed reads in the same defining state
     /// must have the same value. The application nodes are query terms: this
     /// does not change the representation of either loaded `ProgramValue`.
-    /// Callers must supply the addresses and snapshot of actual pointer reads;
+    /// Callers must supply the addresses and state of actual pointer reads;
     /// decoding a storage-relative pointer value as a load is ambiguous with
     /// ordinary indexed pointer arithmetic.
     #[allow(dead_code, reason = "live comparisons use filed graph bridges")]
@@ -1569,7 +1569,7 @@ impl EqualityGraph {
         if left == right {
             return true;
         }
-        // As for shared scalar queries, retain shared syntax and snapshots.
+        // As for shared scalar queries, retain shared syntax and states.
         // Canonicalize genuinely native inputs before locking; the interner
         // itself never walks memory history.
         let selected = |value: &crate::kernel::SharedMachineIntegerTerm| match value.operand_view()
@@ -1680,7 +1680,7 @@ impl EqualityGraph {
         changed
     }
 
-    /// Query int32 equality, addition and registered same-snapshot load congruence.
+    /// Query int32 equality, addition and registered same-state load congruence.
     /// A false answer is unknown. Integer operators use typed operand classes.
     pub(in crate::kernel) fn are_int32_equal(
         &self,
@@ -3344,7 +3344,7 @@ impl EqualityGraph {
 }
 
 /// A raw descriptor of an already registered read is the same selected input
-/// as its retained name. Preserve that exact snapshot before applying the
+/// as its retained name. Preserve that exact state before applying the
 /// legacy comparison form to inputs that do not already have an identity.
 fn exact_read_comparison_input(term: &MachineTerm) -> MachineTerm {
     if let MachineTerm::MemoryLoad(memory, pointer, kind) = term
@@ -4046,10 +4046,10 @@ mod tests {
     }
 
     #[test]
-    fn loads_at_equal_pointers_of_one_snapshot_are_one_value() {
+    fn loads_at_equal_pointers_of_one_state_are_one_value() {
         let memory =
             crate::kernel::intern_memory(crate::kernel::Memory::new().with_block(symbolic(51), 16));
-        // A later snapshot where the cell `p` addresses was written.
+        // A later state where the cell `p` addresses was written.
         let other_memory = crate::kernel::intern_memory(memory.memory().clone().store(
             at(symbolic(41), 0),
             ProgramValue::Int32(MachineTerm::constant(7)),
@@ -4114,7 +4114,7 @@ mod tests {
     }
 
     #[test]
-    fn cross_snapshot_load_equality_requires_a_supplied_conclusion() {
+    fn cross_state_load_equality_requires_a_supplied_conclusion() {
         // The store goes through a pointer structure cannot separate from the
         // cell; only a stated disequality does. The two reads therefore get
         // different names, and only the path's facts make them one value.

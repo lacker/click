@@ -8,7 +8,7 @@ premise.
 The application used to be refused: the premise was reported unavailable
 although the `have` immediately above it had recorded exactly that proposition.
 The theorem's requirement instantiated to
-`holds(Box::Box(p), array-ref(snapshot#1, p))`: the occurrence of `p` inside
+`holds(Box::Box(p), array-ref(state#1, p))`: the occurrence of `p` inside
 the constructor was the loop head's value, and the occurrence passed directly
 as a pointer argument was read at function entry. A pointer parameter has two
 entries in a proof-side environment, its value and the array reference a

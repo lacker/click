@@ -200,7 +200,7 @@ impl super::ProofSearch<PureFactContext> {
                                 )
                         )
                     // Two terms for one value that differ only
-                    // representationally (memory snapshots embedded in loads,
+                    // representationally (memory states embedded in loads,
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls use complete,
                     // input-linear worklists.
@@ -429,7 +429,7 @@ impl super::ProofSearch<PureFactContext> {
     /// General solving may inspect several loadability ranges while planning.
     /// A derivation must retain the successful choice so check does not repeat
     /// that candidate search. Other fact kinds remain available because
-    /// pointer/snapshot equality can depend on explicit frame facts.
+    /// pointer/state equality can depend on explicit frame facts.
     pub(crate) fn atomic_derivation_premises(
         context: &PureFactContext,
         proposition: &Proposition,
@@ -793,7 +793,7 @@ impl super::ProofSearch<PureFactContext> {
             });
             // Condition selection already made the narrow attempt. Its
             // fallback includes frame and quantified dependencies in one
-            // query, rather than retrying a partial snapshot context first.
+            // query, rather than retrying a partial state context first.
             let widths: &[bool] = if condition_goal {
                 &[true]
             } else {
@@ -1669,7 +1669,7 @@ pub(crate) fn reset_condition_selection_visits() {
 }
 
 /// Follow the variable/fact graph through the context's adjacency indexes.
-/// Scalar facts are indexed incrementally; snapshot-dependent facts use a
+/// Scalar facts are indexed incrementally; state-dependent facts use a
 /// complete, lazy index. Each reachable variable and fact is expanded once.
 #[cfg(test)]
 fn connected_condition_premises(
@@ -1891,7 +1891,7 @@ mod condition_premise_tests {
     }
 
     #[test]
-    fn condition_component_keeps_load_address_and_snapshot_variables() {
+    fn condition_component_keeps_load_address_and_state_variables() {
         let pointer = Pointer {
             block: "cell".into(),
             offset: PointerOffsetTerm::scaled_int32_node(term(40), 4),
@@ -2221,7 +2221,7 @@ fn atomic_context_from_facts(
 }
 
 /// Select only the exact order edges covering a native view's prefix. The
-/// ordinary restricted kernel query still decides snapshot transport and
+/// ordinary restricted kernel query still decides state transport and
 /// retirement; a prefix that needs other dependencies uses the usual planner.
 fn native_view_prefix_premises(
     context: &PureFactContext,

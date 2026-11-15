@@ -1,4 +1,4 @@
-# Call-havoc snapshots keep symbolic write sets distinct
+# Call-havoc states keep symbolic write sets distinct
 
 Two callers share a call-havoc marker allocation. The first holds a view of
 the loaded cell beside an empty owned range, so its call writes nothing; the

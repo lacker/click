@@ -1533,7 +1533,7 @@ Goal-local interval checks also use native type bounds, conditional branch
 hulls, casts, and supported arithmetic when the resulting interval decides
 the comparison; wrapping operations conservatively lose their tighter bounds.
 Negated computational conjunctions and disjunctions are evaluated structurally.
-Direct snapshot metadata can establish allocation bounds and initialized
+Direct state metadata can establish allocation bounds and initialized
 integer reads, including a fixed-width read covered by cached bytes. This
 never resolves the read value, follows aliases, or walks store history;
 uncertain lifetime or initialization metadata, or an ambiguous cached-run
@@ -3577,7 +3577,7 @@ explicit `at(...)`. Thus an old comparison of two reads can carry one read
 while the target explicitly keeps the other at its old point, but this route
 does not silently substitute the other's current value. The original source
 fact remains in the proof and is checked by `known()`.
-See `mdtests/snapshot_comparison_transport_expansion.md`.
+See `mdtests/state_comparison_transport_expansion.md`.
 
 When both operands are reads at earlier points, the comparison route can
 preserve both: `transport(at(statement(0).entry, *q == *r), *q == *r)`.

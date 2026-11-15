@@ -31,7 +31,7 @@ fn sequence_child_spelling_visits_only_the_written_elements() {
                     right: ContractExpression::Old(_),
                     ..
                 } => leaves += 1,
-                other => panic!("lost an element's snapshot: {other:?}"),
+                other => panic!("lost an element's state: {other:?}"),
             }
         }
         assert_eq!(leaves, length);
@@ -53,7 +53,7 @@ fn computed_transport_read_selection_is_linear_in_written_expression() {
             ContractExpression::Add(Box::new(left), Box::new(read.clone()))
         });
         let historical = ContractExpression::At {
-            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(0),
                 kind: ProgramPointKind::Entry,
             }),

@@ -53,8 +53,8 @@ fn bindings() -> AlphaBindings {
         integer_scope: 0,
         bitvector_scope: 0,
         next_scope_id: 1,
-        snapshot_aware: false,
-        raw_snapshot_load_seen: false,
+        state_aware: false,
+        raw_state_load_seen: false,
         registered_load_stack: BTreeSet::new(),
         registered_load_memo: HashMap::new(),
         pointer_load_stack: BTreeSet::new(),
@@ -108,24 +108,24 @@ fn pointer_index_keys_match_native_arithmetic_and_opaque_binders() {
                     KernelTerm::machine_binary_shared(ty, op, [leaf_root.clone(), leaf_root]);
                 let value = SharedMachineIntegerTerm::from_shared(ty, root).unwrap();
                 let native = value.structural_value();
-                let expected_snapshot = snapshot_blind_bitvector_key(native);
+                let expected_state = memory_erased_bitvector_key(native);
                 let expected_alpha =
                     alpha_machine_key::<true>(V::Legacy(native), &mut bindings(), &mut 0);
                 let exports = KernelTermExport::machine_export_count();
                 let actual_alpha =
                     alpha_machine_key::<true>(value.operand_view(), &mut bindings(), &mut 0);
                 assert_eq!(expected_alpha, actual_alpha, "{term:?}");
-                let key = snapshot_blind_pointer_offset_key(&offset(
+                let key = memory_erased_pointer_offset_key(&offset(
                     value.clone(),
                     4,
                     ty == MachineIntegerType::UInt64,
                 ));
-                let (SnapshotBlindPointerOffsetNode::Int32Scaled { value: actual, .. }
-                | SnapshotBlindPointerOffsetNode::Int64Scaled { value: actual, .. }) = key.node()
+                let (MemoryErasedPointerOffsetNode::Int32Scaled { value: actual, .. }
+                | MemoryErasedPointerOffsetNode::Int64Scaled { value: actual, .. }) = key.node()
                 else {
                     panic!("scaled key")
                 };
-                assert_eq!(actual, &expected_snapshot);
+                assert_eq!(actual, &expected_state);
                 assert!(
                     proposition_identity_key(&fact(offset(
                         value,
@@ -184,7 +184,7 @@ fn pointer_index_keys_preserve_quantifiers_free_variables_and_stride() {
 }
 
 #[test]
-fn pointer_index_keys_erase_snapshots_only_for_candidate_selection() {
+fn pointer_index_keys_erase_states_only_for_candidate_selection() {
     let _session = VerificationSession::enter();
     let pointer = crate::kernel::Memory::global_pointer("key-read");
     let before = crate::kernel::Memory::new().with_block("key-read", 16);
@@ -210,10 +210,10 @@ fn pointer_index_keys_erase_snapshots_only_for_candidate_selection() {
     let b = make(after, LoadKind::Int32);
     let different_kind = make(before, LoadKind::UInt8);
     let exports = KernelTermExport::machine_export_count();
-    let key = snapshot_blind_proposition_key(&a);
-    assert_eq!(key, snapshot_blind_proposition_key(&b));
+    let key = memory_erased_proposition_key(&a);
+    assert_eq!(key, memory_erased_proposition_key(&b));
     assert!(key.requires_checked_match());
-    assert_ne!(key, snapshot_blind_proposition_key(&different_kind));
+    assert_ne!(key, memory_erased_proposition_key(&different_kind));
     assert_ne!(
         proposition_identity_key(&a).unwrap(),
         proposition_identity_key(&b).unwrap()

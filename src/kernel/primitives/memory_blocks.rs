@@ -5,12 +5,12 @@ use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MemoryBlocks {
-    entries: SnapshotMap<PointerBlock, MemoryBlock>,
-    scalars: SnapshotSet<PointerBlock>,
+    entries: HashedOrdMap<PointerBlock, MemoryBlock>,
+    scalars: HashedOrdSet<PointerBlock>,
 }
 
 impl std::ops::Deref for MemoryBlocks {
-    type Target = SnapshotMap<PointerBlock, MemoryBlock>;
+    type Target = HashedOrdMap<PointerBlock, MemoryBlock>;
     fn deref(&self) -> &Self::Target {
         &self.entries
     }
@@ -57,8 +57,8 @@ impl MemoryBlocks {
             .entries
             .diff(&other.entries)
             .filter_map(|change| match change {
-                SnapshotMapChange::Removed(_) => None,
-                SnapshotMapChange::Added(key) | SnapshotMapChange::Changed(key) => Some((
+                HashedOrdMapChange::Removed(_) => None,
+                HashedOrdMapChange::Added(key) | HashedOrdMapChange::Changed(key) => Some((
                     key.clone(),
                     other.get(key).expect("changed block exists").clone(),
                 )),
@@ -87,9 +87,9 @@ impl MemoryBlocks {
         for other in others {
             for change in self.entries.diff(&other.entries) {
                 match change {
-                    SnapshotMapChange::Removed(_) => {}
-                    SnapshotMapChange::Changed(key) => return Err(key.clone()),
-                    SnapshotMapChange::Added(key) => {
+                    HashedOrdMapChange::Removed(_) => {}
+                    HashedOrdMapChange::Changed(key) => return Err(key.clone()),
+                    HashedOrdMapChange::Added(key) => {
                         let value = other.get(key).expect("an added key is held").clone();
                         if let Some(existing) = union.insert(key.clone(), value.clone())
                             && existing != value

@@ -1,6 +1,6 @@
 # Current memory through an entry-state pointer
 
-The pointer's snapshot and the memory snapshot are independent. The write
+The pointer's state and the memory state are independent. The write
 changes current memory, and assigning the parameter does not change `old(p)`.
 
 ```c filename=current_load_through_old_pointer.c

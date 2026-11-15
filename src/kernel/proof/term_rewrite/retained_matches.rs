@@ -550,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn common_match_pointer_transport_preserves_snapshots_and_avoids_capture() {
+    fn common_match_pointer_transport_preserves_states_and_avoids_capture() {
         let _session = VerificationSession::enter();
         let memory = intern_memory(Memory::new());
         let source = Variable(3);

@@ -449,7 +449,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         let mut path_branch_premises = Vec::new();
         for recorded in execution.presentation.path_branch_premises.iter() {
             if let Some(selector) = bundle.iteration_entry_selector.as_ref()
-                && let Ok(at_iteration_entry) = surface_at_snapshot(recorded, selector)
+                && let Ok(at_iteration_entry) = surface_at_program_point(recorded, selector)
             {
                 path_branch_premises.push(at_iteration_entry);
             }
@@ -509,7 +509,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                     let presentation = PropositionPresentation {
                         surface: crate::surface::proof::surface_synthesis::with_synthesis_binder_names(
                             &bundle.binder_names,
-                            || crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                            || crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_state(
                                 goal,
                                 context.parameter_binding(),
                                 context.old_reference_state(&execution.core.frontier, &execution.core.state),

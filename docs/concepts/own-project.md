@@ -207,7 +207,7 @@ $ click verify label.click
 1 selected proof verified
 ```
 
-Verification now reads the locked snapshot without running GCC, so commit the
+Verification now reads the locked state without running GCC, so commit the
 lock and `.click/` with the project. If you edit `label_fit.c` or
 `include/label_config.h`, verification refuses the stale lock until you run
 `click import lock` again. See

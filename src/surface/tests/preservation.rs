@@ -135,46 +135,52 @@ fn region_footprint_refuses_unrecorded_memory_changes() {
         crate::kernel::Pointer::symbolic(Variable(8_390_200)),
         ProgramValue::Int32(7u32.into()),
     ));
-    let mut snapshots = RecordedSnapshots::new();
-    snapshots.insert(
+    let mut retained_states = RecordedStates::new();
+    retained_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Region(0),
             kind: ProgramPointKind::Entry,
         },
         before,
     );
-    snapshots.insert(
+    retained_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Region(0),
             kind: ProgramPointKind::Exit,
         },
         after,
     );
-    assert!(snapshots.footprint(&CodeRegionRef::Region(0)).is_err());
+    assert!(
+        retained_states
+            .footprint(&CodeRegionRef::Region(0))
+            .is_err()
+    );
 }
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by transport_batch_01")]
-fn region_footprint_identity_survives_unrelated_snapshots() {
+fn region_footprint_identity_survives_unrelated_states() {
     let _session = crate::kernel::VerificationSession::enter();
     let state = ExecutionState::new();
-    let mut snapshots = RecordedSnapshots::new();
-    snapshots.insert(
+    let mut retained_states = RecordedStates::new();
+    retained_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Region(0),
             kind: ProgramPointKind::Entry,
         },
         state.clone(),
     );
-    snapshots.insert(
+    retained_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Region(0),
             kind: ProgramPointKind::Exit,
         },
         state.clone(),
     );
-    let first = snapshots.footprint(&CodeRegionRef::Region(0)).unwrap();
-    snapshots.insert(
+    let first = retained_states
+        .footprint(&CodeRegionRef::Region(0))
+        .unwrap();
+    retained_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Region(1),
             kind: ProgramPointKind::Entry,
@@ -183,7 +189,9 @@ fn region_footprint_identity_survives_unrelated_snapshots() {
     );
     assert_eq!(
         first,
-        snapshots.footprint(&CodeRegionRef::Region(0)).unwrap()
+        retained_states
+            .footprint(&CodeRegionRef::Region(0))
+            .unwrap()
     );
 }
 
@@ -758,8 +766,8 @@ fn known_value_transport_preserves_resource_fields_across_statements() {
 }
 
 #[test]
-fn snapshot_comparison_transport_expands_without_search() {
-    let (source, sources) = mdtest_sources("mdtests/snapshot_comparison_transport_expansion.md");
+fn state_comparison_transport_expands_without_search() {
+    let (source, sources) = mdtest_sources("mdtests/state_comparison_transport_expansion.md");
     let sources = sources
         .iter()
         .map(|(n, s)| (n.as_str(), s.as_str()))
@@ -783,8 +791,8 @@ fn snapshot_comparison_transport_expands_without_search() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by transport_batch_06")]
-fn snapshot_comparison_transport_retains_the_other_operands_snapshot() {
-    let (source, sources) = mdtest_sources("mdtests/snapshot_comparison_transport_expansion.md");
+fn state_comparison_transport_retains_the_other_operands_state() {
+    let (source, sources) = mdtest_sources("mdtests/state_comparison_transport_expansion.md");
     let sources = sources
         .iter()
         .map(|(n, s)| (n.as_str(), s.as_str()))
@@ -820,8 +828,8 @@ fn snapshot_comparison_transport_retains_the_other_operands_snapshot() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by transport_batch_07")]
-fn snapshot_comparison_transport_handles_resource_fields_across_statements() {
-    let (source, sources) = mdtest_sources("mdtests/snapshot_comparison_transport_expansion.md");
+fn state_comparison_transport_handles_resource_fields_across_statements() {
+    let (source, sources) = mdtest_sources("mdtests/state_comparison_transport_expansion.md");
     let c = sources[0].1.replace("*p = 0;", "*p = 0; *p = 1;");
     let source = source.replace("    have *q == 7 by", r#"
     step();
@@ -1469,7 +1477,7 @@ test_batches! {
     ],
     transport_batch_01: [
         region_footprint_refuses_unrecorded_memory_changes,
-        region_footprint_identity_survives_unrelated_snapshots,
+        region_footprint_identity_survives_unrelated_states,
         preserve_checks_named_resource_field,
         preserve_checks_integer_resource_field,
     ],
@@ -1500,10 +1508,10 @@ test_batches! {
         inequality_transport_handles_multiple_statements_and_resource_fields,
         known_value_transport_expands_to_ordinary_steps,
         known_value_transport_preserves_resource_fields_across_statements,
-        snapshot_comparison_transport_retains_the_other_operands_snapshot,
+        state_comparison_transport_retains_the_other_operands_state,
     ],
     transport_batch_07: [
-        snapshot_comparison_transport_handles_resource_fields_across_statements,
+        state_comparison_transport_handles_resource_fields_across_statements,
         two_read_transport_refuses_changed_reads_and_missing_source,
         two_read_transport_handles_resources_and_multiple_statements,
         conjunction_transport_requires_both_facts_and_preservations,
@@ -1517,7 +1525,7 @@ test_batches! {
 #[test]
 #[ignore = "nightly: computed scalar transport expansion and cold replay"]
 fn computed_scalar_transport_expands_read_preservation() {
-    let (source, sources) = mdtest_sources("mdtests/snapshot_comparison_transport_expansion.md");
+    let (source, sources) = mdtest_sources("mdtests/state_comparison_transport_expansion.md");
     let source = source.replace("*q == 7", "*q + 1 == 8");
     let sources = sources
         .iter()

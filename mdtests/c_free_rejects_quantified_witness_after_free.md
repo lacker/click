@@ -1,8 +1,8 @@
 # a quantified load fact does not witness viewability after free
 
 `zero_one` publishes `forall k. 0 <= k and k < 1 implies p[k] == 0`, a
-fact about loads in the snapshot before `free(p)`. That fact must not
-certify that `result[j]` is viewable in the final snapshot, where the
+fact about loads in the state before `free(p)`. That fact must not
+certify that `result[j]` is viewable in the final state, where the
 allocation is gone.
 
 ```c filename=zero_one.c

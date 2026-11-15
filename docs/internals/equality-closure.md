@@ -5,7 +5,7 @@ graph of pointer, offset, and integer equalities that memory and resource
 reasoning query.
 
 The trusted persistent graph maintains affine pointer classes, offset and
-int32 congruence, and registered same-snapshot pointer, four-byte scalar, and
+int32 congruence, and registered same-state pointer, four-byte scalar, and
 complete eight-byte scalar loads. Normalization, transport, memory,
 resource-value, range, and resource-lookup consumers query it. Ordinary C
 pointer loads keep a storage-relative representation. Wider theories mentioned
@@ -88,7 +88,7 @@ This supplies no ownership or read permission.
 
 Query registration does not admit type evidence. Opaque call arguments can
 retain annotations from another interning context and are never used as type
-support. Alternative arms, binder bodies, snapshots, weak C declaration
+support. Alternative arms, binder bodies, states, weak C declaration
 metadata, and destination casts do not
 supply positive support. Branches fork the persistent index. Condition and
 proposition sources have separate indexes so
@@ -166,9 +166,9 @@ nested pointer calls and scalar reads; a draining guard prevents nested argument
 registration from recursively entering the queue. The ordinary parent-use index
 propagates late argument aliases without scanning ambient facts. Signatures
 retain function identity, argument order and types, and array-reference read
-snapshots. Calls grant no ownership or separation, and equal results do not
+states. Calls grant no ownership or separation, and equal results do not
 imply equal arguments. The `pointer_call_tests` unit and scaling modules exercise
-late model aliases, nested calls, snapshots, missing premises, and selected work at
+late model aliases, nested calls, states, missing premises, and selected work at
 multiple input sizes. The surface regression is
 `mdtests/pure_pointer_call_congruence.md`.
 
@@ -204,7 +204,7 @@ Registration visits only selected expressions; shared Integer DAG nodes are
 visited once per registration. Curried applications use the existing indexed
 parent-use propagation for late equalities. There is no ambient-fact scan,
 function unfolding, cancellation, or arithmetic search. Existing branch,
-restriction, and snapshot scope rules apply unchanged. Regressions live in
+restriction, and state scope rules apply unchanged. Regressions live in
 `integer_tests`, `ordinary_expression_tests`, and their scaling counterparts;
 `mdtests/integer_count_model_congruence.md` exercises source-level count lookup.
 
@@ -216,7 +216,7 @@ argument and a bounded shape selector; pointer arguments become typed holes
 in that selector, while other arguments and memory versions remain. Matching
 checks all pointer arguments through equality closure with equal C types and
 all other arguments exactly, including the complete C state. This supplies
-pointer substitution only, without unfolding or snapshot transport. Exact
+pointer substitution only, without unfolding or state transport. Exact
 membership still controls admission and provenance.
 
 The same bucket mechanism indexes nominal callback witnesses by contract name.
@@ -231,7 +231,7 @@ through an unchanged C callback table.
 
 ## Shared typed pointer reads
 
-A registered typed pointer read is a congruence application of its snapshot
+A registered typed pointer read is a congruence application of its state
 read identity, complete address, and load interpretation. Complete address
 classes, rather than only affine block coordinates, determine equality of
 these applications. The existing parent-use index propagates late address
@@ -243,15 +243,15 @@ read equality or enumerating aliases. The pending stream is persistent so a
 context fork cannot copy unrelated deferred work.
 
 This rule establishes values only: it supplies
-no read authority, initialization, allocation identity, or cross-snapshot
-frame proof. Snapshot read identities retain their existing independently
+no read authority, initialization, allocation identity, or cross-state
+frame proof. Memory state read identities retain their existing independently
 checked representation-only normalization.
 
 Immutable definitions and checked read evidence serve different purposes.
 An existing C value can keep its original load definition when a later read
 returns it from a cached cell. A checked resource-index evaluation retains
-that later snapshot and selected address in its certified producer binding.
-After its prerequisites pass, it admits `value == Read(snapshot, address)`
+that later state and selected address in its certified producer binding.
+After its prerequisites pass, it admits `value == Read(retained_state, address)`
 through the graph's existing checked-equality input. It does not mutate the
 value's definition or install a global observation. The input is branch-local
 and retained by input checkpoints; rebuilding a context without its evidence drops it.
@@ -260,10 +260,10 @@ definitions as full-pointer queries. Registration visits only the selected
 operands; it never infers pointer-block identity from equal offsets.
 
 A checked pointer store also emits the equation between its complete stored
-value and the typed read at the written address in the resulting snapshot.
+value and the typed read at the written address in the resulting state.
 The equation travels with the certified execution facts into the ordinary
 graph, so an equal-address query does not require a preliminary read through
-the store spelling. It relates only that snapshot; a subsequent write needs
+the store spelling. It relates only that state; a subsequent write needs
 its own preservation evidence. Scalar or partial stores do not emit pointer
 value equations.
 
@@ -282,9 +282,9 @@ bodies keep their equations local. Changed cells, missing aliases, restricted
 contexts, and narrower scalar reads cannot reuse the old relation. No read
 permission is introduced.
 A call's postconditions are lowered against the caller's own post-call
-snapshot, so their reads are the caller's reads and need no bridge
+state, so their reads are the caller's reads and need no bridge
 (`mdtests/a_call_postcondition_cast_is_available_after_the_call.md`).
-Diagnostic snapshot histories remain explanatory metadata, never proof evidence.
+Diagnostic state histories remain explanatory metadata, never proof evidence.
 
 Compound pointer and offset queries retain the generation at which their read
 dependencies were registered. Repeated queries reuse that result; a newly registered logical
@@ -317,13 +317,13 @@ class, never the destination type's class. A bare address remains unclassified,
 and unavailable origin evidence cannot supply a class. Loop
 object-class joins and incompatible-access checks remain in force.
 
-A `Bits64` read uses its registered defining snapshot and complete address,
+A `Bits64` read uses its registered defining state and complete address,
 with an eight-byte producer-width check for named scalar reads. It is a
 separate application sort from pointer reads and int32 values. Equal addresses
-at that snapshot therefore produce equal words, and the ordinary parent-use
+at that state therefore produce equal words, and the ordinary parent-use
 index propagates that equality through surrounding expressions. Different
-snapshots are not unified by this registration; existing checked frame or
-copy evidence must establish any cross-snapshot equality.
+states are not unified by this registration; existing checked frame or
+copy evidence must establish any cross-state equality.
 
 Exact wide premises are retained as typed edges for context rebuilding. Derived resource indexes receive them through the same
 persistent input history. Ordinary condition and required-obligation checking
@@ -346,13 +346,13 @@ through the existing parent-use index; queries never scan ambient facts.
 
 Machine-valued Click function applications also have congruence signatures.
 Their argument list uses shallow binary application nodes, preserving function
-identity, result width, argument order, C types, and array-reference snapshot
+identity, result width, argument order, C types, and array-reference state
 identity. Int32, UInt32, UInt64 and pointer arguments use the existing scalar
 and complete-address classes. Other arguments, including binder-bearing
 algebraic and mathematical Integer expressions, currently retain exact opaque
 identity. Legacy applications without argument sorts also remain opaque. This
 does not introduce injectivity, arithmetic solving, memory permissions, or
-implicit equality between different snapshots.
+implicit equality between different states.
 
 Condition truth follows scoped persistent graph forks. Its exact support is
 retained for rebuilding after replacement or context restriction;
@@ -372,13 +372,13 @@ Pointer operations keep pointer-typed operands; `add_offset_equality` and
 `are_offsets_equal` accept whole pointer-offset terms. Supported pointer-load
 applications and offset terms register on demand during insertion and queries.
 `add_int32_equality` and `are_int32_equal` admit and query explicit int32
-equalities, addition congruence, and registered same-snapshot int32 load congruence. The uint64 interface above extends the same closure to wide reads and selected
+equalities, addition congruence, and registered same-state int32 load congruence. The uint64 interface above extends the same closure to wide reads and selected
 wide expressions. Further sorts and consumers remain separate work. `pointer_is_classed` and `pointer_spellings` are explicitly
 pointer-specific compatibility helpers for legacy consumers.
 
 Every read application (pointer, int32 and uint64) takes the read's
 *numeric* address, `UInt64Address(address class)`, as its operand, not the
-pointer's address class. Memory is addressed, so two reads of one snapshot at
+pointer's address class. Memory is addressed, so two reads of one state at
 equal addresses read the same bytes. A C pointer comparison states only a
 uint64 address equality (`program_pointer_comparison_condition`), which merges the
 two numeric addresses and so the reads, but never the address classes that
@@ -396,12 +396,12 @@ Term interning and affine decomposition run under the graph mutex and do not
 canonicalize memory or traverse its history. Public scalar and offset equality
 queries normalize their selected scalar indices before locking while preserving
 the offset expression's addition nodes. A raw scalar read can
-receive an exact-snapshot observation name with its recorded kind and access
+receive an exact-state observation name with its recorded kind and access
 width; that internal definition introduces no path proposition or read authority.
-A different snapshot still needs the existing checked normalization or frame
+A different state still needs the existing checked normalization or frame
 bridge. `raw_read_address_registration_does_not_walk_memory_history` measures
 selected registration beside 0, 16, 64 and 256 unrelated classes. The existing
-snapshot/support regression separately checks raw/named equality and premise scope.
+state/support regression separately checks raw/named equality and premise scope.
 
 Kernel consumers use `PureFactContext::pointers_known_equal(left, right)`
 for equality already established by this trusted graph. It neither searches
@@ -415,7 +415,7 @@ Kernel rules may trust the graph's answers in their own proof context. There
 is no `explain` API or separate derivation checker. Expanded proofs can use
 simple kernel equality queries; expansion need not print the internal
 congruence steps. Such a consumer must preserve the checked premises, branch,
-load interpretation, and memory snapshot of the query. Cloning shares
+load interpretation, and memory state of the query. Cloning shares
 persistent storage while keeping subsequent additions branch-local.
 
 `normalize() using { ... }` queries this existing graph while reducing
@@ -424,7 +424,7 @@ Successful queries replace equality conditions with true; unsuccessful queries
 leave them unknown. The same traversal handles equality leaves and nested
 conditions. Graph queries may use ambient graph facts; the `using` list
 restricts the additional conditions used for reduction. All cited premises must still be available and
-supported. Other ambient facts, quantified bodies, and cross-snapshot frame
+supported. Other ambient facts, quantified bodies, and cross-state frame
 search remain outside this operation. Expansion retains the simple step and
 rechecks it in the same proof context, without an explanation API or a
 per-tactic graph rebuild. Restricted `solve() using` planning checks a
@@ -444,7 +444,7 @@ so equal operands establish equal sums. Indexed parent uses
 propagate late merges through nested additions with an iterative worklist;
 parents of the lighter class are revisited. When a class first acquires a
 literal value, its existing parents also receive constant evaluation. It preserves widths,
-signedness, and machine-term snapshot identity, and adds no arithmetic solver
+signedness, and machine-term state identity, and adds no arithmetic solver
 or cancellation rule. Queries and additions use indexed access. Existing
 context restriction rebuilds retain all graph
 fragments from their remaining exact equality indexes. The pointer query
@@ -494,20 +494,20 @@ definedness obligation. Registration canonicalizes each
 input once before walking its supported constructors. Literal sums use the
 kernel bitvector wrapping semantics; equality does not prove C signed
 definedness. No commutativity, cancellation, or arithmetic solver is added. The graph preserves canonical machine-term identity, including
-memory snapshots. Int32 scaling is a congruent application: equal indices
+memory states. Int32 scaling is a congruent application: equal indices
 with the same byte width give equal offsets, and existing offset addition
 applications propagate that equality. Parent-use indexes handle late scalar
 merges in the same worklist. Literal indices join their folded byte constants
 when multiplication fits i64. This does not infer congruence for unsupported scalar operations,
 64-bit or mathematical-integer equality, or general injectivity of offset constructors. Exact scalar premises are filed under shallow canonical edge keys. `MemoryLoad`
 expressions are not separately interned for support tracking: that would allow
-cross-arena snapshot comparisons to traverse unrelated memory.
+cross-arena state comparisons to traverse unrelated memory.
 
 Checked signed int32 addition-overflow facts use the same predicate classes.
 Overflow checking consults this retained truth before reconstructing operand
 intervals, including the reversed operand order of this symmetric predicate.
 Thus an established `defined(x + z)` follows checked aliases of `x` and `z`;
-equality alone never establishes definedness. Branches and snapshots retain
+equality alone never establishes definedness. Branches and states retain
 the ordinary typed graph scope, and this predicate does not match subtraction
 or a 64-bit overflow condition.
 
@@ -536,7 +536,7 @@ test `a_byte_product_merge_is_keyed_and_ignores_unrelated_products`.
 
 Constant endpoints of checked signed int32 order facts annotate their value
 class with an interval. A class union intersects these intervals, so overflow
-checking can use bounds supplied on an equal variable or a same-snapshot read.
+checking can use bounds supplied on an equal variable or a same-state read.
 The annotations are persistent across forks and are rebuilt from the selected
 facts after restriction. Strict and complemented comparisons retain their signed
 meaning; unsigned and 64-bit comparisons do not contribute. This ranges the
@@ -584,7 +584,7 @@ revisit it after a later typed read of the cell, and would know less than one
 rebuilt from the same facts
 (`a_store_equation_admitted_before_a_typed_read_joins_reads_at_equal_indexes`). The general memory and expression reasoning APIs still perform
 their explicit checked judgments; the known-value query does no arithmetic
-search or snapshot transport.
+search or state transport.
 
 The lazy exact-equality index remains for consumers that enumerate aliases or
 produce premise-path evidence. Those are distinct operations, not a second
@@ -592,7 +592,7 @@ Boolean equality checker.
 
 Wide-read alias checks retain the latest producer observation for each load
 identity in the current function epoch. Assigning a load identity, including a
-cache hit, records its complete live snapshot and address. Two model match arms
+cache hit, records its complete live state and address. Two model match arms
 can reuse one identity while their live histories are
 unconnected; the selected check tries these observations before its original
 origin-based rule. Both routes retain the eight-byte kind and check pointer
@@ -650,35 +650,35 @@ reorder addition. Other checked addend rules still cover forms outside this grap
 Direct memory-resource matching queries graph equality for its int32 range
 start and end values through the shared known-value query. These fields are
 scalar values, not byte-offset equivalences; the resource base still follows
-its separate pointer check. Congruent sums and registered same-snapshot loads
-can therefore identify equal range endpoints, while changed snapshots and
+its separate pointer check. Congruent sums and registered same-state loads
+can therefore identify equal range endpoints, while changed states and
 missing premises remain distinct.
 
 The checked `ProgramValue::Int32` value comparison queries the graph before its
 broader memory-resolution path. Direct composite, token, and instance matching
 use that shared typed rule for resource arguments and instance fields, rather
 than maintaining a resource-specific graph check. Byte-typed values and pointer
-arguments retain their separate rules. Registered loads in one snapshot may
-match as values, while changed snapshots and missing premises do not.
+arguments retain their separate rules. Registered loads in one state may
+match as values, while changed states and missing premises do not.
 Multi-size regressions check that graph matches avoid building the legacy fact
 index.
 
 Contract certification's `int32` equality check uses this typed int32
-value rule after its checked cross-snapshot load rule. Graph-congruent sums and
-same-snapshot loads therefore certify without searching the legacy fact index;
-changed snapshots and missing premises still fail. This affects scalar
+value rule after its checked cross-state load rule. Graph-congruent sums and
+same-state loads therefore certify without searching the legacy fact index;
+changed states and missing premises still fail. This affects scalar
 equality claims, not pointer-offset certification.
 
 Certification of call- and loop-havoc mutable-range lists uses the typed
 int32 value rule for each start and end, after separate width and pointer-base
 checks. The general range-endpoint helper also serves scaled pointer offsets;
 it has not been changed to accept wrapping graph equality as exact address
-equality. Regressions cover same-snapshot loads, changed snapshots, missing
+equality. Regressions cover same-state loads, changed states, missing
 premises, width mismatch, and multi-size queries without the legacy fact index.
 
 The structural, memory-resolution, and covering-span loadable-range readers
 share one typed int32 value rule for matching byte extents at the same
-base. Their callers retain the range-availability check for the goal snapshot;
+base. Their callers retain the range-availability check for the goal state;
 equal extents do not supply viewability by themselves. Tests retain the
 loadable-premise and base boundaries and check direct multi-size queries
 without the legacy fact index.
@@ -698,19 +698,19 @@ search every order fact for a graph-equivalent endpoint.
 The kernel comparison of condition facts for certified transport uses the
 typed int32 value rule for operands of matching signed-order or equality
 conditions. Condition kind and truth value must still match. Registered loads
-remain scoped to their defining snapshot, and a context without the premise
+remain scoped to their defining state, and a context without the premise
 lacks its consequences. Multi-size queries avoid the legacy fact index.
 
 Allocation continuity across a call compares its two 32-bit size values
 through the typed graph rule after the separate allocation-base check. This
 does not use wrapping value equality to establish pointer-base equality.
-Regressions cover same-snapshot loads, overwrite and missing-premise boundaries,
+Regressions cover same-state loads, overwrite and missing-premise boundaries,
 different bases, and multi-size graph queries without the legacy fact index.
 
 After indexed resource matching misses, the zero-ownership fallback uses
 the typed int32 graph rule for the required quantity. This is value equality
 with zero, not a resource-key or pointer match. Regressions cover graph-
-congruent registered loads, changed snapshots, missing premises, and
+congruent registered loads, changed states, missing premises, and
 multi-size zero-quantity queries without the legacy fact index.
 
 For a range pair already selected for composition, endpoint comparison uses
@@ -721,20 +721,20 @@ every pair whose endpoints become equal only through graph congruence.
 
 After the existing memory resolver establishes a four-byte scalar load's
 value, load equality compares it through the shared int32 query. Resolution still supplies the value in the
-load's snapshot; graph equality neither resolves stores nor grants read or
+load's state; graph equality neither resolves stores nor grants read or
 frame permission. Other load widths keep their existing comparison path.
-Regressions cover both comparison directions, a changed snapshot, missing
+Regressions cover both comparison directions, a changed state, missing
 premises, a one-byte load, and multi-size query work.
 
 When both operands are resolved four-byte loads, the same path compares their
 checked stored values through the same graph query. Neither load's opaque name needs to equal the other load's stored term.
-Each value still comes from its own recorded snapshot. Changed or missing
+Each value still comes from its own recorded state. Changed or missing
 evidence and a resolved one-byte read do not use this two-load rule.
 
 Registered four-byte scalar loads also participate as int32 applications. Their
-signature contains the registered defining snapshot's read identity and the
+signature contains the registered defining state's read identity and the
 complete address class, as pointer and uint64 reads do. A checked address
-equality therefore gives equal reads at that snapshot, even when its block
+equality therefore gives equal reads at that state, even when its block
 relation has no affine spelling. Late address merges propagate through the
 same parent-use index as addition and scaling.
 
@@ -744,9 +744,9 @@ retained by its typed producer; matching arithmetic without that metadata is
 not a pointer read. These operations inspect the selected expression and new
 parent uses, without scanning unrelated definitions or address spellings.
 
-The defining snapshot can already be an assumption-free canonical projection.
+The defining state can already be an assumption-free canonical projection.
 The graph uses that registered definition, never the mutable live origin. It
-does not infer a new address relationship or equate distinct defining snapshots,
+does not infer a new address relationship or equate distinct defining states,
 search for frame evidence, resolve stores, or grant read permission. Unregistered, unknown-width,
 and other-width loads remain opaque. Existing canonicalization can independently
 retain a value across a justified memory change; this slice adds no new rule
@@ -755,12 +755,12 @@ for doing so. Global load naming remains independent of contextual equality.
 Checked transport conclusions enter the ordinary int32 equality interface.
 For example, after a store to `p[k]`, explicit transport can use `i != k` to
 prove that `p[i]` equals its entry value. With `i == j`, normalization then
-combines this edge with current-snapshot load congruence to prove the same for
-`p[j]`. The graph needs no frame search or snapshot-merging operation.
+combines this edge with current-state load congruence to prove the same for
+`p[j]`. The graph needs no frame search or state-merging operation.
 [The executable composition example](https://github.com/clicklang/click/blob/master/mdtests/normalize_using_transported_int32_loads.md)
 keeps the transport and graph steps explicit. Regression tests remove either
 premise or the bridge, reject an overlapping store, recheck expansion, and
-verify that a context without the bridge lacks only its cross-snapshot consequences.
+verify that a context without the bridge lacks only its cross-state consequences.
 
 ## Scope
 
@@ -769,7 +769,7 @@ kernel keeps one persistent equality service using congruence closure without
 saturation. Hypotheses, checked proof steps, and execution contribute
 equalities; congruence propagates them through registered applications. The
 service does not invent rewrite rules or search arithmetic identities.
-Ordering, general arithmetic, and cross-snapshot frame derivation remain
+Ordering, general arithmetic, and cross-state frame derivation remain
 outside the closure; a checked theorem from one of those procedures can
 contribute an equality to it.
 
@@ -795,13 +795,13 @@ A typed pointer-load application in the equality graph denotes the stored
 value independently of the storage address spelling and pointee width. The
 graph can answer equality of two such applications without replacing the
 `Pointer` values produced by C execution. A live caller must supply the actual
-defining snapshot and address from a typed load site or checked evidence. A
+defining state and address from a typed load site or checked evidence. A
 loaded value is spelled only by its `LoadedPointer` name; an address indexed
 by a loaded scalar (`a[*p]`) is pointer arithmetic, never a read.
 
 The bridge from a completed nonvolatile C pointer read to the graph
 application is execution evidence scoped to that path. The typed producer
-registers its value with the exact defining snapshot and address; only a
+registers its value with the exact defining state and address; only a
 matching defining equation in the path's fact context files the equality in
 the graph. It is not published as an ordinary proposition premise: doing so
 changes a statement theorem from `Executes` to `bridge => Executes` and makes
@@ -818,7 +818,7 @@ contexts within one verification session, like load-variable interning;
 address hypotheses, unions, and their consequences remain in persistent
 path-local graph roots. Reconstructing a context must not forget what a logical
 term denotes. Registration never decodes arbitrary pointer arithmetic and adds
-no proposition premise, ownership, read validity, or cross-snapshot equality.
+no proposition premise, ownership, read validity, or cross-state equality.
 Each query registers only its named values and their recorded dependencies.
 Filing a checked pointer equality also registers the producer definitions of
 its two operands. A later query can therefore use a read hidden behind another
@@ -832,14 +832,14 @@ checks this after an unfold publishes address equality.
 
 An explicit pointer rewrite uses this producer metadata to distinguish a
 pointer-valued read from ordinary address arithmetic. For a registered read,
-it rewrites the defining address at the read's original snapshot and names
+it rewrites the defining address at the read's original state and names
 that rewritten read. It does not add the owner's alias displacement to the
-loaded value. Resolving the new address against the original snapshot keeps
+loaded value. Resolving the new address against the original state keeps
 cached child identities across a joined loop; a projection for the old address
 alone is insufficient. Naming uses exact recorded reads and cached pointer
-cells; a cold read keeps its snapshot application without searching history.
+cells; a cold read keeps its state application without searching history.
 A complete pointer value cached at the rewritten address is returned directly
-from that snapshot, including after a pointer store.
+from that state, including after a pointer store.
 The joined-pointer-field fixtures cover the explicit
 rewrite and rejection of an equality about a different field.
 
@@ -851,11 +851,11 @@ metadata just as the symbolic pointer-read route does. Ordinary propositions
 and volatile reads cannot supply it. `mdtests/egraph_recursive_child_alias.md`
 checks unfold at one parent spelling and fold at an equal model identity,
 without intermediate field-load claims or C writes. This does not transport
-loads across different snapshots.
+loads across different states.
 
 
 The kernel has a distinct `PointerLoadId`, `PointerBlock::LoadedPointer`,
-and a constructor/decoder pair for `(defining snapshot, address, displacement)`.
+and a constructor/decoder pair for `(defining retained_state, address, displacement)`.
 The equality graph indexes this explicit pointer application without consulting
 the scalar load registry's mutable access width. Ordinary C pointer-load
 producers still create the storage-relative form; their checked path-context
@@ -875,16 +875,16 @@ The graph records an exact offset equality when a congruence merge joins two
 pointers already in one block class. Account for affine expression size when
 describing merge cost.
 
-### Loads and memory snapshots
+### Loads and memory states
 
-Model a load as an application keyed by its snapshot, address, and access
+Model a load as an application keyed by its state, address, and access
 interpretation (sort/width and any other distinctions required by memory
 semantics). The semantic key is explicit even when an external registry
 supplies it.
 
 The typed graph query uses a distinct pointer-load name and an explicit
 loaded-pointer block variant, rather than hiding another sort in the scalar
-load-variable range. Its key is the assumption-free canonical snapshot,
+load-variable range. Its key is the assumption-free canonical state,
 address, and pointer interpretation (object-pointer value, eight-byte access).
 Pointee type remains on the C value and is not key material. Live origin/epoch
 metadata is separate from that defining key. The widthless scalar load
@@ -900,7 +900,7 @@ uses the graph's explicit loaded-pointer node as the C execution value, its
 constructor, decoder, substitution, provenance, and rendering consumers must
 be reviewed together. The current equality query requires none of that.
 
-Equal addresses at one snapshot imply equal compatible loads. This must hold
+Equal addresses at one state imply equal compatible loads. This must hold
 whether the loads were registered before or after the address equality, and
 whether either load already belongs to another explicit class. For example:
 
@@ -915,7 +915,7 @@ x == y
 The answer must survive extra facts and all insertion orders. Nested loads
 must obey the same rule without a fixed nesting-depth limit.
 
-A read also equals the value its snapshot stores at an equal address under
+A read also equals the value its state stores at an equal address under
 another spelling: after a store through `p`, a read through `id` equals the
 stored value once `p == id`. Lowering keeps the read's own term and does not
 respell the address through the equality (lowering is fact-stable,
@@ -924,9 +924,9 @@ the equality. The rule is in `TermClasses::equate_read_with_aliased_cell`. It
 spells the read's address in each member of its pointer block class, which the
 term classes mirror from the block union-find (`join_block_classes`), and looks
 up a cell at each spelling: one lookup per member, in the read's naming
-snapshot. A load variable read in another value of that same snapshot (an
-observed cell keeps the snapshot identity) is also looked up there; an origin
-at another snapshot is not. A read that finds no cell waits under its class
+state. A load variable read in another value of that same state (an
+observed cell keeps the state identity) is also looked up there; an origin
+at another state is not. A read that finds no cell waits under its class
 root; a later block union looks again in the members it brings, so the answer
 does not depend on whether the read or the pointer equality came first.
 Integer and 64-bit reads take part, and a function pointer read meets a stored
@@ -948,7 +948,7 @@ spellings still authorize no conversion. Regressions:
 `mdtests/packed_pointer_loop_object_class.md` and the scaling test
 `a_recorded_address_fact_is_found_through_its_word_class_without_scanning`.
 
-Different snapshots do not become equal merely because addresses match.
+Different states do not become equal merely because addresses match.
 Execution may preserve a load name through its existing checked unchanged-cell
 rule. Additional frame reasoning belongs to explicit transport or the checked
 execution rule that needs it, and contributes justified equalities to the
@@ -965,12 +965,12 @@ information, but mere inequality of term IDs proves no separation.
 
 Do not infer a pointer's provenance from the spelling of the cell that held
 it. Do not infer an allocation's birth from a contract allocation claim or
-from absence in a projected snapshot. The existing special rules for hidden
+from absence in a projected state. The existing special rules for hidden
 locals and later-declared locals need their exact preconditions retained.
 Any broader rule needs its own positive and negative tests.
 
-Snapshots form a DAG. A proposed class attribute such as "earliest birth"
-needs a semantic ordering and evidence valid in the current path; snapshot IDs
+Memory states form a DAG. A proposed class attribute such as "earliest birth"
+needs a semantic ordering and evidence valid in the current path; state IDs
 or unrelated branch timestamps do not provide that ordering.
 
 ## Incremental closure and indexing
@@ -991,9 +991,9 @@ Class weight counts blocks and application uses, so high-fanout classes remain
 on the heavy side of a merge. A context clone copies persistent roots into its
 own lock; query registration cannot mutate a sibling's closure.
 
-Signature keys (`LoadSignature`) contain snapshot arena identity,
+Signature keys (`LoadSignature`) contain state arena identity,
 representative block identity, an affine-offset ID, and the load kind. Offset sequences are interned with shallow prefix keys
-and retained machine-atom IDs. This removes deep snapshot/term comparison from
+and retained machine-atom IDs. This removes deep state/term comparison from
 signature lookup. Explicit affine syntax is normalized with an iterative walk;
 legacy spelling output sorts structurally rather than by interning order.
 The existing weighted affine payload operations still need broader scaling
@@ -1011,7 +1011,7 @@ pointer-class merge stream. Memory facts have a raw block/affine-base index
 maintained at insertion and removal, so a cold lookup can pair that index
 without scanning the resource store. The initial execution proof boundary
 registers the selected resource input's starts as typed graph address
-applications. Successors register only newly published occurrences. A paired snapshot retains both resource and graph checkpoints;
+applications. Successors register only newly published occurrences. A paired state retains both resource and graph checkpoints;
 execution proof-step boundaries advance it using exact occurrence deltas and
 class merges. Forks share those roots and have independent cache locks.
 A restricted or sibling context starts from raw roots and its own graph's
@@ -1040,7 +1040,7 @@ choosing its address coordinates. A loaded pointer can have a variable offset
 within its storage block; only the displacement from that complete base needs
 to be constant. Dropping the offset would give an unrelated read identity for
 an unchanged field after a helper call. Address selection grants neither read
-permission nor equality between different snapshots.
+permission nor equality between different states.
 
 Specification reads also use the paired index for concrete affine addresses in classes whose memory entries
 all have positive concrete read cores. A persistent AVL interval tree stores
@@ -1056,7 +1056,7 @@ classifier described below. Positive hits retain their suppliers even when
 coverage is incomplete. Neither case scans unrelated resources, including
 resources published before a later address equality.
 Whole-cell read hits also use an exact-start payload attached to typed graph
-address classes. Offset congruence and late same-snapshot loaded-pointer
+address classes. Offset congruence and late same-state loaded-pointer
 merges update this payload through the graph's persistent term-merge stream.
 Block merges translate only affected registered address applications. Payload
 unions retain the larger entry set, even when the graph chooses the other root.
@@ -1071,7 +1071,7 @@ both the complete fold-candidate set and these read sets. Each occurrence
 contributes at most two footprints (including the logical pointer-slot rule),
 and merges move both indexes from the smaller occurrence payload. Input
 registration still belongs to the execution proof boundary. An unbound class
-is unknown: scalar arithmetic or snapshot transport may justify an equality
+is unknown: scalar arithmetic or state transport may justify an equality
 outside this closure, but permission lookup cannot search for that evidence.
 Candidate delivery is lazy; equality selects the
 occurrence's own start and the ordinary checker still validates its quantity,
@@ -1112,7 +1112,7 @@ cannot shadow a completed registered ancestor.
 
 An index with no memory occurrences has no class-keyed IDs to translate. It
 captures the already-closed source graph in constant work. The first memory
-occurrence can therefore use that snapshot, including in a preexisting
+occurrence can therefore use that state, including in a preexisting
 sibling, without walking unrelated scalar equality inputs. Empty-input
 capture and subsequent attachment have deterministic scaling regressions.
 
@@ -1207,7 +1207,7 @@ exact-size view cannot hide a larger owner. The read and write payloads share
 the existing footprint/width eligibility rule and move only the smaller
 occurrence payload on a class merge. Exact candidates do not depend on an
 affine coordinate bucket. Unbound footprints and unsupported containment or
-snapshot shapes proceed through the shared candidate classifier below; when
+state shapes proceed through the shared candidate classifier below; when
 it cannot select a supplier, permission is refused. Unknown equality is not
 disequality. The existing logical pointer-cell width
 rule is preserved for both access judgments. Input registration remains a
@@ -1220,7 +1220,7 @@ branch's equalities. A resource lookup therefore needs no preliminary equality
 query to recognize `load(a)` and `load(b)` after proving `a = b`. It registers
 no unrelated reads or resources and introduces no premise or access authority.
 The regression asks the read and write indexes directly before any equality
-warm-up, rejects sibling, displacement, width, and snapshot mismatches, and
+warm-up, rejects sibling, displacement, width, and state mismatches, and
 checks cold address registration at multiple unrelated-definition counts.
 
 Structural "already held" range checks do not scan a pointer block's
@@ -1231,7 +1231,7 @@ persistent roots, and branch copies share them. Reads use the shared graph
 candidate service.
 
 The structural index is part of the trusted kernel. Shape fingerprints ignore
-snapshots only to select candidates for the existing structural judgment; a
+states only to select candidates for the existing structural judgment; a
 hash match or collision never proves pointer equality, range containment,
 initialization, or permission. Each selected occurrence still passes the
 original range check. Proved graph aliases do not become structural matches.
@@ -1261,7 +1261,7 @@ that owner's checked children also uses checked construction before consuming
 the requested frontier. It retains graph candidate selection while ordinary
 resource consumption checks quantity, ownership, and sufficient coverage;
 partial consumption leaves only the residual authority in a proof-local fork.
-Branch isolation, read width, double consumption, partial coverage, snapshot
+Branch isolation, read width, double consumption, partial coverage, state
 isolation, and scaling against unrelated facts and caller resources are covered.
 Normalization refreshes existing attachments when it replaces occurrences.
 
@@ -1274,7 +1274,7 @@ consuming `a[0..1]` from `a[0..3]`, a context with `a = b = c` recognizes
 its residual `a[1..3]` as satisfying `c[1..3]`, without restoring the consumed
 prefix or changing either retained representation. This graph and its index
 are part of the trusted kernel. Regressions cover sibling-context isolation,
-view refusal, insufficient coverage, preserved snapshots, and multi-size
+view refusal, insufficient coverage, preserved states, and multi-size
 scaling beside unrelated resources and equalities. The retained supplier
 interface below also covers explicit fragment composition; unsupported
 symbolic matching refuses without an ambient retry.
@@ -1311,7 +1311,7 @@ resource/graph pairing therefore maintains an additional persistent index
 for exact symbolic byte footprints beside the existing exact start-address index.
 A footprint is a typed
 graph application of its start and end address classes. Congruence propagates
-late base, scalar endpoint, and retained same-snapshot load equalities through
+late base, scalar endpoint, and retained same-state load equalities through
 that application. These applications and their occurrence payloads are part of
 the trusted kernel. They establish neither coverage nor permission.
 
@@ -1344,7 +1344,7 @@ opaque occurrence handle. Expansion emits ordinary proof source, and fresh
 verification reconstructs its checked occurrences and graph registrations.
 Borrowed byte and halfword buffers, including nonzero symbolic starts, have an
 expansion/rechecking regression. Kernel regressions cover symbolic index bounds,
-late endpoint equality, snapshots, sibling contexts, retired occurrences,
+late endpoint equality, states, sibling contexts, retired occurrences,
 read/write authority, and same-base non-supplier scaling at multiple sizes.
 
 The symbolic-byte-extent consumer uses this service exclusively. Unknown or
@@ -1464,7 +1464,7 @@ Multi-size regressions
 measure satisfaction, support, and two-fragment consumption beside 16, 64,
 256, and 1,024 unrelated same-base spans. Controls cover holes, insufficient
 coverage, residuals, missing aliases, view-only authority, zero quantity,
-sibling snapshots, and the existing projection/separation checks. Another
+sibling states, and the existing projection/separation checks. Another
 scaling regression checks direct support beside 16–1,024
 overlapping views, including insufficient views inserted before a sufficient
 owner; explicit fragment composition is measured separately
@@ -1597,7 +1597,7 @@ The framing regression inspects the actual opened context returned by
 `call_kept_ownership`, rather than relying on a successful general permission
 check, so it detects a missing graph payload through `a = b = c`. Controls cover sibling isolation and retained source authority.
 Additional tests cover late equalities, insertion/consumption deltas, preserved
-parent snapshots, and fresh plus framing construction beside 16, 64, 256, and
+parent states, and fresh plus framing construction beside 16, 64, 256, and
 1,024 unrelated resources and equality facts. Both deterministic query work and
 persistent-map work are measured, so deferred publication or a hidden ambient
 scan cannot pass merely because the final lookup is cheap.
@@ -1609,11 +1609,11 @@ interfaces above establish bounded selection and refusal.
 
 Typed pointer-read producers share `PureFactContext::register_pointer_read`.
 It records the existing value's load definition and, when the exact defining
-snapshot (or its recorded canonical projection source) is a `CellsSeeded`
+state (or its recorded canonical projection source) is a `CellsSeeded`
 edge supplying the entire read footprint, admits equality with that run's
 source read into the branch's graph. Only load-valued, contiguous, live slots
 of the required width qualify. The check inspects the selected slots rather
-than the run's extent, address aliases, or snapshot history. Canonical
+than the run's extent, address aliases, or state history. Canonical
 projection bridges use exact producer registry entries. These are trusted
 kernel rules; they introduce neither proposition premises nor access rights.
 
@@ -1627,7 +1627,7 @@ own admitted unions.
 
 Function-pointer reads retain the same structural loaded-pointer descriptor as
 object-pointer reads, with the callback signature in the complete C value.
-Their descriptor supplies the exact snapshot and address without a scalar
+Their descriptor supplies the exact state and address without a scalar
 variable or a defining equation. Nonvolatile statement reads from borrowed
 callback tables also retain the checked current-cell equation. Statement
 publication preserves that evidence in the successor's fact context; it grants
@@ -1653,23 +1653,23 @@ Already admitted single-store edges compose through ordinary graph closure;
 unknown store-address aliases require a later producer check once the needed
 separation is available. Unregistered intermediate edges remain unknown.
 
-Snapshot producers also maintain an immutable **read identity** for graph
+Memory state producers also maintain an immutable **read identity** for graph
 load congruence. A recorded `CellsForgotten` edge inherits its base's identity:
 removing cached knowledge changes no program bytes. A load-valued `CellsSeeded`
 run inherits it only when the run's source and base already share that identity
 and each slot's stride equals its value width. Copying the same bytes already
 in the base is materialization, including successive sibling runs copied from
-an equivalent earlier snapshot. Other transitions receive a distinct identity.
+an equivalent earlier state. Other transitions receive a distinct identity.
 The pointer and int32 graph-load signatures use this key while the existing
-load terms and C pointer values retain their original snapshot representation.
+load terms and C pointer values retain their original state representation.
 
 This metadata is part of the trusted kernel and establishes value equality
-only. It does not establish snapshot equality, read permission, initialization,
+only. It does not establish state equality, read permission, initialization,
 allocation continuity, or framing. Unrecorded pruning, constant or symbolic
 storage runs, changed sources, stores, and havoc cannot inherit a key by this
 rule. Checked separate-store unions still belong to their proof branch.
 
-The key is fixed at first interning. If a snapshot was already interned without
+The key is fixed at first interning. If a state was already interned without
 this annotation, recording a later edge conservatively loses the new equality;
 existing graph applications never require relabeling or rescanning. Arena reset
 keeps prior-session keys distinct. Production uses immediate-source key lookups
@@ -1691,11 +1691,11 @@ with `pointer_in_block`, one keyed query over the affine class relation, so a
 run answers for `id + 8` exactly as a single cached cell does through
 `pointers_known_equal`. It selects a cached slot only; it adds no separation,
 framing, or read authority: the slot is the one a load spelled at the run's
-own address reads from the same snapshot. `mdtests/fold_at_arm_identity_after_store_to_other_node.md`
+own address reads from the same state. `mdtests/fold_at_arm_identity_after_store_to_other_node.md`
 and its three negatives retain the case.
 
 A retained cell-map entry alone is insufficient preservation evidence:
-low-level snapshot construction can leave it present after a write through a
+low-level state construction can leave it present after a write through a
 possibly aliasing address. Other memory transitions and separation forms
 remain future work at this common kernel boundary. Deterministic tests cover
 late read-address aliases and transitivity, complete and incomplete footprints,
@@ -1715,18 +1715,18 @@ proposed means to meet that contract, not a blanket complexity guarantee.
 In particular, measure signature maintenance, persistent map updates, affine
 payloads, explanation construction, resource reindexing, and repeated branch
 extensions. Do not claim a whole-verifier bound from union-by-size alone.
-Avoid whole-state clones, deep structural cache keys, repeated same-snapshot
+Avoid whole-state clones, deep structural cache keys, repeated same-state
 load scans, and alias enumeration on each resource access.
 
 Restricted contexts rebuild from the selected premises and required term DAG.
 They must not inherit ambient merges or explanations. Contexts never withdraw
 a fact: a branch forks the persistent parent, so no consequence needs
-invalidating. Execution writes do not remove facts about old snapshots.
+invalidating. Execution writes do not remove facts about old states.
 
 Deterministic regressions vary multiple input sizes along these axes:
 
 - chains, balanced merges, late merges, and repeated equality queries;
-- nested loads and many unrelated loads within one snapshot;
+- nested loads and many unrelated loads within one state;
 - repeated loads across a growing store history;
 - resource lookup through growing classes and resources present before merges;
 - many branches extending a large common prefix; and
@@ -1756,13 +1756,13 @@ must pass the kernel's corresponding-leaf transport check first. The candidate
 helper used by smart planning has no proof authority.
 
 The outer quantifier walk refuses binder collisions with the bounded,
-carrier-aware variable collector, which treats snapshots as opaque. Direct
+carrier-aware variable collector, which treats states as opaque. Direct
 regressions cover unavailable/reversed premises, sibling-context isolation,
-forged presentation, shadowing, capture, and ambient premise/snapshot scaling.
+forged presentation, shadowing, capture, and ambient premise/state scaling.
 Goal lowering/unfolding and other transitions through the generic publisher
 are separate trust boundaries.
 
-Soundness tests include unproved aliases, snapshot changes, incompatible load
+Soundness tests include unproved aliases, state changes, incompatible load
 interpretations, branch leakage, restricted-premise leakage, offset wrapping,
 and tampered equality explanations. Constructor injectivity and no-confusion
 are class rules (see "Typed algebraic model values"); cyclic constructor
@@ -1790,7 +1790,7 @@ type. In particular, an exact one-hop source query must not
 silently substitute an inferred congruence equality in a certificate requiring
 a written premise. Scalar premise paths use incrementally filed source edges
 rather than a lazy scan of all conditions. Full-width load-source transport
-selects the exact address/interpretation bucket before comparing snapshots.
+selects the exact address/interpretation bucket before comparing states.
 
 Literal values and conditional/load witnesses are annotations of shared term
 roots. Folding uses application dependency hooks and reindexes affected uses
@@ -1798,7 +1798,7 @@ when a class learns a literal. Ordinary integer operators use those same applica
 congruence, with typed curried applications for the remaining conversions and
 wide operators. Full-width constant discovery first asks the shared class engine;
 contextual folding and implicit-provenance collection retain exact source
-premises. None of these operations grants memory access or snapshot transport.
+premises. None of these operations grants memory access or state transport.
 
 Restriction resets the closure and refiles only the selected facts. Branch clones
 share persistent input roots and fork subsequent changes. Pointer-predicate source handles are retained with
@@ -1809,7 +1809,7 @@ complex deferred load dependencies conservatively use ordinary store reasoning.
 Unrelated ordinary scalar or offset premises do not disable these paths.
 
 Memory authorization, contextual
-snapshot reasoning, and explicit tactic search remain separate judgments with
+state reasoning, and explicit tactic search remain separate judgments with
 their own contracts; they are not alternate stores answering value equality.
 Scaling regressions cover selected source enumeration, long constant chains,
 range-value equality, missing premises, and unrelated ambient facts. Gate and nightly
@@ -1867,7 +1867,7 @@ This does not recover a designation, bounds, or memory permission from numbers.
 A logical word cast names its address as `$integer-address(bits)`. Registering
 that constructor joins its numeric address to `bits` in the uint64 classes,
 using the existing iterative dependency worklist once per constructor. Byte
-displacements and compatible same-snapshot reads therefore use the same
+displacements and compatible same-state reads therefore use the same
 classes as the original word. Complete pointer-value applications use the numeric
 address as one operand, alongside independent designation and extent operands;
 address equality cannot merge those other operands. Complete-value comparisons whose designation and
@@ -1876,5 +1876,5 @@ uint64 equality. The internal constructor does not enter the result-domain
 congruence used for actual pointer-returning pure functions. Numeric definitions
 alone establish no designation, bounds, object type, or memory authority.
 The explicit source control is `tagged_pointer_explicit_round_trip.md`; branch
-scope, displaced addresses, snapshot distinctions, and designation
+scope, displaced addresses, state distinctions, and designation
 separation are covered by the equality-graph unit tests.

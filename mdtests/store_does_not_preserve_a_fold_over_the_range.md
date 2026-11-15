@@ -1,7 +1,7 @@
 # a store does not preserve a fold over the range it writes into
 
-The fold form. `icount` is evaluated at two snapshots, and the fold's own reads
-come from the snapshot its array argument names. Nothing relates the two counts,
+The fold form. `icount` is evaluated at two states, and the fold's own reads
+come from the state its array argument names. Nothing relates the two counts,
 so the equation is not available; the frame lemma that would relate them needs a
 per-cell premise the store does not give.
 

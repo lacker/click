@@ -1206,11 +1206,11 @@ impl TermClasses {
                             let numeric = self.read_address(address);
                             let read =
                                 self.intern_node(Node::UInt64Read(memory.read_identity(), numeric));
-                            let snapshot = memory.read_identity();
+                            let retained_state = memory.read_identity();
                             let origin = super::load_origin(term, &memory);
                             let source = WideReadSource {
                                 read,
-                                snapshot: memory.arena_id(),
+                                retained_state: memory.arena_id(),
                                 origin: origin.as_ref().map(|origin| origin.arena_id()),
                                 address,
                             };
@@ -1227,7 +1227,7 @@ impl TermClasses {
                                     only: None,
                                 });
                             }
-                            Node::UInt64Read(snapshot, numeric)
+                            Node::UInt64Read(retained_state, numeric)
                         } else if let Some(pointer) = term.address_pointer() {
                             values.push(self.numeric_address(pointer));
                             continue;
@@ -1958,7 +1958,7 @@ impl TermClasses {
         if let A::Value(ProgramValue::UInt64(term)) = argument {
             return self.intern_node(Node::OpaqueMachineCount(MachineAtom::uint64(term.clone())));
         }
-        // Map comparisons use stable IDs, not full algebraic values/snapshots.
+        // Map comparisons use stable IDs, not full algebraic values/states.
         self.intern_node(Node::OpaqueArgument(SharedPureApplication::intern(
             String::new(),
             vec![argument.clone()],
@@ -2155,7 +2155,7 @@ impl TermClasses {
     /// head on its argument classes, so applications to equal arguments are
     /// congruent; a conditional is a call of one head on its three classes;
     /// an equality is the condition node `BoolEq` on its operands' classes,
-    /// true when they meet (rule L-Eq); a read is its snapshot's read head
+    /// true when they meet (rule L-Eq); a read is its state's read head
     /// applied to its address class. A comparison is its own condition node.
     /// Each node is interned once, so the work is the value's size. `None`
     /// for a condition the graph does not intern.

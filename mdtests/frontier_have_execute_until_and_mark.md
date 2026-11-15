@@ -1,8 +1,8 @@
-# frontier facts, statement snapshots, and marks act at the current frontier
+# frontier facts, statement states, and marks act at the current frontier
 
 This checks the frontier proof shapes from the proof-workflow concept page:
 `have` before a loop sees the facts the preceding steps established,
-`step_until` pauses at a statement whose entry snapshot a later `have`
+`step_until` pauses at a statement whose entry state a later `have`
 reads, and `mark` names the reached state for a later comparison.
 
 ```c filename=fill_zero.c
@@ -17,8 +17,8 @@ int32 fill_zero(int32 p[], int32 n) {
 }
 ```
 
-```c filename=snapshot_y.c
-int32 snapshot_y(int32 x) {
+```c filename=state_y.c
+int32 state_y(int32 x) {
     int32 y;
     y = 1;
     x = 2;
@@ -37,7 +37,7 @@ int32 bump_first(int32 p[]) {
 
 ```click
 verifying "fill_zero.c";
-verifying "snapshot_y.c";
+verifying "state_y.c";
 verifying "bump_first.c";
 
 int32 fill_zero(int32 p[], int32 n) {
@@ -61,7 +61,7 @@ int32 fill_zero(int32 p[], int32 n) {
     solve();
 }
 
-int32 snapshot_y(int32 x) {
+int32 state_y(int32 x) {
     ensures result >= 0;
 } by {
     step_until(region(4));

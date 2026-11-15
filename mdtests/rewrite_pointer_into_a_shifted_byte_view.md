@@ -1,7 +1,7 @@
 # Rewrite a pointer into a shifted byte view
 
 The shifted range keeps its endpoint expression `(i + 4) - i`. After
-rewriting the model pointer, the goal names the same address and snapshot
+rewriting the model pointer, the goal names the same address and state
 with a literal four-byte extent. The checked viewability comparison recognizes
 that structural constant without changing the stored range or reading
 unrelated facts.

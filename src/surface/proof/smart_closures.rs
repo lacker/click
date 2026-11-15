@@ -231,8 +231,8 @@ fn collect_signed_surface_terms<'a>(
     }
 }
 
-// Arithmetic combinations may mix snapshots. Put each selector on its
-// operands so generated comparisons keep those snapshots when combined.
+// Arithmetic combinations may mix states. Put each selector on its
+// operands so generated comparisons keep those states when combined.
 fn surface_comparison_with_anchored_operands(proposition: &ClickProposition) -> ClickProposition {
     let mut inner = proposition;
     let mut selectors = Vec::new();
@@ -510,7 +510,7 @@ pub(super) fn observed_native_surface_comparison(
             _ => observes_exact_value(operand),
         }
     }
-    // A read at a snapshot is observed there, `at(s, to_integer(x))`, which
+    // A read at a state is observed there, `at(s, to_integer(x))`, which
     // lowers to the same read as the fact; `to_integer(at(s, x))` reads `x`
     // anew.
     fn observe_operand(operand: &ContractExpression, native_int32: bool) -> ContractExpression {
@@ -1012,7 +1012,7 @@ fn integer_surface_zero_claim(
 
 /// Whether direct lowering reads this expression as a literal constant.
 ///
-/// A snapshot does not change a literal's value, so `at(<point>, 0)` folds
+/// A state does not change a literal's value, so `at(<point>, 0)` folds
 /// exactly as a bare `0` does; look through one.  This is a syntactic test on
 /// one already built expression, not a lowering.
 fn surface_expression_is_constant(expression: &ContractExpression) -> bool {
@@ -1087,7 +1087,7 @@ fn integer_surface_equality_from_bounds(
 ///
 /// The result is spelled from the bound's own sides. The disequality is not
 /// compared syntactically: two spellings of one kernel term, such as a value
-/// read at two snapshots the body did not separate, are the same premise to
+/// read at two states the body did not separate, are the same premise to
 /// the checker, and the kernel node checks that the disequality names the
 /// bound's affine form. Pairing the printed operands here discarded plans the
 /// kernel had already accepted.
@@ -1188,8 +1188,8 @@ fn written_integer_observations<'s>(
     let mut written: Vec<ContractExpression> = Vec::new();
     for surface in surfaces {
         // A native comparison such as `amount <= count(...)` spells the
-        // Integer observations of its operands; one read at a snapshot, as a
-        // precondition `at(entry, 1u64 <= x)`, spells them at that snapshot.
+        // Integer observations of its operands; one read at a state, as a
+        // precondition `at(entry, 1u64 <= x)`, spells them at that state.
         let (selector, comparison) = match surface {
             ClickProposition::At {
                 selector,
@@ -1289,17 +1289,17 @@ fn written_integer_observations<'s>(
             let ContractExpression::Call { arguments, .. } = expression else {
                 return None;
             };
-            let mut snapshot = false;
+            let mut retained_state = false;
             crate::surface::proof::fixed_state_proofs::conversion_conditions::walk_written_expressions(
                 &arguments[0],
                 &mut |inner| {
-                    snapshot |= matches!(
+                    retained_state |= matches!(
                         inner,
                         ContractExpression::Old(_) | ContractExpression::At { .. }
                     );
                 },
             );
-            (!snapshot).then(|| ContractExpression::Call {
+            (!retained_state).then(|| ContractExpression::Call {
                 name: "to_integer".into(),
                 arguments: vec![ContractExpression::Old(Box::new(arguments[0].clone()))],
             })
@@ -1313,11 +1313,12 @@ fn written_integer_observations<'s>(
     written
 }
 
-/// Whether `proposition` reads `result` inside a snapshot that precedes the
+/// Whether `proposition` reads `result` inside a state that precedes the
 /// return, which the parser refuses.
 fn reads_result_before_return(proposition: &ClickProposition) -> bool {
-    let too_early =
-        |selector: Option<&SnapshotSelector>| !crate::surface::snapshot_can_name_result(selector);
+    let too_early = |selector: Option<&ProgramPointSelector>| {
+        !crate::surface::program_point_can_name_result(selector)
+    };
     let proposition_reads = match proposition {
         ClickProposition::At {
             selector,
@@ -2830,7 +2831,7 @@ impl<'a> Proof<'a> {
                 continue;
             };
             // `defined(a + b)` spells by its operation's operands, and a
-            // fact spelled at a snapshot keeps that snapshot on each.
+            // fact spelled at a state keeps that state on each.
             let (selector, source) = match source {
                 ClickProposition::At {
                     selector,
@@ -2967,7 +2968,7 @@ impl<'a> Proof<'a> {
             // keep that naming index in scope while spelling the operation.
             let _recorded =
                 crate::surface::proof::surface_synthesis::SynthesisRecordedPointsScope::enter(
-                    view.fixed_state.recorded_snapshots,
+                    view.fixed_state.recorded_states,
                 );
             let unsigned = machine.ty() == crate::kernel::MachineIntegerType::UInt32;
             let value = if unsigned {
@@ -3201,7 +3202,7 @@ impl<'a> Proof<'a> {
     /// Resolves one exact retained fact to a surface form that will lower
     /// back to that same kernel proposition when the selected proof step is
     /// checked. Historical locals are anchored before ordinary forms are
-    /// considered, so a same-written newer snapshot cannot be substituted.
+    /// considered, so a same-written newer state cannot be substituted.
     /// The fixed-state view against which a premise lookup is spelled: the
     /// focused branch's outcome data, the frontier's current state for a
     /// judgment stated mid-execution, or a fixed-state proof's own state.
@@ -3501,7 +3502,7 @@ impl<'a> Proof<'a> {
                 let execution_view = execution.view(context);
                 let _recorded_points =
                     super::surface_synthesis::SynthesisRecordedPointsScope::enter(
-                        execution_view.recorded_snapshots,
+                        execution_view.recorded_states,
                     );
                 let _qualified_sources = super::surface_synthesis::QualifiedSynthesisScope::enter(
                     execution_view.surface_propositions,
@@ -3580,7 +3581,7 @@ impl<'a> Proof<'a> {
         let spelling_view = self.premise_fixed_state_view();
         let _requirement_points = spelling_view.as_ref().map(|view| {
             super::surface_synthesis::SynthesisRecordedPointsScope::enter(
-                view.fixed_state.recorded_snapshots,
+                view.fixed_state.recorded_states,
             )
         });
         let non_execution_surface = match self.context.as_ref() {
@@ -3638,7 +3639,7 @@ impl<'a> Proof<'a> {
         };
         let execution_view = execution.view(context);
         let _recorded_points = super::surface_synthesis::SynthesisRecordedPointsScope::enter(
-            execution_view.recorded_snapshots,
+            execution_view.recorded_states,
         );
         let _qualified_sources = super::surface_synthesis::QualifiedSynthesisScope::enter(
             execution_view.surface_propositions,
@@ -3912,7 +3913,7 @@ fn conjunction_under_binders(goal: Option<&Proposition>) -> bool {
 
 /// The existential witness closer is reserved for the source-backed range
 /// slice.  In particular, a generated overflow guard (as in `cstr::readable`)
-/// remains on the dynamic snapshot-transport route.  The worklist is bounded
+/// remains on the dynamic state-transport route.  The worklist is bounded
 /// because this predicate is part of smart closure dispatch.
 fn quantified_external_range_goal(goal: &Proposition) -> bool {
     const MAX_NODES: usize = 4096;
@@ -4292,14 +4293,14 @@ fn source_backed_refusal(
     let Some(site) = requirement.call_site.as_ref() else {
         return Ok(false);
     };
-    if crate::kernel::MemorySnapshotIdentity::of(current_memory) != site.source_snapshot {
+    if crate::kernel::MemoryStateIdentity::of(current_memory) != site.source_memory_state {
         return Ok(false);
     }
     source_backed_requirement_is_supported(
         &requirement.proposition,
         site.source_requirement_ordinal,
         site.source_requirement_is_state_independent,
-        site.source_load_snapshot,
+        site.source_load_state,
     )
 }
 
@@ -4327,8 +4328,8 @@ fn source_backed_call_requirement_surface(
     let source_ordinal = source.source_requirement_ordinal?;
     let site = source.site.as_ref();
 
-    if crate::kernel::MemorySnapshotIdentity::of(execution.core.state.memory())
-        != site.source_snapshot
+    if crate::kernel::MemoryStateIdentity::of(execution.core.state.memory())
+        != site.source_memory_state
     {
         return None;
     }
@@ -4537,7 +4538,7 @@ fn source_backed_call_requirement_surface(
             .surface_record
             .last_call_parameters
             .as_ref()?;
-        let bound = execution.presentation.recorded_snapshots.get(point)?;
+        let bound = execution.presentation.recorded_states.get(point)?;
         for parameter in &aggregate_parameters {
             bound.locals().aggregate_layout(parameter)?;
             substitutions.insert(
@@ -4730,9 +4731,9 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
     *substituted_arguments.get_mut(*predicate_argument_slot)? =
         caller_parameter_as_argument(caller_parameter, predicate_parameter_type);
     let entry_state = context.constants.function_entry_state.as_ref()?;
-    let entry_snapshot = crate::kernel::MemorySnapshotIdentity::of(entry_state.memory());
+    let entry_memory_state = crate::kernel::MemoryStateIdentity::of(entry_state.memory());
     // Phase 1 projects entry requirements only across an effect-free prefix.
-    // Local declarations change the current snapshot without adding an
+    // Local declarations change the current state without adding an
     // effect, while stores and havoc do add one. Crossing a recorded memory
     // effect requires the later generated-load transport identity.
     if !execution.core.effect_facts.is_empty() {
@@ -4748,7 +4749,7 @@ pub(in crate::surface::proof) fn source_backed_direct_caller_requirement(
             *predicate_argument_slot,
             *caller_parameter_slot,
             &substituted_arguments,
-            entry_snapshot,
+            entry_memory_state,
         )?;
     Some((predicate_name, selection))
 }
@@ -4833,21 +4834,21 @@ fn caller_parameter_through_identity_cast(
 }
 
 /// Candidate spellings of one kernel fact from recorded program-point
-/// snapshots, nearest first: the fact synthesized from a snapshot where its cells are
+/// states, nearest first: the fact synthesized from a state where its cells are
 /// readable and re-read there (`at(statement(n).entry, ...)`), then, for an
-/// equality whose operands were read from different snapshots, one anchor per
+/// equality whose operands were read from different states, one anchor per
 /// operand. Callers must re-lower each candidate and accept it only when it
 /// denotes exactly `kernel`.
 ///
-/// Seek lazily through the persistent snapshot tree, nearest point first.
+/// Seek lazily through the persistent state tree, nearest point first.
 /// Both tree traversal and candidate synthesis check the verifier budget;
 /// a successful near-anchor candidate costs logarithmic work in history size.
 /// Exhaustion is sticky and stops this iterator before any further synthesis.
-/// The cross-snapshot equality fallback sees only the already visited points.
-pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
+/// The cross-state equality fallback sees only the already visited points.
+pub(super) fn synthesize_surface_at_recorded_states<'a>(
     kernel: &'a Proposition,
     parameter_binding: ParameterBinding<'a>,
-    recorded_snapshots: &'a RecordedSnapshots,
+    recorded_states: &'a RecordedStates,
     anchor: &ProgramPointRef,
 ) -> impl Iterator<Item = ClickProposition> + 'a {
     let anchor_index = match &anchor.region {
@@ -4857,11 +4858,11 @@ pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
     // This is speculative premise presentation, not an explicit request to
     // visit the execution history. A missing spelling must not scan every
     // retained state for each equality candidate. Probe a small neighborhood;
-    // callers can name an older snapshot explicitly when this search misses.
-    const MAX_SNAPSHOT_CANDIDATES: usize = 256;
-    let mut entries = recorded_snapshots
+    // callers can name an older state explicitly when this search misses.
+    const MAX_STATE_CANDIDATES: usize = 256;
+    let mut entries = recorded_states
         .statement_entries_nearest(anchor_index)
-        .take(MAX_SNAPSHOT_CANDIDATES);
+        .take(MAX_STATE_CANDIDATES);
     let mut points = Vec::new();
     let mut finished = false;
     std::iter::from_fn(move || {
@@ -4876,7 +4877,7 @@ pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
             }
             points.push((point.clone(), state));
             if let Some(surface) = synthesize_surface_proposition(kernel, parameter_binding, state)
-                && let Ok(surface) = surface_at_snapshot(&surface, point)
+                && let Ok(surface) = surface_at_program_point(&surface, point)
             {
                 return Some(surface);
             }
@@ -4889,31 +4890,31 @@ pub(super) fn synthesize_surface_at_recorded_snapshots<'a>(
     })
 }
 
-/// [`synthesize_surface_at_recorded_snapshots`] for a fact that mixes states:
+/// [`synthesize_surface_at_recorded_states`] for a fact that mixes states:
 /// spelled at `current`, with each recorded statement entry nearest `anchor`
-/// in turn as the one further snapshot for a value only that entry state
+/// in turn as the one further state for a value only that entry state
 /// reads, such as `link.link == ParentLink::Linked(at(region(3).entry,
 /// p->kid))`. The same bounded neighborhood as the whole-fact probe.
-fn synthesize_surface_with_recorded_snapshot<'a>(
+fn synthesize_surface_with_recorded_state<'a>(
     kernel: &'a Proposition,
     parameter_binding: ParameterBinding<'a>,
     entry: &'a ExecutionState,
     current: &'a ExecutionState,
-    recorded_snapshots: &'a RecordedSnapshots,
+    recorded_states: &'a RecordedStates,
     anchor: &ProgramPointRef,
 ) -> impl Iterator<Item = ClickProposition> + 'a {
     let anchor_index = match &anchor.region {
         CodeRegionRef::Region(index) => *index,
         _ => usize::MAX,
     };
-    const MAX_SNAPSHOT_CANDIDATES: usize = 256;
-    recorded_snapshots
+    const MAX_STATE_CANDIDATES: usize = 256;
+    recorded_states
         .statement_entries_nearest(anchor_index)
-        .take(MAX_SNAPSHOT_CANDIDATES)
+        .take(MAX_STATE_CANDIDATES)
         .take_while(|_| !crate::instrumentation::deadline_exceeded())
         .filter_map(move |(point, state)| {
-            let selector = SnapshotSelector::ProgramPoint(point.clone());
-            super::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+            let selector = ProgramPointSelector::ProgramPoint(point.clone());
+            super::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_state(
                 kernel,
                 parameter_binding,
                 entry,
@@ -5053,7 +5054,7 @@ mod synthesized_literal_tests {
         );
         let written = ClickProposition::Comparison {
             left: ContractExpression::At {
-                selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Function,
                     kind: ProgramPointKind::Entry,
                 }),

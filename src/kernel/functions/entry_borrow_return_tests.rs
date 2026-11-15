@@ -24,7 +24,7 @@ fn returned_borrows_keep_checked_entry_arguments_when_clauses_are_reordered() {
             vec![field(name)],
             vec![ProgramType::Int32Pointer],
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap()
     };
@@ -47,7 +47,7 @@ fn returned_borrows_keep_checked_entry_arguments_when_clauses_are_reordered() {
         .map(|(index, fact)| CheckedResourceFact {
             fact: fact.clone(),
             role: ResourceTransferRole::Borrow,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: Some(index),
             selected_mutex_source: None,

@@ -125,7 +125,7 @@ pub(crate) fn program_checked_function_proposition_with_reason(
         }
     }
     // The origin is evidence for this exact checked path, never an arbitrary
-    // caller-supplied snapshot. Its producer checked the body against its
+    // caller-supplied state. Its producer checked the body against its
     // retained trace and applied the contract exit rule to that same trace.
     match conclusion(path.theorem()) {
         Proposition::ProgramFunctionVerifies {
@@ -212,8 +212,8 @@ pub(crate) fn program_checked_function_proposition_with_reason(
     })
 }
 
-/// Compare exact snapshots while allowing only producer-recorded caching of
-/// their own typed reads. Each hop descends the newer snapshot's derivation;
+/// Compare exact states while allowing only producer-recorded caching of
+/// their own typed reads. Each hop descends the newer state's derivation;
 /// unrelated cells, facts, and execution history are never visited. Read
 /// identity alone is insufficient: forgotten knowledge, havoc, stores, and
 /// allocation changes remain barriers even when some reads are unchanged.
@@ -614,7 +614,7 @@ fn memories_equal_by_matching_derivations(
 }
 
 /// Matches two recomputed memory histories and returns the exact pairs of call
-/// result snapshots encountered on the successful path. Execution-proof
+/// result states encountered on the successful path. Execution-proof
 /// construction uses these pairs to register another concrete view of an
 /// already checked call event; the pairs themselves are never authority.
 pub(crate) fn matching_recomputed_call_havoc_views(
@@ -841,7 +841,7 @@ mod range_list_equality_graph_tests {
     }
 
     #[test]
-    fn certified_range_list_endpoints_use_graph_with_snapshot_scope() {
+    fn certified_range_list_endpoints_use_graph_with_state_scope() {
         let _session = crate::kernel::VerificationSession::enter();
         let before = crate::kernel::intern_memory(Memory::new().with_block("range-list", 8));
         let pointer = |index| Pointer {
@@ -903,7 +903,7 @@ mod range_list_equality_graph_tests {
     }
 }
 
-/// Whether two memory snapshots have the same heap status and are the same
+/// Whether two memory states have the same heap status and are the same
 /// program state, up to definitional equality of the terms in their cells.
 ///
 /// The `local:` blocks this skips are the ones
@@ -2816,7 +2816,7 @@ pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
                 proposition.clone()
             }
         }
-        // A predicate identity carries a resource-state snapshot only when
+        // A predicate identity carries a resource-state state only when
         // its definition observes resource counts; the proof's lowering
         // leaves it empty otherwise. The outcome the completion was made
         // at fixes that state, so the key compares predicates without it.

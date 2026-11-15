@@ -251,15 +251,15 @@ fn parses_arguments_and_duration_units() {
 }
 
 /// The internal translation-unit suffix is not legal Click syntax. Calls
-/// in snapshot paths use the source spelling, with each occurrence retained.
+/// in state paths use the source spelling, with each occurrence retained.
 #[test]
-#[ignore = "nightly: static-call snapshot expansion and full claim audit"]
-fn static_call_snapshot_paths_expand_and_audit() {
+#[ignore = "nightly: static-call state expansion and full claim audit"]
+fn static_call_state_paths_expand_and_audit() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/c_static_function.md");
     let source = load_audit_source(&path).unwrap();
     let claim = "run.contract";
     let expanded = expand_claim_with_source(&path, &source, claim)
-        .expect("static calls have a source spelling in expanded snapshots");
+        .expect("static calls have a source spelling in expanded states");
     let rewritten = rewritten_click_source(&source, &expanded).unwrap();
     assert!(rewritten.contains("call(add_one, 0)"), "{rewritten}");
     assert!(rewritten.contains("call(add_one, 1)"), "{rewritten}");
@@ -1342,9 +1342,9 @@ fn audits_an_undecided_wide_guard_after_a_recursive_call() {
     // cannot decide as a proof `if` anchored at the statement's entry, and the
     // recheck applies each arm's `step()`, which must prove the guard: the arm
     // assumes the surface lowering of the guard while the C guard evaluates
-    // against the snapshot its own load resolved. Those agree only because
+    // against the state its own load resolved. Those agree only because
     // every integer scalar one to eight bytes wide is named where it is
-    // loaded; an unnamed `load_uint64` reads the whole current snapshot, which
+    // loaded; an unnamed `load_uint64` reads the whole current state, which
     // after the call differs by the `local:rest` cell the load cannot alias,
     // and audit reported `2 feasible condition paths` where `click verify`
     // passed.
@@ -1904,7 +1904,7 @@ fn result_parameter_postconditions_audit_every_site() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for relative in [
         "mdtests/result_parameter_old_value_certifies.md",
-        "mdtests/result_parameter_entry_snapshot_certifies.md",
+        "mdtests/result_parameter_entry_state_certifies.md",
         "mdtests/result_parameter_current_binding_certifies.md",
         "mdtests/result_parameter_resource_binding_certifies.md",
         "mdtests/result_parameter_mutation_certifies.md",
@@ -2106,7 +2106,7 @@ fn expanded_loop_claims_stay_within_checking_work_bounds() {
     for (fixture, claim) in [
         ("c_decreases_recursive_in_loop", "recursive_loop.contract"),
         ("later_loop_preserve", "later_loop_preserve.contract"),
-        ("loop_exit_snapshot", "count_from_to.contract"),
+        ("loop_exit_state", "count_from_to.contract"),
         ("nested_loop_preserve", "nested_loop_preserve.contract"),
     ] {
         let path = root.join("mdtests").join(format!("{fixture}.md"));
@@ -2238,12 +2238,9 @@ int32 compare(uint8 bytes[]) {
 fn whole_claim_audits_allow_unexpanded_neighbors_and_workers() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests");
     for (fixture, claim) in [
-        ("statement_at_snapshots", "set_first_twice.prefix_exit"),
-        (
-            "statement_at_snapshots",
-            "set_first_twice.adjacent_boundary",
-        ),
-        ("statement_at_snapshots", "set_first_twice.final_exit"),
+        ("statement_at_states", "set_first_twice.prefix_exit"),
+        ("statement_at_states", "set_first_twice.adjacent_boundary"),
+        ("statement_at_states", "set_first_twice.final_exit"),
         ("composite_resource_borrow_fact", "inspect_server.owns_0"),
         (
             "composite_resource_borrow_fact",
@@ -2280,7 +2277,7 @@ fn whole_claim_audits_allow_unexpanded_neighbors_and_workers() {
 #[ignore = "nightly: strict selected-proof refusals and scope restoration"]
 fn cold_claim_scope_keeps_selected_proofs_strict_and_refuses_unknown_labels() {
     use click::surface::{without_implicit_solve, without_implicit_solve_for_claim};
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/statement_at_snapshots.md");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/statement_program_points.md");
     let source = load_audit_source(&path).unwrap();
     let check = || {
         verify_rewritten_with_inputs(&source, "set_first_twice.final_exit", &source.click_source)

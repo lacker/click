@@ -4,12 +4,12 @@
 `arena_scan` window carrying the map, the iterated ownership of the free
 cells, and the run's bounds as fields; one arm resets the run to `0`.
 
-The then-arm reasons over snapshot-relative order facts
+The then-arm reasons over state-relative order facts
 (`at(iteration, i) < at(iteration, i) + 1` beside `i == at(iteration, i) + 1`),
 which the context consistency check must examine without declaring the
 context contradictory. At the return the function's locals end, and the
-snapshot after their lifetime ends has the same content as one recorded
-before they were declared, so its history does not pass through the snapshot
+state after their lifetime ends has the same content as one recorded
+before they were declared, so its history does not pass through the state
 the step started from. Invalidating iterated facts across that step must walk
 both sides back to their common ancestor rather than the later side alone.
 

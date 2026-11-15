@@ -117,11 +117,11 @@ context. The callback resource stays folded across the parent-link helper call.
 The generalized red-leaf/nonempty-child continuation exposed a join-lowering
 bug: a comparison mentioning a mark was treated as wholly historical even
 when its other side read current memory. Every exported interface fact now
-gets checked state-parametric lowering with the snapshots shared by both
+gets checked state-parametric lowering with the states shared by both
 arms; the marked expression stays fixed while the current read is checked at
 each frontier. A loaded-pointer reduction pins the former kernel refusal.
 The generalized proof also exposed lost source names in exported interface
-facts: later snapshot rewrites printed resolved model pointers as `…`. Interface
+facts: later state rewrites printed resolved model pointers as `…`. Interface
 checking now retains the written facts alongside resolved values. A reduced
 packed-word rewrite and the complete successor expansion audit cover the fix.
 The reduction also exposed lost element types for loaded local pointers in
@@ -199,9 +199,9 @@ remove the successor's parent/color assignment or its new left child's parent
 assignment and are rejected.
 
 The post-return fold bug is fixed: checked `have` completions are retained on
-the returned path, bound to its program snapshot, with root assumptions
+the returned path, bound to its program state, with root assumptions
 checked once and subsequent persistent deltas checked incrementally. Kernel
-regressions reject sibling facts and different memory snapshots and check
+regressions reject sibling facts and different memory states and check
 scaling; mdtests cover interleaved proofs and folds. Exact fact lookup now
 recognizes retained resource-composition facts. Explicit resource closers use
 the same checked ownership receipts as `solve`, fixing the successor's final
@@ -215,7 +215,7 @@ successor. All five smart sites pass expansion audit. Mutations reject
 returning null or skipping root replacement.
 The proof also exposed scalar pure-function calls skipped by pointer
 `rewrite`; the existing binder-safe pointer walker now handles those goals,
-with missing-premise, capture, offset, snapshot, and scaling regressions.
+with missing-premise, capture, offset, state, and scaling regressions.
 
 `rbtree_erase_child_successor.click` covers the immediate successor with a
 nonempty right child at the root (2026-10-08). Its `rb_immediate_successor_child`
@@ -705,7 +705,7 @@ declare `owns name: resource(args);`. Semantics mirror a callee contract:
 - After the loop, `name` denotes the final instance at the final arguments.
 - A loop name may reuse an enclosing binder name; that is a rebinding.
   `old(name.field)` keeps its meaning, the function-entry instance of the
-  function-level binder. No loop-entry snapshot in the first slice.
+  function-level binder. No loop-entry state in the first slice.
   Landed behavior (A3): a loop binder takes the unique owned instance of its
   family with provably equal arguments and renames it, so a fresh name
   consumes the enclosing name for the rest of the function and cannot appear
@@ -766,7 +766,7 @@ beyond D5 and D6. Superseded in part on 2026-10-03: user-defined tactics
 (`docs/internals/user-defined-tactics.md`) now give recursive,
 resource-transforming steps, such as `refold_to_root`. The following stay out
 of scope for every package here: a binder map on loop
-headers, loop-entry snapshots such as `at(loop.entry, sub.model)`, and a
+headers, loop-entry states such as `at(loop.entry, sub.model)`, and a
 positive constructor test such as `requires c.model is Some`. A package that
 appears to need one reports the need instead of adding it.
 

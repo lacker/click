@@ -3,7 +3,7 @@
 The negative for
 [`fold_pointer_argument_body_fact.md`](fold_pointer_argument_body_fact.md).
 Anchoring a memory-free pure function's pointer arguments to one canonical
-snapshot makes the body fact's term *stable*; it does not make the fact free.
+state makes the body fact's term *stable*; it does not make the fact free.
 Here the proposed model names `other`, a second pointer the contract never
 relates to `c`, so `is_owner(Owned::Held(other, 0), c) == 1` is not available
 and the fold refuses.

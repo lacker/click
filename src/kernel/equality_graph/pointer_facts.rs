@@ -33,7 +33,7 @@ impl EqualityGraph {
 
     /// Checked values retained directly by an admitted, unconditional atom.
     /// Opaque call arguments may carry annotations from another interning
-    /// context; they are not evidence here. Binders and snapshots stay opaque.
+    /// context; they are not evidence here. Binders and states stay opaque.
     fn object_type_keys(proposition: &Proposition) -> BTreeSet<(Pointer, terms::PointerFactKey)> {
         enum Work<'a> {
             Term(&'a Term),
@@ -140,7 +140,7 @@ impl EqualityGraph {
     }
 
     /// Retain an exact source proposition in the selected pointer's checked
-    /// class. This adds no equality, read permission, or snapshot transport.
+    /// class. This adds no equality, read permission, or state transport.
     pub(in crate::kernel) fn adjust_pointer_fact(
         &self,
         source: &std::sync::Arc<crate::kernel::ExecutionPureFact>,

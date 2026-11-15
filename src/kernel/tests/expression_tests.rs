@@ -4108,7 +4108,7 @@ fn exact_signed_constant_bounds_check_signed_endpoints() {
 }
 
 #[test]
-fn exact_signed_mirror_normalization_checks_snapshot_address_and_selected_premise() {
+fn exact_signed_mirror_normalization_checks_state_address_and_selected_premise() {
     let pointer = Pointer {
         block: "mirror".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -4140,7 +4140,7 @@ fn exact_signed_mirror_normalization_checks_snapshot_address_and_selected_premis
         pointer.clone(),
         ProgramValue::Int32(MachineTerm::constant(0)),
     );
-    for (snapshot, address) in [
+    for (retained_state, address) in [
         (changed, pointer.clone()),
         (
             memory,
@@ -4151,7 +4151,7 @@ fn exact_signed_mirror_normalization_checks_snapshot_address_and_selected_premis
         ),
     ] {
         let unrelated = MachineTerm::MemoryLoad(
-            crate::kernel::intern_memory(snapshot),
+            crate::kernel::intern_memory(retained_state),
             Box::new(address),
             crate::kernel::LoadKind::Int32,
         );

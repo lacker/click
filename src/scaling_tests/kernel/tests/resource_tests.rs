@@ -25,7 +25,7 @@ fn normalized_resource_spec_evaluation_preserves_indexed_lookup_scaling() {
                 Vec::new(),
                 Vec::new(),
                 ResourceTransferRole::Consume,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
             )
             .unwrap();
             let state = ExecutionState::new().with_resource_context(context);
@@ -74,7 +74,7 @@ fn aliased_memory_consumption_does_not_walk_the_pointer_class() {
             assumptions = assumptions
                 .assume_condition(ConditionTerm::pointer_equal(pointer(0), pointer(i)), true);
         }
-        // Establish the paired snapshot once. Subsequent queries and forks
+        // Establish the paired state once. Subsequent queries and forks
         // must share its persistent index, rather than enumerate aliases.
         resources = resources
             .without_fact_incrementally(&ResourceFact::view_memory(cell(pointer(0))), &assumptions)
@@ -807,10 +807,10 @@ fn resource_instance_lookup_and_transfer_scale_by_identity() {
         );
         let mut state = ExecutionState::new().with_resource_context(context.clone());
         state.resource_bindings = Some(bindings);
-        let snapshot = state.clone();
+        let retained_state = state.clone();
         assert!(std::sync::Arc::ptr_eq(
             state.resource_bindings.as_ref().unwrap(),
-            snapshot.resource_bindings.as_ref().unwrap()
+            retained_state.resource_bindings.as_ref().unwrap()
         ));
         let (remaining, query_work) = crate::instrumentation::measure_deterministic_work(|| {
             assert_eq!(
@@ -822,7 +822,7 @@ fn resource_instance_lookup_and_transfer_scale_by_identity() {
             );
             // A formal absent from the map must not fall back to a caller ID.
             assert!(state.owned_resource_instance(Variable(1)).is_none());
-            let mut missing = snapshot.clone();
+            let mut missing = retained_state.clone();
             missing.resources = ResourceContext::new();
             assert!(
                 missing
@@ -852,7 +852,7 @@ fn resource_instance_lookup_and_transfer_scale_by_identity() {
 }
 
 #[test]
-fn symbolic_resource_indices_share_snapshots_and_scale_with_indexed_context() {
+fn symbolic_resource_indices_share_states_and_scale_with_indexed_context() {
     let ty = resource_index_type("Mark", vec![]);
     let selected = ResourceFact::own(indexed_resource(
         resource_index_variable(&ty, 991_000),

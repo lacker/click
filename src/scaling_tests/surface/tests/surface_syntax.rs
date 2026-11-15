@@ -66,7 +66,7 @@ fn indexed_surface_resolution_ignores_unrelated_available_facts() {
 }
 
 #[test]
-fn snapshot_blind_surface_selection_scales_by_index_height() {
+fn memory_erased_surface_selection_scales_by_index_height() {
     let pointer = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(0),
@@ -114,7 +114,7 @@ fn snapshot_blind_surface_selection_scales_by_index_height() {
             }
             let (matches, work) = crate::instrumentation::measure_deterministic_work(|| {
                 spellings
-                    .snapshot_blind_kernels(&query)
+                    .memory_erased_kernels(&query)
                     .cloned()
                     .collect::<Vec<_>>()
             });
@@ -127,7 +127,7 @@ fn snapshot_blind_surface_selection_scales_by_index_height() {
     let last = samples.last().unwrap().1;
     assert!(
         last <= first * 4 + 8,
-        "snapshot-blind lookup should grow only by index height: {samples:?}"
+        "state-blind lookup should grow only by index height: {samples:?}"
     );
 }
 

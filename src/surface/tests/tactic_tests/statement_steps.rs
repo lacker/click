@@ -117,7 +117,7 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
         verify_c_sources(click_source, &[("transport.c", c_source)])
     });
     let verified =
-        verified.expect("transport should certify a source derived from exact snapshot facts");
+        verified.expect("transport should certify a source derived from exact state facts");
     assert!(
         planning_transitions
             .iter()
@@ -866,7 +866,7 @@ fn execute_step_omits_materialization_only_transport() {
     let (verified, planning_transitions) = collect_planning_statement_transitions(|| {
         verify_c_sources(click_source, &[("transport.c", c_source)])
     });
-    let verified = verified.expect("automatic snapshot transport should verify");
+    let verified = verified.expect("automatic state transport should verify");
     assert!(
         planning_transitions.iter().all(|(claim, _, tactic)| claim
             != "set_second_return_first.contract"
@@ -913,7 +913,7 @@ fn execute_step_omits_materialization_only_transport() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by statement_steps_batch_03")]
-fn execute_step_omits_materialized_mixed_snapshot_transport() {
+fn execute_step_omits_materialized_mixed_state_transport() {
     let c_source = r#"
             int32 replace_first(int32 p[2]) {
                 p[0] = 9;
@@ -939,10 +939,10 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
         "#;
 
     let verified = verify_c_sources(click_source, &[("transport.c", c_source)])
-        .expect("mixed snapshot transport should verify");
+        .expect("mixed state transport should verify");
     let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
-            "mixed snapshot transport should have a surface expansion: {:?}",
+            "mixed state transport should have a surface expansion: {:?}",
             verified[0].expansion_blocker()
         )
     });
@@ -954,7 +954,7 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
         "{expanded:#?}"
     );
     ProofCertificate::from_proof_tactics(&expanded)
-        .expect("the mixed-snapshot expansion should be a surface certificate");
+        .expect("the mixed-state expansion should be a surface certificate");
     let execute_offset = click_source
         .find("step()")
         .expect("proof should contain execute_step");
@@ -971,9 +971,9 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
         + 1;
     let expanded_source =
         expand_c_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
-            .expect("the mixed-snapshot statement should expand");
+            .expect("the mixed-state statement should expand");
     verify_c_sources(&expanded_source, &[("transport.c", c_source)])
-        .expect("the mixed-snapshot expansion should check without representational transport");
+        .expect("the mixed-state expansion should check without representational transport");
 }
 
 #[test]
@@ -1008,7 +1008,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
         "#;
 
     let verified = verify_c_sources(click_source, &[("transport.c", c_source)])
-        .expect("multi-statement snapshot transport should verify");
+        .expect("multi-statement state transport should verify");
     let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
             "multi-statement transport should have a surface expansion: {:?}",
@@ -1049,7 +1049,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by statement_steps_batch_04")]
-fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
+fn execute_step_expands_call_assign_fact_from_internal_state() {
     let increment_c_source = r#"
             int32 set_seven(int32 p[1]) {
                 p[0] = 7;
@@ -1412,7 +1412,7 @@ void change(struct node *g, struct node *source, struct node *t) {
         "    step(); step();\n    transport(at(before_tag,",
     );
     let error = verify_c_sources(&overwritten_proof, &[("join.c", &overwritten_c)])
-        .expect_err("transport must refuse a pointer overwritten after its source snapshot");
+        .expect_err("transport must refuse a pointer overwritten after its source state");
     assert!(error.message().contains("transport"), "{}", error.message());
 }
 
@@ -1511,11 +1511,11 @@ test_batches! {
         linear_execute_retains_its_checked_execution_proof,
         linear_execute_until_retains_its_checked_execution_proof,
         execute_step_omits_materialization_only_transport,
-        execute_step_omits_materialized_mixed_snapshot_transport,
+        execute_step_omits_materialized_mixed_state_transport,
     ],
     statement_steps_batch_04: [
         execute_step_omits_materialization_transport_across_statements,
-        execute_step_expands_call_assign_fact_from_internal_snapshot,
+        execute_step_expands_call_assign_fact_from_internal_state,
         synthesizes_loaded_pointer_equality_as_pointer_comparison,
         synthesizes_a_reassigned_pointer_parameter_at_entry,
     ],

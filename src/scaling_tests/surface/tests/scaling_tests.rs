@@ -316,7 +316,7 @@ fn expanded_loop_claims_preserve_the_audit_work_bound() {
     for (fixture, claim) in [
         ("c_decreases_recursive_in_loop", "recursive_loop.contract"),
         ("later_loop_preserve", "later_loop_preserve.contract"),
-        ("loop_exit_snapshot", "count_from_to.contract"),
+        ("loop_exit_state", "count_from_to.contract"),
         ("nested_loop_preserve", "nested_loop_preserve.contract"),
     ] {
         let path =
@@ -1127,14 +1127,14 @@ fn target_with_unrelated_theorems(theorem_count: usize) -> String {
     click_source
 }
 
-fn straight_line_project(statement_count: usize, snapshot_claim: bool) -> (String, String) {
+fn straight_line_project(statement_count: usize, program_point_claim: bool) -> (String, String) {
     let mut c_source = String::from("int32 straight_line(int32 x) {\n");
     for _ in 0..statement_count {
         c_source.push_str("    x = x;\n");
     }
     c_source.push_str("    return x;\n}\n");
 
-    let ensure = if snapshot_claim {
+    let ensure = if program_point_claim {
         "result == at(region(0).entry, x)"
     } else {
         "result == x"
@@ -1512,13 +1512,13 @@ fn targeted_certification_keeps_an_explicit_theorem_dependency() {
 }
 
 #[test]
-fn straight_line_proof_steps_scale_near_linearly_with_retained_snapshots() {
-    for snapshot_claim in [false, true] {
+fn straight_line_proof_steps_scale_near_linearly_with_retained_states() {
+    for program_point_claim in [false, true] {
         let mut finalization_views = Vec::new();
         let samples = [8, 16, 32, 64]
             .into_iter()
             .map(|size| {
-                let (c_source, click_source) = straight_line_project(size, snapshot_claim);
+                let (c_source, click_source) = straight_line_project(size, program_point_claim);
                 let ((verified, view_count), sample) = scaling_sample(size, || {
                     proof::count_finalization_view_constructions(|| {
                         verify_c_sources(&click_source, &[("straight.c", c_source.as_str())])
@@ -1526,7 +1526,7 @@ fn straight_line_proof_steps_scale_near_linearly_with_retained_snapshots() {
                 });
                 verified.unwrap_or_else(|error| {
                     panic!(
-                        "size {size} straight-line fixture (snapshot={snapshot_claim}) failed: {}",
+                        "size {size} straight-line fixture (state={program_point_claim}) failed: {}",
                         error.message()
                     )
                 });
@@ -2226,7 +2226,7 @@ fn scaling_assertion_rejects_a_quadratic_curve() {
     assert!(named_growth_diagnostic(&quadratic).contains("quadratic reference"));
 }
 
-/// The change history is one node per recorded snapshot. Dropping a long
+/// The change history is one node per recorded state. Dropping a long
 /// history through the derived `Drop` recursed once per node and overflowed
 /// `click verify`'s 8 MB main thread at about 6,000 recorded steps. A history
 /// far longer than any budgeted proof records is dropped here on a 256 KB
@@ -2235,49 +2235,49 @@ fn scaling_assertion_rejects_a_quadratic_curve() {
 /// it.
 #[test]
 #[ignore = "nightly: 9s in the parallel gate"]
-fn recorded_snapshot_history_drops_without_recursing() {
+fn recorded_state_history_drops_without_recursing() {
     let build = |size: usize| {
         let state = ExecutionState::new();
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
-                SnapshotSelector::Mark(format!("step-{index:06}")),
+            retained_states.insert(
+                ProgramPointSelector::Mark(format!("step-{index:06}")),
                 state.clone(),
             );
         }
         // Reusing an empty state must not shorten the history under test.
         let mut changes = 0;
-        let mut history = snapshots.version.history.as_deref();
+        let mut history = retained_states.version.history.as_deref();
         while let Some(change) = history {
             changes += 1;
             history = change.parent.as_deref();
         }
         assert_eq!(changes, size);
-        snapshots
+        retained_states
     };
     std::thread::Builder::new()
-        .name("recorded-snapshot-history-drop".into())
+        .name("recorded-state-history-drop".into())
         .stack_size(256 * 1024)
         .spawn(move || {
             drop(build(200_000));
             let shared = build(100_000);
             let mut longer = shared.clone();
             longer.insert(
-                SnapshotSelector::Mark("tip".to_string()),
+                ProgramPointSelector::Mark("tip".to_string()),
                 ExecutionState::new(),
             );
             drop(longer);
-            assert!(shared.contains_key(&SnapshotSelector::Mark("step-000000".to_string())));
+            assert!(shared.contains_key(&ProgramPointSelector::Mark("step-000000".to_string())));
             drop(shared);
         })
         .expect("thread")
         .join()
-        .expect("dropping a recorded snapshot history must not recurse per node");
+        .expect("dropping a recorded state history must not recurse per node");
 }
 
 #[test]
-fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
-    let mark_selector = |name: String| SnapshotSelector::Mark(name);
+fn recorded_state_branch_merge_visits_only_fork_local_changes() {
+    let mark_selector = |name: String| ProgramPointSelector::Mark(name);
     let common_selector = mark_selector("common".to_string());
     let left_only = mark_selector("left-only".to_string());
     let right_only = mark_selector("right-only".to_string());
@@ -2285,7 +2285,7 @@ fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
     let mut samples = Vec::new();
 
     for size in [16_usize, 64, 256, 1024, 4096] {
-        let mut ancestor = RecordedSnapshots::new();
+        let mut ancestor = RecordedStates::new();
         for index in 0..size {
             ancestor.insert(
                 mark_selector(format!("ambient-{index:05}")),
@@ -2299,11 +2299,11 @@ fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
         left.insert(left_only.clone(), ExecutionState::new());
         right.insert(right_only.clone(), ExecutionState::new());
 
-        let before = recorded_snapshot_node_allocations();
+        let before = recorded_state_node_allocations();
         let merged = left
             .common_descendant(&right, &ancestor)
             .expect("fork siblings should have an exact persistent ancestor");
-        let allocations = recorded_snapshot_node_allocations() - before;
+        let allocations = recorded_state_node_allocations() - before;
         samples.push((
             size,
             (usize::BITS - size.leading_zeros()) as usize,
@@ -2319,7 +2319,7 @@ fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
         );
         assert_eq!(ancestor.iter().count(), size);
 
-        let unrelated = RecordedSnapshots::new();
+        let unrelated = RecordedStates::new();
         assert!(left.common_descendant(&right, &unrelated).is_none());
     }
 
@@ -2328,7 +2328,7 @@ fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
         let bound = base_allocations + 8 * (height - base_height);
         assert!(
             allocations <= bound,
-            "size {size} recorded-snapshot merge allocated {allocations} nodes (logarithmic bound {bound})"
+            "size {size} recorded-state merge allocated {allocations} nodes (logarithmic bound {bound})"
         );
     }
 }
@@ -3313,8 +3313,8 @@ fn array_fact_across_local_stores(statement_count: usize) -> (String, String) {
         "verifying \"bump.c\";\n\nfunction icount(p: int32[], lo: int32, hi: int32) -> Integer {\n    (lo..hi).fold(0, |acc, k| { acc + to_integer(p[k]) })\n}\n\nvoid bump(int32 a[], int32 n) {\n    requires 0 < n;\n    requires viewable(a[0..n]);\n    views a[0..n];\n} by {\n    step();\n    step();\n    have 0 <= 0 by { solve(); }\n    have icount(a, 0, 0) == 0 by {\n        peel(icount(a, 0, 0)) using { 0 <= 0; }\n        normalize();\n    }\n",
     );
     // One use of the fact after every step: the walk is asked from a fresh
-    // snapshot each time, which is the shape that goes quadratic when an
-    // version walk cannot reuse the answer it computed one snapshot ago.
+    // state each time, which is the shape that goes quadratic when an
+    // version walk cannot reuse the answer it computed one state ago.
     for _ in 0..statement_count {
         click_source.push_str("    step();\n");
         click_source.push_str("    have icount(a, 0, 0) == 0 by { solve(); }\n");
@@ -3401,9 +3401,9 @@ fn block_version_walk_curve(
 /// A declaration and a call are the interesting shapes because the walk crosses
 /// them with different evidence -- one object proven distinct for a
 /// declaration, a whole checked write set for a call -- and because a call's
-/// arrival at a fresh snapshot per step is exactly the shape that goes
+/// arrival at a fresh state per step is exactly the shape that goes
 /// quadratic when the version walk cannot reuse the answer it computed one
-/// snapshot ago.
+/// state ago.
 #[test]
 #[ignore = "nightly: 1.1s in the parallel gate"]
 fn an_array_fact_carried_across_declarations_and_calls_scales_linearly() {
@@ -3427,8 +3427,8 @@ fn an_array_fact_carried_across_declarations_and_calls_scales_linearly() {
 /// The array argument names a block version, and the version is a walk back along
 /// the derivation edges to the last one that could have changed the block. Run
 /// per step with no memo, that walk is N hops at the Nth step and the proof
-/// costs N^2; memoized per interned snapshot and block it is one hop per new
-/// snapshot. This is the regression that tells those two apart.
+/// costs N^2; memoized per interned state and block it is one hop per new
+/// state. This is the regression that tells those two apart.
 #[test]
 fn an_array_fact_carried_across_local_stores_scales_linearly() {
     let samples = [4, 8, 16, 32]
@@ -3766,9 +3766,9 @@ fn roundtrip_sample_on_this_thread(unrelated: usize, extra_copies: usize) -> Sca
 /// marginals on 2026-09-23: 3226, 3268, 3324, and 3468 units. They were
 /// 3232, 3276, 3336, and 3488 (and 3752 at 32 allocations, too slow for a
 /// debug-build unit test) while whole-function finalization still visited
-/// the grouped proof's shared execution once per path theorem. Before snapshot
+/// the grouped proof's shared execution once per path theorem. Before state
 /// sharing they were about 33,000 at N = 8 and 58,000 at N = 16: every later
-/// free compared the copy's facts, whose embedded snapshots were equal but
+/// free compared the copy's facts, whose embedded states were equal but
 /// separately stored, entry by entry. Before resource validity read only
 /// indexed candidates they were 3236, 3288, 3364, and 3548: each call's
 /// ensured-resource composition swept every block the caller owned.
@@ -3778,7 +3778,7 @@ fn roundtrip_sample_on_this_thread(unrelated: usize, extra_copies: usize) -> Sca
 /// 17 units per unrelated allocation, is mostly the
 /// implicit tail's condition-premise search over its listed pure
 /// facts and that search's solve checkpoints (about 12 per allocation); the
-/// rest is re-derived snapshot comparison relative to a base and more
+/// rest is re-derived state comparison relative to a base and more
 /// composition separation-candidate projections. The kernel call path is
 /// flat here: `ensured resource composition` and `verified call return
 /// resource evaluation` charge the same work at every size.
@@ -3999,7 +3999,7 @@ fn early_return_fan_out(returns: usize) -> String {
 }
 
 /// A fixed one-store proof verified after an unrelated proof in the same
-/// sidecar. Everything a proof unit builds in the session (interned snapshots,
+/// sidecar. Everything a proof unit builds in the session (interned states,
 /// load names, memo tables) outlives it, so this is where a later proof can
 /// end up walking an earlier one's history. The naming cache once returned
 /// load names minted by the earlier function without refreshing their origin,
@@ -4608,7 +4608,7 @@ fn grouped_proof_theorems_share_one_proof_text() {
 /// One project whose caller makes `call_count` plain `step()`s over a callee
 /// that advances one counter field of an owned object and keeps its other
 /// field. Every call's equality ensures name a load at the previous call's
-/// snapshot, so the counter's constant after normalization runs through the
+/// state, so the counter's constant after normalization runs through the
 /// whole prior call chain -- the `arena_free` shape (`after.live ==
 /// old(st.live) - 1`, `region->start == old(r.start)`).
 fn counter_call_chain(call_count: usize) -> (String, String) {
@@ -4636,7 +4636,7 @@ fn counter_call_chain(call_count: usize) -> (String, String) {
 /// proportional to that call, not to the caller's prior call chain.
 ///
 /// Normalizing an ensured term to its constant used to re-walk every earlier
-/// call's ensures, deep-comparing each same-address load at another snapshot:
+/// call's ensures, deep-comparing each same-address load at another state:
 /// the Nth call cost O(N^2) and the proof O(N^3). The constant is now a class
 /// lookup maintained as each fact is inserted, so the last call's lowering is
 /// flat in N and the whole proof is near-linear.
@@ -5178,7 +5178,7 @@ fn explicit_fold_read_transport_along_a_store_sequence_is_near_linear() {
     assert_near_linear_scaling("explicit fold read transport along stores", &samples);
 }
 
-/// Collecting the variables of a state's memory reads the snapshot's counts,
+/// Collecting the variables of a state's memory reads the state's counts,
 /// kept once per session from its derivation base's, so a proof beside a
 /// global array visits each of the array's cells once however many steps
 /// collect the state's variables. Walking the live memory whole on every
@@ -6708,9 +6708,9 @@ fn field_stores_project(count: usize) -> (String, String) {
 }
 
 /// Recording how a stepped store reads in source terms must not rewrite the
-/// memory snapshot the store's fact carries. It used to restore every load
-/// the fact mentioned, the cached values of that snapshot included, one name
-/// at a time and copying the snapshot each time: the square of the known
+/// memory state the store's fact carries. It used to restore every load
+/// the fact mentioned, the cached values of that state included, one name
+/// at a time and copying the state each time: the square of the known
 /// cells for every `step()`. The restored form is only read for a comparison
 /// that names a qualified object, and these name none.
 #[test]
@@ -6724,12 +6724,12 @@ fn stepping_a_store_does_not_rewrite_the_memory_its_fact_carries() {
         verified.unwrap_or_else(|error| panic!("{size}-store fixture failed: {}", error.message()));
         let rewrites = sample
             .named_work
-            .get("operation `substitution: snapshot rewrite`")
+            .get("operation `substitution: state rewrite`")
             .copied()
             .unwrap_or(0);
         assert_eq!(
             rewrites, 0,
-            "{size} field stores spent {rewrites} work units rewriting memory snapshots"
+            "{size} field stores spent {rewrites} work units rewriting memory states"
         );
     }
 }
@@ -6982,7 +6982,7 @@ fn atomic_memory_evidence_cites_only_connected_conditions() {
 }
 
 #[test]
-fn atomic_load_dependencies_ignore_other_snapshot_cells() {
+fn atomic_load_dependencies_ignore_other_state_cells() {
     use crate::kernel::{
         ConditionTerm, MachineTerm, Memory, Pointer, PointerOffsetTerm, ProgramValue, Proposition,
         PureFactContext, Variable,
@@ -7066,7 +7066,7 @@ fn atomic_load_dependencies_ignore_other_snapshot_cells() {
         }
         samples.push((size, work));
     }
-    // Cold snapshot canonicalization may read the supplied snapshot. Its
+    // Cold state canonicalization may read the supplied state. Its
     // size is explicit input; the retained ambient conditions stay bounded.
     for pair in samples.windows(2) {
         assert!(pair[1].1 <= pair[0].1 * 2, "{samples:?}");
@@ -7415,7 +7415,7 @@ fn failing_solve_work_is_flat_along_a_variable_chain() {
 /// branches the execution takes, then one closer per path under the same nested conditions. A returned constant
 /// closes by `known`; the two `-1` returns transport the postcondition
 /// from `function.exit`, since `result` cannot be named in an earlier
-/// snapshot.
+/// state.
 fn early_return_fan_out_explicit_proof(returns: usize) -> String {
     fn indent(depth: usize) -> String {
         "    ".repeat(depth + 1)
@@ -7568,10 +7568,8 @@ fn check_completed_early_return_context_reuse(explicit: bool) {
                 size: returns,
                 work: *sample
                     .named_work
-                    .get("operation `solve closure: snapshot transport`")
-                    .unwrap_or_else(|| {
-                        panic!("solve did not try a snapshot transport: {sample:?}")
-                    }),
+                    .get("operation `solve closure: state transport`")
+                    .unwrap_or_else(|| panic!("solve did not try a state transport: {sample:?}")),
                 named_work: BTreeMap::new(),
             });
             spelling.push(ScalingSample {
@@ -7724,8 +7722,8 @@ fn check_completed_early_return_context_reuse(explicit: bool) {
         assert_near_linear_scaling("implicit empty-effect check over paths", &finalization);
         eprintln!("fan-out execute work: {execute:?}");
         assert_near_linear_scaling("executing a fan-out's paths", &execute);
-        eprintln!("fan-out snapshot transport work: {transport:?}");
-        assert_near_linear_scaling("solve's snapshot transport search", &transport);
+        eprintln!("fan-out state transport work: {transport:?}");
+        assert_near_linear_scaling("solve's state transport search", &transport);
         eprintln!("fan-out premise spelling work: {spelling:?}");
         assert_near_linear_scaling("solve's premise spelling", &spelling);
         eprintln!("indexed fan-out: {samples:?}; selection: {selection:?}");
@@ -7925,24 +7923,24 @@ fn a_linear_goal_costs_a_constant_per_equality_connected_to_its_atoms() {
 }
 
 #[test]
-fn nearest_statement_snapshots_are_lazy_ordered_and_logarithmic() {
+fn nearest_statement_states_are_lazy_ordered_and_logarithmic() {
     let point = |index, kind| ProgramPointRef {
         region: CodeRegionRef::Region(index),
         kind,
     };
     for size in [16usize, 64, 256, 1024, 4096] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(point(index, ProgramPointKind::Entry), ExecutionState::new());
-            snapshots.insert(point(index, ProgramPointKind::Exit), ExecutionState::new());
+            retained_states.insert(point(index, ProgramPointKind::Entry), ExecutionState::new());
+            retained_states.insert(point(index, ProgramPointKind::Exit), ExecutionState::new());
         }
-        snapshots.insert(
-            SnapshotSelector::Mark("unrelated".into()),
+        retained_states.insert(
+            ProgramPointSelector::Mark("unrelated".into()),
             ExecutionState::new(),
         );
         let anchor = size / 2;
         let (nearest, work) = crate::instrumentation::measure_deterministic_work(|| {
-            snapshots
+            retained_states
                 .statement_entries_nearest(anchor)
                 .take(3)
                 .map(|(p, _)| p.clone())
@@ -7960,7 +7958,7 @@ fn nearest_statement_snapshots_are_lazy_ordered_and_logarithmic() {
             work <= 16 * height as usize + 32,
             "size {size}: {work} tree work"
         );
-        let all = snapshots
+        let all = retained_states
             .statement_entries_nearest(anchor)
             .map(|(p, _)| p.clone())
             .collect::<Vec<_>>();
@@ -7972,9 +7970,9 @@ fn nearest_statement_snapshots_are_lazy_ordered_and_logarithmic() {
                 .map(|i| point(i, ProgramPointKind::Entry))
                 .collect::<Vec<_>>()
         );
-        snapshots.remove(&point(anchor, ProgramPointKind::Entry));
+        retained_states.remove(&point(anchor, ProgramPointKind::Entry));
         assert_eq!(
-            snapshots
+            retained_states
                 .statement_entries_nearest(anchor)
                 .next()
                 .unwrap()
@@ -8002,7 +8000,7 @@ fn recorded_value_names_index_only_the_locals_each_point_changes() {
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     for size in [16usize, 64, 256, 1024] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         let mut state = ExecutionState::new()
             .with_memory(crate::kernel::Memory::new().with_block("cells", 4 * size as u32));
         let mut insert_work = Vec::new();
@@ -8054,7 +8052,7 @@ fn recorded_value_names_index_only_the_locals_each_point_changes() {
             state = state.with_memory(memory);
             let (((), work), persistent) = crate::persistent::measure_persistent_work(|| {
                 crate::instrumentation::measure_deterministic_work(|| {
-                    snapshots.insert(point(index), state.clone());
+                    retained_states.insert(point(index), state.clone());
                 })
             });
             insert_work.push(work + persistent);
@@ -8069,36 +8067,40 @@ fn recorded_value_names_index_only_the_locals_each_point_changes() {
         // though `x0` holds a newer value now; the newest one at its point.
         for (term, expected) in [(value(3), point(1)), (value(2 * size - 1), point(size - 1))] {
             let (named, work) = crate::instrumentation::measure_deterministic_work(|| {
-                snapshots
+                retained_states
                     .point_naming_integer(&term)
                     .map(|(selector, name, _)| (selector.clone(), name.to_string()))
             });
             assert_eq!(
                 named,
-                Some((SnapshotSelector::from(expected), "x0".to_string()))
+                Some((ProgramPointSelector::from(expected), "x0".to_string()))
             );
             assert!(work <= 4, "size {size}: naming one value did {work} work");
         }
         // A value no recorded local held has no name.
-        assert!(snapshots.point_naming_integer(&value(10 * size)).is_none());
+        assert!(
+            retained_states
+                .point_naming_integer(&value(10 * size))
+                .is_none()
+        );
         // The first pointer `p` held is found by its block at its point.
         let first = block_pointer(0);
         let (points, work) = crate::instrumentation::measure_deterministic_work(|| {
-            snapshots
+            retained_states
                 .points_holding_pointer_block(&first.block)
                 .map(|(selector, _)| selector.clone())
                 .collect::<Vec<_>>()
         });
-        assert_eq!(points, vec![SnapshotSelector::from(point(0))]);
+        assert_eq!(points, vec![ProgramPointSelector::from(point(0))]);
         assert!(work <= 4, "size {size}: naming one pointer did {work} work");
         // The value the first point stored is found by its fingerprint.
         let (cells, work) = crate::instrumentation::measure_deterministic_work(|| {
-            snapshots
+            retained_states
                 .points_holding_cell_integer(&value(6 * size))
                 .map(|(selector, _)| selector.clone())
                 .collect::<Vec<_>>()
         });
-        assert_eq!(cells, vec![SnapshotSelector::from(point(0))]);
+        assert_eq!(cells, vec![ProgramPointSelector::from(point(0))]);
         assert!(
             work <= 4,
             "size {size}: naming one cell value did {work} work"
@@ -8107,10 +8109,10 @@ fn recorded_value_names_index_only_the_locals_each_point_changes() {
 }
 
 #[test]
-fn nearest_statement_snapshots_stop_at_an_exhausted_deadline() {
-    let mut snapshots = RecordedSnapshots::new();
+fn nearest_statement_states_stop_at_an_exhausted_deadline() {
+    let mut retained_states = RecordedStates::new();
     for index in 0..256 {
-        snapshots.insert(
+        retained_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Region(index),
                 kind: ProgramPointKind::Entry,
@@ -8118,7 +8120,7 @@ fn nearest_statement_snapshots_stop_at_an_exhausted_deadline() {
             ExecutionState::new(),
         );
     }
-    let mut entries = snapshots.statement_entries_nearest(128);
+    let mut entries = retained_states.statement_entries_nearest(128);
     crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
         assert!(entries.next().is_none());
     });
@@ -9451,7 +9453,7 @@ fn mixed_width_owned_entry_work_is_independent_of_segment_length() {
 }
 
 #[test]
-fn native_read_equality_refusal_does_not_restart_snapshot_search_as_integer() {
+fn native_read_equality_refusal_does_not_restart_state_search_as_integer() {
     let c = "int32 read_after_store(int32 *a, int32 k) { a[3] = 5; return a[k]; }";
     verify_c_sources(
         "verifying \"read.c\"; int32 read_after_store(int32 *a, int32 k) {
@@ -9502,7 +9504,7 @@ fn native_read_equality_refusal_does_not_restart_snapshot_search_as_integer() {
             .filter(|event| {
                 matches!(event,
                     crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                        if *name == "solve closure: snapshot transport"
+                        if *name == "solve closure: state transport"
                 )
             })
             .count();
@@ -9515,7 +9517,7 @@ fn native_read_equality_refusal_does_not_restart_snapshot_search_as_integer() {
 
 #[test]
 #[ignore = "nightly: 2.164s for composite read refusal across three array sizes"]
-fn composite_native_read_equality_refusal_keeps_one_snapshot_search() {
+fn composite_native_read_equality_refusal_keeps_one_state_search() {
     let c = "int32 read_after_store(int32 *a, int32 k) { a[3] = 5; return a[k]; }";
     for length in [4usize, 8, 16] {
         let source = format!(
@@ -9535,13 +9537,13 @@ fn composite_native_read_equality_refusal_keeps_one_snapshot_search() {
             .filter(|event| {
                 matches!(event,
                     crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                        if *name == "solve closure: snapshot transport"
+                        if *name == "solve closure: state transport"
                 )
             })
             .count();
         assert!(
             searches <= 1,
-            "size {length}: arithmetic restarted snapshot search {searches} times"
+            "size {length}: arithmetic restarted state search {searches} times"
         );
     }
 }
@@ -9910,7 +9912,7 @@ fn post_return_function_equations_scale_with_explicit_unfolds() {
 fn recorded_call_results_scale_and_replace_execution_occurrences() {
     use crate::kernel::{ConditionTerm, MachineIntegerType, MachineTerm, Variable};
     for size in [16usize, 64, 256, 1024] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         let value = |index| {
             ProgramValue::Bool(MachineTerm::bool_cast(
                 MachineIntegerType::UInt8,
@@ -9919,7 +9921,7 @@ fn recorded_call_results_scale_and_replace_execution_occurrences() {
         };
         for index in 0..size {
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-                snapshots.record_call_result(index, Some(value(index as u64)));
+                retained_states.record_call_result(index, Some(value(index as u64)));
             });
             assert!(work <= 2, "{size}: insertion {work}");
         }
@@ -9927,13 +9929,13 @@ fn recorded_call_results_scale_and_replace_execution_occurrences() {
             unreachable!()
         };
         let (region, work) = crate::instrumentation::measure_deterministic_work(|| {
-            snapshots.call_result_naming_integer(&first)
+            retained_states.call_result_naming_integer(&first)
         });
         assert_eq!(region, Some(CodeRegionRef::Region(0)));
         assert!(work <= 2, "{size}: lookup {work}");
-        let branch = snapshots.clone();
-        snapshots.record_call_result(0, Some(value(10000)));
-        assert!(snapshots.call_result_naming_integer(&first).is_none());
+        let branch = retained_states.clone();
+        retained_states.record_call_result(0, Some(value(10000)));
+        assert!(retained_states.call_result_naming_integer(&first).is_none());
         assert_eq!(
             branch
                 .region_result_value(&CodeRegionRef::Region(0))
@@ -9941,14 +9943,14 @@ fn recorded_call_results_scale_and_replace_execution_occurrences() {
             value(0)
         );
         assert_eq!(
-            snapshots
+            retained_states
                 .region_result_value(&CodeRegionRef::Region(0))
                 .unwrap(),
             value(10000)
         );
-        snapshots.record_call_result(0, None);
+        retained_states.record_call_result(0, None);
         assert!(
-            snapshots
+            retained_states
                 .region_result_value(&CodeRegionRef::Region(0))
                 .is_err()
         );
@@ -9968,7 +9970,7 @@ fn recorded_algebraic_field_names_use_changed_instances_and_direct_lookups() {
     )])
     .unwrap();
     for size in [16usize, 64, 256, 1024] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         let mut state = ExecutionState::new();
         for index in 0..size {
             let variable = Variable(900_000 + index as u64);
@@ -10005,7 +10007,7 @@ fn recorded_algebraic_field_names_use_changed_instances_and_direct_lookups() {
                     ));
             state = state.with_resource_context(resources);
             let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-                snapshots.insert(
+                retained_states.insert(
                     ProgramPointRef {
                         region: CodeRegionRef::Region(index),
                         kind: ProgramPointKind::Exit,
@@ -10016,7 +10018,7 @@ fn recorded_algebraic_field_names_use_changed_instances_and_direct_lookups() {
             assert!(work <= 4, "{size}/{index}: insertion {work}");
         }
         let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
-            snapshots
+            retained_states
                 .point_holding_field_value(Variable(900_000))
                 .is_some()
         });
@@ -10194,7 +10196,7 @@ fn known_value_transport_replay_scales_with_explicit_links() {
 }
 
 #[test]
-fn snapshot_comparison_transport_replay_scales_with_explicit_links() {
+fn state_comparison_transport_replay_scales_with_explicit_links() {
     let mut costs = Vec::new();
     for size in [2, 4, 8, 16] {
         let c = format!(
@@ -10232,7 +10234,7 @@ fn snapshot_comparison_transport_replay_scales_with_explicit_links() {
         verified.unwrap();
         costs.push(work);
     }
-    eprintln!("snapshot-comparison replay work: {costs:?}");
+    eprintln!("state-comparison replay work: {costs:?}");
     assert!(costs.iter().all(|cost| *cost > 0));
     assert!(
         costs.windows(2).all(|pair| pair[1] <= pair[0] * 3),
@@ -10749,7 +10751,7 @@ fn volatile_read_results_use_selected_event_indexes() {
     let mut samples = Vec::new();
     let mut repeated_samples = Vec::new();
     for size in [16usize, 64, 256, 1024] {
-        let mut points = RecordedSnapshots::new();
+        let mut points = RecordedStates::new();
         let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
             for index in 0..size {
                 let value =
@@ -11065,28 +11067,28 @@ fn consuming_call_bound_samples() {
 fn a_loop_exit_reads_only_the_points_its_pass_recorded() {
     use crate::instrumentation::measure_deterministic_work;
     let region = |index: usize, kind: ProgramPointKind| {
-        SnapshotSelector::ProgramPoint(ProgramPointRef {
+        ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Region(index),
             kind,
         })
     };
     let pass_work = |before: usize, during: usize| {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..before {
-            snapshots.insert(
+            retained_states.insert(
                 region(index, ProgramPointKind::Entry),
                 ExecutionState::new(),
             );
         }
-        let mark = snapshots.history_mark();
+        let mark = retained_states.history_mark();
         for index in 0..during {
-            snapshots.insert(
+            retained_states.insert(
                 region(before + index, ProgramPointKind::Exit),
                 ExecutionState::new(),
             );
         }
-        let (points, work) = measure_deterministic_work(|| snapshots.recorded_since(&mark));
-        assert_eq!(points.snapshots.len(), during);
+        let (points, work) = measure_deterministic_work(|| retained_states.recorded_since(&mark));
+        assert_eq!(points.retained_states.len(), during);
         work
     };
     let unrelated = [16_usize, 64, 256, 1024].map(|before| pass_work(before, 4));

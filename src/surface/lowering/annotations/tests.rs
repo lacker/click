@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn addressed_result_members_bind_the_builtin_and_preserve_explicit_program_names() {
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let (mut lowerer, mut context) = fixed_state_elaboration(
@@ -13,7 +13,7 @@ fn addressed_result_members_bind_the_builtin_and_preserve_explicit_program_names
         BTreeMap::new(),
         BTreeMap::new(),
         None,
-        &snapshots,
+        &retained_states,
         SpecDefinitions::new(&predicates, &functions),
         BTreeSet::new(),
         BTreeMap::new(),
@@ -94,7 +94,7 @@ fn struct_pointer_arithmetic_through_uint64_cast_uses_layout_width() {
     )
     .expect("struct pointer function should parse");
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let (lowerer, context) = fixed_state_elaboration(
@@ -104,7 +104,7 @@ fn struct_pointer_arithmetic_through_uint64_cast_uses_layout_width() {
         BTreeMap::new(),
         BTreeMap::new(),
         None,
-        &snapshots,
+        &retained_states,
         SpecDefinitions::new(&predicates, &functions),
         BTreeSet::new(),
         parameter_pointer_element_widths(function.parameters()),
@@ -192,7 +192,7 @@ thread_local! {
 }
 
 #[test]
-fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
+fn nested_state_propositions_lower_with_small_frames_and_linear_visits() {
     std::thread::Builder::new()
         .name("small-stack-proposition-lowering".into())
         .stack_size(1024 * 1024)
@@ -200,11 +200,11 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
             let state = ExecutionState::new().with_local("x", int32(7));
             let predicates = PredicateEnvironment::new(&[]);
             let functions = ClickFunctionEnvironment::new(&[]);
-            let mut snapshots = RecordedSnapshots::default();
-            snapshots.insert(SnapshotSelector::Mark("before".into()), state.clone());
+            let mut retained_states = RecordedStates::default();
+            retained_states.insert(ProgramPointSelector::Mark("before".into()), state.clone());
             let atom = || ClickProposition::Comparison {
                 left: ContractExpression::At {
-                    selector: SnapshotSelector::Mark("before".into()),
+                    selector: ProgramPointSelector::Mark("before".into()),
                     expression: Box::new(ContractExpression::ProgramExpression(
                         ProgramExpression::Variable("x".into()),
                     )),
@@ -230,7 +230,7 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
                     BTreeMap::from([("x".into(), int32(7))]),
                     BTreeMap::from([("x".into(), int32(9))]),
                     None,
-                    &snapshots,
+                    &retained_states,
                     SpecDefinitions::new(&predicates, &functions),
                     BTreeSet::new(),
                     BTreeMap::new(),
@@ -277,7 +277,7 @@ fn nested_snapshot_propositions_lower_with_small_frames_and_linear_visits() {
 /// wherever inside the component that state is named. The kernel reads the one
 /// declared component at two states and ranks the values; a component that
 /// fixes its own state reads one state twice, so both `old(...)` and any
-/// `at(...)` snapshot, including a loop's own entry, are refused.
+/// `at(...)` state, including a loop's own entry, are refused.
 #[test]
 fn a_fixed_state_anywhere_in_a_measure_is_found() {
     let current = ContractExpression::CBinding("n".to_string());
@@ -292,7 +292,7 @@ fn a_fixed_state_anywhere_in_a_measure_is_found() {
         Some(FixedMeasureState::Old)
     ));
 
-    let loop_entry = SnapshotSelector::ProgramPoint(ProgramPointRef {
+    let loop_entry = ProgramPointSelector::ProgramPoint(ProgramPointRef {
         region: CodeRegionRef::Loop(0),
         kind: ProgramPointKind::Entry,
     });
@@ -303,9 +303,9 @@ fn a_fixed_state_anywhere_in_a_measure_is_found() {
             expression: Box::new(current),
         }],
     };
-    let found = fixed_measure_state(&at).expect("a snapshot in a call argument is a snapshot");
+    let found = fixed_measure_state(&at).expect("a state in a call argument is a state");
     let FixedMeasureState::At(selector) = &found else {
-        panic!("the refusal names the snapshot, not `old`");
+        panic!("the refusal names the state, not `old`");
     };
     assert_eq!(selector, &loop_entry);
     assert_eq!(found.spelling(), "at(loop(0).entry, ...)");
@@ -390,7 +390,7 @@ fn c_loop_index_agrees_with_the_walk_at_every_loop() {
 fn ordinary_integer_arithmetic_retains_structure_and_deferred_domain_checks() {
     use crate::kernel::{IntegerTerm as Int, SpecIntegerExpression as Spec};
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let (mut lowerer, mut context) = fixed_state_elaboration(
@@ -400,7 +400,7 @@ fn ordinary_integer_arithmetic_retains_structure_and_deferred_domain_checks() {
         BTreeMap::new(),
         BTreeMap::new(),
         None,
-        &snapshots,
+        &retained_states,
         SpecDefinitions::new(&predicates, &functions),
         BTreeSet::new(),
         BTreeMap::new(),

@@ -1,6 +1,6 @@
 //! Selected source queries; enumeration carries exact premises, not new authority.
 use super::*;
-use crate::kernel::assumptions::load_snapshot_and_pointer;
+use crate::kernel::assumptions::load_state_and_pointer;
 use crate::kernel::assumptions::{parameter_alias_bucket, parameter_partition_variable};
 use crate::kernel::reasoning::memories_match_for_pointer_load;
 use crate::kernel::{CompareRelation, MachineIntegerType};
@@ -140,7 +140,7 @@ impl EqualityGraph {
         if !exact.is_empty() {
             return exact;
         }
-        let Some((query_memory, pointer, kind)) = load_snapshot_and_pointer(term) else {
+        let Some((query_memory, pointer, kind)) = load_state_and_pointer(term) else {
             return exact;
         };
         let mut transported = Vec::new();
@@ -160,7 +160,7 @@ impl EqualityGraph {
                 continue;
             };
             for (side, other) in [(left, right), (right, left)] {
-                let Some((fact_memory, fact_pointer, fact_kind)) = load_snapshot_and_pointer(side)
+                let Some((fact_memory, fact_pointer, fact_kind)) = load_state_and_pointer(side)
                 else {
                     continue;
                 };

@@ -13,7 +13,7 @@ Let `n` be any `uint64` length both buffers admit, and let `A0` and `B0` each
 be from 0 through 65520. Give C a seed whose decoded low/high 16-bit fields
 are `A0`/`B0`, and Rust a receiver with those fields. The C buffer must be
 nonnull. Each caller supplies the read authority required by its contract.
-The buffers may be distinct allocations, provided their entry snapshots have
+The buffers may be distinct allocations, provided their entry states have
 the same byte at every index `k < n`.
 
 | Checked producer | Result observation |
@@ -40,7 +40,7 @@ not the full LP64 seed word.
 The actual [C two-call client](zlib/incremental.click) and
 [Rust two-write client](adler2/incremental.click) independently produce the
 whole-input checksum. Instantiate the same correspondence theorem with their
-return words and whole-input entry snapshots. Both splits may range from zero
+return words and whole-input entry states. Both splits may range from zero
 through the total length; their split positions need not be equal. The C
 client requires both call pointers to be nonnull, including empty pieces.
 Rust's [saved/restored client](adler2/resumed.click) has the same standard-seed

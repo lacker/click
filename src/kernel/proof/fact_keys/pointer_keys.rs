@@ -1,5 +1,5 @@
 //! Shallow offset keys retain shared graphs. These are identities/selectors,
-//! not evidence; snapshot erasure still requires the existing checked bridge.
+//! not evidence; state erasure still requires the existing checked bridge.
 use super::*;
 use crate::kernel::{
     KernelPointerOffset as O, MachineOperandView as V, SharedPointerAddress, SharedPointerOffset,
@@ -103,9 +103,9 @@ impl<N: KeyNode> Canonical<N> {
         self.0.checked
     }
 }
-impl KeyNode for SnapshotBlindPointerOffsetNode {
+impl KeyNode for MemoryErasedPointerOffsetNode {
     fn table() -> &'static Table<Self> {
-        static TABLE: OnceLock<Table<SnapshotBlindPointerOffsetNode>> = OnceLock::new();
+        static TABLE: OnceLock<Table<MemoryErasedPointerOffsetNode>> = OnceLock::new();
         TABLE.get_or_init(Default::default)
     }
     fn checked_match(&self) -> bool {
@@ -156,35 +156,35 @@ fn offsets<K: Clone>(
 }
 
 #[allow(dead_code)] // Prepared before the pointer-producing boundaries switch.
-pub(super) fn snapshot_offset(root: &SharedPointerOffset) -> SnapshotBlindPointerOffsetKey {
+pub(super) fn state_offset(root: &SharedPointerOffset) -> MemoryErasedPointerOffsetKey {
     offsets(root, |node, children| {
         Some(Canonical::new(match node {
             O::Constant(value) => {
-                SnapshotBlindPointerOffsetNode::Exact(PointerOffsetTerm::Constant(*value))
+                MemoryErasedPointerOffsetNode::Exact(PointerOffsetTerm::Constant(*value))
             }
             O::Variable(value) => {
-                SnapshotBlindPointerOffsetNode::Exact(PointerOffsetTerm::Variable(*value))
+                MemoryErasedPointerOffsetNode::Exact(PointerOffsetTerm::Variable(*value))
             }
             O::Add(_) => {
                 let [a, b] = children.unwrap();
-                SnapshotBlindPointerOffsetNode::Add(a, b)
+                MemoryErasedPointerOffsetNode::Add(a, b)
             }
-            O::Int32Scaled { value, byte_width } => SnapshotBlindPointerOffsetNode::Int32Scaled {
-                value: snapshot_operands::operand(V::Shared(value)),
+            O::Int32Scaled { value, byte_width } => MemoryErasedPointerOffsetNode::Int32Scaled {
+                value: memory_operands::operand(V::Shared(value)),
                 byte_width: *byte_width,
             },
             O::Int64Scaled {
                 value,
                 byte_width,
                 unsigned,
-            } => SnapshotBlindPointerOffsetNode::Int64Scaled {
-                value: snapshot_operands::operand(V::Shared(value)),
+            } => MemoryErasedPointerOffsetNode::Int64Scaled {
+                value: memory_operands::operand(V::Shared(value)),
                 byte_width: *byte_width,
                 unsigned: *unsigned,
             },
         }))
     })
-    .expect("snapshot key is total")
+    .expect("state key is total")
 }
 
 #[allow(dead_code)]
@@ -281,7 +281,7 @@ pub(super) fn alpha_offset<const ALLOW_LOADS: bool>(
 }
 
 #[allow(dead_code)]
-pub(super) fn snapshot_address(pointer: &SharedPointerAddress) -> SnapshotBlindPointerKey {
+pub(super) fn state_address(pointer: &SharedPointerAddress) -> MemoryErasedPointerKey {
     let depth = POINTER_READ_KEY_DEPTH.with(|depth| depth.replace(depth.get() + 1));
     let _restore = PointerReadKeyDepth(depth);
     let block = pointer.node().block.native_atom();
@@ -298,13 +298,13 @@ pub(super) fn snapshot_address(pointer: &SharedPointerAddress) -> SnapshotBlindP
         }
         _ => None,
     };
-    SnapshotBlindPointerKey {
+    MemoryErasedPointerKey {
         block: read
             .map(|source| {
-                SnapshotBlindPointerBlockKey::Read(Box::new(snapshot_blind_pointer_key(&source)))
+                MemoryErasedPointerBlockKey::Read(Box::new(memory_erased_pointer_key(&source)))
             })
-            .unwrap_or_else(|| SnapshotBlindPointerBlockKey::Exact(block.clone())),
-        offset: Box::new(snapshot_offset(&pointer.node().offset)),
+            .unwrap_or_else(|| MemoryErasedPointerBlockKey::Exact(block.clone())),
+        offset: Box::new(state_offset(&pointer.node().offset)),
     }
 }
 #[allow(dead_code)]
@@ -324,23 +324,23 @@ pub(super) fn alpha_address<const ALLOW_LOADS: bool>(
     })
 }
 #[allow(dead_code)]
-pub(super) fn snapshot_value(pointer: &SharedPointerValue) -> SnapshotBlindPointerValueKey {
+pub(super) fn recorded_value(pointer: &SharedPointerValue) -> MemoryErasedPointerValueKey {
     let p = pointer.node();
     let q = p.qualifiers.as_ref();
     let known = q.is_some_and(|q| q.extent_known);
-    SnapshotBlindPointerValueKey {
+    MemoryErasedPointerValueKey {
         program_type: p.program_type,
-        address: snapshot_address(&p.address),
-        designation: snapshot_address(&p.designation),
+        address: state_address(&p.address),
+        designation: state_address(&p.designation),
         opaque_extent: if known {
             None
         } else {
-            p.opaque_extent.as_ref().map(snapshot_address)
+            p.opaque_extent.as_ref().map(state_address)
         },
         extent: q.and_then(|q| q.extent.as_ref()).map(|e| {
             (
-                snapshot_address(&e.start),
-                snapshot_operands::operand(V::Shared(&e.width)),
+                state_address(&e.start),
+                memory_operands::operand(V::Shared(&e.width)),
             )
         }),
         extent_known: known,
@@ -438,14 +438,14 @@ mod tests {
                 Box::new(PointerOffsetTerm::Constant(3)),
             ));
             let shared = SharedPointerValue::import(&source);
-            let expected = snapshot_blind_pointer_value_key(&source);
+            let expected = memory_erased_pointer_value_key(&source);
             let alpha = alpha_program_value_key_with_bindings::<true>(
                 &ProgramValue::Pointer(source.clone()),
                 &mut fold_keys::bindings(),
                 &mut 0,
             );
             let exports = KernelTermExport::machine_export_count();
-            assert_eq!(snapshot_value(&shared), expected);
+            assert_eq!(recorded_value(&shared), expected);
             assert_eq!(
                 alpha_value::<true>(&shared, &mut fold_keys::bindings(), &mut 0),
                 alpha
@@ -455,7 +455,7 @@ mod tests {
             let changed = source.clone().with_pointee_constant(false);
             let changed = SharedPointerValue::import(&changed);
             assert_ne!(shared, changed);
-            assert_eq!(snapshot_value(&shared), snapshot_value(&changed));
+            assert_eq!(recorded_value(&shared), recorded_value(&changed));
             assert_ne!(
                 alpha_value::<true>(&shared, &mut fold_keys::bindings(), &mut 0),
                 alpha_value::<true>(&changed, &mut fold_keys::bindings(), &mut 0)
@@ -463,7 +463,7 @@ mod tests {
         }
     }
     #[test]
-    fn shared_snapshot_selection_retains_checked_match_and_alpha_snapshot_identity() {
+    fn shared_state_selection_retains_checked_match_and_alpha_state_identity() {
         let _session = VerificationSession::enter();
         let address = crate::kernel::Memory::global_pointer("shared-key-load");
         let before = crate::kernel::Memory::new().with_block("shared-key-load", 16);
@@ -487,14 +487,14 @@ mod tests {
         let a = make(before);
         let b = make(after);
         let exports = KernelTermExport::machine_export_count();
-        assert_eq!(snapshot_value(&a), snapshot_value(&b));
-        assert!(snapshot_value(&a).requires_checked_match());
+        assert_eq!(recorded_value(&a), recorded_value(&b));
+        assert!(recorded_value(&a).requires_checked_match());
         assert_ne!(
             alpha_value::<true>(&a, &mut fold_keys::bindings(), &mut 0),
             alpha_value::<true>(&b, &mut fold_keys::bindings(), &mut 0)
         );
         let mut bindings = fold_keys::bindings();
-        bindings.snapshot_aware = false;
+        bindings.state_aware = false;
         assert!(alpha_value::<false>(&a, &mut bindings, &mut 0).is_none());
         assert_eq!(KernelTermExport::machine_export_count(), exports);
     }
@@ -506,10 +506,7 @@ mod tests {
         for _ in 0..6 {
             source = Pointer::loaded_value(&memory, &source);
             let shared = SharedPointerAddress::import(&source);
-            assert_eq!(
-                snapshot_address(&shared),
-                snapshot_blind_pointer_key(&source)
-            );
+            assert_eq!(state_address(&shared), memory_erased_pointer_key(&source));
             assert_eq!(
                 alpha_address::<true>(&shared, &mut fold_keys::bindings(), &mut 0),
                 alpha_pointer_key_with_bindings::<true>(
@@ -530,7 +527,7 @@ mod tests {
         let a = make();
         let b = make();
         assert_ne!(a, b);
-        assert_eq!(snapshot_address(&a), snapshot_address(&b));
+        assert_eq!(state_address(&a), state_address(&b));
         assert_eq!(
             alpha_address::<true>(&a, &mut fold_keys::bindings(), &mut 0),
             alpha_address::<true>(&b, &mut fold_keys::bindings(), &mut 0)
@@ -539,7 +536,7 @@ mod tests {
     #[test]
     fn compact_key_fingerprints_survive_dropping_all_handles() {
         let fingerprint = || {
-            let key = snapshot_blind_pointer_offset_key(&PointerOffsetTerm::Constant(1010301));
+            let key = memory_erased_pointer_offset_key(&PointerOffsetTerm::Constant(1010301));
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             key.hash(&mut hasher);
             hasher.finish()

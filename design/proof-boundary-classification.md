@@ -53,7 +53,7 @@ fallback exchange. These are closed preparation tasks, not outstanding adapters.
 
 Scoped evidence: twelve named preparation controls passed on this baseline,
 including constructor counts at 1/8/32, missing-premise refusals, and expansion
-and cold replay. Snapshot-pointer and arithmetic-field regressions preserve the
+and cold replay. MemoryState-pointer and arithmetic-field regressions preserve the
 meaning of generated obligations. This establishes the selected routes, not a
 cost bound for every evaluator, observation, join or contract-closing operation.
 
@@ -70,8 +70,8 @@ Two separate limits remain:
 
 ## Statement-exit fact transport: removed operation discovery
 
-Statement publication retains producer facts at their original snapshots.
-It no longer calls condition transport to discover bonus final-snapshot facts,
+Statement publication retains producer facts at their original states.
+It no longer calls condition transport to discover bonus final-state facts,
 builds no extra transport context, and adds no replacement obligations.
 Existing producer-issued transport metadata is still published.
 

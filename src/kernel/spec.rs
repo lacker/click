@@ -2237,12 +2237,12 @@ fn evaluate_spec_integer_expression_paths_in(
     budget.consume_expression_step()?;
     match expression {
         SpecIntegerExpression::ResourceField(projection) => {
-            let snapshot = if projection.at_entry {
+            let retained_state = if projection.at_entry {
                 loop_entry_state.ok_or(ExecutionLimit::Paths)?
             } else {
                 state
             };
-            let Some(AlgebraicValue::Integer(value)) = snapshot
+            let Some(AlgebraicValue::Integer(value)) = retained_state
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .and_then(|instance| {
                     crate::kernel::eval::typed_reads::record_field(
@@ -2539,7 +2539,7 @@ fn evaluate_spec_integer_expression_paths_in(
                         // Its branch facts and definedness obligations therefore
                         // cannot be exported as ambient facts for the fold
                         // result.  Load-defining facts are represented by the
-                        // registered snapshot load itself and may be dropped;
+                        // registered state load itself and may be dropped;
                         // derived read equations also stay local; all other body facts
                         // must already be ambient.
                         if let Some(unavailable) = body_path.facts.iter().find(|fact| {
@@ -2599,8 +2599,8 @@ fn evaluate_spec_integer_expression_paths_in(
 }
 
 /// A load definition is trusted only when it names the same registered read
-/// on both sides, by handle or exact snapshot/address/kind descriptor. Comparing
-/// interned snapshots uses their O(1) identity equality; arbitrary memory
+/// on both sides, by handle or exact state/address/kind descriptor. Comparing
+/// interned states uses their O(1) identity equality; arbitrary memory
 /// contents are never traversed here.
 pub(crate) fn is_verified_load_variable_defining_fact(proposition: &Proposition) -> bool {
     let Proposition::ConditionIs(
@@ -2625,7 +2625,7 @@ pub(crate) fn is_verified_load_variable_defining_fact(proposition: &Proposition)
         return false;
     };
     // A produced definition uses the registered read handle on both sides.
-    // Retained raw definitions must still name its exact snapshot and kind.
+    // Retained raw definitions must still name its exact state and kind.
     match right.as_ref() {
         MachineTerm::Variable(read) => read == variable,
         raw @ MachineTerm::MemoryLoad(_, _, _) => descriptor == *raw,
@@ -2869,7 +2869,7 @@ fn pointer_offset_contains_registered_load(offset: &PointerOffsetTerm) -> bool {
 }
 
 /// Use the checked carrier collector for ordinary machine payloads, then
-/// inspect only a registered load's selected pointer.  The memory snapshot is
+/// inspect only a registered load's selected pointer.  The memory state is
 /// deliberately never traversed.  Unknown registry entries are treated as a
 /// dependency so a missing pointer cannot drop an accumulator quantifier.
 fn integer_carrier_in_bitvector(term: &MachineTerm, variable: Variable) -> bool {
@@ -3024,7 +3024,7 @@ fn proposition_mentions_integer_variable(proposition: &Proposition, variable: Va
             // A state or an execution outcome may carry a mathematical
             // machine conversion in a nested local.  Keep this conservative
             // rather than silently dropping the accumulator scope; memory
-            // snapshots themselves remain opaque below.
+            // states themselves remain opaque below.
             Term::StatementOutcome(_) | Term::FunctionOutcome(_) | Term::ExecutionState(_) => true,
             Term::ExpressionOutcome(_) | Term::Memory(_) => false,
         }
@@ -3963,12 +3963,12 @@ fn evaluate_spec_algebraic_non_call_in(
     let algebraic_bindings = scope.algebraic_bindings;
     match &expression.node {
         SpecAlgebraicExpressionNode::ResourceField(projection) => {
-            let snapshot = if projection.at_entry {
+            let retained_state = if projection.at_entry {
                 loop_entry_state.ok_or(ExecutionLimit::Paths)?
             } else {
                 state
             };
-            let Some(AlgebraicValue::Algebraic(value)) = snapshot
+            let Some(AlgebraicValue::Algebraic(value)) = retained_state
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .and_then(|instance| {
                     crate::kernel::eval::typed_reads::record_field(
@@ -5909,7 +5909,7 @@ fn lower_spec_predicate_proposition_at_state_in(
             .collect());
     }
     // A function-contract fact describes the behavior of its pointer value;
-    // it is independent of the caller's current resource-population snapshot.
+    // it is independent of the caller's current resource-population state.
     // Keeping the uniform predicate state argument canonical lets a closed
     // pure theorem establish the same fact at every later application site.
     let predicate_state = if !resource_state_dependent
@@ -5917,7 +5917,7 @@ fn lower_spec_predicate_proposition_at_state_in(
     {
         ExecutionState::new()
     } else {
-        state.resource_state_snapshot()
+        state.resource_state_source()
     };
     let mut paths = vec![SpecPropositionPath {
         introductions: Vec::new(),
@@ -6031,7 +6031,7 @@ fn invalid_mutex_held_path(
 }
 
 /// Evaluates one specification expression with explicit algebraic bindings
-/// and no loop-entry snapshot. This is the shape a declared pure function
+/// and no loop-entry state. This is the shape a declared pure function
 /// body is evaluated in: its parameters are the bindings and its locals.
 fn evaluate_spec_expression_paths_with_bindings_in(
     state: &ExecutionState,
@@ -6051,7 +6051,7 @@ fn evaluate_spec_expression_paths_with_bindings_in(
 /// One lowered Integer specification expression's values at `state`.
 ///
 /// A `decreases` component names no state of its own, so there is no
-/// loop-entry snapshot and no algebraic binding to supply: the kernel picks
+/// loop-entry state and no algebraic binding to supply: the kernel picks
 /// the state and this reads the one declared expression there.
 fn evaluate_spec_integer_measure_paths_in(
     state: &ExecutionState,
@@ -6164,7 +6164,7 @@ fn evaluate_spec_expression_dispatch(
             | SpecExpression::MemoryLoad { .. }
             | SpecExpression::AggregateFieldValue { .. }
             | SpecExpression::Value(_)
-            | SpecExpression::LoopEntrySnapshot(_)
+            | SpecExpression::LoopEntryState(_)
             | SpecExpression::Cast(_, _)
             | SpecExpression::Add(_, _)
             | SpecExpression::BitwiseAnd(_, _)
@@ -6849,12 +6849,12 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
             projection,
             program_type,
         } => {
-            let snapshot = if projection.at_entry {
+            let retained_state = if projection.at_entry {
                 loop_entry_state.ok_or(ExecutionLimit::Paths)?
             } else {
                 state
             };
-            let Some(AlgebraicValue::Program(value)) = snapshot
+            let Some(AlgebraicValue::Program(value)) = retained_state
                 .resource_instance_at_path(projection.identity, &projection.children)
                 .and_then(|instance| {
                     crate::kernel::eval::typed_reads::record_field(
@@ -7695,7 +7695,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
             assumptions,
             budget,
         )?,
-        SpecExpression::LoopEntrySnapshot(expression) => {
+        SpecExpression::LoopEntryState(expression) => {
             if let Some(loop_entry_state) = loop_entry_state {
                 evaluate_spec_expression_paths_with_algebraic_bindings_in(
                     SpecScope {
@@ -7799,7 +7799,7 @@ fn evaluate_spec_expression_paths_with_algebraic_bindings_one_in(
                 };
                 let mut obligations = pointer_path.obligations;
                 // A written definedness claim must retain the typed premise,
-                // even when this snapshot's cached cell already proves it.
+                // even when this state's cached cell already proves it.
                 // Otherwise `have defined(read)` records only true and cannot
                 // supply that premise to a later explicit preservation step.
                 if budget.checked_reads
@@ -8407,7 +8407,7 @@ fn evaluate_spec_pure_function_argument_paths_in(
             )?
             .into_iter()
             .map(|path| {
-                // Preserve the existing selected snapshot; retain the pointer
+                // Preserve the existing selected state; retain the pointer
                 // expression separately from its native descriptor reading.
                 let memory = array_ref_argument_memory(memory, &path.value.native());
                 let value = if !retain_pointers
@@ -8437,12 +8437,12 @@ fn evaluate_spec_pure_function_argument_paths_in(
     }
 }
 
-/// The snapshot an array argument at `pointer` names, given the state it was
+/// The state an array argument at `pointer` names, given the state it was
 /// evaluated at.
 ///
 /// See [`crate::kernel::resource_tracker`] for
 /// what the epoch guarantees and which derivation edges it crosses. An
-/// argument that is not a pointer at all keeps the live snapshot, which is
+/// argument that is not a pointer at all keeps the live state, which is
 /// always sound and merely as fragile as before; so does a block the walk
 /// cannot separate from anything, because it then crosses no edge.
 fn array_ref_argument_memory(memory: &Memory, pointer: &ProgramValue) -> Memory {
@@ -8450,9 +8450,9 @@ fn array_ref_argument_memory(memory: &Memory, pointer: &ProgramValue) -> Memory 
         return memory.clone();
     };
     let interned = crate::kernel::intern_memory(memory.clone());
-    crate::kernel::resource_tracker::last_same_point(
+    crate::kernel::resource_tracker::last_same_version_point(
         crate::kernel::resource_tracker::TrackedResource::Block(&pointer.pointer().block),
-        &crate::kernel::resource_tracker::ProgramPoint::at(&interned),
+        &crate::kernel::resource_tracker::VersionPoint::at(&interned),
     )
     .map(|point| point.memory().clone())
     .unwrap_or_else(|| memory.clone())

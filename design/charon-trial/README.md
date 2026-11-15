@@ -167,7 +167,7 @@ zero generated aggregate fields, and bounded deterministic verification work.
 The source fixture and negative claims also run through verification, profiling,
 auditing, expansion, and expanded-certificate rechecking.
 
-The snapshot checkpoint below adds general represented lane copies and copies
+The state checkpoint below adds general represented lane copies and copies
 after concrete element overrides. Whole-array
 reassignment, by-value array parameters/returns, array fields and nested arrays
 remain outside the compact-array increment. Unsupported
@@ -328,7 +328,7 @@ adler2's owned `U32X4` computation.
 [`owned-array-fields/owned.rs`](owned-array-fields/owned.rs) and its
 [sidecar](owned-array-fields/owned.click) prove nine contracts for repeated-array
 construction, whole-record moves, whole-field replacement, field extraction,
-snapshot independence, tuple fields, byte fields and empty fields. Replacement
+state independence, tuple fields, byte fields and empty fields. Replacement
 preserves both neighboring scalar fields. Copies retain the value read before
 any destination overwrite or later source mutation.
 
@@ -349,18 +349,18 @@ readonly storage, active view loans and addressed scalar-local bindings.
 Verification, profiling, auditing, expansion and expanded-certificate rechecking
 agree on the unchanged trial source.
 
-The following snapshot checkpoint extends these copies to independently computed
+The following state checkpoint extends these copies to independently computed
 scalar lanes. Borrowed symbolic or heap regions, union views and local-array
 reassignment remain outside the region operation.
 
-## Nonuniform array snapshot checkpoint
+## Nonuniform array state checkpoint
 
-[`array-snapshots/snapshots.rs`](array-snapshots/snapshots.rs) and its
-[sidecar](array-snapshots/snapshots.click) prove eight contracts for computed
+[`array-states/states.rs`](array-states/states.rs) and its
+[sidecar](array-states/states.click) prove eight contracts for computed
 lanes, owned record moves, field replacement, neighboring fields, signed and
 byte arrays, and source/destination mutation after copying. A sparse repeated
 array contains a separately computed lane and retains it after source mutation.
-The import lock names `compact-scalar-array-snapshots-v1`.
+The import lock names the compact scalar-array profile milestone.
 
 Copies capture the selected source region before any destination write. They
 retain constant spans as typed runs and explicit lanes as immutable scalar
@@ -489,9 +489,9 @@ missing safety premises, overflow and unguarded division by zero.
 
 The proof machinery retains a checked refuted-disjunction witness for unreachable
 panic-check paths. Equality congruence propagates through unsigned division,
-remainder and XOR while preserving operation tags and load snapshots; it grants
+remainder and XOR while preserving operation tags and load states; it grants
 no arithmetic definedness. Reconstructed expressions keep unsigned casts and
-explicit snapshots, including lane zero. Both checkpoints exercise expansion and
+explicit states, including lane zero. Both checkpoints exercise expansion and
 rechecking, and indexed equality work is tested at 16/64/256/1024 inputs.
 By-value aggregate operands, generic implementations, other operator traits,
 external implementation bodies and dynamic dispatch remain rejected.
@@ -560,7 +560,7 @@ scaling evidence. Extend the single ULLBC adapter rather than adding a fallback
 to the legacy exporter per function. The borrowed-loop checkpoint now composes
 a live restoring guard with checked
 iteration and termination. The conversions/arrays checkpoint composes resolved
-unsigned conversion, repeated initialization, nonuniform snapshot copy, indexing, and owned
+unsigned conversion, repeated initialization, nonuniform state copy, indexing, and owned
 cleanup. The byte-slice checkpoint carries full-width metadata, dynamic bounds,
 reborrows and local calls through that same boundary. Stored exact-chunk state,
 owned moves, typed Option dispatch and remainder now pass through it as well.
@@ -630,11 +630,11 @@ whole-array reference assignment as a scalar operation. It now verifies
 unchanged, including compact copies from borrowed storage. Compiler pins and
 extraction flags are unchanged.
 
-## Whole-array assignments and borrowed snapshots
+## Whole-array assignments and borrowed states
 
 The [array-value checkpoint](array-values/README.md) adds the missing ULLBC
 assignment path for `*reference = array_value`. It uses existing checked compact
-region writes, constructor operand capture, and snapshot copies. Local scalar
+region writes, constructor operand capture, and state copies. Local scalar
 arrays support literal/repeat replacement, self-copy, and independent copies
 through mutable references. Deterministic 8-, 1024-, and million-element checks
 retain bounded storage, lowered statement count, and proof work.
@@ -643,8 +643,8 @@ retain bounded storage, lowered statement count, and proof work.
 expansion; checkpoint lock identities are updated with unchanged compiler pins
 and existing artifact bytes. The unchanged `rust-array-values` source and sidecar
 now verify all sixteen contracts, including reads from shared external arrays
-and writes to mutable external arrays. `external-scalar-array-snapshot-v1`
-versions this extension. Immutable source snapshots preserve bytes after source
+and writes to mutable external arrays. The external scalar-array profile milestone
+versions this extension. Immutable source states preserve bytes after source
 or destination mutation. Sparse represented lanes and compact runs are captured
 without materializing the unknown remainder. Full read/write authority,
 read-only qualifiers, active destination loans, alignment, local initialization,
@@ -655,7 +655,7 @@ constant or single scaled 32-bit bases, alongside automatic storage. Live heap
 allocations, typed union overlays, and general symbolic pointer expressions
 remain outside this compact path. Genuine by-value array parameters and
 aggregate returns are separate adapter gaps. Deterministic regressions cover
-8, 1024, and million elements, source/destination snapshots, sparse lanes,
+8, 1024, and million elements, source/destination states, sparse lanes,
 source-load substitution, pointer spelling shapes, and unrelated source cells.
 The frozen source is unchanged; no generated per-element operation or iterator
 processed count is introduced.
@@ -771,7 +771,7 @@ remain 16/16 (100%), and the default switch and legacy retirement remain open.
 [iterator-proof](iterator-proof/README.md) verifies the byte-identical original
 `rust-iterators` source and unchanged mathematical sum contract. The proof uses
 the real iterator cursor/remaining length and the source `byte` and `total`
-locals. Named snapshots and loop/read/assignment/back-edge selectors replace
+locals. Named states and loop/read/assignment/back-edge selectors replace
 legacy ghost names and compiler statement counts. Every overflow, memory read,
 invariant, and decreasing measure remains checked.
 
@@ -786,7 +786,7 @@ The [iterator-proof](iterator-proof/README.md) checkpoint now verifies the
 unchanged `rust-iter-references` source and its full mathematical sum contract.
 `let { result: loaded_byte } = step();` binds the value of the checked scalar read,
 following the existing checked call-result binding model. The proof uses actual
-iterator cursor/remaining state, readable source frontiers, and named snapshots;
+iterator cursor/remaining state, readable source frontiers, and named states;
 it contains no MIR IDs, compiler statement indices, or synthetic processed
 count. Ordinary read permissions, signed overflow, and decreases are checked.
 

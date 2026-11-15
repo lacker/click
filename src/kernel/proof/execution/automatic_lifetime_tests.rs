@@ -5,7 +5,7 @@ use crate::kernel::int32;
 fn automatic_lifetime_event_rejects_active_local_loan_and_forged_retirement() {
     use crate::kernel::loans::{LoanLedger, plan_stable_view_transfer};
     use crate::kernel::prelude::CheckedResourceFact;
-    use crate::kernel::{ResourceSnapshot, ResourceTransferRole};
+    use crate::kernel::{ResourceStateSource, ResourceTransferRole};
     let state = ExecutionState::new()
         .with_local("selected", int32(5))
         .with_memory(Memory::new().with_block("local:selected", 4));
@@ -29,7 +29,7 @@ fn automatic_lifetime_event_rejects_active_local_loan_and_forged_retirement() {
         &[CheckedResourceFact {
             fact: viewed,
             role: ResourceTransferRole::Borrow,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: None,
             selected_mutex_source: None,

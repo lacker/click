@@ -1023,7 +1023,7 @@ fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
 }
 
 #[test]
-fn consuming_a_whole_range_drops_snapshot_equivalent_prefix_residues() {
+fn consuming_a_whole_range_drops_state_equivalent_prefix_residues() {
     let owner = Pointer {
         block: "owner".into(),
         offset: PointerOffsetTerm::Constant(0),

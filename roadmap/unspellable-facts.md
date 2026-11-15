@@ -83,13 +83,13 @@ not ten aliases for partial progress on one boundary. Keep one PR open at a time
 
 | Chunk | Work package | State |
 | --- | --- | --- |
-| 1 | Let bindings and local value handoffs | Merged in [PR #2617](https://github.com/clicklang/click/pull/2617); specification bindings retain shared values through selected lookups, with shadowing and snapshot scope preserved. |
-| 2 | Symbolic conditional joins | Merged [PR #2638](https://github.com/clicklang/click/pull/2638). Typed guards and shared arms survive checking, transport, snapshot matching and Surface spelling. The full gate passed 7,294 unit/API tests, 5,240 fixtures and all examples; its 15m54s run exceeded the ten-minute target. The final conditional-equality follow-up passed 1,884 selected checks, including all scaling, Rust import and expansion tests. Its full-corpus fact-stability audit passed all 5,240 fixtures with zero differences. |
+| 1 | Let bindings and local value handoffs | Merged in [PR #2617](https://github.com/clicklang/click/pull/2617); specification bindings retain shared values through selected lookups, with shadowing and state scope preserved. |
+| 2 | Symbolic conditional joins | Merged [PR #2638](https://github.com/clicklang/click/pull/2638). Typed guards and shared arms survive checking, transport, state matching and Surface spelling. The full gate passed 7,294 unit/API tests, 5,240 fixtures and all examples; its 15m54s run exceeded the ten-minute target. The final conditional-equality follow-up passed 1,884 selected checks, including all scaling, Rust import and expansion tests. Its full-corpus fact-stability audit passed all 5,240 fixtures with zero differences. |
 | 3 | Pure-function arguments and results | In progress. [PR #2643](https://github.com/clicklang/click/pull/2643) retained shared machine values during argument assembly. [PR #2647](https://github.com/clicklang/click/pull/2647) retains them in call payloads and migrates argument collection, rewriting, alpha keys, congruence and fold-read consumers. Typed semantic application identity is separate from exact producer payloads; numeric indexes share native/retained call identities, and comparison cycle guards permit narrow-to-wide checking. Repeated native/shared readings do not accumulate payload versions. The integer machine call-result sequence 3a–3f below completes common result production and its consumers; pointer, algebraic, Boolean and floating-point result families remain separate work. |
 | 4 | Mixed-width arithmetic and casts | Implemented as subchunks 4a–4j below, one PR per subchunk. Numeric producers retain shared operands and results within the existing supported profile. General call and nonnumeric compatibility boundaries belong to the remaining packages; the previous combined branch stays unmerged reference material. |
 | 5 | C/Rust execution result carriers | Supported machine handoffs implemented in 5a–5g below: expression paths, local bindings, returns and caller receipt retain common roots. Native memory-cell, specification and presentation boundaries remain explicit. |
 | 6 | Folds, binders and algebraic matches | Implemented as 6a–6n below. Common fold and numeric/algebraic match results retain scoped children; remaining native consumers are named compatibility boundaries. |
-| 7 | Complete pointers and read addresses | Implemented as 7a–7u below, one PR per slice. Supported pointer producers and execution/storage handoffs retain common roots; checking and Surface consumers preserve metadata, snapshot identity and existing rules. |
+| 7 | Complete pointers and read addresses | Implemented as 7a–7u below, one PR per slice. Supported pointer producers and execution/storage handoffs retain common roots; checking and Surface consumers preserve metadata, state identity and existing rules. |
 | 8 | Remaining Boolean and opaque expression payloads | Inventory and authorized PR sequence below; implementation open. |
 | 9 | Unified raising/lowering and certificate boundaries | Open |
 | 10 | Duplicate storage removal and final closure | Open |
@@ -108,7 +108,7 @@ representation changes.
 | 3a | Common result roots | Typed common calls preserve the function, ordered arguments, result type and exact opaque producer payloads; native/shared numeric inputs agree. |
 | 3b | Numeric consumers | Observations, casts and arithmetic retain common machine call operands without prefix exports. |
 | 3c | Comparison and fact matching | Existing comparison/equality keys preserve native/shared rules, source premises and refusals. |
-| 3d | Rewriting and transport | Substitution, rewriting, dependencies and snapshot handling retain common call roots and their arguments. |
+| 3d | Rewriting and transport | Substitution, rewriting, dependencies and state handling retain common call roots and their arguments. |
 | 3e | Surface boundary | Calls round-trip through raising, lowering and certificate paths with exact term identity. |
 | 3f | Producer switch and closure | Actual call evaluation returns common machine roots; nested calls and result handoffs retain them, and obsolete adapters for this boundary are removed. |
 
@@ -142,7 +142,7 @@ typed congruence registration. The final fixture audit passed with zero differen
 pointer-index transport. Unchanged leaves keep exact payload identity; changed
 calls rebuild common arguments. Native/shared selected-source matching uses the
 existing typed application identity. Pure-call arguments retain their original
-snapshots under transport, following the native rule. No new search or index is
+states under transport, following the native rule. No new search or index is
 introduced. [PR #2694](https://github.com/clicklang/click/pull/2694) merged and its
 pushed commit was verified on upstream. All 1,699 selected regressions and all
 5,275 regular fixtures passed, with zero fact-stability differences.
@@ -171,18 +171,18 @@ machine exports. Pointer-dependency discovery in the equality graph reads
 common calls through the existing call-argument path, retaining complete-pointer
 equality requirements. Direct call comparisons preserve their native machine
 fact form instead of selecting Integer rewrite/search dispatch merely because
-the producer is shared. Snapshot keys reinterpret conditional operands at their
+the producer is shared. MemoryState keys reinterpret conditional operands at their
 existing canonical observation type for every integer format. Native comparison
 and algebraic reflexivity readers use the existing typed application identity.
-The existing rewrite history uses snapshot-aware proposition identity so fresh
+The existing rewrite history uses state-aware proposition identity so fresh
 argument carriers do not restart visited branches; search strategies and limits
 are unchanged. Calls whose numeric arguments are already retained borrow their
 producer's application payload for compatibility reads. Boxed numeric inputs
 still import to shared children, including when an equivalent shared producer
 later reuses their root. Scaling checks cover borrowed readings, nested handoffs,
-and rewrite identities that distinguish snapshots, formats and polarity.
+and rewrite identities that distinguish states, formats and polarity.
 Certification compares retained arguments by written call syntax, including
-algebraic variables, applications and exact snapshot reads, without replacing
+algebraic variables, applications and exact state reads, without replacing
 that syntax comparison with arithmetic observation equality.
 [PR #2701](https://github.com/clicklang/click/pull/2701) closes the integer
 call-result sequence, not the wider KernelTerm/SurfaceTerm migration or the
@@ -193,7 +193,7 @@ other result families.
 Deliver sequentially, one PR per row. Prepare consumer support and existing
 Surface spelling before switching live producers. Preserve exact producer
 metadata separately from observation/fact identity, existing reductions and
-refusals, binder scope, snapshots and evidence. Do not add search, indexes or
+refusals, binder scope, states and evidence. Do not add search, indexes or
 larger budgets. General raising/lowering and certificate consolidation stays in
 package 9; duplicate-storage removal and final migration closure stay in 10.
 Routine sequencing changes are allowed; discuss unexpected semantic or scope
@@ -205,13 +205,13 @@ changes before implementing them.
 | 8b | Boolean operand views | Inspect common Boolean roots without exporting entire conditions. |
 | 8c | Boolean dependencies | Variables, captures and memory dependencies follow common children. |
 | 8d | Boolean substitution | Preserve shared children and binder scope. |
-| 8e | Boolean snapshot transport | Preserve read identities and evidence requirements. |
+| 8e | Boolean state transport | Preserve read identities and evidence requirements. |
 | 8f | Boolean identity and fact keys | Preserve native/common matching and comparison-format equivalences. |
 | 8g | Pointer-offset equality | Retain shared offset operands. |
 | 8h | Raw pointer equality | Retain shared address operands. |
 | 8i | Complete-pointer equality | Preserve designation, extent and complete-payload distinctions. |
 | 8j | Overflow conditions | Retain typed operands and existing operation/width rules. |
-| 8k | Boolean reads | Retain snapshot and shared address. |
+| 8k | Boolean reads | Retain state and shared address. |
 | 8l | Boolean pure calls | Retain common arguments and result structure. |
 | 8m | Boolean composition and casts | Equality, conditionals and Boolean-to-machine conversions preserve children through production. |
 | 8n | Boolean local/call handoffs | Bindings, arguments and returns retain roots. |
@@ -221,10 +221,10 @@ changes before implementing them.
 | 8r | Algebraic equality | Preserve constructor and type distinctions. |
 | 8s | Algebraic pure calls | Retain common arguments and results. |
 | 8s.1 | Algebraic conditionals | Retain condition and both branches with existing reduction behavior. |
-| 8s.2 | Algebraic reads | Retain memory snapshot, address and abstract type. |
+| 8s.2 | Algebraic reads | Retain memory state, address and abstract type. |
 | 8t | Algebraic handoffs | Bindings, result carriers and package-6 matches preserve roots. |
 | 8u | Float value foundation | Typed literals/views preserve exact bits, widths and identity. |
-| 8v | Float reads | Retain common addresses and exact snapshots. |
+| 8v | Float reads | Retain common addresses and exact states. |
 | 8w | Float arithmetic | Existing negation and binary operations retain operands. |
 | 8x | Float conversions | Existing integer/float and width conversions preserve definedness. |
 | 8y | Float conditions | Comparisons/classifications preserve NaN and signed-zero behavior. |
@@ -239,7 +239,7 @@ changes before implementing them.
 passed all 44 documentation tests.
 
 8b (merged [PR #2805](https://github.com/clicklang/click/pull/2805)) adds borrowed Boolean operands and a borrowed machine-conditional view.
-Shape and branch-only readers in decision dispatch, interval checks, snapshot
+Shape and branch-only readers in decision dispatch, interval checks, state
 keys, syntax ordering and equality-graph admission no longer export the guard.
 Consumers that actually require native conditions keep an explicitly named
 compatibility conversion. This prepares the following dependency and rewrite
@@ -247,11 +247,11 @@ slices without switching producers or changing proof rules. Native/shared view
 regressions preserve written comparison formats and exact opaque payloads; a
 multi-size regression checks that inspecting growing guards does no export work
 beside unrelated arena terms. All 1,753 selected tests passed, including every
-scaling test and the Boolean, condition-reasoning, snapshot-key and equality-graph
+scaling test and the Boolean, condition-reasoning, state-key and equality-graph
 selections.
 
 8c (merged [PR #2806](https://github.com/clicklang/click/pull/2806)) gives standalone Boolean roots the existing five scoped variable-reader
-modes and walks shared Boolean connectives once for resource-read and snapshot
+modes and walks shared Boolean connectives once for resource-read and state
 dependencies. Comparison operands use the existing shared machine readers;
 Boolean calls stay opaque to these memory readers. Resource operand stacks
 preserve the native reader's first-occurrence order. Selected Integer-comparison
@@ -260,7 +260,7 @@ restricted admission rather than broadening memory discovery. This is an
 explicit selected-leaf compatibility boundary, not an export of the surrounding
 Boolean DAG. All 1,693 selected tests passed, including all scaling tests,
 resource tracking and variable collection. New regressions pin mode agreement,
-read/snapshot order, opaque-call behavior and shared-connective traversal work.
+read/state order, opaque-call behavior and shared-connective traversal work.
 After integrating upstream through `7a681179b` (including #2802 and #2804),
 all 1,729 integration selections passed, including every scaling test and the
 contract-claim tests.
@@ -270,7 +270,7 @@ Boolean comparison matching reads retained machine operands through the existing
 comparison-format identity. Exact Boolean identity walks common connectives
 once and preserves native comparison-format equivalences; numeric call arguments
 remain typed handles for application identity. Composite guards retain their
-exact-equality-only load policy. Snapshot keys inspect guard shape without
+exact-equality-only load policy. MemoryState keys inspect guard shape without
 exporting it and key eligible primitive comparisons through shared operands;
 Integer comparisons and Boolean value forms keep their existing exact enclosing
 operand keys. Selected Integer comparison atoms retain the existing structural
@@ -278,7 +278,7 @@ classifier, and opaque leaves retain their native family identity. Explicit
 native syntax ordering remains a compatibility boundary.
 
 Validation: 1,635 selected tests passed, including every scaling test, Boolean
-view/identity tests, snapshot operand keys and shared load-atom comparisons.
+view/identity tests, state operand keys and shared load-atom comparisons.
 Regressions cover native/shared format agreement, composite load-authority
 refusal, linear shared-connective identity and growing arithmetic comparison
 prefixes without machine exports. No proof rules, search indexes or budgets
@@ -288,7 +288,7 @@ changed. The following 8d/8e slices reuse this identity support.
 handoff slices. Bitvector substitution preserves raw Boolean connectives and
 uses the existing shared arithmetic normalization mapper; one local memo shares
 numeric work across comparison atoms. Pointer substitution preserves its distinct
-native Boolean folding policy, scoped carrier reservation and read snapshots.
+native Boolean folding policy, scoped carrier reservation and read states.
 Comparison reconstruction preserves written formats, width-specific reductions,
 address/zero and alignment rules. In particular, unsigned 32-bit equality keeps
 its written format, and bitvector substitution keeps signed 64-bit equality raw.
@@ -300,7 +300,7 @@ in the later Boolean slices.
 
 Validation covers native/common constructor and substitution parity across all
 integer widths, address and mask rules, fold capture, pointer connective folding,
-read snapshots, and shared connective/overlapping arithmetic-prefix scaling.
+read states, and shared connective/overlapping arithmetic-prefix scaling.
 All 1,741 selected tests passed, including every scaling test and the substitution
 selections, with pinned importer tools. The CI-quality check passed.
 
@@ -313,7 +313,7 @@ guards retain their original roots through native-equivalent Boolean identity.
 Selected Integer and opaque condition families keep their existing compatibility
 readers. Other index mappers keep their explicit native guard adapter; the
 numeric Boolean-cast compatibility boundary remains assigned to 8m.
-Native/common transport agreement, snapshots, comparison-constructor behavior,
+Native/common transport agreement, states, comparison-constructor behavior,
 constant-work refusal and accepted shared arithmetic transport without exports
 are covered. The shared Boolean matcher also restores the native exact-equality
 precedence before load authority: an identical guard, including comparison-format
@@ -326,7 +326,7 @@ comparison selections, with exit status 0. The CI-quality check passed.
 pair of shared offsets. Imports and explicit exports preserve the written Add
 shape, scales, index carrier types and signedness. Boolean identity, load-atom
 matching, variable/capture/binder readers, memory/resource dependencies and
-snapshot selectors read the retained operands directly. Native exact equality
+state selectors read the retained operands directly. Native exact equality
 still precedes load authority; only the existing narrow-index path admits
 load-atom matching, while wide indices retain exact identity.
 
@@ -342,15 +342,15 @@ offset spelling; the general raise/lower boundary remains package 9.
 
 The initial broad selection passed all 1,673 tests, including every scaling test,
 constructor/substitution/transport parity, annotation identity, dependency widths,
-snapshot keys and doubled/growing offset DAGs without numeric exports. Integration
-validation against the subsequent pointer-read/snapshot-control changes is recorded
+state keys and doubled/growing offset DAGs without numeric exports. Integration
+validation against the subsequent pointer-read/state-control changes is recorded
 with the PR. Boolean execution handoffs and the other package-8 families remain open.
 
 8h (merged [PR #2816](https://github.com/clicklang/click/pull/2816)) retains raw pointer equality as a typed pair of shared addresses. Block
 identity, shared displacement, exact producer metadata and semantic observation
 identity remain separate. Dependency readers preserve native admission and
 ordering, including loaded-pointer defining reads and right-first resource
-displacement traversal. Snapshot selectors and load matching reuse the existing
+displacement traversal. MemoryState selectors and load matching reuse the existing
 shared-address readers; narrow and wide indices retain their existing authority
 rules. Frame transport uses one context for both addresses.
 
@@ -363,13 +363,13 @@ continues through the existing address-context adapter. Complete-pointer equalit
 is the separate 8i slice.
 
 Validation: all 1,716 selected tests passed, including every scaling test,
-raw-pointer constructor/substitution parity, block and snapshot identity,
+raw-pointer constructor/substitution parity, block and state identity,
 load authority, read ordering, dependency modes and frame transport. The
 CI-quality check passed.
 
 8i (merged [PR #2818](https://github.com/clicklang/click/pull/2818)) retains complete-pointer equality operands, including designation, opaque
 extent, explicit extent and exact qualifiers/evidence. Its observation identity
-uses the native logical fields without changing the producer payload. Snapshot
+uses the native logical fields without changing the producer payload. MemoryState
 selectors and dependency readers use shared address roles directly; extent widths
 retain each reader's existing admission policy. Load matching still accepts exact
 identity only. Framed condition transport reuses the existing complete-pointer
@@ -382,12 +382,12 @@ constructor reductions. Surface output keeps its explicit compatibility adapter.
 
 Validation: all 1,723 selected tests passed on current upstream, including every
 scaling test, native constructor/substitution/transport parity, complete-domain
-snapshot keys, dependency admission, read order and observation identity. Exact
+state keys, dependency admission, read order and observation identity. Exact
 producer metadata stays retained while logical keys preserve the native const,
 volatile, type and extent distinctions. The CI-quality check passed.
 
 8j (merged [PR #2821](https://github.com/clicklang/click/pull/2821)) retains overflow conditions as typed numeric operand pairs with their exact
-format and operation. Identity, observation normalization, snapshot selectors,
+format and operation. Identity, observation normalization, state selectors,
 dependency readers and load matching inspect the shared operands directly.
 Reconstruction reuses the existing constant and width-interval rules. Bitvector
 substitution and frame transport use smart construction; top-level pointer
@@ -400,9 +400,9 @@ load authority, exact format/operation keys, dependencies and frame transport.
 Shared arithmetic DAGs remain retained without numeric exports. The CI-quality
 check passed.
 
-8k (merged [PR #2822](https://github.com/clicklang/click/pull/2822)) retains Boolean reads as typed snapshot/shared-address nodes. Producer keys
-keep exact snapshot arenas and address spelling; observation identity preserves
-native memory and address equality. Substitution retains the existing snapshot
+8k (merged [PR #2822](https://github.com/clicklang/click/pull/2822)) retains Boolean reads as typed state/shared-address nodes. Producer keys
+keep exact state arenas and address spelling; observation identity preserves
+native memory and address equality. Substitution retains the existing state
 and raw/smart address policies. Variable, capture, binder and memory-dependency
 readers preserve their distinct admission rules and read order. Resource
 diagnostics still report only the one-byte Boolean cell; their selected native
@@ -583,17 +583,17 @@ Validation: all 2,794 selected tests passed, including every scaling test,
 algebraic/Boolean/call/nat checks, readers/rewrites, Surface synthesis and full
 ordinary example projects. The quality gate exited 0.
 
-8s.2 (merged [PR #2840](https://github.com/clicklang/click/pull/2840)) represents algebraic reads with their abstract type, exact snapshot and
-shared address. Boolean and algebraic reads reuse the same snapshot descriptor,
+8s.2 (merged [PR #2840](https://github.com/clicklang/click/pull/2840)) represents algebraic reads with their abstract type, exact state and
+shared address. Boolean and algebraic reads reuse the same state descriptor,
 keeping producer arena identity separate from native observation equality.
 Import/export, syntax comparison, observation normalization and existing Surface
 read spelling support the common form. Selected algebraic read results retain
 it; broader binding and execution handoffs remain 8t.
 
 Dependency readers preserve the native UInt64 read-carrier policy, including
-stored-load connections and havoc origins. Read resolution, canonical snapshot
+stored-load connections and havoc origins. Read resolution, canonical state
 selection and evidence requirements remain unchanged. Fourteen focused tests
-passed, covering snapshot/type identity, native/common keys, all reader modes,
+passed, covering state/type identity, native/common keys, all reader modes,
 actual read results, constant-work construction with growing shared addresses,
 and existing Boolean read and algebraic fact-key regressions.
 Validation: all 2,214 broader tests passed, including every scaling test,
@@ -651,7 +651,7 @@ quality checks passed. No limits or budgets changed.
 
 Source baseline: `20100ea35` (after package 7 closure). This inventory describes
 expression-bearing compatibility paths, not a requirement to eliminate opaque
-snapshot, variable, function or allocation identities. The two additional
+state, variable, function or allocation identities. The two additional
 algebraic slices, 8s.1 and 8s.2, were explicitly approved after this inventory
 identified their omission from the original sequence.
 
@@ -659,7 +659,7 @@ identified their omission from the original sequence.
 | --- | --- | --- |
 | `kernel_term/boolean.rs`, `KernelTermImport::condition` | Constants, variables, numeric comparisons, Boolean equality/conditionals and calls already have common roots. The fallback wraps the entire other condition in `LegacyBool`. | Views/readers/transport/keys 8b–8f; production and handoffs 8l–8o. |
 | `ConditionTerm::{PointerOffsetEqual, PointerEqual, PointerValueEqual}` | Whole native operands inside the Boolean fallback despite package-7 shared pointer support. | 8g, 8h, 8i respectively. |
-| `ConditionTerm::{Overflows, BoolLoad}` | Operation/width operands or snapshot/address hidden in the fallback. | 8j, 8k. |
+| `ConditionTerm::{Overflows, BoolLoad}` | Operation/width operands or state/address hidden in the fallback. | 8j, 8k. |
 | `ConditionTerm::{AlgebraicEqual, Float32, Float64}` | Native algebraic trees or float comparison/classification operands. | 8r, 8y. |
 | `KernelTermImport::argument` | Integer and shared/native machine integers are imported; other `PureFunctionArgument` values use generic `Legacy`. Dedicated pointer routes already bypass this fallback. | Boolean 8l–8o; algebraic 8p–8t; floats 8u–8ab; mixed callers 8ac. |
 | `AlgebraicTermNode` | Variable, Constructor, PureFunctionApplication, If and MemoryLoad remain native; Match has package-6 common support but its children can cross this boundary. `ProgramValue::Parameter` carries an algebraic tree too. | 8p, 8s, 8s.1, 8s.2, then 8t; projections/variant reductions 8q. |
@@ -673,7 +673,7 @@ identified their omission from the original sequence.
 NativeObservation, ApplicationArgument, ExactApplicationArgument and Fresh
 forms. An identity token is not itself an expression migration defect. Inspect
 its associated `KernelLegacyTerm.value`: if it hides children, those children
-belong to the family slices above. Snapshot identities, binder IDs, type names,
+belong to the family slices above. MemoryState identities, binder IDs, type names,
 function names and allocation IDs remain legitimate opaque descriptors; keeping
 one does not justify retaining an entire expression tree as an opaque payload.
 `Void` has no expression children. Array-reference and pointer-integer arguments
@@ -698,7 +698,7 @@ Routine ordering refinements do not change this scope.
 | 7c | Complete pointer payloads | Preserve designation, opaque extent, qualifiers, subobject bounds and evidence, including metadata ignored by logical equality. |
 | 7d | Dependency readers | Collect variables, capture and memory dependencies through shared children. |
 | 7e | Substitution | Rewrite selected children with capture and metadata preservation. |
-| 7f | Snapshot transport | Retain historical read and snapshot identity during transport. |
+| 7f | MemoryState transport | Retain historical read and state identity during transport. |
 | 7g | Identity and fact keys | Preserve existing matching keys while separating exact payload identity from logical equality. |
 | 7h | Checking consumers | Preserve equality, designation, extent and access evidence requirements. |
 | 7i | Address Surface boundary | Raise/lower offsets in their address context using existing syntax. |
@@ -713,7 +713,7 @@ Routine ordering refinements do not change this scope.
 | 7r | Locals and call arguments | Assignment, lookup and execution argument handoffs retain pointer structure. |
 | 7s | Returns | Callee/caller return handoffs retain complete payloads. |
 | 7t | Memory storage | Stores and value receipt preserve pointer structure through the existing memory model. |
-| 7u | Closure | Remove superseded pointer adapters; validate nested calls/arithmetic/reads/stores/snapshots and Surface round trips. |
+| 7u | Closure | Remove superseded pointer adapters; validate nested calls/arithmetic/reads/stores/states and Surface round trips. |
 
 7a prepares a shared offset DAG with constant-time child identities. It is an
 internal address component, not a new `KernelType` or source-level value.
@@ -751,14 +751,14 @@ indices use the existing frame checks and scale reconstruction, and shared
 addition reconstruction retains the existing constant-displacement policy.
 Loaded pointer definitions retain their historical identity; reconstructed
 complete words require the same complete-read evidence. All memos are local to
-one snapshot/context pair. Native block atoms and one-node scaled adapters remain
+one state/context pair. Native block atoms and one-node scaled adapters remain
 explicit compatibility boundaries; shared expression trees are never exported.
 
-7g prepares native/shared snapshot and alpha keys for complete pointers. Offset
+7g prepares native/shared state and alpha keys for complete pointers. Offset
 keys use compact child identities, cache checked-match requirements, and visit
 shared offset DAGs without expanding trees. Numeric alpha keys are reused within
 the selected binder context; registered-load traversal keeps the existing depth,
-snapshot and refusal policies. Matching keys do not coalesce exact pointer
+state and refusal policies. Matching keys do not coalesce exact pointer
 payloads or supply access evidence. Live pointer producer activation remains in
 the later slices.
 
@@ -782,7 +782,7 @@ raises those bindings through the common-term boundary. Source matching is
 separate from logical pointer equality: qualifiers, opaque extents, historical
 reads and retained evidence must agree. Matching compares shared children and
 persistent evidence identity without exporting numeric trees or walking premises.
-Other native source/snapshot readers remain at the producer compatibility
+Other native source/state readers remain at the producer compatibility
 boundary until their carriers switch; this adds no spelling search or syntax.
 
 7k stores shared address handles in numeric read nodes, retaining defining
@@ -830,7 +830,7 @@ Surface observations use the existing pointer cast spelling.
 
 7p retains pointer-valued specification calls as a generic call root with original
 common argument handles and the complete result payload. Typed pointer arguments
-retain their selected memory snapshot and pointer child; existing nominal
+retain their selected memory state and pointer child; existing nominal
 object-type refinement preserves that structure. Explicit native call
 argument descriptors preserve object-origin evidence and existing null/projection
 reductions. Surface raises the retained generic call with the existing call syntax;
@@ -858,7 +858,7 @@ object-type metadata and aggregate-return ABI/copy behavior remain unchanged.
 recorded stores. Executed load receipt, local-slot synchronization, aggregate
 field/union copies and selected history recovery carry the same root through
 existing conversions. Cell equality/hash/order and native diagnostic views keep
-the previous payload identity. Logical reads still name their snapshot version;
+the previous payload identity. Logical reads still name their state version;
 alias rules, metadata, refusals and history limits are unchanged. Other cell
 families remain explicit native payloads.
 
@@ -866,7 +866,7 @@ families remain explicit native payloads.
 Temporary call/operator/prior-assignment results use the same native-key pointer
 carrier as memory, so a statement's `StepResult` keeps its producer root. Existing
 native result typing, missing-result errors, source names and diagnostic payloads
-remain unchanged. Closure regressions cover nested snapshot-read/call/arithmetic
+remain unchanged. Closure regressions cover nested state-read/call/arithmetic
 children through temporary results, stores and loads, plus selected-result scaling;
 the common-pointer Surface round-trip suite remains part of validation.
 
@@ -888,13 +888,13 @@ and constructor reduction rules. No new search, indexes or larger budgets.
 | --- | --- | --- |
 | 6a | Common fold payloads | Typed shared children retain range kinds, bounds, initial value, body and exact binder IDs; explicit native conversion is lossless. |
 | 6b | Fold scope and dependency readers | Common children support free-variable, capture, binder and memory-dependency collection with correct nested scope. |
-| 6c | Fold substitution and transport | Instantiation, rewriting and snapshot transport retain roots and avoid capture. |
+| 6c | Fold substitution and transport | Instantiation, rewriting and state transport retain roots and avoid capture. |
 | 6d | Fold checking and identity | Existing equality, alpha keys, fact matching and fold rules retain their proofs and refusals. |
 | 6e | Fold Surface boundary | Common fold roots raise/lower through existing syntax and certificate paths with exact identity. |
 | 6f | Integer fold producers | Actual Integer fold evaluation retains common roots and scoped obligations, including empty ranges. |
 | 6g | Machine fold producers | Supported machine folds retain common operands through evaluation and nested arithmetic handoffs. |
 | 6h | Common match payloads | Typed scrutinees, ordered arms, bound-field types and bodies; required constructor fields retain common children. |
-| 6i | Match scope and transport | Capture-safe dependencies, substitution, rewriting and snapshot handling. |
+| 6i | Match scope and transport | Capture-safe dependencies, substitution, rewriting and state handling. |
 | 6j | Match checking and reduction | Existing checked constructor selection and equality retain evidence requirements; unknown scrutinees remain symbolic. |
 | 6k | Match Surface boundary | Exact raising/lowering and certificate paths preserve arm structure and binding names. |
 | 6l | Numeric match producers | Integer and machine result producers retain common arms and roots. |
@@ -918,8 +918,8 @@ and typed binder variables, plus current-memory read dependencies. Variable
 summaries use the existing persistent set representation and a traversal-local
 memo keyed by common node identity; filtering body binders never changes the
 summary of the same root used as an initial value. Native opaque leaves keep
-their existing registry, snapshot and call-connection rules. Dependency queries
-retain selected widths and recheck the current snapshot on each call. These
+their existing registry, state and call-connection rules. Dependency queries
+retain selected widths and recheck the current state on each call. These
 readers remain staged until common fold roots are activated. Validation: nine
 focused parity/scaling cases and the full scaling plus related-reader selection
 (1,574 tests) pass.
@@ -932,14 +932,14 @@ bridge. Range endpoints retain shared machine operands, including the existing
 UInt64-range/Int32-endpoint carrier convention. The result reports existing
 scope/work refusals explicitly. Bounds and initial values stay outside binders,
 body rewriting restores the enclosing scope, and pointer substitution preserves
-read snapshots. This remains staged until fold roots are activated; the Integer
+read states. This remains staged until fold roots are activated; the Integer
 compatibility boundary has not been removed. All four focused parity/scaling
 tests and the full scaling plus rewrite selection (1,682 tests) pass.
 
 6d ([PR #2738](https://github.com/clicklang/click/pull/2738), merged)
 shares the machine fold alpha-key implementation between native and common
 children. Bound-variable ordinals apply only to the body, with the enclosing
-scope restored on success or refusal; free variables and snapshot identities
+scope restored on success or refusal; free variables and state identities
 remain distinct. Integer checking uses a named compatibility adapter retaining
 shared endpoints, also reused by scoped rewriting. This does not activate fold
 producers or change fold reduction laws. Fold child keys remain boxed so this
@@ -1225,7 +1225,7 @@ row further if it cannot remain a small, independently validated change.
 
 | Subchunk | Producer boundary | Scope |
 | --- | --- | --- |
-| 4a | Same-type integer casts | Retain identity through casts that do not change integer type; preserve named reads and snapshots. |
+| 4a | Same-type integer casts | Retain identity through casts that do not change integer type; preserve named reads and states. |
 | 4b | Signedness conversions | Existing same-width signed/unsigned conversions for 8/16/32/64-bit values. |
 | 4c | Widening casts | Existing sign extension and zero extension through 64 bits. |
 | 4d | Narrowing casts | Existing truncation and low-word conversions through 64 bits. |
@@ -1238,7 +1238,7 @@ row further if it cannot remain a small, independently validated change.
 
 The 4a audit confirms that the existing unary and cast-chain paths already
 retain same-type shared integer results. Its PR adds exact-root coverage across
-all ten integer formats, registered-read snapshot controls, a changed-type
+all ten integer formats, registered-read state controls, a changed-type
 negative control, and no-export scaling over 16/32/64 casts. Native inputs retain
 their existing compatibility boundary. Focused tests and all 1,507 scaling tests
 passed; the unchanged `preserve_apply_names_its_missing_viewable.md` passed its
@@ -1343,11 +1343,11 @@ existing bounded wide arithmetic profile: signed 128-bit multiplication and
 same-format signed/unsigned 128-bit division and remainder. Results retain their
 mathematical source; overflow and C-defined divisor requirements remain
 obligations, never assumed facts. Typed 128-bit reads retain their kind and
-snapshot through casts and integer observations. Unsupported wide addition,
+state through casts and integer observations. Unsupported wide addition,
 subtraction, unsigned multiplication, mixed division, shifts and bitwise
 operations remain unsupported. General calls and nonnumeric compatibility
 boundaries remain explicit; completing chunk 4 does not complete the overall
-KernelTerm/SurfaceTerm migration. Native parity, refusal and snapshot controls,
+KernelTerm/SurfaceTerm migration. Native parity, refusal and state controls,
 nested evaluation and two deterministic growth tests pass. All 1,571 selected
 regressions (including all 1,524 scaling tests) and all 5,275 regular fixtures
 pass, with zero fact-stability differences.
@@ -1358,7 +1358,7 @@ For each PR:
   results, including types, casts and ordinary proof obligations.
 - Keep existing C and proof fixtures unchanged. In particular,
   `preserve_apply_names_its_missing_viewable.md` must continue to pass.
-- Cover positive, refusal and scope/snapshot cases relevant to that path, plus
+- Cover positive, refusal and scope/state cases relevant to that path, plus
   no-export and deterministic scaling checks where representation work requires
   them. Run all scaling tests for performance-sensitive changes and the ordinary
   required gate through the repository workflow.
@@ -1422,11 +1422,11 @@ The remaining scaled-index consumers retain operands through:
   binder substitution, shallow load expansion and equality-fact atom indexing.
 - Algebraic scalar-payload traversal, resource-read collection and load
   footprints. Footprints memoize shared nodes by depth, preserving the existing
-  depth refusal and source-snapshot/checked-width requirements.
+  depth refusal and source-state/checked-width requirements.
 - Arithmetic certificate payload, identity, hashing, translation and alignment
   checks. Occurrence budgets and unsupported-operator refusals remain unchanged;
   a compact DAG does not admit a formerly oversized certificate.
-- Wide range-normalization coordinates and candidate keys. Snapshot-sensitive
+- Wide range-normalization coordinates and candidate keys. MemoryState-sensitive
   memoized fingerprints replace exported endpoint trees; candidates still go
   through the ordinary merge rule. The selected coverage cursor keeps a wide
   displacement without constructing a temporary native range.
@@ -1447,7 +1447,7 @@ steps 2–4. Bounded planner comparisons and source-capability inspection also
 retain shared operands before applying their existing refusal limits.
 
 Regression coverage includes native/shared behavior, missing and opposite
-premises, source withdrawal, certificate size refusal, snapshot and width
+premises, source withdrawal, certificate size refusal, state and width
 checks, and cold repeated-child DAGs at 16/64/256 nodes with no machine exports.
 The full local gate passed 7,198 unit/integration tests and all four fixture
 harnesses in 11m42s (over the ten-minute target). A subsequent production-only
@@ -1469,12 +1469,12 @@ result already supports shared storage (notably pointer indices).
 | ID | Caller and boundary | Reproduction and required closure |
 | --- | --- | --- |
 | R1 — closed | `proof/term_rewrite.rs`: `TermRewrite::integer` → `shared_machine_operand` → `.value()` fallback; `range_endpoint` has the same pattern. Fast checked substitution, also used by fold instantiation. | Replace a variable inside a shared sum by a native `MachineTerm::If`. The shared replacement importer declines and the entire sum is exported. Retain the exact opaque replacement under shared parents; preserve capture avoidance, carrier types, checked refusals and fold scope. |
-| R2 — closed | `proof/equality_rewrite.rs`: `rewrite_with_admitted_equality_as_written` → `rewrite_integer_observation` → `shared::rewrite`; the range-endpoint closure repeats this boundary. Fast exact-equality substitution. | An admitted `x == (if b { 1 } else { 2 })` rewrites the Integer observation of shared `x + x`, but exports the source on shared-import failure. Keep the source shared through replacement construction; test an unavailable source, bound variables, read snapshots and both endpoint formats. |
+| R2 — closed | `proof/equality_rewrite.rs`: `rewrite_with_admitted_equality_as_written` → `rewrite_integer_observation` → `shared::rewrite`; the range-endpoint closure repeats this boundary. Fast exact-equality substitution. | An admitted `x == (if b { 1 } else { 2 })` rewrites the Integer observation of shared `x + x`, but exports the source on shared-import failure. Keep the source shared through replacement construction; test an unavailable source, bound variables, read states and both endpoint formats. |
 | R3 — closed | `machine_integer/representation.rs::operation_observation`, called by `identity::machine_operation_of_integer_value`, then `comparison_view_through_integer_operations` and checked consumers such as `ProofFacts::shared_operation_reading`. | One shared arithmetic operand and one native opaque operand miss the both-shared branch; `.value()` exports the shared operand. Retain mixed operands in the common operation node, preserving the existing format map and exact range obligations. All-native construction is a separate legitimate input boundary. |
 | R4 — closed | `machine_integer/modular.rs::wrapped_equality_at`, called by `rewrite_with_admitted_equality` after the exact rewrite does not apply. Fast explicit rewrite consequence. | Project `to_integer(shared(x + x)) == 0` to its 32-bit word equality. The projection calls `machine.value()`. Its existing 64-node limit counts outer Integer syntax, not nodes inside a machine observation. Retain residue operands and their comparison, preserving width, polarity and the existing admission/refusal rule; do not increase the limit. |
 | R5 — closed | `TermRewrite::offset` → `index_bits` → `structural_value`, then `scaled_int32_node`/`scale_int64`. Fast address reconstruction. | Rename `x` to `y` in an `Int32Scaled` offset containing shared `x + x`. Even a successful shared rewrite exports and reimports the result. The destination offset already stores `SharedMachineIntegerTerm`; retain it directly, preserving stride, signedness and the checked unsigned-index narrowing rule. |
-| R6 — closed | `ProofFacts::with_checked_rewritten_loads`: mixed observations take `pairs.push((left.value(), right.value()))`; selected unmatched shared pairs can also reach `rewritten_loads::evidence_operand`. Fast checked presentation/evidence matching. | Compare the observation of shared `x + x` with an opaque native conditional. The match correctly refuses, but first exports the shared side. Keep both views through correspondence/refusal; construct native evidence only at a genuine selected native evidence boundary. Preserve binder independence, original snapshots and exact source authority. |
-| R7 — closed | Shared indices inside `PointerOffsetTerm::{Int32Scaled,Int64Scaled}`: variable/capture/binder/scope walkers in `reasoning/variable_collection.rs`; `assumptions::collect_pointer_offset_memory_loads`; related offset equality and memory-blind fingerprint adapters. Fast address/dependency checking. | Passing `value: &SharedMachineIntegerTerm` to an `&MachineTerm` helper invokes `Deref` even without an explicit `.value()` call. Direct pointer-variable collection and current-memory dependency collection both export a shared `x + x` index. Use the existing retained carrier/read/scope summaries and operand views; grow index DAGs and vary snapshot/registry/binder state. No change to pointer semantics is needed. |
+| R6 — closed | `ProofFacts::with_checked_rewritten_loads`: mixed observations take `pairs.push((left.value(), right.value()))`; selected unmatched shared pairs can also reach `rewritten_loads::evidence_operand`. Fast checked presentation/evidence matching. | Compare the observation of shared `x + x` with an opaque native conditional. The match correctly refuses, but first exports the shared side. Keep both views through correspondence/refusal; construct native evidence only at a genuine selected native evidence boundary. Preserve binder independence, original states and exact source authority. |
+| R7 — closed | Shared indices inside `PointerOffsetTerm::{Int32Scaled,Int64Scaled}`: variable/capture/binder/scope walkers in `reasoning/variable_collection.rs`; `assumptions::collect_pointer_offset_memory_loads`; related offset equality and memory-blind fingerprint adapters. Fast address/dependency checking. | Passing `value: &SharedMachineIntegerTerm` to an `&MachineTerm` helper invokes `Deref` even without an explicit `.value()` call. Direct pointer-variable collection and current-memory dependency collection both export a shared `x + x` index. Use the existing retained carrier/read/scope summaries and operand views; grow index DAGs and vary state/registry/binder state. No change to pointer semantics is needed. |
 
 The R7 call-site review found `collect_pointer_offset_integer_variables`,
 `collect_pointer_offset_capture_variables`, `collect_pointer_offset_scope_summary`,
@@ -1509,14 +1509,14 @@ whole-expression replacement, missing sources and both endpoint formats.
 R1/R2 are **closed**. `proof/machine_source_match.rs` builds query-local
 structural keys for the selected source and shared goal. Each shared node is
 visited once; parent keys use child IDs, while opaque leaves use the existing
-native equality rule. These keys never replace term identities or snapshot
+native equality rule. These keys never replace term identities or state
 authority. Source imports are retained per carrier; native leaf hashing is
 charged, including its payload cost. Neither matching nor a miss exports the
 shared expression.
 
 Exact equality rewriting uses the same matcher for its existing canonical-read
 comparison. Its numeric address/mask comparison now uses operand views and keeps
-its existing operand-order rule. Controls cover changed snapshots, absent
+its existing operand-order rule. Controls cover changed states, absent
 sources, native and shared source inputs, and the deliberate refusal of composite
 sources beneath C-item fold binders. Scaling grows both native source length and
 shared goal depth at 16, 64 and 256 nodes, for hits and misses in both routes.
@@ -1556,8 +1556,8 @@ comparison uses retained operand views and the existing load authority; Int64
 offset equality keeps its structural rule. Memory-blind fingerprints use one
 encoding for native/shared operands and cached child hashes for shared syntax.
 The cache is session-local, keyed by syntax identity, independent of facts,
-registry changes and snapshot contents. Controls cover conversion/binder
-payloads, registered reads, access widths, changed snapshots and native/shared
+registry changes and state contents. Controls cover conversion/binder
+payloads, registered reads, access widths, changed states and native/shared
 parity. Cold DAGs and growing fingerprint prefixes at 16, 64 and 256 nodes have
 near-linear deterministic work and no exports.
 
@@ -1572,7 +1572,7 @@ R6 is **closed**. Mixed observations use retained syntax correspondence, and
 unmatched shared arithmetic remains shared through selected read-equality
 checking. Native stored-value evidence comes from the selected store itself;
 the existing origin-chain rule accepts retained endpoints. Binder restrictions,
-read widths and snapshot/source authority are unchanged. Controls cover opaque
+read widths and state/source authority are unchanged. Controls cover opaque
 mismatches in both directions, explicit source withdrawal, stored values,
 unchanged origins and intervening writes. Multi-size cold mismatch controls
 refuse without exporting or walking the shared arithmetic DAG. Existing
@@ -1624,9 +1624,9 @@ This cleanup increment removes `map_scaled_values`, replacing it with a
 shared-operand mapper. Equality-graph affine keys, offset interning, read-offset
 classification and four-byte scaled-word source indexing retain their inputs.
 Offset equality follows the existing shared-input policy: shared syntax and
-read snapshots retain their identity; genuine native inputs take the legacy
+read states retain their identity; genuine native inputs take the legacy
 comparison form before locking. No-export controls cover width/signedness,
-source polarity/withdrawal, sibling contexts, snapshot identity and cold DAGs.
+source polarity/withdrawal, sibling contexts, state identity and cold DAGs.
 Validation: all 12 focused tests and the full gate passed (7,733 unit/API tests,
 58 examples, 5,123 mdtests). The gate took 11m06s and emitted its existing
 ten-minute budget warning; no limits changed.
@@ -1640,7 +1640,7 @@ final dependency-bookkeeping fix; the final gate reran the scaling tests. Cold
 success/refusal controls at 16, 64 and 256 operators require zero exports.
 
 **Validated cleanup:** the contract-certification and retained walker
-increment includes no-export, snapshot/source-withdrawal and DAG scaling
+increment includes no-export, state/source-withdrawal and DAG scaling
 controls. Direct scalar-to-literal support is indexed on admission so a native
 written equality and its shared operand query use the same source; this does
 not permit transitive equality to substitute for a direct premise.
@@ -1712,7 +1712,7 @@ without exporting or expanding repeated subexpressions.
 Resource coordinate keys, selected range evidence, pointer-formation bounds,
 and contract/loop range checks keep those operands. Range splitting retains
 shared intermediate endpoints through its checks and exports only when creating
-native `CMemoryRange` output bounds. Snapshot comparisons still enter the native
+native `CMemoryRange` output bounds. MemoryState comparisons still enter the native
 memory machinery only through selected read leaves. The unused native byte-offset
 adapter and several obsolete checker wrappers are removed. Native pointer-index
 output APIs still serve native resource/value producers and Surface tools; this
@@ -1751,9 +1751,9 @@ The remaining locations divide into these concrete groups:
 | Group | Remaining routes | Disposition |
 | --- | --- | --- |
 | Read/address checking | `memory_resolution` offset matching, exact-index materialization and selected read payloads; `memory_provenance` framed transport and exact-load normalization are closed below | Live checker migration; shared outer arithmetic does not eliminate native address children |
-| Wide indices and shallow pointer checks | Wide access reconstruction, strided-region membership, offset transport and fold-read summaries are closed below; snapshot equivalence and `pointer_block_bounds` remain | Retain width, signedness and exactness rules while closing the remaining callers |
-| Pointer fact/rewrite payloads | `arithmetic_special`, `equality_rewrite`, `fact_reasoning`, pointer-offset substitution and execution facts; snapshot-blind and alpha pointer-index fact keys are closed below | Mixed construction/checking boundaries; migrate expression children without changing pointer semantics |
-| Resource and snapshot construction | quantified cells, memory-base roots, initialized-byte spelling, havoc identity, memory-load range collection | Mixed producer/checker boundaries, not merely printing |
+| Wide indices and shallow pointer checks | Wide access reconstruction, strided-region membership, offset transport and fold-read summaries are closed below; state equivalence and `pointer_block_bounds` remain | Retain width, signedness and exactness rules while closing the remaining callers |
+| Pointer fact/rewrite payloads | `arithmetic_special`, `equality_rewrite`, `fact_reasoning`, pointer-offset substitution and execution facts; state-blind and alpha pointer-index fact keys are closed below | Mixed construction/checking boundaries; migrate expression children without changing pointer semantics |
+| Resource and state construction | quantified cells, memory-base roots, initialized-byte spelling, havoc identity, memory-load range collection | Mixed producer/checker boundaries, not merely printing |
 | Native outputs and Surface tools | final `CValue`/`CMemoryRange` bounds, Surface synthesis/certificates, diagnostic renderers, planner segment indices | Explicit output or frontend/tool boundaries; remove only with their corresponding payload migration |
 
 `scalar_evidence_class` is still a native syntax-sorted alias enumeration API.
@@ -1793,7 +1793,7 @@ constant summary-query work and zero exports. Focused controls cover stated and
 missing bounds, both bounds of a strided field, and existing frame/refusal rules.
 
 This increment closes those named consumers, not wide access reconstruction,
-read-address payload normalization, snapshot-equivalence recursion, or the
+read-address payload normalization, state-equivalence recursion, or the
 remaining native pointer rewrite/fact-key families. The implicit native traits
 remain until those callers migrate.
 
@@ -1823,7 +1823,7 @@ adapters can be classified as output-only or removed.
 Controls distinguish a full-width bound from a bound on the truncated low word.
 Cold doubled index DAGs at 16, 64 and 256 levels reconstruct with constant query
 work and zero exports. This closes the wide access reconstruction group above,
-not read-address normalization, snapshot recursion, pointer rewrite/fact keys,
+not read-address normalization, state recursion, pointer rewrite/fact keys,
 or generic native expression bridges.
 
 The nested-rounding bound rule is shared by native and retained comparisons:
@@ -1866,7 +1866,7 @@ locations with the two implicit conversion traits disabled, versus 178 at the
 previous checkpoint. These are caller locations, not distinct checker defects;
 output, diagnostics and native payload construction also depend on the traits.
 The traits were restored after the audit. After the cell-run and wide-offset closures below, remaining checker examples
-include read-address/snapshot reasoning, pointer fact keys and native range
+include read-address/state reasoning, pointer fact keys and native range
 normalization.
 
 #### Retained cell-run access indices
@@ -1902,7 +1902,7 @@ pin the full index.
 Controls preserve the full high word, signed byte-offset refusals, misalignment,
 missing no-wrap premises and wrapping increments. Cold shared DAGs and unrelated
 fact populations exercise the same selected equality route without exporting
-index trees. Read-address/snapshot reasoning, pointer fact keys and native range
+index trees. Read-address/state reasoning, pointer fact keys and native range
 normalization remain separate checker boundaries.
 
 Validation: the full `scripts/check.sh --no-fail-fast` gate exited 0 in 9m01s:
@@ -1918,7 +1918,7 @@ value-equality and explicit memory-derivation queries for scaled indices.
 `pointer_offset_equality_evidence` and its typed checker select read sources
 through operand views instead of exporting shared arithmetic merely to inspect
 its root. The native atomic evidence checker still enforces its read-root,
-width and exact-snapshot requirements; this does not broaden its rule family.
+width and exact-state requirements; this does not broaden its rule family.
 
 Controls compare native/shared value answers, preserve changed-cell and width
 refusals, and reject cold arithmetic DAGs at 16, 64 and 256 levels with constant
@@ -1936,7 +1936,7 @@ kernel source changed. No nightly suite ran.
 The four canonicalization/read-selection walkers explicitly borrow retained
 native inputs after their shared-index guard. These eight call sites no longer
 depend on implicit `Deref`. Shared indices retain their exact structure and
-snapshots without entering the native walkers. This classifies existing native
+states without entering the native walkers. This classifies existing native
 input paths. Framed transport and exact-load normalization are closed below.
 
 Validation: `scripts/check.sh --no-fail-fast` exited 0 with 7,142 unit/API tests
@@ -1964,7 +1964,7 @@ signed-to-unsigned wide extension. Retained native leaves supply their existing
 constant reading once on introduction, including literal-conditioned native
 conditionals; shared parents reuse the result. This is checking metadata, not a
 change to structural lowering. Controls cover exact constructor shapes,
-overflowing and full-width coordinates, missing bounds, read snapshots and
+overflowing and full-width coordinates, missing bounds, read states and
 growing DAG prefixes.
 
 The full gate exposed a common comparison-reader gap: removing an exact
@@ -1981,19 +1981,19 @@ scaling and zero-export checks. No nightly run.
 The distinct cumulative pointer-index producer and remaining compiler-audit
 groups are still open. Framed transport and exact-load normalization are closed below.
 
-#### Retained snapshot-equivalent pointer indices
+#### Retained state-equivalent pointer indices
 
-The snapshot-equivalence route for 32-bit scaled indices now retains operand
+The state-equivalence route for 32-bit scaled indices now retains operand
 views. Its shared syntax correspondence is cached separately from proof
 authority: every selected read pair is checked under the current context.
 The existing native rule remains the reference: exact syntax matches, and
-changed read snapshots may be framed only through same-format 32-bit sums,
+changed read states may be framed only through same-format 32-bit sums,
 differences and products. Casts, other operations and wide arithmetic retain
 exact-syntax matching but do not gain framing of changed reads. Variables do
 not acquire registered-load semantics in this route.
 
-The snapshot source index shares the native/shared operand fingerprint walker.
-Its policy omits read addresses and snapshots only along those same permitted
+The state source index shares the native/shared operand fingerprint walker.
+Its policy omits read addresses and states only along those same permitted
 paths, while the existing memory-blind fingerprint retains its own policy.
 This also aligns the source-index shape with the existing unsigned 32-bit ring
 comparison rule; previously the shape recognized only signed ring operations.
@@ -2046,8 +2046,8 @@ were changed and no nightly suite was run.
 
 The assumption-free offset comparison retains its indices while following only
 root `int32` reads through exact stored cells. It does not normalize loads inside
-arithmetic, reinterpret other read kinds, or resolve an unknown snapshot. Both
-sides are materialized once; the existing bounded snapshot rule then receives
+arithmetic, reinterpret other read kinds, or resolve an unknown state. Both
+sides are materialized once; the existing bounded state rule then receives
 only selected native read leaves. Exact shared syntax correspondence reuses the
 memoized operand matcher with framing disabled, preserving native literal and
 operator distinctions without exporting either arithmetic DAG. This is also the
@@ -2068,14 +2068,14 @@ in the later increment below.
 Framed transport retains shared scaled indices through memory updates. An
 iterative, query-local walk visits each distinct arithmetic node once and
 rebuilds shared children. Only selected native leaves enter the existing
-memory-framing checks; no proof authority is cached across contexts or snapshots.
+memory-framing checks; no proof authority is cached across contexts or states.
 Native inputs still use the native walker. Raw 32-bit operators, wide constructor
 constant readings, casts, stride simplification and the offset carrier convention
 retain their existing rules. Opaque leaves retain their existing transport
 refusals; this does not add a new memory equality rule.
 
 Six focused tests pass, covering constructor parity, opaque constant readings,
-registered load names, changed and unknown snapshots, overlapping stores, havoc,
+registered load names, changed and unknown states, overlapping stores, havoc,
 and refusal paths. Cold repeated-child DAGs at 16, 64 and 256 nodes retain
 near-linear deterministic work with zero machine-tree exports through the actual
 pointer-offset entry point, for signed 32-bit and signed/unsigned wide indices.
@@ -2090,7 +2090,7 @@ run the full gate. The complete split remains open.
 
 Exact-load normalization now uses the same iterative, query-local shared-index
 walk as framed transport, with its own smart-constructor policy. It resolves
-selected native load leaves through the existing snapshot/kind checks and
+selected native load leaves through the existing state/kind checks and
 cycle guard, and retains shared arithmetic parents. Native inputs and opaque
 selected leaves keep the native normalizer. Load authority never survives a
 query or fact-context change. The narrow carrier, signed/unsigned wide reading,
@@ -2103,7 +2103,7 @@ Validation: all 1,721 selected tests passed on the rebased change, including all
 nonignored scaling tests, memory provenance, equality/term rewriting, transport
 API, documentation and search-boundary checks. The run used the existing 8 MiB
 test-thread stack; compilation took 5m07s and tests took 116s (two slow notices).
-The five new regressions cover native constructor parity, snapshot/kind/context
+The five new regressions cover native constructor parity, state/kind/context
 authority, and cold 16/64/256-node DAGs for unchanged arithmetic, resolved read
 children and structurally ordered XOR atoms, with zero machine-tree exports.
 Formatting and documentation rendering passed. The full integration gate and
@@ -2114,15 +2114,15 @@ not the whole migration.
 
 #### Retained pointer-index fact keys — closed
 
-Snapshot-blind pointer-offset keys consume the retained machine operand view,
+MemoryState-blind pointer-offset keys consume the retained machine operand view,
 using the existing interned syntax keys instead of exporting an index tree.
 Both narrow and wide scaled offsets preserve their stride and unsigned reading.
-These keys still select candidates only: erasing a read snapshot never supplies
+These keys still select candidates only: erasing a read state never supplies
 proof authority.
 
 Alpha pointer-offset keys now retain the existing compact machine-key DAG,
 including exact proposition identities and quantified candidate keys. Selected
-native leaves keep their existing binder, load-kind, registry and snapshot rules.
+native leaves keep their existing binder, load-kind, registry and state rules.
 Binders introduced inside an opaque machine leaf use leaf-local ordinals: a
 repeated DAG child and repeated native syntax agree, while outer binders,
 shadowing and free variables remain distinct. No load answer or binder-context
@@ -2132,8 +2132,8 @@ Validation: all 1,796 selected tests passed, including every nonignored scaling
 test, proof fact/key/reasoning tests, equality/term rewriting, transport API,
 documentation and search-boundary checks. Seven new regressions cover native
 syntax parity, repeated opaque binders, shadowing/free-variable distinctions,
-stride/signedness, snapshot/kind authority, and actual fact-store hit/miss and
-branch behavior. Cold 16/64/256-node DAGs and growing snapshot-key prefixes have
+stride/signedness, state/kind authority, and actual fact-store hit/miss and
+branch behavior. Cold 16/64/256-node DAGs and growing state-key prefixes have
 near-linear deterministic work with zero exports; lookup work stays bounded
 beside 16/64/256 unrelated facts. Compilation took 1m36s and tests took 110s
 (two slow notices), using the gate's existing 8 MiB test-thread stack.
@@ -2274,7 +2274,7 @@ requirements, relation-cycle refusal and tag rules. Its explicit source terms
 and alignment evidence remain the only inputs; no ambient proof search is added.
 Signed interval planning bounds and exports selected operands once for the
 existing public certificate payload; its affine evidence matcher reads shared
-claims directly. Shared cast raising keeps Surface operands, including snapshot
+claims directly. Shared cast raising keeps Surface operands, including state
 selectors, instead of forcing them through C fragments. Opaque conditional
 operands retain their interval rules and Surface conditional spelling. Resource
 body requirement matching recognizes retained comparison directions and exact
@@ -2321,7 +2321,7 @@ finishes the split.
   preserving all existing identity and metadata; remove their generic legacy
   bridges and duplicate expression storage as their consumers migrate.
 - [ ] Distinguish expression children from legitimate opaque semantic atoms,
-  such as a memory snapshot identity or execution event identity. Such atoms may
+  such as a memory state identity or execution event identity. Such atoms may
   remain opaque; an opaque wrapper around an expression tree is not a substitute
   for migrating its children.
 
@@ -2344,8 +2344,8 @@ model; states and resources need not become expression nodes.
 | Mathematical Integer | `SharedIntegerNode` retains `IntegerTerm` plus a cached `KernelTerm`. Arithmetic, calls and conditionals have common children. Folds and algebraic matches still need typed common children and binder metadata. Remove the parallel native node storage after its readers migrate. |
 | Machine values | `MachineTerm` and native `CValue` payloads remain producer/result carriers. Shared arithmetic, casts, machine conditionals and read descriptors are common nodes; fold, application, algebraic-match, pointer-address and floating payloads still use generic bridges on some routes. |
 | Logical Bool | Comparisons, calls, equality and conditionals have common nodes. `LegacyBool` still carries pointer/offset/complete-pointer comparisons, algebraic equality, overflow and floating conditions, and Boolean loads. |
-| Complete pointers and read addresses | Keep address, designation, opaque extent, qualifiers, subobject extent and access/evidence metadata. Expression children must migrate; snapshot, allocation and execution-event identities may remain semantic atoms. A wrapper around the existing complete pointer tree is not closure. |
-| Algebraic values and array references | `KernelTermImport::argument` still uses the generic legacy argument boundary. Constructors, matches and scalar children need typed common nodes; array-reference snapshot identity remains an atom. |
+| Complete pointers and read addresses | Keep address, designation, opaque extent, qualifiers, subobject extent and access/evidence metadata. Expression children must migrate; state, allocation and execution-event identities may remain semantic atoms. A wrapper around the existing complete pointer tree is not closure. |
+| Algebraic values and array references | `KernelTermImport::argument` still uses the generic legacy argument boundary. Constructors, matches and scalar children need typed common nodes; array-reference state identity remains an atom. |
 | Raising/lowering | `raise_kernel_term` visits common arithmetic, casts, observations, machine/Integer conditionals and Boolean children directly. Shared arithmetic uses the existing local-name index before expanding children; it preserves current-local spelling without exporting the query or scanning unrelated locals. Legacy payload dispatch, native fact/goal synthesis, certificate-only lowering and the general evaluator-backed lowering path remain distinct boundaries until consolidated. |
 
 ### 4. Close the common boundary and declare the split complete

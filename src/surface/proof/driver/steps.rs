@@ -146,7 +146,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         }
 
         // One explicitly selected statement can produce its read equality
-        // directly. A later landing snapshot belongs to history planning,
+        // directly. A later landing state belongs to history planning,
         // not to this ordinary preserve operation.
         if let ProofStep::TransportUsing {
             source,
@@ -162,8 +162,8 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                 .lower_surface_proposition_direct(&separation, "transport separation")?;
             if let Proposition::ResourceSeparate { left, .. } = fact
                 && let crate::kernel::Resource::Footprint(footprint) = left.as_ref()
-                && crate::kernel::MemorySnapshotIdentity::of(&footprint.after)
-                    == crate::kernel::MemorySnapshotIdentity::of(execution.core.state.memory())
+                && crate::kernel::MemoryStateIdentity::of(&footprint.after)
+                    == crate::kernel::MemoryStateIdentity::of(execution.core.state.memory())
                 && footprint
                     .after_resources
                     .shares_storage_with(execution.core.state.resources())
@@ -202,7 +202,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                 driver_proof.lower_surface_proposition_direct(source, "transport source")?;
             let target_fact =
                 driver_proof.lower_surface_proposition_direct(target, "transport target")?;
-            let same_snapshot = match (&source_fact, &target_fact) {
+            let same_state = match (&source_fact, &target_fact) {
                 (
                     Proposition::MemoryLoadable {
                         memory: left,
@@ -223,7 +223,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                 ) if !narrow_range => left == right,
                 _ => false,
             };
-            if same_snapshot {
+            if same_state {
                 return self.apply_ordinary_transport_steps(target, steps);
             }
         }
@@ -539,7 +539,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                 .step_error("this proof step has not yet migrated to the checked `Proof` API")),
         }?;
 
-        // A rewrite or transport changes the cited proposition's snapshot
+        // A rewrite or transport changes the cited proposition's state
         // context. Do not let a source-epoch projection survive that
         // boundary and accidentally make a later citation look current.
         if matches!(

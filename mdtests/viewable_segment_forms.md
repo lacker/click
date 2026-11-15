@@ -1,4 +1,4 @@
-# `viewable` segment forms and a snapshotted viewability fact
+# `viewable` segment forms and a stateted viewability fact
 
 This checks the `viewable` spellings of the memory-model page — a constant
 range, a symbolic range, and a pointer-base range — and that a proof can name

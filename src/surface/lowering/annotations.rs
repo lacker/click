@@ -48,7 +48,7 @@ fn integer_comparison_operator(
 fn is_unsuffixed_integer_literal_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::IntegerLiteral(_) => true,
-        // A snapshot of a literal is the literal.
+        // A state of a literal is the literal.
         ContractExpression::Negate(inner)
         | ContractExpression::Old(inner)
         | ContractExpression::At {
@@ -80,8 +80,8 @@ enum LoopMeasureClauses {
 enum FixedMeasureState {
     /// `old(...)`: the function's entry state.
     Old,
-    /// `at(<selector>, ...)`: a recorded snapshot, including a loop's entry.
-    At(SnapshotSelector),
+    /// `at(<selector>, ...)`: a recorded state, including a loop's entry.
+    At(ProgramPointSelector),
 }
 
 impl FixedMeasureState {
@@ -90,7 +90,7 @@ impl FixedMeasureState {
             Self::Old => "old(...)".to_string(),
             Self::At(selector) => format!(
                 "at({}, ...)",
-                crate::surface::diagnostics::describe_snapshot_selector(selector)
+                crate::surface::diagnostics::describe_program_point_selector(selector)
             ),
         }
     }
@@ -616,7 +616,7 @@ pub(in crate::surface) fn register_kernel_fold_read_definitions(
             statement_index: 0,
             next_quantifier_variable: 3_200_000,
             branch_join_target: None,
-            snapshots: None,
+            retained_states: None,
             loop_records: None,
         };
         let Some(body) = definition.body() else {
@@ -682,7 +682,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
-        snapshots: None,
+        retained_states: None,
         loop_records: None,
     };
     let all_predicates = spec_definitions
@@ -769,7 +769,7 @@ pub(in crate::surface) fn lower_composite_resource_body_with_bindings(
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
         branch_join_target: None,
-        snapshots: None,
+        retained_states: None,
         loop_records: None,
     };
     let all_predicates = spec_definitions
@@ -1293,7 +1293,7 @@ pub(in crate::surface) fn annotated_loop_function_extending(
         statement_index: record.statement_index,
         next_quantifier_variable: previous.quantifiers_after,
         branch_join_target: None,
-        snapshots: None,
+        retained_states: None,
         loop_records: None,
     };
     match pointer_element_types {
@@ -1703,8 +1703,8 @@ fn annotate_function(
         // `old(...)` names the function entry. A frontier loop is annotated
         // from the proof's execution start, which a proof that unfolds a
         // resource before its first step has already moved past: the unfold
-        // names the body's cells in a new snapshot. Lowering `old` there
-        // would give the loop's entry-snapshot reads a snapshot the proof's
+        // names the body's cells in a new state. Lowering `old` there
+        // would give the loop's entry-state reads a state the proof's
         // own `old(...)` and `at(function.entry, ...)` never name, so the
         // checked function entry is used when the proof recorded one.
         entry_state: frame_entry
@@ -1760,7 +1760,7 @@ fn annotate_function(
         statement_index: 0,
         next_quantifier_variable: 3_000_000,
         branch_join_target: None,
-        snapshots: None,
+        retained_states: None,
         loop_records: record_loops.then(Vec::new),
     };
     let parsed_kernel_function = parsed_function.to_kernel_function();
@@ -2008,7 +2008,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
     entry_state: &ExecutionState,
     current_state: &ExecutionState,
     branch_join_target: &ProgramPointRef,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     arguments: &[ProgramExpression],
     spec_definitions: SpecDefinitions<'_>,
 ) -> Result<SpecProposition, ClickError> {
@@ -2067,7 +2067,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         statement_index: 0,
         next_quantifier_variable: 2_000_000,
         branch_join_target: Some(branch_join_target),
-        snapshots: Some(snapshots),
+        retained_states: Some(retained_states),
         loop_records: None,
     };
     lowerer
@@ -2076,7 +2076,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
 }
 
 /// The elaborator and context of a fixed-state proof: `old(...)` names the
-/// function entry, a predicate call stays a predicate, recorded snapshots
+/// function entry, a predicate call stays a predicate, recorded states
 /// are fixed states, and the proof's current locals and `result` are fixed
 /// values. `array_element_types` names the array parameters and proof-local
 /// array bindings in scope; `opaque_click_functions` names the calls the
@@ -2089,7 +2089,7 @@ fn fixed_state_elaboration<'a>(
     entry_values: BTreeMap<String, ProgramValue>,
     current_values: BTreeMap<String, ProgramValue>,
     result: Option<&ProgramValue>,
-    snapshots: &'a RecordedSnapshots,
+    retained_states: &'a RecordedStates,
     spec_definitions: SpecDefinitions<'a>,
     _opaque_click_functions: BTreeSet<String>,
     parameter_pointer_element_widths: BTreeMap<String, u32>,
@@ -2118,11 +2118,11 @@ fn fixed_state_elaboration<'a>(
         implicit_contract_mutable_segments: &[],
         loop_resources: BTreeMap::new(),
         inherits_resource_derived_frame: false,
-        snapshots: Some(snapshots),
+        retained_states: Some(retained_states),
         loop_records: None,
     };
     // The proof's current locals are fixed values in every context: a name a
-    // snapshot or the entry does not bind keeps its current value, as the
+    // state or the entry does not bind keeps its current value, as the
     // proof reads it.
     let mut context = SpecElaborationContext {
         values: current_values
@@ -2149,7 +2149,7 @@ fn fixed_state_elaboration<'a>(
 
 /// Elaborates a fixed-state proposition with already-elaborated symbolic
 /// algebraic and Integer bindings. The bindings are logical values captured at the
-/// application site, so entering `old(...)` or another snapshot keeps the
+/// application site, so entering `old(...)` or another state keeps the
 /// same value instead of re-evaluating its source expression there.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
@@ -2162,7 +2162,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
@@ -2174,7 +2174,7 @@ pub(in crate::surface) fn elaborate_fixed_state_proposition_with_algebraic_and_i
         entry_values,
         current_values,
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         pointer_element_widths,
@@ -2216,7 +2216,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
     current_values: BTreeMap<String, ProgramValue>,
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
@@ -2228,7 +2228,7 @@ pub(in crate::surface) fn elaborate_fixed_state_algebraic_expression(
         entry_values,
         current_values,
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         pointer_element_widths,
@@ -2249,7 +2249,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression(
     entry_values: BTreeMap<String, ProgramValue>,
     current_values: BTreeMap<String, ProgramValue>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
 ) -> Result<crate::kernel::SpecIntegerExpression, String> {
@@ -2261,7 +2261,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression(
         current_values,
         &crate::persistent::PersistentMap::default(),
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         BTreeMap::new(),
@@ -2282,7 +2282,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_
     current_values: BTreeMap<String, ProgramValue>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
@@ -2294,7 +2294,7 @@ pub(in crate::surface) fn elaborate_fixed_state_integer_expression_with_integer_
         entry_values,
         current_values,
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         pointer_element_widths,
@@ -2355,7 +2355,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
     entry_values: BTreeMap<String, ProgramValue>,
     current_values: BTreeMap<String, ProgramValue>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
@@ -2368,7 +2368,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression(
         current_values,
         BTreeMap::new(),
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         pointer_element_widths,
@@ -2384,7 +2384,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression_with_algebraic_values
     current_values: BTreeMap<String, ProgramValue>,
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
@@ -2398,7 +2398,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression_with_algebraic_values
         algebraic_values,
         &crate::persistent::PersistentMap::default(),
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         pointer_element_widths,
@@ -2415,7 +2415,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression_with_algebraic_and_in
     algebraic_values: BTreeMap<String, SpecAlgebraicExpression>,
     integer_values: &crate::persistent::PersistentMap<String, crate::kernel::SpecIntegerExpression>,
     result: Option<&ProgramValue>,
-    snapshots: &RecordedSnapshots,
+    retained_states: &RecordedStates,
     spec_definitions: SpecDefinitions<'_>,
     opaque_click_functions: BTreeSet<String>,
     pointer_element_widths: BTreeMap<String, u32>,
@@ -2427,7 +2427,7 @@ pub(in crate::surface) fn elaborate_fixed_state_expression_with_algebraic_and_in
         entry_values,
         current_values,
         result,
-        snapshots,
+        retained_states,
         spec_definitions,
         opaque_click_functions,
         pointer_element_widths,
@@ -2452,8 +2452,8 @@ pub(in crate::surface) fn elaborate_fixed_state_expression_with_algebraic_and_in
             }
         }
     }
-    // A snapshot the expression enters reads only these names, as for a
-    // proposition, rather than every local the snapshot's state binds.
+    // A state the expression enters reads only these names, as for a
+    // proposition, rather than every local the state's state binds.
     lowerer.capture_referenced_names = Some(names);
     lowerer.lower_contract_expression_to_spec(expression, &context)
 }
@@ -2532,7 +2532,7 @@ pub(in crate::surface) fn elaborate_requirement_proposition(
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
         branch_join_target: None,
-        snapshots: None,
+        retained_states: None,
         loop_records: None,
     };
     lowerer.click_proposition_to_spec_proposition(
@@ -2609,7 +2609,7 @@ pub(in crate::surface) fn function_contract_summary(
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
         branch_join_target: None,
-        snapshots: None,
+        retained_states: None,
         loop_records: None,
     };
     let mut context = SpecElaborationContext::for_function_contract();
@@ -3110,7 +3110,7 @@ struct AnnotationLowerer<'a> {
     branch_join_target: Option<&'a ProgramPointRef>,
     /// The states a proof recorded at program points and marks, when the
     /// proposition is stated inside a proof.
-    snapshots: Option<&'a RecordedSnapshots>,
+    retained_states: Option<&'a RecordedStates>,
     /// What a whole-function walk saw at each loop it lowered, in loop
     /// order, when a later annotation may lower one loop alone
     /// (`LoopAnnotation`).
@@ -4350,8 +4350,9 @@ impl AnnotationLowerer<'_> {
                 selector,
                 proposition,
             } => {
-                if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
-                    return self.click_proposition_to_spec_proposition(proposition, &snapshot);
+                if let Some(retained_state) = self.point_environment(selector, environment)? {
+                    return self
+                        .click_proposition_to_spec_proposition(proposition, &retained_state);
                 }
                 match self.resolve_visit_selector(selector, environment)? {
                     ResolvedProgramPoint::Current => {
@@ -4362,7 +4363,7 @@ impl AnnotationLowerer<'_> {
                             environment.old_state(&self.entry_values, self.entry_state.memory())?;
                         self.click_proposition_to_spec_proposition(proposition, &old_environment)
                     }
-                    _ => Err("`at(...)` propositions are proof-script snapshots".to_string()),
+                    _ => Err("`at(...)` propositions are proof-script states".to_string()),
                 }
             }
             _ => unreachable!("proposition dispatched to the wrong lowering helper"),
@@ -5130,11 +5131,11 @@ impl AnnotationLowerer<'_> {
                 resources,
             } => {
                 let before = self
-                    .snapshot_environment(before, environment)?
-                    .ok_or("changes_only requires a recorded before snapshot")?;
+                    .point_environment(before, environment)?
+                    .ok_or("changes_only requires a recorded before state")?;
                 let after = self
-                    .snapshot_environment(after, environment)?
-                    .ok_or("changes_only requires a recorded after snapshot")?;
+                    .point_environment(after, environment)?
+                    .ok_or("changes_only requires a recorded after state")?;
                 Ok(SpecProposition::ChangesOnly {
                     before: before.current_memory.clone(),
                     after: after.current_memory.clone(),
@@ -5183,9 +5184,9 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    /// The value a fixed snapshot gives one resource field.
+    /// The value a fixed state gives one resource field.
     ///
-    /// Only an explicit `at(...)` snapshot fixes one. That snapshot names a
+    /// Only an explicit `at(...)` state fixes one. That state names a
     /// state, so a field the instance does not hold there is an error: no
     /// other reading exists.
     ///
@@ -5209,7 +5210,7 @@ impl AnnotationLowerer<'_> {
         // so that a refusal downstream can spell a model-field variable
         // instead of printing it (`crate::kernel::model_fields`).
         crate::kernel::model_fields::register_instance_spelling(access.identity, &access.owner);
-        if let Some(state) = environment.snapshot_state.as_ref() {
+        if let Some(state) = environment.reference_state.as_ref() {
             return state
                 .resource_instance_at_path(access.identity, &access.children)
                 .and_then(|instance| {
@@ -5220,7 +5221,7 @@ impl AnnotationLowerer<'_> {
                 .map(Some)
                 .ok_or_else(|| {
                     format!(
-                        "resource instance `{}` is not owned at this snapshot",
+                        "resource instance `{}` is not owned at this state",
                         access.owner
                     )
                 });
@@ -5613,8 +5614,8 @@ impl AnnotationLowerer<'_> {
                 selector,
                 expression,
             } => {
-                if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
-                    return self.lower_contract_integer_to_spec(expression, &snapshot);
+                if let Some(retained_state) = self.point_environment(selector, environment)? {
+                    return self.lower_contract_integer_to_spec(expression, &retained_state);
                 }
                 // `at(function.entry, e)` is `old(e)` and the current point
                 // is `e`, as for C values and sequences.
@@ -6106,11 +6107,11 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    /// Lower a field whose base pointer is named in another snapshot. The
-    /// base expression supplies the pointer value from that snapshot, while
+    /// Lower a field whose base pointer is named in another state. The
+    /// base expression supplies the pointer value from that state, while
     /// the field itself is read from the surrounding environment's memory.
     /// This is the meaning of `old(p->kid)->payload`.
-    fn lower_snapshot_field_to_spec(
+    fn lower_program_point_field_to_spec(
         &mut self,
         base: &ContractExpression,
         lowered: &ProgramExpression,
@@ -6501,7 +6502,7 @@ impl AnnotationLowerer<'_> {
                 offset_bytes,
                 ..
             } if contract_expression_has_explicit_program_result_reference(base) => {
-                self.lower_snapshot_field_to_spec(base, lowered, *offset_bytes, environment)
+                self.lower_program_point_field_to_spec(base, lowered, *offset_bytes, environment)
             }
             ContractExpression::ArrayIndex {
                 base,
@@ -6592,7 +6593,7 @@ impl AnnotationLowerer<'_> {
                 ContractExpression::Old(_) | ContractExpression::At { .. }
             ) =>
             {
-                self.lower_snapshot_field_to_spec(base, lowered, *offset_bytes, environment)
+                self.lower_program_point_field_to_spec(base, lowered, *offset_bytes, environment)
             }
             ContractExpression::Field {
                 base,
@@ -6633,7 +6634,7 @@ impl AnnotationLowerer<'_> {
                 else {
                     return Err("`count(...)` expects a declared resource".to_string());
                 };
-                if environment.snapshot_state.is_some() {
+                if environment.reference_state.is_some() {
                     return Err("`count(R(p))` at a recorded state is unavailable".to_string());
                 }
                 if arguments.is_empty()
@@ -6667,7 +6668,7 @@ impl AnnotationLowerer<'_> {
                 // A count named at the function entry is the entry's
                 // population, which the kernel evaluates at the entry state.
                 Ok(if environment.at_function_entry {
-                    SpecExpression::LoopEntrySnapshot(Box::new(count))
+                    SpecExpression::LoopEntryState(Box::new(count))
                 } else {
                     count
                 })
@@ -6676,17 +6677,19 @@ impl AnnotationLowerer<'_> {
                 Err("`_` is only valid inside a `count(...)` resource pattern".to_string())
             }
             ContractExpression::RegionAllocation(region) => {
-                let snapshots = self
-                    .snapshots
+                let retained_states = self
+                    .retained_states
                     .ok_or("`.allocation` requires a function execution")?;
-                Ok(SpecExpression::Value(snapshots.region_allocation(region)?))
+                Ok(SpecExpression::Value(
+                    retained_states.region_allocation(region)?,
+                ))
             }
             ContractExpression::RegionResult(region) => {
-                let snapshots = self
-                    .snapshots
+                let retained_states = self
+                    .retained_states
                     .ok_or("`.result` names a region of a function body being executed")?;
                 Ok(SpecExpression::Value(
-                    snapshots.region_result_value(region)?,
+                    retained_states.region_result_value(region)?,
                 ))
             }
             ContractExpression::RegionParameter { region, name } => Err(format!(
@@ -7102,7 +7105,7 @@ impl AnnotationLowerer<'_> {
             ContractExpression::Old(inner) => self.enum_program_value_type(inner, environment),
             // The enum value a call returned.
             ContractExpression::RegionResult(region) => {
-                match self.snapshots?.region_result_value(region).ok()? {
+                match self.retained_states?.region_result_value(region).ok()? {
                     ProgramValue::Parameter(term) => {
                         let enum_type = crate::kernel::TypeParameterName::of(&term.algebraic_type);
                         crate::surface::holds_spec_value(enum_type).then_some(enum_type)
@@ -7138,10 +7141,10 @@ impl AnnotationLowerer<'_> {
                         node: AlgebraicTermNode::Variable(variable),
                         ..
                     })) => Some(variable),
-                    // A named snapshot has only the value it holds; the
+                    // A named state has only the value it holds; the
                     // function entry also has its symbolic projection.
-                    Some(_) if environment.snapshot_state.is_some() => {
-                        return Err("only entry-bound symbolic resource fields support fixed snapshots in this slice".into());
+                    Some(_) if environment.reference_state.is_some() => {
+                        return Err("only entry-bound symbolic resource fields support fixed states in this slice".into());
                     }
                     Some(_) | None => None,
                 };
@@ -7456,11 +7459,11 @@ impl AnnotationLowerer<'_> {
                 selector,
                 expression,
             } => {
-                let snapshot = self.snapshot_environment(selector, environment)?.ok_or_else(|| {
+                let retained_state = self.point_environment(selector, environment)?.ok_or_else(|| {
                     "algebraic values at unresolved program points are not supported in this slice"
                         .to_string()
                 })?;
-                self.lower_contract_algebraic_to_spec(expression, &snapshot)
+                self.lower_contract_algebraic_to_spec(expression, &retained_state)
             }
             ContractExpression::Let {
                 name, value, body, ..
@@ -7493,10 +7496,10 @@ impl AnnotationLowerer<'_> {
             // A region result that is no enum value: say why, as a call the
             // function does not make.
             ContractExpression::RegionResult(region) => {
-                let snapshots = self
-                    .snapshots
+                let retained_states = self
+                    .retained_states
                     .ok_or("`.result` names a region of a function body being executed")?;
-                snapshots.region_result_value(region)?;
+                retained_states.region_result_value(region)?;
                 Err(format!(
                     "`{}.result` is not an algebraic value",
                     diagnostics::describe_code_region_ref(region)
@@ -7670,7 +7673,7 @@ impl AnnotationLowerer<'_> {
                         Ok(crate::kernel::SpecPureFunctionArgument::ArrayRef {
                             // A function that reads no memory is a function of
                             // its argument values, so its pointer arguments are
-                            // anchored to one canonical snapshot instead of the
+                            // anchored to one canonical state instead of the
                             // ambient one. Without this the same proposition is a
                             // different term on either side of a C write, and a
                             // `fold` cannot discharge a body fact that applies a
@@ -7929,8 +7932,8 @@ impl AnnotationLowerer<'_> {
                 selector,
                 expression,
             } => {
-                if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
-                    return self.lower_contract_sequence_to_spec(expression, &snapshot);
+                if let Some(retained_state) = self.point_environment(selector, environment)? {
+                    return self.lower_contract_sequence_to_spec(expression, &retained_state);
                 }
                 match self.resolve_visit_selector(selector, environment)? {
                     ResolvedProgramPoint::Current => {
@@ -7942,7 +7945,7 @@ impl AnnotationLowerer<'_> {
                         self.lower_contract_sequence_to_spec(expression, &old_environment)
                     }
                     ResolvedProgramPoint::LoopEntry(_) => Err(
-                        "sequence snapshots at loop entry are not in the first sequence slice"
+                        "sequence states at loop entry are not in the first sequence slice"
                             .to_string(),
                     ),
                 }
@@ -8036,23 +8039,23 @@ impl AnnotationLowerer<'_> {
             )),
             ResourceSubject::Instance { identity, name, at } => {
                 // `at(point, name)` reads the named state; inside an
-                // enclosing snapshot a bare name reads that snapshot.
+                // enclosing state a bare name reads that state.
                 let named = match at {
                     Some(selector) => Some(
-                        self.snapshots
-                            .and_then(|snapshots| snapshots.get(selector))
+                        self.retained_states
+                            .and_then(|retained_states| retained_states.get(selector))
                             .ok_or_else(|| {
                                 format!("`at(..., {name})` names a state that is not recorded here")
                             })?,
                     ),
                     None => None,
                 };
-                if let Some(state) = named.or(environment.snapshot_state.as_ref()) {
+                if let Some(state) = named.or(environment.reference_state.as_ref()) {
                     let instance =
                         state
                             .resource_instance_at_path(*identity, &[])
                             .ok_or_else(|| {
-                                format!("resource instance `{name}` is not owned at this snapshot")
+                                format!("resource instance `{name}` is not owned at this state")
                             })?;
                     Ok(SpecResource::Value(Resource::Instance(instance.clone())))
                 } else {
@@ -8063,8 +8066,8 @@ impl AnnotationLowerer<'_> {
                 }
             }
             ResourceSubject::Footprint(region) => Ok(SpecResource::Value(
-                self.snapshots
-                    .ok_or("region footprint requires execution snapshots")?
+                self.retained_states
+                    .ok_or("region footprint requires execution states")?
                     .footprint(region)?,
             )),
             ResourceSubject::Parameter { index, .. } => Ok(SpecResource::Value(
@@ -8133,17 +8136,20 @@ impl AnnotationLowerer<'_> {
     /// The elaboration context of a state a proof recorded under `selector`:
     /// its locals are fixed values and its memory is fixed, so the kernel
     /// lowers loads there exactly as the proof observed them.
-    fn snapshot_environment(
+    fn point_environment(
         &self,
-        selector: &SnapshotSelector,
+        selector: &ProgramPointSelector,
         environment: &SpecElaborationContext,
     ) -> Result<Option<SpecElaborationContext>, String> {
-        let Some(state) = self.snapshots.and_then(|snapshots| snapshots.get(selector)) else {
+        let Some(state) = self
+            .retained_states
+            .and_then(|retained_states| retained_states.get(selector))
+        else {
             return Ok(None);
         };
         let mut values = environment.values.clone();
-        // A parameter reads as its entry value at any snapshot that does not
-        // bind it as a local, which is every snapshot taken before its first
+        // A parameter reads as its entry value at any state that does not
+        // bind it as a local, which is every state taken before its first
         // statement. The context's own binding is the current value, and a
         // mark taken before a reassignment used to read the value after it.
         values.extend(
@@ -8171,7 +8177,7 @@ impl AnnotationLowerer<'_> {
                 )
             }));
             // A local that keeps its value in memory is named by the read of
-            // its object in the snapshot's memory.
+            // its object in the state's memory.
             values.extend(
                 state
                     .locals()
@@ -8231,14 +8237,14 @@ impl AnnotationLowerer<'_> {
             integer_values: environment.integer_values.clone(),
             algebraic_values: environment.algebraic_values.clone(),
             array_refs: array_refs.into_iter().collect(),
-            // The snapshot's own memory is the memory here; an outer
+            // The state's own memory is the memory here; an outer
             // binding's state does not reach into it.
             array_memories: PersistentMap::default(),
             current_memory: SpecMemory::Fixed(state.memory().clone()),
             current_loop_entry: None,
             function_contract: false,
             at_function_entry: false,
-            snapshot_state: Some(state.clone()),
+            reference_state: Some(state.clone()),
             contract_result_in_scope: environment.contract_result_in_scope,
             checking_definedness: environment.checking_definedness,
         }))
@@ -8261,20 +8267,20 @@ impl AnnotationLowerer<'_> {
                 diagnostics::describe_code_region_ref(region)
             )
         };
-        let snapshots = self.snapshots.ok_or_else(|| {
+        let retained_states = self.retained_states.ok_or_else(|| {
             format!(
                 "`{}` names a call of a function body being executed",
                 spelled()
             )
         })?;
-        let index = snapshots
+        let index = retained_states
             .result_region_index(region)
             .map_err(|error| format!("`{}`: {error}", spelled()))?;
         let point = ProgramPointRef {
             region: CodeRegionRef::Region(index),
             kind: ProgramPointKind::Parameters,
         };
-        let bound = snapshots.get(&point).ok_or_else(|| {
+        let bound = retained_states.get(&point).ok_or_else(|| {
             format!(
                 "`{}` names a by-value aggregate argument of a call, and no call at `{}` has been prepared or stepped with one",
                 spelled(),
@@ -8341,20 +8347,24 @@ impl AnnotationLowerer<'_> {
             access_class: None,
             source: Default::default(),
         });
-        self.lower_at_expression_to_spec(&SnapshotSelector::ProgramPoint(point), &read, environment)
+        self.lower_at_expression_to_spec(
+            &ProgramPointSelector::ProgramPoint(point),
+            &read,
+            environment,
+        )
     }
 
     fn lower_at_expression_to_spec(
         &mut self,
-        selector: &SnapshotSelector,
+        selector: &ProgramPointSelector,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
-        if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
-            return self.lower_contract_expression_to_spec(expression, &snapshot);
+        if let Some(retained_state) = self.point_environment(selector, environment)? {
+            return self.lower_contract_expression_to_spec(expression, &retained_state);
         }
-        if self.snapshots.is_none()
-            && let SnapshotSelector::Mark(name) = selector
+        if self.retained_states.is_none()
+            && let ProgramPointSelector::Mark(name) = selector
             && let Some(loop_index) = environment.current_loop_entry
         {
             return Err(format!(
@@ -8376,7 +8386,7 @@ impl AnnotationLowerer<'_> {
                         "`at(loop({loop_index}).entry, ...)` is currently supported only inside that loop's invariant"
                     ));
                 }
-                Ok(SpecExpression::LoopEntrySnapshot(Box::new(
+                Ok(SpecExpression::LoopEntryState(Box::new(
                     self.lower_contract_expression_to_spec(expression, environment)?,
                 )))
             }
@@ -8385,22 +8395,22 @@ impl AnnotationLowerer<'_> {
 
     fn resolve_visit_selector(
         &self,
-        selector: &SnapshotSelector,
+        selector: &ProgramPointSelector,
         environment: &SpecElaborationContext,
     ) -> Result<ResolvedProgramPoint, String> {
         match selector {
-            SnapshotSelector::ProgramPoint(program_point)
+            ProgramPointSelector::ProgramPoint(program_point)
                 if self.branch_join_target == Some(program_point) =>
             {
                 Ok(ResolvedProgramPoint::Current)
             }
-            SnapshotSelector::ProgramPoint(program_point) => {
+            ProgramPointSelector::ProgramPoint(program_point) => {
                 self.resolve_program_point_ref(program_point, environment)
             }
-            SnapshotSelector::Mark(name) if self.snapshots.is_some() => Err(format!(
+            ProgramPointSelector::Mark(name) if self.retained_states.is_some() => Err(format!(
                 "unknown proof mark `{name}`; add `mark {name};` after the proof reaches that frontier"
             )),
-            SnapshotSelector::Mark(name) => Err(format!(
+            ProgramPointSelector::Mark(name) => Err(format!(
                 "proof-local mark `{name}` is available only in an execution proof"
             )),
         }
@@ -8412,10 +8422,10 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<ResolvedProgramPoint, String> {
         if let CodeRegionRef::Path(_) = &program_point.region {
-            let snapshots = self
-                .snapshots
+            let retained_states = self
+                .retained_states
                 .ok_or("`statement(i)` regions name points of a function body being executed")?;
-            let point = snapshots.source_point(program_point)?;
+            let point = retained_states.source_point(program_point)?;
             return self
                 .resolve_program_point_ref(&point, environment)
                 .map_err(|error| {
@@ -8450,22 +8460,22 @@ impl AnnotationLowerer<'_> {
                     .to_string(),
             ),
             (CodeRegion::Loop(_), ProgramPointKind::Exit) | (CodeRegion::Statement(_), _)
-                if self.snapshots.is_some() =>
+                if self.retained_states.is_some() =>
             {
-                if let Some(refusal) = self.snapshots.and_then(|snapshots| {
-                    snapshots.ambiguous_exit_refusal(&SnapshotSelector::ProgramPoint(
+                if let Some(refusal) = self.retained_states.and_then(|retained_states| {
+                    retained_states.ambiguous_exit_refusal(&ProgramPointSelector::ProgramPoint(
                         program_point.clone(),
                     ))
                 }) {
                     return Err(refusal);
                 }
                 Err(format!(
-                    "no state snapshot was recorded for `{}`; run `step()` across that statement before using it in `at(...)`",
+                    "no symbolic state was recorded for `{}`; run `step()` across that statement before using it in `at(...)`",
                     crate::surface::diagnostics::describe_program_point_ref(program_point)
                 ))
             }
             (CodeRegion::Loop(index), ProgramPointKind::Exit) => Err(format!(
-                "`at(loop({index}).exit, ...)` requires a recorded snapshot in an execution proof"
+                "`at(loop({index}).exit, ...)` requires a recorded state in an execution proof"
             )),
             (CodeRegion::Statement(_), _) => Err(format!(
                 "`at({}, ...)` is not supported in this context yet",
@@ -8495,7 +8505,7 @@ impl AnnotationLowerer<'_> {
         match environment.values.get(name) {
             Some(value) => Ok(value.clone()),
             None if environment
-                .snapshot_state
+                .reference_state
                 .as_ref()
                 .is_some_and(|state| state.locals().aggregate_object_pointer(name).is_some()) =>
             {
@@ -8503,13 +8513,13 @@ impl AnnotationLowerer<'_> {
                 // object-value bindings. Resolve only the named place in
                 // this recorded state, including after it leaves scope.
                 let state = environment
-                    .snapshot_state
+                    .reference_state
                     .as_ref()
-                    .expect("checked aggregate snapshot binding");
+                    .expect("checked aggregate state binding");
                 let pointer = state
                     .locals()
                     .aggregate_object_pointer(name)
-                    .expect("checked aggregate snapshot binding");
+                    .expect("checked aggregate state binding");
                 // An object that holds one value of a library or enum type, a
                 // borrowed Rust `Vec` or iterator, is read as that value, as
                 // the program reads it.
@@ -8679,7 +8689,7 @@ impl AnnotationLowerer<'_> {
                 }
             }
             // C member selection records a designation, not merely an extent.
-            // Retain that selected syntax around the snapshot-bound base.
+            // Retain that selected syntax around the state-bound base.
             let (base, pointer) = bind_address_base(pointer, &name);
             let target = Box::new(ProgramExpression::TypedLoad {
                 pointer: Box::new(pointer),
@@ -9138,12 +9148,12 @@ impl AnnotationLowerer<'_> {
 
     fn lower_at_array_ref_to_spec(
         &mut self,
-        selector: &SnapshotSelector,
+        selector: &ProgramPointSelector,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecArrayRef, String> {
-        if let Some(snapshot) = self.snapshot_environment(selector, environment)? {
-            return self.lower_array_ref_to_spec(expression, &snapshot);
+        if let Some(retained_state) = self.point_environment(selector, environment)? {
+            return self.lower_array_ref_to_spec(expression, &retained_state);
         }
         match self.resolve_visit_selector(selector, environment)? {
             ResolvedProgramPoint::Current => self.lower_array_ref_to_spec(expression, environment),
@@ -9169,7 +9179,7 @@ impl AnnotationLowerer<'_> {
                 };
                 Ok(SpecArrayRef {
                     memory,
-                    pointer: SpecExpression::LoopEntrySnapshot(Box::new(pointer)),
+                    pointer: SpecExpression::LoopEntryState(Box::new(pointer)),
                     element_type,
                 })
             }
@@ -9293,7 +9303,7 @@ impl AnnotationLowerer<'_> {
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<Option<u32>, String> {
-        // A snapshot changes the value read, not the call's declared type.
+        // A state changes the value read, not the call's declared type.
         if let ContractExpression::Old(inner)
         | ContractExpression::At {
             expression: inner, ..
@@ -9670,7 +9680,7 @@ fn spec_expression_click_type(expression: &SpecExpression) -> Option<ClickType> 
             value_type: result_type,
             ..
         } => *result_type,
-        SpecExpression::LoopEntrySnapshot(inner) => {
+        SpecExpression::LoopEntryState(inner) => {
             return spec_expression_click_type(inner);
         }
         SpecExpression::If { then_branch, .. } => {
@@ -9902,7 +9912,7 @@ mod integer_source_quantifier_tests {
     use crate::kernel::{IntegerTerm, SpecIntegerExpression};
 
     #[test]
-    fn captured_integer_freshness_ignores_unrelated_heap_snapshot() {
+    fn captured_integer_freshness_ignores_unrelated_heap_state() {
         use crate::kernel::{
             MachineTerm, Memory, Pointer, PointerBlock, PointerOffsetTerm, ProgramType,
             ProgramValue, SpecExpression, SpecMemory, SpecPureFunctionArgument,
@@ -9947,7 +9957,7 @@ mod integer_source_quantifier_tests {
         assert_eq!(
             max_spec_integer_expression_variable(&captured),
             Some(explicit),
-            "freshness must follow explicit expression identities, not cells in an unrelated snapshot"
+            "freshness must follow explicit expression identities, not cells in an unrelated state"
         );
     }
 
@@ -9983,7 +9993,7 @@ mod integer_source_quantifier_tests {
                 BTreeMap::new(),
                 &integer_values,
                 None,
-                &RecordedSnapshots::new(),
+                &RecordedStates::new(),
                 SpecDefinitions::new(
                     &PredicateEnvironment::new(&[]),
                     &ClickFunctionEnvironment::new(&[]),

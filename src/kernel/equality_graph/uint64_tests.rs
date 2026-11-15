@@ -95,7 +95,7 @@ fn integer_address_coordinates_join_word_classes_and_follow_scoped_equalities() 
 }
 
 #[test]
-fn integer_address_definition_preserves_byte_displacements_and_load_snapshots() {
+fn integer_address_definition_preserves_byte_displacements_and_load_states() {
     let _session = VerificationSession::enter();
     let bits = MachineTerm::Variable(Variable(960_003));
     let decoded = Pointer::integer_address(bits.clone());
@@ -107,7 +107,7 @@ fn integer_address_definition_preserves_byte_displacements_and_load_snapshots() 
     let graph = EqualityGraph::default();
     assert!(graph.are_uint64_equal(&raw_address(&shifted), &sum));
     assert!(!graph.are_uint64_equal(&raw_address(&shifted), &bits));
-    // Equal numeric addresses connect compatible reads, not snapshot identity.
+    // Equal numeric addresses connect compatible reads, not state identity.
     let memory = intern_memory(Memory::new().with_block("coordinates", 32));
     let pointer = Pointer {
         block: "coordinates".into(),
@@ -194,7 +194,7 @@ fn wide_read_and_packed_word_congruence_compose_early_and_late() {
 }
 
 #[test]
-fn wide_reads_preserve_snapshot_width_and_value_sort() {
+fn wide_reads_preserve_state_width_and_value_sort() {
     let _session = VerificationSession::enter();
     let before = intern_memory(Memory::new().with_block("wide", 128));
     let p = Pointer::symbolic(Variable(920_001));
@@ -279,7 +279,7 @@ fn a_read_through_an_alias_equals_the_value_stored_at_the_other_spelling() {
     assert!(!graph.are_uint64_equal(&read, &five));
     graph.add_equality(&alias_of, &stored_at);
     assert!(graph.are_uint64_equal(&read, &five));
-    // Another snapshot's read is not this cell's value.
+    // Another state's read is not this cell's value.
     assert!(
         !aliased
             .equality_graph

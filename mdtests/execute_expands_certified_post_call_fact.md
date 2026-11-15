@@ -3,7 +3,7 @@
 A verified call may establish the exact current-memory fact required by a
 later call. The implicit tail of an omitted proof must carry that certified
 postcondition through its generated `step()` certificate, even when the same surface
-expression described an older snapshot earlier in the function.
+expression described an older state earlier in the function.
 
 ```c filename=set_one.c
 struct cell {

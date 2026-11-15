@@ -171,7 +171,7 @@ pub(super) enum MutexProtocolMismatch {
     Initialization,
 }
 
-/// A proof-path snapshot. Updates touch only the selected mutex's persistent
+/// A proof-path state. Updates touch only the selected mutex's persistent
 /// map path, not unrelated mutexes or resources.
 #[derive(Clone)]
 pub(super) struct MutexContext {
@@ -2507,18 +2507,18 @@ mod tests {
 
     fn guard_spec(
         mutex: Pointer,
-        snapshot: super::super::ResourceSnapshot,
+        retained_state: super::super::ResourceStateSource,
     ) -> super::super::ResourceSpec {
         use super::super::*;
         ResourceSpec::new(
             ResourceTerm::MutexGuard {
                 mutex: Box::new(ProgramExpression::Value(ProgramValue::pointer(mutex))),
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            snapshot,
+            retained_state,
         )
         .unwrap()
     }
@@ -2527,12 +2527,12 @@ mod tests {
         entry: &ExecutionState,
         current: &ExecutionState,
         mutex: Pointer,
-        snapshot: super::super::ResourceSnapshot,
+        retained_state: super::super::ResourceStateSource,
     ) -> ResourceFact {
         super::super::functions::evaluate_function_resource_spec_with_entry(
             entry,
             current,
-            &guard_spec(mutex, snapshot),
+            &guard_spec(mutex, retained_state),
             &PureFactContext::new(),
             &mut super::super::ExecutionBudget::beside_live_state(),
         )
@@ -2594,15 +2594,19 @@ mod tests {
 
     #[test]
     fn assumed_guard_inputs_are_generative_and_preserve_entry_identity() {
-        use super::super::ResourceSnapshot;
+        use super::super::ResourceStateSource;
         let assumptions = PureFactContext::new();
         let address = mutex(0);
         let input = assumed_guard_state(&address);
         let first = bind_assumed_guard_inputs(input.clone(), &assumptions).unwrap();
         let second = bind_assumed_guard_inputs(input.clone(), &assumptions).unwrap();
-        let required = evaluate_guard(&first, &second, address.clone(), ResourceSnapshot::Entry);
-        let replacement =
-            evaluate_guard(&first, &second, address.clone(), ResourceSnapshot::Current);
+        let required = evaluate_guard(&first, &second, address.clone(), ResourceStateSource::Entry);
+        let replacement = evaluate_guard(
+            &first,
+            &second,
+            address.clone(),
+            ResourceStateSource::Current,
+        );
         assert_ne!(required, replacement);
         assert!(!second.resources.satisfies_fact(&required, &assumptions));
         assert!(!input.resources.satisfies_fact(&required, &assumptions));
@@ -2654,7 +2658,7 @@ mod tests {
 
     #[test]
     fn preserved_guard_selects_entry_acquisition_after_reacquisition() {
-        use super::super::ResourceSnapshot;
+        use super::super::ResourceStateSource;
         let assumptions = PureFactContext::new();
         let address = mutex(0);
         let entry = MutexContext::new(ExecutionState::new())
@@ -2671,13 +2675,13 @@ mod tests {
             entry.state(),
             next.state(),
             address.clone(),
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         );
         let replacement = evaluate_guard(
             entry.state(),
             next.state(),
             address,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         );
         assert_ne!(required, replacement);
         assert!(
@@ -2701,12 +2705,12 @@ mod tests {
 
     #[test]
     fn symbolic_guard_description_grants_no_authority_and_is_mutex_specific() {
-        use super::super::ResourceSnapshot;
+        use super::super::ResourceStateSource;
         let assumptions = PureFactContext::new();
         let mut state = ExecutionState::new();
         state.preserves_mutex_protocols = true;
-        let guard = evaluate_guard(&state, &state, mutex(0), ResourceSnapshot::Current);
-        let other = evaluate_guard(&state, &state, mutex(1), ResourceSnapshot::Current);
+        let guard = evaluate_guard(&state, &state, mutex(0), ResourceStateSource::Current);
+        let other = evaluate_guard(&state, &state, mutex(1), ResourceStateSource::Current);
         assert_ne!(guard, other);
         assert!(!state.resources.satisfies_fact(&guard, &assumptions));
         state.resources = state
@@ -2731,7 +2735,7 @@ mod tests {
             concrete.state(),
             concrete.state(),
             mutex(0),
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         );
         assert!(
             !state
@@ -3638,7 +3642,7 @@ mod tests {
         state.mutex_input_reservations =
             MutexInputReservations::from_ranges([storage_range(&address, 40)]);
         let assumptions = PureFactContext::new();
-        let snapshot = state.clone();
+        let retained_state = state.clone();
         assert!(state.mutex_ledger.is_none());
         assert!(state.resources.facts().is_empty());
         // Ownership, not the reservation, keeps a body's writes off its input
@@ -3654,7 +3658,7 @@ mod tests {
                 .is_err()
         );
         state.resources = ResourceContext::new();
-        assert_eq!(state, snapshot);
+        assert_eq!(state, retained_state);
         let mut forged = state.clone();
         forged.mutex_input_reservations = None;
         assert_ne!(state, forged);
@@ -3818,7 +3822,7 @@ mod tests {
             &[CheckedResourceFact {
                 fact: viewed,
                 role: ResourceTransferRole::Borrow,
-                snapshot: ResourceSnapshot::Entry,
+                state_source: ResourceStateSource::Entry,
                 clause_position: None,
                 section_index: None,
                 selected_mutex_source: None,

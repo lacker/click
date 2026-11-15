@@ -5,7 +5,7 @@
 use super::*;
 
 #[test]
-fn construction_recording_cost_is_independent_of_snapshot_size() {
+fn construction_recording_cost_is_independent_of_state_size() {
     let _session = crate::kernel::VerificationSession::enter();
     let mut costs = Vec::new();
     for size in [16, 64, 256, 1024] {

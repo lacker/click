@@ -347,7 +347,7 @@ fn compiler_import_reproduces_header_existence_and_preserves_unsupported_bodies(
     verify_c_prepared_sources(&project.proof(), &imports).unwrap();
     let original_identity = imports[0].identity().to_string();
     fs::write(project.0.join("optional.h"), "#define OPTIONAL_VALUE 16\n").unwrap();
-    // A locked import means the prepared snapshot, including the absence of
+    // A locked import means the prepared state, including the absence of
     // this header. Only an explicit refresh selects the newly added header.
     let still_locked = load_imports(&project.config()).unwrap();
     assert_eq!(still_locked[0].identity(), original_identity);

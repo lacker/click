@@ -3,7 +3,7 @@
 //! (`docs/internals/fold-read-ranges.md`).
 //!
 //! An `Integer` function over an `int32[]` argument is an opaque application
-//! whose array argument names a whole-block snapshot. A fact about
+//! whose array argument names a whole-block state. A fact about
 //! `unmarked(visited, 0, i)` therefore dies at `visited[i] = 1` even though
 //! the fold reads only the cells below `i`. This module adds two independent
 //! checks that together bridge that store, and nothing else:
@@ -20,8 +20,8 @@
 //!    private, so the Surface can register a body but never state a summary.
 //! 2. **Framing** ([`frame_fold_application_transport`]). Two applications of
 //!    one summarized function whose arguments agree except for the array
-//!    argument's snapshot are equal when every recorded step between the two
-//!    snapshots is shown not to write a byte of the instantiated interval
+//!    argument's state are equal when every recorded step between the two
+//!    states is shown not to write a byte of the instantiated interval
 //!    `base + 4*k` for `start <= k < end`. Each step is decided from its own
 //!    recorded write set and the querying context's exact facts; nothing is
 //!    recorded on the edge or cached, so the answer is a checked derivation of
@@ -35,7 +35,7 @@
 //! arguments and of those cells' contents alone (finite fold induction: equal
 //! initial values, and each iteration sees the same accumulator, index and
 //! cell). Framing guarantees those cells hold the same bytes at both
-//! snapshots. Pointer offsets are exact `i64` sums of sign-extended scaled
+//! states. Pointer offsets are exact `i64` sums of sign-extended scaled
 //! `int32` terms (`PointerOffsetTerm::Int32Scaled`), so the cells occupy the
 //! contiguous bytes `[p + 4*start, p + 4*end)` with no wraparound, and a write
 //! misses them exactly when it ends at or below the first byte or starts at or
@@ -699,7 +699,7 @@ pub(crate) fn registered_fold_read_summary(
 // ---------------------------------------------------------------------------
 
 /// A checked explicit transport of one proposition across the steps between
-/// the snapshots its fold applications name.
+/// the states its fold applications name.
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedFoldFrameTransport {
     /// How many application pairs were framed.
@@ -712,7 +712,7 @@ pub(crate) struct CheckedFoldFrameTransport {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FoldFrameRefusal {
     /// The two propositions differ somewhere other than in the array
-    /// snapshots of fold applications.
+    /// states of fold applications.
     ShapeMismatch,
     /// No two applications differ, so this rule has nothing to frame.
     NothingToFrame,
@@ -724,9 +724,9 @@ pub(crate) enum FoldFrameRefusal {
     /// The two applications differ in a name, a scalar argument, the array
     /// pointer, or an argument sort.
     ApplicationsDiffer { name: String },
-    /// Neither array snapshot is recorded as derived from the other.
-    UnrelatedSnapshots { name: String },
-    /// A step between the snapshots could not be shown to miss the interval.
+    /// Neither array state is recorded as derived from the other.
+    UnrelatedStates { name: String },
+    /// A step between the states could not be shown to miss the interval.
     StepNotShownOutside {
         name: String,
         step: &'static str,
@@ -738,7 +738,7 @@ impl std::fmt::Display for FoldFrameRefusal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ShapeMismatch => formatter.write_str(
-                "source and target differ outside the array snapshots of fold applications",
+                "source and target differ outside the array states of fold applications",
             ),
             Self::NothingToFrame => {
                 formatter.write_str("no fold application differs between source and target")
@@ -757,22 +757,22 @@ impl std::fmt::Display for FoldFrameRefusal {
             },
             Self::ApplicationsDiffer { name } => write!(
                 formatter,
-                "the two `{name}` applications differ in an endpoint, a scalar argument or the array pointer, not only in the array snapshot"
+                "the two `{name}` applications differ in an endpoint, a scalar argument or the array pointer, not only in the array state"
             ),
-            Self::UnrelatedSnapshots { name } => write!(
+            Self::UnrelatedStates { name } => write!(
                 formatter,
-                "the two `{name}` array snapshots are not on one recorded history"
+                "the two `{name}` array states are not on one recorded history"
             ),
             Self::StepNotShownOutside { name, step, detail } => write!(
                 formatter,
-                "a `{step}` step between the two `{name}` snapshots was not shown to miss the cells the fold reads: {detail}"
+                "a `{step}` step between the two `{name}` states was not shown to miss the cells the fold reads: {detail}"
             ),
         }
     }
 }
 
 /// The explicit transport rule: `target` follows from `source` when the two
-/// propositions are the same up to the array snapshots of summarized fold
+/// propositions are the same up to the array states of summarized fold
 /// applications, and every such pair is framed.
 ///
 /// The walk is shallow and parallel: propositional connectives, the Integer
@@ -876,7 +876,7 @@ fn zip_integer(
 }
 
 /// Proves `left == right` for two applications of one summarized function
-/// that differ only in the array argument's snapshot, returning how many
+/// that differ only in the array argument's state, returning how many
 /// recorded steps were crossed.
 pub(crate) fn frame_fold_applications(
     left: &SharedPureApplication,
@@ -895,7 +895,7 @@ pub(crate) fn frame_fold_applications(
     })?;
     let differ = || FoldFrameRefusal::ApplicationsDiffer { name: name.clone() };
     let left_interval = summary.instantiate(left).ok_or_else(differ)?;
-    // Every argument but the array's snapshot must be the same term: the
+    // Every argument but the array's state must be the same term: the
     // same scalar values (so the same endpoints), the same pointer, the same
     // element type. Nothing here is proved equal; it is compared.
     for (position, (a, b)) in left.arguments().iter().zip(right.arguments()).enumerate() {
@@ -933,21 +933,21 @@ pub(crate) fn frame_fold_applications(
     else {
         return Err(differ());
     };
-    let left_snapshot = intern_memory_ref(&left_interval.memory);
-    let right_snapshot = intern_memory_ref(right_memory);
-    if left_snapshot == right_snapshot {
+    let left_state = intern_memory_ref(&left_interval.memory);
+    let right_state = intern_memory_ref(right_memory);
+    if left_state == right_state {
         return Ok(0);
     }
-    // Snapshots are content-addressed and each records its first derivation,
-    // so the later snapshot's recorded history need not pass through the
+    // Memory states are content-addressed and each records its first derivation,
+    // so the later state's recorded history need not pass through the
     // earlier one: a second store to one cell re-derives from the state
-    // before the first. Walk both back to a common snapshot, always stepping
+    // before the first. Walk both back to a common state, always stepping
     // the newer one, and check every step crossed on either side. Each step
     // relates two contents, so agreement on the interval along both walks is
     // agreement between the two ends. Arena ids strictly decrease along a
     // derivation, so the walk terminates, and it costs one unit per step.
     let empty = interval_proven_empty(&left_interval, assumptions);
-    let (mut left_current, mut right_current) = (left_snapshot, right_snapshot);
+    let (mut left_current, mut right_current) = (left_state, right_state);
     let mut crossed = 0;
     while left_current != right_current {
         crate::instrumentation::record_deterministic_work(1);
@@ -956,10 +956,10 @@ pub(crate) fn frame_fold_applications(
         } else if later_than(&right_current, &left_current) {
             &mut right_current
         } else {
-            return Err(FoldFrameRefusal::UnrelatedSnapshots { name });
+            return Err(FoldFrameRefusal::UnrelatedStates { name });
         };
         let Some(step) = newer.derivation() else {
-            return Err(FoldFrameRefusal::UnrelatedSnapshots { name });
+            return Err(FoldFrameRefusal::UnrelatedStates { name });
         };
         step_misses_interval(&step, newer, &left_interval, empty, assumptions).map_err(
             |(kind, detail)| FoldFrameRefusal::StepNotShownOutside {

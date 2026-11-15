@@ -67,7 +67,7 @@ fn terms_distinct(assumptions: &PureFactContext, left: &MachineTerm, right: &Mac
 
 fn pointers_equal(assumptions: &PureFactContext, left: &Pointer, right: &Pointer) -> bool {
     // Resource selection asks whether these reads name the same address;
-    // use the shared checked snapshot/read comparison, not just pure facts.
+    // use the shared checked state/read comparison, not just pure facts.
     crate::kernel::prelude::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
@@ -129,7 +129,7 @@ fn guard_holds_for(
     Some(equal == iterated.guard().holds_when_equal())
 }
 
-/// The logical guard value in this snapshot. Gathering ownership does not
+/// The logical guard value in this state. Gathering ownership does not
 /// execute a C read: it needs the guard's truth, while the surrounding rule
 /// separately requires ownership of the guard range. A logical value fact
 /// never establishes that a subsequent C load is initialized.

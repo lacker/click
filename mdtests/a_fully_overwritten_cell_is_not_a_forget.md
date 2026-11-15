@@ -4,7 +4,7 @@ A store drops the cells it may alias and the cells whose every byte it writes.
 Only the first loses knowledge: the second is replaced by the value about to be
 stored, so the result still says everything about the state it describes. Were
 the second marked as a forget too, every straight-line sequence of writes to one
-cell would mint a fresh chain of snapshots for no reason.
+cell would mint a fresh chain of states for no reason.
 
 ```c filename=a_fully_overwritten_cell_is_not_a_forget.c
 int32 write_twice(int32* a, int32 i) {

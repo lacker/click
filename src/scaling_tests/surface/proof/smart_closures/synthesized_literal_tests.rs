@@ -9,7 +9,7 @@ use crate::kernel::{CompareRelation, MachineIntegerType};
 fn speculative_solve_premise_spelling_declines_large_components_without_rendering() {
     let function = syntax::parse_function("int32 noop() { return 0; }").unwrap();
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -30,7 +30,7 @@ fn speculative_solve_premise_spelling_declines_large_components_without_renderin
         ParameterBinding::new(function.parameters(), &[]),
         &state,
         &state,
-        &snapshots,
+        &retained_states,
         &surfaces,
         SpecDefinitions::new(&predicates, &functions),
         &theorems,
@@ -63,7 +63,7 @@ fn speculative_solve_premise_spelling_declines_large_components_without_renderin
 }
 
 #[test]
-fn reflexive_pointer_metadata_does_not_search_snapshot_history() {
+fn reflexive_pointer_metadata_does_not_search_state_history() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
@@ -82,9 +82,9 @@ fn reflexive_pointer_metadata_does_not_search_snapshot_history() {
     let facts = [reflexive.clone(), equivalent.clone()];
     let surfaces = SurfacePropositionMap::default();
     for size in [4usize, 16, 64, 256] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -102,7 +102,7 @@ fn reflexive_pointer_metadata_does_not_search_snapshot_history() {
             &facts,
             Proposition::ConditionIs(ConditionTerm::Constant(true), true),
             ParameterBinding::default(),
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -124,7 +124,7 @@ fn reflexive_pointer_metadata_does_not_search_snapshot_history() {
                     })
                 });
             assert!(surface.is_none());
-            assert!(work <= 32, "{size} snapshots: {work} work");
+            assert!(work <= 32, "{size} states: {work} work");
             assert!(
                 !events.iter().any(|event| matches!(event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
@@ -187,7 +187,7 @@ fn native_signed_certificate_results_do_not_walk_ambient_facts() {
     };
     let pairs = [(premise.clone(), surface.clone())];
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -216,7 +216,7 @@ fn native_signed_certificate_results_do_not_walk_ambient_facts() {
             ParameterBinding::new(function.parameters(), &arguments),
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,

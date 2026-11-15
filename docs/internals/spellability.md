@@ -42,7 +42,7 @@ checked. Each one costs completeness, expansion, or a readable report.
   value. A non-void call's result is `<region>.result`, including calls whose
   source discards the return value. The checked call transition retains the
   exact returned value, and its exit records it by region in
-  `RecordedSnapshots::call_results`. Lowering reads that value directly;
+  `RecordedStates::call_results`. Lowering reads that value directly;
   integer and Boolean synthesis uses a reverse term index, and algebraic
   synthesis (a Rust enum a call returned) an index from the value to the
   first call that returned it (`algebraic_call_results`). Replacing or removing
@@ -69,19 +69,19 @@ checked. Each one costs completeness, expansion, or a readable report.
   A heap allocation keeps its nullable return value as `<region>.result` and
   names its success identity as `<region>.allocation`. The producer reserves
   both identities before the null check. The allocation exit indexes the heap
-  pointer in `RecordedSnapshots::allocation_results`; raising it uses that name
+  pointer in `RecordedStates::allocation_results`; raising it uses that name
   after reassignment or `free`. The name grants no allocation success, liveness,
   or read authority. Its value is constructed from the producer's recorded
   pending allocation, without facts or a history scan. The index is scoped with
-  recorded snapshots and removes a name when its exit is replaced or removed.
+  recorded states and removes a name when its exit is replaced or removed.
   A loop head mints its pass count `K` fresh; the loop's phases spell it
   `iterations` (kernel placeholder `LOOP_ITERATIONS_VARIABLE`, bound per phase
   by `LoopIterationsScope`), and each path past the loop carries it on its
   correspondence metadata to the exit, which records it by loop in
-  `RecordedSnapshots::loop_iterations` with a reverse index from the variable:
+  `RecordedStates::loop_iterations` with a reverse index from the variable:
   it is spelled `loop(i).iterations` in one lookup.
   Recorded points index each integer value, and each pointer's block, by the
-  point and the local it was first given to (`RecordedSnapshots::value_points`
+  point and the local it was first given to (`RecordedStates::value_points`
   and `pointer_points`, filled from the locals each recorded state changed),
   and each symbolic integer or algebraic model-field value by the point whose
   resource instance first held it (`field_points`, filled from the instances each state changed), and
@@ -200,7 +200,7 @@ work count. Within a session, repeated conversions still reuse the cached bridge
 
 Mathematical observations of machine values (`to_integer`) now have a shared
 `MachineObservation` node with the interpretation format and machine operand.
-Signed and unsigned interpretations remain distinct. Raising retains the observation's interpretation inside any snapshot selector;
+Signed and unsigned interpretations remain distinct. Raising retains the observation's interpretation inside any program point selector;
 a local's name must not silently choose a different signedness. Narrow values retain their
 existing load/conversion spelling: adding another narrowing or promotion cast
 changes the structural observation, particularly under quantified binders.
@@ -222,7 +222,7 @@ conversion through a no-narrower intermediate can be related to its direct
 modular conversion; a lossy intermediate does not restore the original value.
 No stored cast node is replaced by that equality.
 The `Legacy` leaf retains complete unmigrated values, including pointer
-metadata, array snapshots, and scoped binders. Those families do not yet have
+metadata, array states, and scoped binders. Those families do not yet have
 unified constructors or total raising. Boolean-to-machine conversions
 now have a shared `BoolCast` node with a logical `Bool` child. Boolean literals,
 variables, machine comparisons, equality, conditionals and calls have structural
@@ -312,9 +312,9 @@ the one the text names.
   holds.
 - Allowed: `raise(lower(s))` may normalize surface syntax, collapsing
   spellings of one structure; the kernel need not produce every surface
-  form. In particular `at(term, location)` raises at one location per
-  version: when two locations share a version, both lower to the same
-  term, and raising picks one of them.
+  form. In particular `at(point, expression)` can raise at any program point
+  whose recorded state selects the same version point for the read. Distinct
+  program points may lower to the same read; raising picks one of them.
 - Allowed: identifying two places whose values are structurally equal by a
   fact-free walk, which names one place twice rather than substituting a
   value. The version walk below is that case.
@@ -420,9 +420,9 @@ reads resolved through known values, comparison kinds chosen by provenance,
 and decided guards dropped. Such equalities belong in checking, not in the
 term lowering produces.
 
-## A read names its version
+## A read names its version point
 
-A Click read of an integer or object-pointer cell lowers to the read at the cell's version,
+A Click read of an integer or object-pointer cell lowers to the read at the cell's version point,
 never to the value a store left there: after `a[i] = 5`, `a[i]` lowers to the
 read, not to `5` (`logical_read_names_its_version` in
 `kernel::eval::memory_loads`). A read lowered to its stored value has no
@@ -438,7 +438,7 @@ A logical 32-bit read through a model-pointer alias keeps that same read
 term. When the published footprint index selects an equal address with a
 stored word, the read returns a path-local equation to that word. The
 selection uses the address-class index and one exact cell lookup; it grants
-no access permission and does not search other aliases or snapshots.
+no access permission and does not search other aliases or states.
 `logical_read_through_an_alias_retains_the_stored_word` checks the equation,
 missing-alias and changed-cell controls; its nightly scaling companion keeps
 the work bounds as aliases and unrelated frames grow.
@@ -447,25 +447,25 @@ Quantified `defined` facts over a direct automatic object use that object's
 producer-recorded memory version. A store to another automatic object preserves
 the key; a store to the selected object changes it. The version is a persistent
 map lookup, not a scan of intervening stores. Lifetime changes, unknown-address
-writes and other unhandled effects keep an exact new snapshot identity. Cache
+writes and other unhandled effects keep an exact new state identity. Cache
 forgetting alone preserves the version because it changes knowledge, not the
 object's initialization or lifetime. This identity is for definedness facts,
-not general snapshot equality or permission to access memory.
+not general state equality or permission to access memory.
 `mdtests/local_array_quantified_definedness_survives_disjoint_store.md` covers
 `known()` after a store to an unrelated local.
 
 A scalar read handle retains its structural descriptor (memory version,
 address, and read kind) in the load registry. A generated read-definition fact
 uses that same handle representation as source lowering; its producer binding
-retains the exact registered descriptor. A reduced cache snapshot must not
+retains the exact registered descriptor. A reduced cache state must not
 introduce a second raw-load form into the citable equation. Cache-only records
 share the unchanged-bytes identity, while actual writes still create distinct
-read versions. Retaining typed read evidence checks the descriptor's epoch,
+version points. Retaining typed read evidence checks the descriptor's epoch,
 address and kind by indexed lookup, independently of the spelling.
 
 The read-over-write authority relates a read to the stored value:
 `kernel::eval::read_over_write_value` returns, for a load variable whose
-snapshot records a value at exactly its address, that value. It reads the
+state records a value at exactly its address, that value. It reads the
 memory, never facts, so it holds at every program point. It enters checking
 only through the comparison form (`kernel::comparison_form`): the proposition
 with each read of a stored cell replaced by the value stored there.
@@ -473,7 +473,7 @@ with each read of a stored cell replaced by the value stored there.
 That shared comparison form also normalizes assumption-free arithmetic
 identities, including fold endpoints and the selected address of a registered
 scalar read. It leaves the retained proposition and lowered operation nodes
-unchanged. Read-address normalization keeps snapshots and loaded-pointer
+unchanged. Read-address normalization keeps states and loaded-pointer
 identities opaque and memoizes the selected registry DAG within the traversal.
 Exact premise lists, signed arithmetic claims, and fold alpha keys use this
 same form; they do not add tactic-specific fact searches.
@@ -489,13 +489,13 @@ same form; they do not add tactic-specific fact searches.
 
 Code does not resolve reads anywhere else. A comparison form is a fact like
 any other: a smart step that cites one spells it, and its spelling must lower
-back to it. The printer casts C arithmetic read at a snapshot,
+back to it. The printer casts C arithmetic read at a state,
 `at(p, a - 1) as int32`, because the parser reads arithmetic inside `at(...)`
 and `old(...)` as Integer arithmetic.
 
-A read is named by its cell's version: the point the assumption-free version
-walk (`resource_tracker::last_same_point`) finds the cell last written. One
-version has one name. A cell of the canonical snapshot that holds the cell's
+A read is named by its cell's version point: the memory state the assumption-free version
+walk (`resource_tracker::last_same_version_point`) selects for that cell. One
+version point has one name. A cell of the canonical state that holds the cell's
 own read (a materialization) names the read by that read, so a read through
 an unchanged-bytes source keeps the name it had there. Two reads the kernel's
 assumption-free load equality proves equal must share a name;

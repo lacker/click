@@ -11,9 +11,9 @@ it with each side read at entry, as
 `at(function.entry, ((arena as uint64) & 7u64)) == at(function.entry, 0u64)`.
 Click has no cast spelling for a pointer's address, so the rewrite did not
 parse and `click audit examples/arena` failed at that site while
-`click verify` accepted the proof. A snapshot-read alignment fact now renders
+`click verify` accepted the proof. A state-read alignment fact now renders
 as `at(function.entry, aligned(arena, 8))`, which
-`snapshot_read_alignment_fact_renders_as_aligned` in
+`state_read_alignment_fact_renders_as_aligned` in
 `src/surface/tests/surface_syntax.rs` checks directly. The expansion no longer
 needs the fact at all: the loop's store `occupied[i - 1]` and an earlier cell
 `occupied[k]` are separated by `k < i - 1` alone. The loop also follows a

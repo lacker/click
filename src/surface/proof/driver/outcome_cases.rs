@@ -109,7 +109,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                         facts.with_kernel_checked_fact(fact.clone())
                     })
             });
-            let snapshots = provenance.recorded_snapshots.clone();
+            let retained_states = provenance.recorded_states.clone();
             let match_cases = |source: &ProofMatch,
                                query: &ProofFacts,
                                authority: &ProofFacts,
@@ -117,7 +117,8 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                 let scoped = driver_proof.with_surface_local_scope(
                     bindings.unwrap_or(&driver_proof.state.locals().values),
                 );
-                let value = scoped.outcome_match_scrutinee(source, state, query, &snapshots)?;
+                let value =
+                    scoped.outcome_match_scrutinee(source, state, query, &retained_states)?;
                 let cases =
                     scoped.outcome_match_cases(source, &value, authority, next_variable.get())?;
                 next_variable.set(cases.next_variable);
@@ -142,7 +143,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                         let retained_query = facts.iter().fold(query.clone(), |query, fact| {
                             query.with_kernel_checked_fact(fact.clone())
                         });
-                        lower_outcome_proposition_with_recorded_snapshots(
+                        lower_outcome_proposition_with_recorded_states(
                             context.parameter_binding(),
                             &pre_state,
                             state,
@@ -150,10 +151,10 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                             &retained_query,
                             condition,
                             context.spec_definitions,
-                            &snapshots,
+                            &retained_states,
                         )
                     } else {
-                        lower_outcome_proposition_with_recorded_snapshots(
+                        lower_outcome_proposition_with_recorded_states(
                             context.parameter_binding(),
                             &pre_state,
                             state,
@@ -161,7 +162,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                             facts,
                             condition,
                             context.spec_definitions,
-                            &snapshots,
+                            &retained_states,
                         )
                     };
                     lowered.map_err(|message| {
@@ -184,7 +185,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
                                 &pre_state,
                                 state,
                                 Some(&native_value),
-                                &provenance.recorded_snapshots,
+                                &provenance.recorded_states,
                             ),
                             frontier_premise_anchor(&execution),
                             &provenance.surface_propositions,

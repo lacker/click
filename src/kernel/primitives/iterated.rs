@@ -236,7 +236,7 @@ impl IteratedMemory {
     }
 
     /// The same fact with every term rewritten by `term` and every pointer by
-    /// `pointer`. Substitution, canonicalization, and snapshot rewriting use
+    /// `pointer`. Substitution, canonicalization, and state rewriting use
     /// this so that every term the fact carries is visited exactly once.
     pub(crate) fn map_terms(
         &self,

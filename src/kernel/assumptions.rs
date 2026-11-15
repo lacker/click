@@ -90,7 +90,7 @@ pub(crate) use proposition_reasoning::finite_forall_goal_instances;
 /// How a structural walk compares two load atoms. The walk itself is exact —
 /// it only ever descends through matching constructors — so the whole
 /// relation is only as strong as the load-atom rule plugged in here. Registered
-/// names are offered before their raw origin snapshots, allowing an explicit
+/// names are offered before their raw origin states, allowing an explicit
 /// named-load equality to supply authority without discarding those identities.
 pub(in crate::kernel) type LoadAtomsMatch<'a> = &'a dyn Fn(&MachineTerm, &MachineTerm) -> bool;
 
@@ -194,9 +194,9 @@ fn terms_equal_with_load_atoms(
                 .is_some_and(|origin| loads_match(load, &origin))
         }
         // A registered load variable is a load atom too: the same cell named
-        // at two snapshots has two variables when the edge between them is
+        // at two states has two variables when the edge between them is
         // crossed only in context. Compare through the first-seen origin
-        // snapshots, which are DAG-connected; the canonical placeholder form
+        // states, which are DAG-connected; the canonical placeholder form
         // is unsuited to frame checks.
         (MachineTerm::Variable(a), MachineTerm::Variable(b))
             if a != b
@@ -250,7 +250,7 @@ fn terms_equal_with_load_atoms(
 }
 
 /// Adapt only a selected leaf for the existing load-atom authority. Never
-/// export a surrounding shared expression or open a read's snapshot.
+/// export a surrounding shared expression or open a read's state.
 fn operand_load_leaf(operand: crate::kernel::MachineOperandView<'_>) -> Option<MachineTerm> {
     use crate::kernel::MachineOperandView as V;
     if let Some(variable) = operand.variable() {
@@ -512,7 +512,7 @@ pub(in crate::kernel) fn conditions_equal_with_load_atoms(
 
 /// Exact structural algebraic equality with each load of an abstract value
 /// compared by `loads_match` on its scalar carrier: the value an address
-/// holds is the same in two snapshots when its bytes are.
+/// holds is the same in two states when its bytes are.
 fn algebraic_terms_equal_with_load_atoms(
     left: &AlgebraicTerm,
     right: &AlgebraicTerm,
@@ -570,11 +570,11 @@ fn algebraic_terms_equal_with_load_atoms(
 }
 
 /// Compares two load atoms by their pointers alone, ignoring which memory
-/// snapshot each carries.
+/// state each carries.
 ///
 /// NOT sound as an equality on its own: two loads of one pointer in
-/// different snapshots hold different values whenever a write between the
-/// snapshots reached that pointer. It exists only as a cheap prefilter that
+/// different states hold different values whenever a write between the
+/// states reached that pointer. It exists only as a cheap prefilter that
 /// discards hopeless candidates before a proving comparison runs, and every
 /// caller must decide the surviving pairs with a real check.
 fn load_atoms_equal_ignoring_memories(left: &MachineTerm, right: &MachineTerm) -> bool {
@@ -590,24 +590,24 @@ fn load_atoms_equal_ignoring_memories(left: &MachineTerm, right: &MachineTerm) -
 }
 
 /// Structural pointer equality that treats two loads of one location as
-/// equal regardless of which memory snapshot each form carries. Cheap:
+/// equal regardless of which memory state each form carries. Cheap:
 /// no proving, no canonicalization.
 pub(crate) fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
     pointers_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
 }
 
 /// Cheap, assumption-free necessary condition for
-/// [`PureFactContext::conditions_equal_modulo_proven_snapshots`]: same structure,
+/// [`PureFactContext::conditions_equal_modulo_proven_states`]: same structure,
 /// with load atoms compared by pointer only.
 ///
-/// Snapshot-blind, so it is NOT an equivalence and must never decide fact
+/// MemoryState-blind, so it is NOT an equivalence and must never decide fact
 /// availability on its own — it only narrows the candidate set before the
 /// proving comparison runs.
 pub fn conditions_equal_ignoring_memories(left: &ConditionTerm, right: &ConditionTerm) -> bool {
     if let (ConditionTerm::PointerValueEqual(a, b), ConditionTerm::PointerValueEqual(c, d)) =
         (left, right)
     {
-        // Candidate selection only. The context's snapshot bridge separately
+        // Candidate selection only. The context's state bridge separately
         // compares both complete designations before accepting this candidate.
         return a.program_type() == c.program_type()
             && b.program_type() == d.program_type()
@@ -873,16 +873,16 @@ pub(super) fn resources_equal_ignoring_memories(left: &Resource, right: &Resourc
 /// The equality-graph vertex key for a term is its canonical form, so a raw
 /// load term and the load variable for it share one vertex: the graph
 /// joins equal terms by construction rather than by per-query bridging.
-/// The memory snapshot and cell a load term reads, for a raw load or a
+/// The memory state and cell a load term reads, for a raw load or a
 /// registered load variable.
-pub(in crate::kernel) fn load_snapshot_and_pointer(
+pub(in crate::kernel) fn load_state_and_pointer(
     term: &MachineTerm,
 ) -> Option<(Memory, Pointer, LoadKind)> {
     let read = crate::kernel::eval::scalar_read_observation(
         crate::kernel::MachineOperandView::Legacy(term),
     )?;
     // Checking follows the recorded observation, even when structural version
-    // selection retained an earlier representative snapshot in the term.
+    // selection retained an earlier representative state in the term.
     Some((
         (*read.origin.unwrap_or(read.memory)).clone(),
         read.pointer,
@@ -1292,9 +1292,9 @@ fn assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
         key.universals_by_conclusion = crate::persistent::PersistentMap::default();
         key.shared_condition_variables = Default::default();
         key.condition_facts_by_variable = crate::persistent::PersistentMap::default();
-        key.snapshot_condition_variable_base = crate::persistent::PersistentMap::default();
-        key.snapshot_condition_variable_changes = crate::persistent::PersistentMap::default();
-        key.snapshot_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
+        key.state_condition_variable_base = crate::persistent::PersistentMap::default();
+        key.state_condition_variable_changes = crate::persistent::PersistentMap::default();
+        key.state_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
         key.memory_load_condition_facts = crate::persistent::PersistentMap::default();
         // Lazy query caches may be populated *after* this clone is interned.
         // The identity table must not own their shared OnceLocks either.
@@ -1324,7 +1324,7 @@ mod planning_index_memo_lifetime_tests {
                     true,
                 ));
             }
-            let cache = std::sync::Arc::downgrade(&context.snapshot_condition_variables);
+            let cache = std::sync::Arc::downgrade(&context.state_condition_variables);
             let id = assumptions_memo_id(&context);
             // The identity key exists before the live context populates a
             // shared cache; dropping only already-built data is insufficient.
@@ -1706,7 +1706,7 @@ pub(in crate::kernel) fn pointer_offsets_equal_after_exact_materialization(
                     ),
                 ),
             };
-            equal || loads_equal_by_bounded_snapshot_match(left_view, right_view)
+            equal || loads_equal_by_bounded_state_match(left_view, right_view)
         }
         (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
             (pointer_offsets_equal_after_exact_materialization(left_a, right_a)
@@ -1720,10 +1720,10 @@ pub(in crate::kernel) fn pointer_offsets_equal_after_exact_materialization(
 
 /// Two irreducible loads of the same cell whose memory forms differ only
 /// by materialization drift: chase each load to its fixed point, then let the
-/// bounded snapshot matcher decide the memory pair at that one cell. Havoc
+/// bounded state matcher decide the memory pair at that one cell. Havoc
 /// markers must match on both sides, so this never equates loads across an
 /// unresolved havoc. Assumption-free.
-fn loads_equal_by_bounded_snapshot_match(
+fn loads_equal_by_bounded_state_match(
     left: MachineOperandView<'_>,
     right: MachineOperandView<'_>,
 ) -> bool {
@@ -1761,7 +1761,7 @@ fn loads_equal_by_bounded_snapshot_match(
 }
 
 /// Only a root int32 read is materialized by this rule. Arithmetic, other
-/// read kinds and unresolved snapshots keep their written operand.
+/// read kinds and unresolved states keep their written operand.
 fn exact_materialized_index_fixed_point(
     term: &SharedMachineIntegerTerm,
 ) -> SharedMachineIntegerTerm {
@@ -1882,18 +1882,18 @@ mod exact_materialization_tests {
     }
 
     #[test]
-    fn retained_materialization_preserves_snapshot_separation_and_havoc() {
+    fn retained_materialization_preserves_state_separation_and_havoc() {
         use crate::kernel::KernelTermExport;
         let _session = crate::kernel::VerificationSession::enter();
         let pointer = Pointer {
-            block: "retained-snapshot".into(),
+            block: "retained-retained_state".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
         let other = Pointer {
             block: pointer.block.clone(),
             offset: PointerOffsetTerm::Constant(32),
         };
-        let before = Memory::new().with_block("retained-snapshot", 64);
+        let before = Memory::new().with_block("retained-retained_state", 64);
         let load = |memory| {
             MachineTerm::MemoryLoad(
                 intern_memory(memory),
@@ -2046,26 +2046,26 @@ thread_local! {
 }
 
 // Child fingerprints keep repeated shared subexpressions compact. The same
-// operand-view encoding is used for native and shared index syntax; snapshots
+// operand-view encoding is used for native and shared index syntax; states
 // are omitted only along the paths allowed by the selected policy.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum OperandFingerprintPolicy {
     MemoryBlind,
-    Snapshot(bool),
+    MemoryState(bool),
 }
 impl OperandFingerprintPolicy {
     fn without_frame(self) -> Self {
         match self {
             Self::MemoryBlind => self,
-            Self::Snapshot(_) => Self::Snapshot(false),
+            Self::MemoryState(_) => Self::MemoryState(false),
         }
     }
 }
 /// Exact-syntax candidate fingerprint. Collisions are not proof authority.
-/// Arithmetic nodes are memoized; snapshots and native opaque payloads remain
+/// Arithmetic nodes are memoized; states and native opaque payloads remain
 /// in the key, unlike the framed and memory-blind candidate policies.
 pub(in crate::kernel) fn machine_syntax_fingerprint(root: MachineOperandView<'_>) -> u64 {
-    operand_fingerprint(root, OperandFingerprintPolicy::Snapshot(false))
+    operand_fingerprint(root, OperandFingerprintPolicy::MemoryState(false))
 }
 
 fn memory_blind_operand_fingerprint(root: MachineOperandView<'_>) -> u64 {
@@ -2100,16 +2100,18 @@ fn operand_fingerprint(root: MachineOperandView<'_>, policy: OperandFingerprintP
             op.hash(&mut hash);
             let child_policy = match policy {
                 OperandFingerprintPolicy::MemoryBlind => policy,
-                OperandFingerprintPolicy::Snapshot(frame) => OperandFingerprintPolicy::Snapshot(
-                    frame
-                        && format.format().bits() == 32
-                        && matches!(
-                            op,
-                            crate::kernel::MachineBinaryOp::Add
-                                | crate::kernel::MachineBinaryOp::Subtract
-                                | crate::kernel::MachineBinaryOp::Multiply
-                        ),
-                ),
+                OperandFingerprintPolicy::MemoryState(frame) => {
+                    OperandFingerprintPolicy::MemoryState(
+                        frame
+                            && format.format().bits() == 32
+                            && matches!(
+                                op,
+                                crate::kernel::MachineBinaryOp::Add
+                                    | crate::kernel::MachineBinaryOp::Subtract
+                                    | crate::kernel::MachineBinaryOp::Multiply
+                            ),
+                    )
+                }
             };
             (child_policy, args.to_vec())
         } else if let Some((format, op, arg)) = value.unary() {
@@ -2125,7 +2127,7 @@ fn operand_fingerprint(root: MachineOperandView<'_>, policy: OperandFingerprintP
             (policy.without_frame(), vec![arg])
         } else {
             3u8.hash(&mut hash);
-            if let (OperandFingerprintPolicy::Snapshot(true), Some(kind)) =
+            if let (OperandFingerprintPolicy::MemoryState(true), Some(kind)) =
                 (policy, value.read_kind())
             {
                 // This selector observes only the kind. Exporting its address
@@ -2141,10 +2143,10 @@ fn operand_fingerprint(root: MachineOperandView<'_>, policy: OperandFingerprintP
                         hash_memory_blind_bitvector(&leaf, &mut hash)
                     }
                     (
-                        OperandFingerprintPolicy::Snapshot(true),
+                        OperandFingerprintPolicy::MemoryState(true),
                         MachineTerm::MemoryLoad(_, _, kind),
                     ) => kind.hash(&mut hash),
-                    (OperandFingerprintPolicy::Snapshot(_), _) => leaf.hash(&mut hash),
+                    (OperandFingerprintPolicy::MemoryState(_), _) => leaf.hash(&mut hash),
                 }
             }
             let hash = hash.finish();
@@ -2522,7 +2524,7 @@ fn collect_bitvector_memory_load_keys(
     }
 }
 
-/// Collect every current-snapshot load nested in a lowered term.  This is the
+/// Collect every current-state load nested in a lowered term.  This is the
 /// boundary used by dynamic resource checking, so an unrecognised carrier is
 /// an error rather than an invitation to silently forget a memory dependency.
 pub(crate) fn current_memory_loads_in_term(
@@ -2696,9 +2698,7 @@ fn collect_condition_memory_loads(
         }
         // A `bool` cell is one byte.
         ConditionTerm::BoolLoad(memory, pointer) => {
-            if MemorySnapshotIdentity::of(memory.memory())
-                == MemorySnapshotIdentity::of(current_memory)
-            {
+            if MemoryStateIdentity::of(memory.memory()) == MemoryStateIdentity::of(current_memory) {
                 loads.push((pointer.as_ref().clone(), 1));
             }
             collect_pointer_offset_memory_loads(
@@ -2768,7 +2768,7 @@ fn collect_memory_read_descriptor(
         .map(|read| read.origin.as_ref().unwrap_or(&read.memory))
         .unwrap_or(memory);
     let width = observation.as_ref().map(|read| read.bytes).or(width);
-    if MemorySnapshotIdentity::of(memory.memory()) == MemorySnapshotIdentity::of(current_memory) {
+    if MemoryStateIdentity::of(memory.memory()) == MemoryStateIdentity::of(current_memory) {
         let width = width
             .ok_or_else(|| "current memory load has no statically known byte width".to_string())?;
         loads.push((pointer.clone(), width));
@@ -3188,7 +3188,7 @@ fn collect_integer_memory_loads_with_width(
 
 /// Shared arithmetic retains read nodes and Integer conversion carriers.
 /// Read their syntax summaries, then resolve each
-/// payload against this query's snapshot; never cache memory-dependent results.
+/// payload against this query's state; never cache memory-dependent results.
 fn collect_shared_machine_memory_loads(
     value: &SharedMachineIntegerTerm,
     current_memory: &Memory,
@@ -3206,7 +3206,7 @@ fn collect_shared_machine_memory_loads(
         );
     };
     // A selected root leaf has no shared arithmetic to summarize. Resolve it
-    // directly using the existing width/snapshot/registry rules.
+    // directly using the existing width/state/registry rules.
     if let Some(leaf) = value.operand_view().read_source() {
         return collect_bitvector_memory_loads_with_width(
             &leaf,
@@ -4047,7 +4047,7 @@ impl PureFactContext {
                         .pointer_address_sources
                         .get(&address.flipped())
                 })?;
-            // A source bucket can grow with snapshots of this same address. Its
+            // A source bucket can grow with states of this same address. Its
             // cached cardinality decides whether implicit selection is unambiguous.
             if sources.len() != 1 {
                 return None;
@@ -4251,7 +4251,7 @@ impl PureFactContext {
             _ => return,
         };
         // File exact premises under the canonical edge rather than interning
-        // raw MemoryLoad payloads. Raw interning can compare whole snapshots
+        // raw MemoryLoad payloads. Raw interning can compare whole states
         // across verification arenas.
         let atom = |view: MachineOperandView<'_>| match view {
             MachineOperandView::Legacy(term) => {
@@ -4360,7 +4360,7 @@ impl PureFactContext {
 
     /// Reconcile a retained, checked pointer read with a cached alias value.
     /// Only spellings in its checked address class are queried in this exact
-    /// snapshot. Logical term construction does not perform this cell search.
+    /// state. Logical term construction does not perform this cell search.
     pub(in crate::kernel) fn register_checked_pointer_read(
         &self,
         value: &Pointer,
@@ -4421,7 +4421,7 @@ impl PureFactContext {
                 // named block using established graph equality, then check
                 // complete byte separation, or use the selected ownership
                 // composition's two disjoint complete cells. This checks one
-                // store edge; it never searches older snapshots.
+                // store edge; it never searches older states.
                 let read = if write.blocks_proven_distinct(address) {
                     Some(address.clone())
                 } else {
@@ -4593,7 +4593,7 @@ impl PureFactContext {
     /// `pointer` spelled in `block` when they are one block or one affine
     /// class of the graph. The shallow half of
     /// [`crate::kernel::reasoning::pointer_in_block_for_memory_resolution`]:
-    /// no snapshot comparison. It locates an address and grants no access.
+    /// no state comparison. It locates an address and grants no access.
     pub(in crate::kernel) fn pointer_in_block(
         &self,
         pointer: &Pointer,
@@ -4884,9 +4884,9 @@ impl PureFactContext {
         self.pointer_offset_equalities_by_shape = crate::persistent::PersistentMap::default();
         self.shared_condition_variables = Default::default();
         self.condition_facts_by_variable = crate::persistent::PersistentMap::default();
-        self.snapshot_condition_variable_base = crate::persistent::PersistentMap::default();
-        self.snapshot_condition_variable_changes = crate::persistent::PersistentMap::default();
-        self.snapshot_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
+        self.state_condition_variable_base = crate::persistent::PersistentMap::default();
+        self.state_condition_variable_changes = crate::persistent::PersistentMap::default();
+        self.state_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
         self.open_condition_facts = crate::persistent::PersistentMap::default();
         self.order_condition_facts = Default::default();
         self.difference_graph.reset();
@@ -5037,16 +5037,15 @@ impl PureFactContext {
         );
         if deferred {
             // Extend the last completed index by a deferred delta. Adding a
-            // new snapshot fact must not re-index older snapshot facts.
-            if let Some(index) = self.snapshot_condition_variables.get() {
-                self.snapshot_condition_variable_base = index.clone();
-                self.snapshot_condition_variable_changes =
-                    crate::persistent::PersistentMap::default();
+            // new state fact must not re-index older state facts.
+            if let Some(index) = self.state_condition_variables.get() {
+                self.state_condition_variable_base = index.clone();
+                self.state_condition_variable_changes = crate::persistent::PersistentMap::default();
             }
-            self.snapshot_condition_variable_changes = self
-                .snapshot_condition_variable_changes
+            self.state_condition_variable_changes = self
+                .state_condition_variable_changes
                 .with_inserted(condition.clone(), value);
-            self.snapshot_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
+            self.state_condition_variables = std::sync::Arc::new(std::sync::OnceLock::new());
         } else {
             crate::instrumentation::record_deterministic_work(variables.len().saturating_sub(1));
             let indexed = SharedIndexFact::new(condition.clone());
@@ -5076,7 +5075,7 @@ impl PureFactContext {
             .adjust_native_equality(condition, value);
         self.contradictions.adjust(condition, value);
         if let (ConditionTerm::PointerOffsetEqual(left, right), true) = (condition, value) {
-            for shape in [offset_snapshot_shape(left), offset_snapshot_shape(right)] {
+            for shape in [offset_state_shape(left), offset_state_shape(right)] {
                 let filed = self
                     .pointer_offset_equalities_by_shape
                     .get(&shape)
@@ -5252,7 +5251,7 @@ impl PureFactContext {
             return;
         }
         for side in [left.as_ref(), right.as_ref()] {
-            if let Some((_, pointer, kind)) = load_snapshot_and_pointer(side) {
+            if let Some((_, pointer, kind)) = load_state_and_pointer(side) {
                 let key = (pointer, kind);
                 let sources = self
                     .equality_graph
@@ -5343,7 +5342,7 @@ impl PureFactContext {
     }
 
     /// Exact full-width equality neighbours of this term, with their checked
-    /// premise. This indexed query never searches unrelated snapshot facts.
+    /// premise. This indexed query never searches unrelated state facts.
     pub(in crate::kernel) fn exact_uint64_equalities(
         &self,
         term: &MachineTerm,
@@ -5359,7 +5358,7 @@ impl PureFactContext {
     }
 
     /// A full-width observer result can name the same unchanged cell at a
-    /// later snapshot. Inspect only equality neighbors of the queried values;
+    /// later state. Inspect only equality neighbors of the queried values;
     /// never search unrelated conditions for a matching load.
     pub(in crate::kernel) fn uint64_values_equal_for_range_resolution(
         &self,
@@ -5382,7 +5381,7 @@ impl PureFactContext {
                 return false;
             };
             let (Some((am, ap, ak)), Some((bm, bp, bk))) =
-                (load_snapshot_and_pointer(&a), load_snapshot_and_pointer(&b))
+                (load_state_and_pointer(&a), load_state_and_pointer(&b))
             else {
                 return false;
             };
@@ -5412,9 +5411,9 @@ impl PureFactContext {
 
     /// The terms recorded as 64-bit equal to `term` by one exact fact, each
     /// with the stored fact so a certificate can cite it exactly. Loads may
-    /// also match the same pointer in a snapshot whose differing cells are
+    /// also match the same pointer in a state whose differing cells are
     /// structurally irrelevant to that pointer; this is an assumption-free
-    /// snapshot check, not contextual frame reconstruction.
+    /// state check, not contextual frame reconstruction.
     pub(in crate::kernel) fn recorded_uint64_equals(
         &self,
         term: &MachineTerm,
@@ -7320,7 +7319,7 @@ impl PureFactContext {
     /// indexed stated separation and exact native Integer observations.
     /// Exact membership remains separate for
     /// provenance and admission.
-    /// This performs no unfolding, implication search, or snapshot transport.
+    /// This performs no unfolding, implication search, or state transport.
     pub(crate) fn contains_known(&self, proposition: &Proposition) -> bool {
         // An indexed conflict among checked scalar equalities makes this
         // scoped context impossible. Its semantic consequences need no new
@@ -7959,7 +7958,7 @@ impl PureFactContext {
 
     fn adjust_atomic_connection_fact(&mut self, proposition: &Proposition) {
         // These scalar dependencies already live in the shared syntax index;
-        // this fragment has no snapshot, block, or algebraic dependencies.
+        // this fragment has no state, block, or algebraic dependencies.
         if let Proposition::ConditionIs(condition, _) = proposition
             && self.shared_condition_variables.contains(condition)
         {
@@ -7996,7 +7995,7 @@ impl PureFactContext {
             covered_variables = covered.len();
             keys.retain(|key| match key {
                 AtomicConnectionKey::Variable(variable) => !covered.contains(variable),
-                // Snapshot equations can define a load named by its address,
+                // Memory state equations can define a load named by its address,
                 // so retain their reverse address-block adjacency as well.
                 // Scalar facts reuse their existing value-variable index.
                 AtomicConnectionKey::Block(_) => !has_variables || covered.is_empty(),
@@ -8221,25 +8220,25 @@ impl PureFactContext {
             .map(|(condition, value)| (condition, *value))
     }
 
-    /// Read-only variable adjacency for smart premise planning. Snapshot
+    /// Read-only variable adjacency for smart premise planning. MemoryState
     /// facts are indexed once on demand; this is necessary because a fact
-    /// can connect to the goal through a variable stored in its snapshot,
+    /// can connect to the goal through a variable stored in its state,
     /// even when their written syntax shares no variable. The kernel still
     /// checks every retained premise and the resulting atomic evidence.
     pub fn condition_facts_mentioning_variable(
         &self,
         variable: Variable,
     ) -> Option<impl Iterator<Item = (&ConditionTerm, bool)>> {
-        let snapshot_index = if let Some(index) = self.snapshot_condition_variables.get() {
+        let state_index = if let Some(index) = self.state_condition_variables.get() {
             index
         } else {
             let _timing = crate::instrumentation::OperationTiming::new(
                 "",
                 "",
-                "snapshot condition premise indexing",
+                "state condition premise indexing",
             );
-            let mut index = self.snapshot_condition_variable_base.clone();
-            for (condition, value) in self.snapshot_condition_variable_changes.iter() {
+            let mut index = self.state_condition_variable_base.clone();
+            for (condition, value) in self.state_condition_variable_changes.iter() {
                 if reasoning_interrupted() {
                     return None;
                 }
@@ -8256,12 +8255,12 @@ impl PureFactContext {
             if reasoning_interrupted() {
                 return None;
             }
-            let _ = self.snapshot_condition_variables.set(index);
-            self.snapshot_condition_variables.get()?
+            let _ = self.state_condition_variables.set(index);
+            self.state_condition_variables.get()?
         };
         Some(
             self.condition_variable_facts(variable).chain(
-                snapshot_index
+                state_index
                     .get(&variable)
                     .into_iter()
                     .flat_map(|facts| facts.iter())
@@ -8324,7 +8323,7 @@ impl PureFactContext {
             // arithmetic guard in the surface spelling of a call requirement.
             return true;
         }
-        // Loads emitted from a callee contract may retain its entry snapshot
+        // Loads emitted from a callee contract may retain its entry state
         // while the caller's retained fact uses the registered load variable.
         // Canonicalize a condition leaf through the kernel's load naming law
         // before consulting the exact stated-fact index; this is not logical
@@ -10597,7 +10596,7 @@ impl ExecutionPureFact {
 }
 
 /// A generated-load binding is valid only while its exact defining equation
-/// names the producer's memory snapshot, pointer, and kind, either through
+/// names the producer's memory state, pointer, and kind, either through
 /// its registered read handle or an exact raw descriptor. Structural equality
 /// alone does not retain the memory epoch, so it cannot retain the binding.
 fn generated_load_binding_matches_proposition(
@@ -10606,7 +10605,7 @@ fn generated_load_binding_matches_proposition(
 ) -> bool {
     let GeneratedLoadBinding::Exact {
         variable,
-        snapshot,
+        retained_state,
         pointer,
         load,
         ..
@@ -10634,7 +10633,7 @@ fn generated_load_binding_matches_proposition(
     }
     match right.as_ref() {
         MachineTerm::MemoryLoad(memory, proposition_pointer, _) => {
-            snapshot == &MemorySnapshotIdentity::of(memory.memory())
+            retained_state == &MemoryStateIdentity::of(memory.memory())
                 && proposition_pointer.as_ref() == pointer
                 && load == right.as_ref()
         }
@@ -10647,7 +10646,7 @@ fn generated_load_binding_matches_proposition(
             else {
                 return false;
             };
-            snapshot == &MemorySnapshotIdentity::of(memory.memory())
+            retained_state == &MemoryStateIdentity::of(memory.memory())
                 && address.as_ref() == pointer
                 && matches!(load, MachineTerm::MemoryLoad(_, _, expected) if *expected == kind)
         }
@@ -10909,9 +10908,9 @@ mod dynamic_current_load_tests {
     fn records_unmaterialized_loads_and_integer_machine_carriers() {
         let pointer = pointer();
         let memory = Memory::new();
-        let snapshot = crate::kernel::intern_memory_ref(&memory);
+        let retained_state = crate::kernel::intern_memory_ref(&memory);
         let load = MachineTerm::MemoryLoad(
-            snapshot,
+            retained_state,
             Box::new(pointer.clone()),
             crate::kernel::LoadKind::Int32,
         );
@@ -10970,7 +10969,7 @@ mod dynamic_current_load_tests {
     }
 
     #[test]
-    fn shared_conversion_loads_preserve_width_and_snapshot_without_exports() {
+    fn shared_conversion_loads_preserve_width_and_state_without_exports() {
         use crate::kernel::{KernelTerm, KernelTermExport, MachineBinaryOp, VerificationSession};
         for format in [
             MachineIntegerType::Int8,
@@ -11115,9 +11114,9 @@ fn aliased_operands(
                 Box::new(left_pointer.offset.clone()),
                 Box::new(right_pointer.offset.clone()),
             )) == Some(true));
-    // The two snapshots agree at the cell when they are one snapshot, or
+    // The two states agree at the cell when they are one state, or
     // when one materialized the other's read there (`this->size` read
-    // first, then `other.size` from a snapshot that records it): an exact
+    // first, then `other.size` from a state that records it): an exact
     // cell lookup each way.
     let holds = |memory: &SharedMemory, pointer: &Pointer, variable: &Variable| {
         matches!(
@@ -12379,10 +12378,10 @@ mod integer_observation_tests {
 }
 
 /// An upper bound on the execution-range variables a context's facts
-/// mention, kept as facts are filed without reading a snapshot's contents.
+/// mention, kept as facts are filed without reading a state's contents.
 /// Filing a fact takes the ceiling of its written syntax into `base`; a fact
-/// that names a snapshot is also queued in `pending`. The first execution
-/// that asks takes each queued fact's whole ceiling, snapshots included,
+/// that names a state is also queued in `pending`. The first execution
+/// that asks takes each queued fact's whole ceiling, states included,
 /// and caches the result for this context version; the next fact filed
 /// rebases on that result, so each queued fact is taken whole once along a
 /// path. Forks share `pending` and the cache until one of them files a fact.
@@ -12411,24 +12410,25 @@ impl std::fmt::Debug for ExecutionVariableCeiling {
 
 impl ExecutionVariableCeiling {
     fn file_condition(&mut self, condition: &ConditionTerm) {
-        let (syntax, names_snapshot) =
+        let (syntax, names_program_point) =
             crate::kernel::reasoning::variable_collection::condition_syntax_execution_variable_ceiling(
                 condition,
             );
         self.file(
             syntax,
-            names_snapshot.then(|| ExecutionVariableCeilingFact::Condition(condition.clone())),
+            names_program_point.then(|| ExecutionVariableCeilingFact::Condition(condition.clone())),
         );
     }
 
     fn file_proposition(&mut self, proposition: &Proposition) {
-        let (syntax, names_snapshot) =
+        let (syntax, names_program_point) =
             crate::kernel::reasoning::variable_collection::proposition_syntax_execution_variable_ceiling(
                 proposition,
             );
         self.file(
             syntax,
-            names_snapshot.then(|| ExecutionVariableCeilingFact::Proposition(proposition.clone())),
+            names_program_point
+                .then(|| ExecutionVariableCeilingFact::Proposition(proposition.clone())),
         );
     }
 
@@ -12483,9 +12483,9 @@ mod execution_variable_ceiling_tests {
         Variable(ExecutionBudget::KERNEL_VARIABLE_BASE + offset)
     }
 
-    /// A fact naming a snapshot whose stored value holds `variable`, though
+    /// A fact naming a state whose stored value holds `variable`, though
     /// the fact's own syntax names no variable.
-    fn fact_over_snapshot_holding(variable: Variable) -> ConditionTerm {
+    fn fact_over_state_holding(variable: Variable) -> ConditionTerm {
         let memory = Memory::new().with_block("a", 8).store(
             word(0),
             ProgramValue::Int32(MachineTerm::Variable(variable)),
@@ -12503,11 +12503,11 @@ mod execution_variable_ceiling_tests {
     }
 
     #[test]
-    fn the_ceiling_covers_variables_only_a_named_snapshot_holds() {
+    fn the_ceiling_covers_variables_only_a_named_state_holds() {
         let context = PureFactContext::new();
         assert_eq!(context.execution_variable_ceiling(), None);
         let context = context
-            .assume_condition(fact_over_snapshot_holding(execution_variable(7)), true)
+            .assume_condition(fact_over_state_holding(execution_variable(7)), true)
             .assume_proposition(Proposition::ConditionIs(
                 ConditionTerm::Compare {
                     format: MachineIntegerType::Int32,
@@ -12607,13 +12607,13 @@ mod execution_variable_ceiling_tests {
     }
 
     #[test]
-    fn asking_after_every_fact_takes_each_snapshot_fact_whole_once() {
+    fn asking_after_every_fact_takes_each_state_fact_whole_once() {
         for size in [8, 32] {
             WHOLE_CEILING_FACTS.with(|count| count.set(0));
             let mut context = PureFactContext::new();
             for index in 0..size {
                 context = context.assume_condition(
-                    fact_over_snapshot_holding(execution_variable(index as u64)),
+                    fact_over_state_holding(execution_variable(index as u64)),
                     true,
                 );
                 assert_eq!(
@@ -12807,7 +12807,7 @@ impl OrderFactsByLower {
     }
 
     /// The `int32` order facts whose lower end is a load of `pointer` as
-    /// `kind`, at any snapshot.
+    /// `kind`, at any state.
     pub(crate) fn loads_of<'a>(
         &'a self,
         pointer: &Pointer,
@@ -12838,13 +12838,13 @@ impl OrderFactsByLower {
     }
 }
 
-/// A hash of an offset's structure that two snapshot-equivalent offsets
-/// (`pointer_offset_terms_snapshot_equivalent`) always share: every
+/// A hash of an offset's structure that two state-equivalent offsets
+/// (`pointer_offset_terms_state_equivalent`) always share: every
 /// literal load stands for its kind alone, since two loads of one kind at
-/// proven-equal addresses may match whatever their pointers and snapshots,
+/// proven-equal addresses may match whatever their pointers and states,
 /// and a sum's operands are taken in either order. Unequal offsets may
 /// share one too; the shape only narrows the facts to check.
-pub(in crate::kernel) fn offset_snapshot_shape(offset: &PointerOffsetTerm) -> u64 {
+pub(in crate::kernel) fn offset_state_shape(offset: &PointerOffsetTerm) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     match offset {
@@ -12853,12 +12853,12 @@ pub(in crate::kernel) fn offset_snapshot_shape(offset: &PointerOffsetTerm) -> u6
             byte_width,
             operand_fingerprint(
                 value.operand_view(),
-                OperandFingerprintPolicy::Snapshot(true),
+                OperandFingerprintPolicy::MemoryState(true),
             ),
         )
             .hash(&mut hasher),
         PointerOffsetTerm::Add(left, right) => {
-            let (left, right) = (offset_snapshot_shape(left), offset_snapshot_shape(right));
+            let (left, right) = (offset_state_shape(left), offset_state_shape(right));
             (1u8, left.min(right), left.max(right)).hash(&mut hasher)
         }
         other => (2u8, other).hash(&mut hasher),
@@ -13264,7 +13264,7 @@ mod shared_load_atom_comparison_tests {
                 let accept = |l: &MachineTerm, r: &MachineTerm| {
                     if let (MachineTerm::Variable(left), MachineTerm::Variable(right)) = (l, r) {
                         assert_eq!((*left, *right), (a, b));
-                        // This authority recognizes origin snapshots only. The
+                        // This authority recognizes origin states only. The
                         // optional named-load check must still consult it.
                         return false;
                     }
@@ -13282,7 +13282,7 @@ mod shared_load_atom_comparison_tests {
                     true
                 }));
                 assert!(
-                    !PureFactContext::new().conditions_equal_modulo_proven_snapshots(&left, &right)
+                    !PureFactContext::new().conditions_equal_modulo_proven_states(&left, &right)
                 );
                 let mixed = MachineTerm::Binary {
                     format: ty,
@@ -13312,7 +13312,7 @@ mod shared_load_atom_comparison_tests {
     }
 
     #[test]
-    fn shared_snapshot_premise_requires_the_selected_frame() {
+    fn shared_state_premise_requires_the_selected_frame() {
         use crate::kernel::proof::ProofFacts;
         let _session = crate::kernel::VerificationSession::enter();
         let before = Memory::new()
@@ -13586,7 +13586,7 @@ mod shared_read_memory_collection_tests {
     use super::*;
 
     #[test]
-    fn shared_read_collection_preserves_width_and_snapshot_refusals() {
+    fn shared_read_collection_preserves_width_and_state_refusals() {
         let _session = crate::kernel::VerificationSession::enter();
         let memory = Memory::new().with_block("read-width", 8);
         let pointer = Pointer {
@@ -13714,13 +13714,13 @@ mod pointer_index_walk_tests {
             );
             let mut fingerprints = Vec::new();
             let mut previous = None;
-            for snapshot in [old, intern_memory(changed.clone())] {
+            for retained_state in [old, intern_memory(changed.clone())] {
                 let native = MachineTerm::Binary {
                     format: ty,
                     op: MachineBinaryOp::Add,
                     left: MachineTerm::Variable(Variable(1007210)).into(),
                     right: MachineTerm::MemoryLoad(
-                        snapshot,
+                        retained_state,
                         address.clone().into(),
                         LoadKind::Int32,
                     )
@@ -13808,7 +13808,7 @@ mod pointer_index_walk_tests {
             }
             assert_eq!(
                 fingerprints[0], fingerprints[1],
-                "snapshots do not affect the fingerprint"
+                "states do not affect the fingerprint"
             );
         }
     }

@@ -30,7 +30,7 @@ impl<'a> Proof<'a> {
 
     /// Recovers a written body when the kernel obligation has a checked
     /// lowering guard in front of it. The generated display can re-lower a
-    /// snapshot expression at the current state, so its wrapper's consequent
+    /// state expression at the current state, so its wrapper's consequent
     /// is not itself evidence. The obligation's recorded head chain proves
     /// the wrapper, while invariant-body assembly supplies the one declared
     /// Surface body whose lowering is exactly the guarded consequent.
@@ -100,7 +100,7 @@ impl<'a> Proof<'a> {
 
     /// The children of a split with no usable whole source form. A loop
     /// bundle whose whole form could not be synthesized, or was synthesized
-    /// at the wrong snapshot, such as one with a member at the loop entry
+    /// at the wrong state, such as one with a member at the loop entry
     /// beside members at the iteration entry, still has one for each member
     /// alone; the smart closer attaches the same form to each leaf it
     /// closes. Only a member is spelled: a conjunction child is split
@@ -1139,7 +1139,7 @@ impl<'a> Proof<'a> {
                 .is_some_and(|execution| execution.presentation.resource_unfolded);
             // The current partition can answer a selected owned-field query
             // directly. Try it before general reasoning over older compositions:
-            // those may require expensive snapshot/range transport even though
+            // those may require expensive state/range transport even though
             // both current owners already establish this goal.
             let held_facts = if let Some(execution) = self.execution() {
                 self.facts()
@@ -1168,7 +1168,7 @@ impl<'a> Proof<'a> {
             // store edges by path assumptions (see `MemoryDerivation`), so the
             // cell an earlier fact names can carry a different load variable at
             // the frontier; the equality is proved in this path's context from the
-            // goal's own snapshot-blind candidates, never by search.
+            // goal's own state-blind candidates, never by search.
             if at_frontier
                 && !body_facts.contains(&body_kernel)
                 && let Some(execution) = self.execution()
@@ -1178,7 +1178,7 @@ impl<'a> Proof<'a> {
                 body_facts = body_facts.with_kernel_checked_fact(body_kernel.clone());
             }
             // A pointer-valued field's load can be minted from a load-path pruned
-            // snapshot, which records no DAG edge by design, so its renaming
+            // state, which records no DAG edge by design, so its renaming
             // across a call is proved only by the explicit preservation equality a
             // callee's postcondition states. The indexed load-variable chain is
             // the checked bridge for that; integer goals keep the exact rule above.

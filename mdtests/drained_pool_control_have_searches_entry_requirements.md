@@ -4,7 +4,7 @@ A pool control relates `capacity` to `checked_out` plus the free-slot count,
 and `checked_out` to a second population count. A drained pool's spare-slot
 query requires both fields zero. After unfolding, the unproved `have` must
 search a chain through the entry requirements and the unfolded facts. Its
-candidates present field loads at the function-entry snapshot, and synthesis
+candidates present field loads at the function-entry state, and synthesis
 must skip a load variable whose registered load is in another memory epoch
 rather than pairing it with the current load.
 

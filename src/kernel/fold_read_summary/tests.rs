@@ -748,7 +748,7 @@ fn a_call_is_framed_only_by_its_checked_write_set() {
 #[test]
 fn sibling_and_unrelated_histories_and_unsummarized_functions() {
     let v = parameter_base(V);
-    // A snapshot built in an earlier session carries no derivation here.
+    // A state built in an earlier session carries no derivation here.
     let foreign = {
         let _session = VerificationSession::enter();
         Memory::new().store(
@@ -776,8 +776,8 @@ fn sibling_and_unrelated_histories_and_unsummarized_functions() {
         })
     ));
     register_unmarked();
-    // Two siblings of one snapshot agree on the prefix when both steps back
-    // to their common snapshot miss it.
+    // Two siblings of one state agree on the prefix when both steps back
+    // to their common state miss it.
     assert_eq!(frame(&old, &new, &[]), Ok(2));
     // A sibling that wrote inside the prefix does not.
     let inside = base
@@ -789,11 +789,11 @@ fn sibling_and_unrelated_histories_and_unsummarized_functions() {
         &inside,
         &[lt(MachineTerm::constant(0), bv(HI))]
     )));
-    // A snapshot with no recorded history reaches no common snapshot.
+    // A state with no recorded history reaches no common state.
     let foreign = application(&foreign, &v, MachineTerm::constant(0), bv(HI));
     assert!(matches!(
         frame(&old, &foreign, &[]),
-        Err(FoldFrameRefusal::UnrelatedSnapshots { .. })
+        Err(FoldFrameRefusal::UnrelatedStates { .. })
     ));
 }
 
@@ -824,7 +824,7 @@ fn a_declined_definition_frames_nothing_even_across_an_unrelated_store() {
 }
 
 #[test]
-fn a_transport_rewrites_only_fold_application_snapshots() {
+fn a_transport_rewrites_only_fold_application_states() {
     let _session = VerificationSession::enter();
     register_unmarked();
     let v = parameter_base(V);

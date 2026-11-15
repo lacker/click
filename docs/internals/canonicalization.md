@@ -8,12 +8,12 @@ choice. The persistent proof boundary is enforced: the
 entering `PureFactContext` over the example projects and require zero.
 Vocabulary follows the
 [glossary](../reference/glossary.md):
-*term*, *kernel variable*, *load variable*, *snapshot*, *fact*.
+*term*, *kernel variable*, *load variable*, *state*, *fact*.
 
 ## Why canonicalization exists
 
-Symbolic execution produces a new snapshot at every statement. A read of a
-memory cell is a term, `load(snapshot, pointer)`, that embeds the snapshot
+Symbolic execution produces a new state at every statement. A read of a
+memory cell is a term, `load(retained_state, pointer)`, that embeds the state
 it was read from — so one unchanged cell is read through many different
 terms over a proof. Canonicalization collapses those reads onto *which
 write* of the cell they observe: every read between one write and the next
@@ -27,9 +27,9 @@ authorities. The distinction is load-bearing and must stay explicit.
 
 **Definitional equality** needs no evidence. Two terms are equal by
 definition when their difference is bookkeeping that symbolic memory
-introduced: a cell whose value the snapshot already records, a snapshot
+introduced: a cell whose value the state already records, a state
 carrying cells or blocks the load cannot observe, or a chain of recorded
-snapshot derivations that provably left the loaded cell alone. Proof checking
+state derivations that provably left the loaded cell alone. Proof checking
 accepts equality of canonical forms directly.
 
 **Proved equality** covers everything else: an assignment such as
@@ -40,19 +40,19 @@ operation with retained provenance. No comparator, tactic, or search may
 silently consume a proved equality while answering a question that should be
 definitional.
 
-Return proposition certification permits an exact snapshot to differ only by
+Return proposition certification permits an exact state to differ only by
 recorded `CellsSeeded` steps that cache its own typed reads. Each step must use
 load mode, match the element and value widths, and read bytes with the base's
 producer-recorded read identity. The comparison walks only those added cache
-steps to an identical snapshot. Writes, havoc, forgotten knowledge, and
+steps to an identical state. Writes, havoc, forgotten knowledge, and
 allocation changes remain barriers; read identity by itself does not establish
-snapshot equality or access authority. The end-to-end regression is
+state equality or access authority. The end-to-end regression is
 `mdtests/cached_read_return_completion.md`.
 The same comparison preserves a selected resource body's identical readability
-fact across cached snapshots. Address, byte extent, and wide/narrow kind must
+fact across cached states. Address, byte extent, and wide/narrow kind must
 match exactly. Return-trace certification rechecks that body fact before
-retaining its cached-snapshot form; it never imports an arbitrary caller fact
-context. Repeated comparisons of one snapshot pair share a local result, so
+retaining its cached-state form; it never imports an arbitrary caller fact
+context. Repeated comparisons of one state pair share a local result, so
 checking multiple body facts does not repeatedly walk the same cache delta.
 
 ## The canonical form
@@ -63,16 +63,16 @@ operand order, and the proof context are never consulted. It is a fixed
 two-stage composition:
 
 1. **Resolve or shrink each load** (`canonicalize_atomic_loads`): a load
-   whose snapshot records a value for its pointer becomes that value; every
-   other load keeps only the part of its snapshot the load can observe —
+   whose state records a value for its pointer becomes that value; every
+   other load keeps only the part of its state the load can observe —
    the pointer's block plus the havoc markers. Loads inside the pointer's
    own offset are treated the same way. When every observable cell is a
    materialization — it holds exactly the value a load of that cell reads
-   from one common source snapshot — the load is shrunk against that source
-   instead, since such cells write nothing. The shrunk snapshot keeps only the
-   source cells the load's own snapshot still holds: a source cell it lacks
+   from one common source state — the load is shrunk against that source
+   instead, since such cells write nothing. The shrunk state keeps only the
+   source cells the load's own state still holds: a source cell it lacks
    was erased since, by a havoc or a write, and carrying it across would make
-   the named snapshot record a value the cell no longer holds
+   the named state record a value the cell no longer holds
    (`a_load_projection_jump_does_not_restore_a_havocked_cell`). A pointer cell counts when its
    value is the pointer a typed load of the same cell produces: the cell's
    block offset by that load's variable at the pointee's width. So owning a
@@ -81,9 +81,9 @@ two-stage composition:
    A logical read of an integer cell (a Click expression, not C evaluation)
    does not take a recorded value, except a cell holding its own read: it
    keeps its version name, and the read-over-write authority relates it to
-   the stored value ([spellability](spellability.md#a-read-names-its-version)).
+   the stored value ([spellability](spellability.md#a-read-names-its-version-point)).
 2. **Replace each remaining load with its load variable**: the kernel
-   variable identified by the cell and the snapshot of its last write, found
+   variable identified by the cell and the state of its last write, found
    by walking the memory derivation DAG.
 
 The composition is deterministic, idempotent, and complete over its explicit
@@ -148,7 +148,7 @@ import omitted evidence from ambient facts.
 Scalar execution still introduces registered load variables for consumers that
 have not migrated. Shared checker operands import those names as structural
 `KernelTerm` reads. Address-index producers now retain shared machine operands:
-a read index contains its snapshot, address and read kind, rather than the
+a read index contains its state, address and read kind, rather than the
 reserved variable. Offset hashing compares the shared child identity without
 walking its read history. Canonicalizing an outer read preserves that child;
 it must not resolve the index read to its cached value. Width/origin metadata
@@ -157,8 +157,8 @@ and scalar producers outside this boundary still use the registry.
 The following describes the remaining registered-variable interface.
 
 A load variable is the canonical form of the load it represents, not an
-alias for it. The load term carries an entire interned snapshot; the
-variable is small, stable across snapshots that leave the cell alone, and
+alias for it. The load term carries an entire interned state; the
+variable is small, stable across states that leave the cell alone, and
 content-addressed so that independent producers (symbolic execution,
 contract lowering, spec evaluation) introduce the same variable without
 shared allocator state. Comparison and indexing therefore work over load
@@ -167,12 +167,12 @@ variables.
 Two consequences:
 
 - **Every load variable carries a defining fact.** Introducing one pushes
-  the kernel-certified fact `v == load(snapshot, pointer)` into the path's
+  the kernel-certified fact `v == load(retained_state, pointer)` into the path's
   facts. The defining fact is the only bridge from the variable back to
   memory content, and it is an ambient truth, not a premise a proof must
   re-derive.
 - **Comparison never expands a load variable back into its load.** Doing so
-  would reinflate terms with snapshots and make identity depend on snapshot
+  would reinflate terms with states and make identity depend on state
   size. A target-directed checked rewrite may inspect the two registered
   origins to establish address congruence, but it preserves the version and
   block and retains every equality premise. Registry membership alone is
@@ -180,7 +180,7 @@ Two consequences:
 
 Load variables are ordinary kernel variables distinguished only by a
 reserved id range, not by type. Their ids are opaque hashes; an expanded proof
-refers to one through a snapshot form such as `at(region(3).entry, x)` or
+refers to one through a state form such as `at(region(3).entry, x)` or
 `old(x)`, and diagnostics print one by looking up the load it stands for.
 
 ## What is enforced today
@@ -227,8 +227,8 @@ refers to one through a snapshot form such as `at(region(3).entry, x)` or
   loads, one to eight bytes wide, signed or unsigned. Contract lowering
   already materializes a cell of any of those widths with
   `canonical_form_of_load`, so a width execution left unnamed would give one
-  cell two terms — a load variable and a load term — that only the snapshot
-  relates, and a snapshot the execution has since written no longer relates
+  cell two terms — a load variable and a load term — that only the state
+  relates, and a state the execution has since written no longer relates
   them. That is how a resource body fact about a cell an execution did not
   write survives a write to a sibling cell of the same node.
 - **An `unfold` names the cells it exposes**, for the same reason and through
@@ -265,7 +265,7 @@ refers to one through a snapshot form such as `at(region(3).entry, x)` or
   (`mdtests/rb_replace_node_with_children.md`). Certification
   checks this without re-running the projection: an instance rewrite may change
   memory only by adding cells, and each added cell must hold the canonical load
-  form of its own pointer at the pre-rewrite snapshot
+  form of its own pointer at the pre-rewrite state
   (`memory_only_adds_named_cells` in `src/kernel/proof/execution.rs`), which is
   definitional and needs no search.
 - **A checked guarded unfold names its exposed cells** through the same
@@ -290,18 +290,18 @@ refers to one through a snapshot form such as `at(region(3).entry, x)` or
   is the printer's job, distinct from the forbidden comparison-side
   expansion.
 - **Naming cells makes terms a DAG, so rewriting must follow identity.** A
-  load term carries a whole snapshot and a snapshot's cells hold further load
-  terms, so one named cell per unfolded child nests snapshots one level per
-  child. Rewriting a variable therefore visits each *interned* snapshot once,
-  not once per path that reaches it: snapshots are interned, so the rewrite of
+  load term carries a whole state and a state's cells hold further load
+  terms, so one named cell per unfolded child nests states one level per
+  child. Rewriting a variable therefore visits each *interned* state once,
+  not once per path that reaches it: states are interned, so the rewrite of
   one is a pure function of its arena id and the substituted pair, and
   `substitute_bitvector_variable_in_shared_memory` keys this substitution's
   answers on that id. The curve is pinned by
-  `variable_substitution_visits_each_snapshot_once_per_rewrite`, and
+  `variable_substitution_visits_each_state_once_per_rewrite`, and
   `click profile` charges the work to the named operation
-  `substitution: snapshot rewrite`.
+  `substitution: state rewrite`.
 
-Deep memory canonicalization preserves numeric seeded and snapshot-copy runs
+Deep memory canonicalization preserves numeric seeded and state-copy runs
 whose bases already have canonical form. Each numeric slot is minted as an
 atomic load variable, which this normalization leaves unchanged; the source
 need not be uniform. View adjacency likewise reads live run intervals as
@@ -332,19 +332,19 @@ variable. None of these creation paths chooses a member of a proved equality
 class.
 
 A load variable is identified by its cell and the cell's *version*: the
-snapshot the version walk (`resource_tracker::last_same_point`, through
-`cell_last_same_point`, called from `load_variable_for_cell_with_origin`) reaches from
-the load's snapshot by crossing only edges proven, without assumptions, not
+state the version walk (`resource_tracker::last_same_version_point`, through
+`cell_last_same_version_point`, called from `load_variable_for_cell_with_origin`) reaches from
+the load's state by crossing only edges proven, without assumptions, not
 to write the cell — block declarations, cells forgotten, stores and call
 havocs at constant-disjoint offsets or in distinct blocks. The walk runs on
-the live snapshot before the canonical form restricts it, since the
-restricted snapshot is a fresh intern with no derivation. Two snapshots
+the live state before the canonical form restricts it, since the
+restricted state is a fresh intern with no derivation. Two states
 that reach one version produce the same load variable, and the frame checks'
 endpoint matching (`memories_directly_match_for_pointer_load`) accepts
 that identity, so a fact carried unchanged through several steps still
 meets a later effect summary.
 
-Before the version walk runs, the load resolves against the snapshot's own
+Before the version walk runs, the load resolves against the state's own
 materialized cells, and a cell holding a load variable answers the naming
 query outright: that variable already names this value, so the load takes
 it. This is what carries a materialized cell across an effect the walk

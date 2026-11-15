@@ -213,10 +213,10 @@ mod scaling_tests {
 }
 
 #[test]
-fn coordinate_reconstruction_keeps_the_selected_read_snapshot() {
+fn coordinate_reconstruction_keeps_the_selected_read_state() {
     let _session = crate::kernel::VerificationSession::enter();
     let pointer = Pointer {
-        block: PointerBlock::Concrete("coordinate-snapshot".into()),
+        block: PointerBlock::Concrete("coordinate-retained_state".into()),
         offset: PointerOffsetTerm::Constant(0),
     };
     let before = Memory::new().with_block(pointer.block.clone(), 8).store(

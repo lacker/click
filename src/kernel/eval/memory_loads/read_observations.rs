@@ -273,7 +273,7 @@ pub(super) fn for_operand(
     let (memory, pointer, kind) = operand.read()?;
     // Inspection is not an access observation. In particular, retaining the
     // conservative width of an unseen descriptor would widen a later typed
-    // producer, and retaining this snapshot would steal its first live origin.
+    // producer, and retaining this state would steal its first live origin.
     let Some(id) = existing(memory, pointer, kind) else {
         return Some(ScalarReadObservation {
             memory: memory.clone(),
@@ -412,11 +412,7 @@ mod tests {
         };
         let first = collect();
         assert!(first.contains(&bound));
-        assert_eq!(
-            collect(),
-            first,
-            "visited snapshots belong to one collection"
-        );
+        assert_eq!(collect(), first, "visited states belong to one collection");
         assert_eq!(load_variable_registry_len(), 0);
     }
 
@@ -456,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn structural_observations_distinguish_read_kind_and_snapshot() {
+    fn structural_observations_distinguish_read_kind_and_state() {
         let _session = VerificationSession::enter();
         let pointer = Pointer::symbolic(Variable(998_702));
         let before = intern_memory(Memory::new());
@@ -511,12 +507,12 @@ mod tests {
             .expect("integer read");
             let read =
                 crate::kernel::spec::program_value_bitvector_term(&value).expect("scalar term");
-            let MachineTerm::MemoryLoad(snapshot, address, kind) = &read else {
+            let MachineTerm::MemoryLoad(retained_state, address, kind) = &read else {
                 panic!("{ty:?} must retain its read: {read:?}");
             };
             assert_eq!(address.as_ref(), &pointer);
             assert_eq!(
-                canonical_form_of_load(snapshot.clone(), pointer.clone(), *kind),
+                canonical_form_of_load(retained_state.clone(), pointer.clone(), *kind),
                 read
             );
             assert!(facts.is_empty());

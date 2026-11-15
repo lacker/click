@@ -36,7 +36,7 @@ use crate::kernel::functions::CheckedResourceFact;
 use crate::kernel::loans::{LoanLedger, LoanRefusal, LoanViewBinding, plan_stable_view_transfer};
 use crate::kernel::{
     MachineTerm, MemoryRange, Pointer, PointerOffsetTerm, PureFactContext, ResourceContext,
-    ResourceFact, ResourceOccurrenceId, ResourceSnapshot, ResourceTransferRole,
+    ResourceFact, ResourceOccurrenceId, ResourceStateSource, ResourceTransferRole,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -1246,7 +1246,7 @@ fn production_checked(fact: ResourceFact) -> CheckedResourceFact {
     CheckedResourceFact {
         fact,
         role: ResourceTransferRole::Borrow,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,

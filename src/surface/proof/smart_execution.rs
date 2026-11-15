@@ -97,7 +97,7 @@ impl<'a> Proof<'a> {
 
     /// For a missing `viewable` requirement, which memory it reads and which
     /// memory the available `viewable` facts of the same range read. The
-    /// bounded renderer labels snapshots per rendering, so without this a
+    /// bounded renderer labels states per rendering, so without this a
     /// requirement over the current state and a fact at `at(iter, …)` print
     /// alike.
     fn describe_viewable_memory_note(&self, requirement: &Proposition) -> String {
@@ -119,13 +119,13 @@ impl<'a> Proof<'a> {
             }
             execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .iter()
                 .find(|(_, state)| state.memory() == candidate)
                 .map(|(selector, _)| {
                     format!(
                         "`at({}, …)`",
-                        crate::surface::diagnostics::describe_snapshot_selector(selector)
+                        crate::surface::diagnostics::describe_program_point_selector(selector)
                     )
                 })
                 .unwrap_or_else(|| "an earlier state no proof mark names".to_string())
@@ -159,7 +159,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Consult only the guard's indexed spellings and containing source facts.
-    /// Re-lowering prevents a moved resource field or snapshot name from citing
+    /// Re-lowering prevents a moved resource field or state name from citing
     /// an old fact under its current spelling.
     fn argument_guard_source(
         &self,
@@ -246,7 +246,7 @@ impl<'a> Proof<'a> {
                 return None;
             };
             let state = ExecutionState::new().with_memory(context.theorem_context.memory.clone());
-            let recorded_snapshots = RecordedSnapshots::new();
+            let recorded_states = RecordedStates::new();
             let algebraic_values = application
                 .arguments
                 .iter()
@@ -275,7 +275,7 @@ impl<'a> Proof<'a> {
                 pre_state: &state,
                 post_state: &state,
                 result: None,
-                recorded_snapshots: &recorded_snapshots,
+                recorded_states: &recorded_states,
                 integer_values: &context.theorem_context.integer_values,
                 pointer_element_widths: BTreeMap::new(),
             };

@@ -401,7 +401,7 @@ fn offset_queries_retain_typed_read_definitions_and_keep_blocks_distinct() {
     let yv = variable(&q);
     let x = Pointer::loaded(&MachineTerm::Variable(xv)).unwrap();
     let y = Pointer::loaded(&MachineTerm::Variable(yv)).unwrap();
-    // A typed read is named by its defining snapshot and address, not by
+    // A typed read is named by its defining state and address, not by
     // its storage block or a scaled offset.
     for (value, address) in [(&x, &p), (&y, &q)] {
         let read = value.as_loaded_value().expect("a typed pointer read");
@@ -459,10 +459,10 @@ fn offset_queries_retain_typed_read_definitions_and_keep_blocks_distinct() {
 }
 
 /// Load congruence for one query visits only the classed loads of the
-/// queried load's own snapshot: the work is the same beside 16 or 256
-/// classed loads read from other snapshots.
+/// queried load's own state: the work is the same beside 16 or 256
+/// classed loads read from other states.
 #[test]
-fn load_congruence_work_ignores_classed_loads_of_other_snapshots() {
+fn load_congruence_work_ignores_classed_loads_of_other_states() {
     let name = |memory: &crate::kernel::SharedMemory, address: Pointer| {
         PointerBlock::Symbolic(crate::kernel::load_variable_for_cell_with_origin(
             memory,
@@ -503,7 +503,7 @@ fn load_congruence_work_ignores_classed_loads_of_other_snapshots() {
 }
 
 #[test]
-fn same_snapshot_load_queries_ignore_unrelated_applications() {
+fn same_state_load_queries_ignore_unrelated_applications() {
     let memory = crate::kernel::intern_memory(Memory::new().with_block(symbolic(501), 16));
     let p = at(symbolic(502), 0);
     let q = at(symbolic(503), 0);

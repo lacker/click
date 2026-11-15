@@ -23,7 +23,7 @@ pub(crate) fn truncate_search_reason(reason: &mut String) {
 }
 
 /// Keep selected facts unformatted until the terminal proof state supplies
-/// its local and recorded-snapshot names. Capture at most four facts, and
+/// its local and recorded-state names. Capture at most four facts, and
 /// retain only shared entry naming for reports without a proof state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProofSearchPremiseExcerpt {
@@ -76,7 +76,7 @@ impl MemoryHistoryDiagnostic {
             .outcome
             .blocking_step()
             .and_then(|(at, _)| at)
-            .and_then(|at| at.snapshot().derivation())
+            .and_then(|at| at.shared_memory().derivation())
             .and_then(|derivation| match derivation.as_ref() {
                 crate::kernel::MemoryDerivation::Store { value, .. } => {
                     Some(value.program_type().byte_width())
@@ -94,7 +94,7 @@ impl MemoryHistoryDiagnostic {
 /// A lazily inspectable proof state. Implementations retain a persistent proof
 /// handle rather than cloning the goal, environment, or derivation history.
 pub(crate) trait ProofDiagnosticState: Send + Sync {
-    fn register_names(&self, _labels: &mut render::SnapshotLabels) {}
+    fn register_names(&self, _labels: &mut render::MemoryStateLabels) {}
 
     fn failed_requirement(&self) -> Option<(&str, &Proposition)> {
         None
@@ -132,7 +132,7 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
     fn proof_trace(
         &self,
         _claim: &str,
-        _labels: &mut render::SnapshotLabels,
+        _labels: &mut render::MemoryStateLabels,
         _tactic_location: &dyn Fn(&[usize]) -> Option<(String, crate::source::SourcePosition)>,
         _branch_arm: &dyn Fn(&[usize], &crate::source::SourcePosition) -> Option<usize>,
         _have_body_contains: &dyn Fn(&[usize], &crate::source::SourcePosition) -> bool,
@@ -181,7 +181,7 @@ pub(crate) fn capture_check_observations<T>(run: impl FnOnce() -> T) -> (T, Chec
 
 pub(crate) fn render_check_observations(
     checks: &CheckObservations,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
     traced: bool,
 ) -> String {
     let limit = if traced { 16 } else { 2 };
@@ -241,7 +241,7 @@ pub(crate) struct ProofSearchFailure {
 
 fn render_search_reason(
     failure: &ProofSearchFailure,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     let Some(excerpt) = &failure.premise_excerpt else {
         return failure.reason.clone();
@@ -339,7 +339,7 @@ pub(crate) fn requirement_is_goal(state: &dyn ProofDiagnosticState) -> bool {
 
 pub(crate) fn render_failed_requirement(
     state: &dyn ProofDiagnosticState,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     state.register_names(labels);
     let mut result = String::new();
@@ -398,7 +398,7 @@ pub(crate) fn render_terminal_message(
         summary,
         diagnostic,
         search_failures,
-        &mut render::SnapshotLabels::ambient(),
+        &mut render::MemoryStateLabels::ambient(),
     )
 }
 
@@ -406,7 +406,7 @@ pub(crate) fn render_terminal_message_labeled(
     summary: &str,
     diagnostic: &ProofFailureDiagnostic,
     search_failures: &[ProofSearchFailure],
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     render_diagnostic_labeled(
         Some(summary),
@@ -421,7 +421,7 @@ pub(crate) fn render_terminal_message_labeled(
 pub(crate) fn render_trace_context_labeled(
     diagnostic: &ProofFailureDiagnostic,
     search_failures: &[ProofSearchFailure],
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     render_trace_context_with_requirement(diagnostic, search_failures, None, None, labels)
 }
@@ -434,7 +434,7 @@ pub(crate) fn render_trace_context_with_requirement(
     search_failures: &[ProofSearchFailure],
     requirement: Option<&Proposition>,
     resource: Option<&crate::kernel::ResourceFact>,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     // Only explicit trace rendering pays for collision detection. The first
@@ -468,7 +468,7 @@ fn render_diagnostic_labeled(
     diagnostic: &ProofFailureDiagnostic,
     search_failures: &[ProofSearchFailure],
     required: RequiredGoal<'_>,
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     if let Some(state) = &diagnostic.state {
         state.register_names(labels);
@@ -517,7 +517,7 @@ fn render_diagnostic_labeled(
         rendered.push_str(&diagnostic.origin.location);
     }
     // One label map for the whole report. Rendering the goal and each premise
-    // with a map of its own made `snapshot#1` mean a different memory on every
+    // with a map of its own made `state#1` mean a different memory on every
     // line, so a premise that reads exactly like the goal could be about
     // another state entirely — which is the one thing a reader compares these
     // lines to decide.
@@ -663,7 +663,7 @@ fn render_diagnostic_labeled(
 }
 
 pub(crate) fn render_search_failures(summary: &str, failures: &[ProofSearchFailure]) -> String {
-    let mut labels = render::SnapshotLabels::default();
+    let mut labels = render::MemoryStateLabels::default();
     if let Some(state) = failures
         .iter()
         .find_map(|failure| failure.diagnostic.as_ref()?.state.as_ref())
@@ -741,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_read_prerequisite_uses_the_shared_snapshot_legend() {
+    fn rejected_read_prerequisite_uses_the_shared_state_legend() {
         use crate::kernel::{Memory, Pointer, ProgramType, Variable};
         struct Rejected(Proposition);
         impl ProofDiagnosticState for Rejected {
@@ -763,7 +763,7 @@ mod tests {
             pointer: Pointer::symbolic(Variable(987_001)),
             value_type: ProgramType::Int32,
         });
-        let mut labels = render::SnapshotLabels::default();
+        let mut labels = render::MemoryStateLabels::default();
         let report = render_failed_requirement(&state, &mut labels);
         assert!(report.contains("unproved prerequisite"), "{report}");
         assert!(
@@ -779,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_resource_fact_uses_one_printer_and_snapshot_legend() {
+    fn rejected_resource_fact_uses_one_printer_and_state_legend() {
         let _typed = render::TypedNotationScope::enter();
         use crate::kernel::{Memory, Pointer, ProgramType, Variable};
         struct Rejected(crate::kernel::proof::RejectedResourceRewriteFact);
@@ -810,7 +810,7 @@ mod tests {
             rejected: rejected.clone(),
             allowed: vec![allowed.clone(); 13].into(),
         });
-        let mut labels = render::SnapshotLabels::default();
+        let mut labels = render::MemoryStateLabels::default();
         let report = render_failed_requirement(&state, &mut labels);
         assert!(
             report.starts_with(&format!(
@@ -824,13 +824,13 @@ mod tests {
             "{report}"
         );
         assert!(
-            report.contains("snapshot#1") && report.contains("snapshot#2"),
+            report.contains("state#1") && report.contains("state#2"),
             "{report}"
         );
         assert!(report.contains("1 more allowed fact"), "{report}");
         let legend = labels.trace_legend();
         assert!(
-            legend.contains("snapshot#1 =") && legend.contains("snapshot#2 ="),
+            legend.contains("state#1 =") && legend.contains("state#2 ="),
             "{legend}"
         );
     }
@@ -896,7 +896,7 @@ mod tests {
             let report = render_trace_context_labeled(
                 &diagnostic,
                 &[],
-                &mut render::SnapshotLabels::default(),
+                &mut render::MemoryStateLabels::default(),
             );
             assert!(report.contains("machine-integer<Int32>"), "{report}");
             assert_eq!(
@@ -950,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn reported_trace_uses_the_goals_snapshot_labels() {
+    fn reported_trace_uses_the_goals_state_labels() {
         use crate::kernel::{MachineTerm, Memory, Pointer, PointerBlock, PointerOffsetTerm};
 
         struct TracedState(Proposition);
@@ -967,7 +967,7 @@ mod tests {
             fn proof_trace(
                 &self,
                 claim: &str,
-                labels: &mut render::SnapshotLabels,
+                labels: &mut render::MemoryStateLabels,
                 tactic_location: &dyn Fn(
                     &[usize],
                 )
@@ -1039,14 +1039,8 @@ mod tests {
                 state: Some(Arc::new(TracedState(at(memory)))),
             };
             let report = crate::surface::ClickError::with_diagnostic("failed", diagnostic).report();
-            assert!(
-                report.contains("goal: viewable(memory=snapshot#1"),
-                "{report}"
-            );
-            assert!(
-                report.contains("adds: viewable(memory=snapshot#1"),
-                "{report}"
-            );
+            assert!(report.contains("goal: viewable(memory=state#1"), "{report}");
+            assert!(report.contains("adds: viewable(memory=state#1"), "{report}");
         });
     }
 
@@ -1138,7 +1132,7 @@ mod tests {
     fn unspelled_premises_use_terminal_names_and_keep_the_reason_bound() {
         let variable = crate::kernel::Variable(786_900);
         let mut failure = unspelled_test_failure(&[unspelled_test_fact(variable)]);
-        let mut labels = render::SnapshotLabels::default();
+        let mut labels = render::MemoryStateLabels::default();
         labels.source_name(variable, "prefix_total".into());
         let reason = render_search_reason(&failure, &mut labels);
         assert!(reason.contains("prefix_total"), "{reason}");
@@ -1178,7 +1172,7 @@ mod tests {
             "loop_value".into(),
             None,
         )];
-        let mut labels = render::SnapshotLabels::naming(crate::surface::ParameterBinding::new(
+        let mut labels = render::MemoryStateLabels::naming(crate::surface::ParameterBinding::new(
             &preferred, &arguments,
         ));
         let reason = render_search_reason(&failure, &mut labels);

@@ -1,5 +1,5 @@
 //! The environment a contract or proof-side expression is read in: the
-//! values and array references in scope at a state, the snapshot a selector
+//! values and array references in scope at a state, the state a selector
 //! names, and the pointer-offset spelling contract-lowered ranges share with
 //! kernel execution. Nothing here evaluates an expression; that is the
 //! kernel's, through the elaborated spec form.
@@ -119,56 +119,56 @@ pub(in crate::surface) fn contract_environment_for_names(
     Ok((values, array_refs))
 }
 
-pub(in crate::surface) fn selected_snapshot_state<'a>(
-    selector: &SnapshotSelector,
+pub(in crate::surface) fn selected_program_state<'a>(
+    selector: &ProgramPointSelector,
     function_entry_state: &'a ExecutionState,
-    recorded_snapshots: &'a RecordedSnapshots,
+    recorded_states: &'a RecordedStates,
 ) -> Result<&'a ExecutionState, String> {
     match selector {
-        SnapshotSelector::ProgramPoint(ProgramPointRef {
+        ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         }) => Ok(function_entry_state),
-        SnapshotSelector::Mark(name) => recorded_snapshots.get(selector).ok_or_else(|| {
+        ProgramPointSelector::Mark(name) => recorded_states.get(selector).ok_or_else(|| {
             format!(
                 "unknown proof mark `{name}`; add `mark {name};` after the proof reaches that frontier"
             )
         }),
-        SnapshotSelector::ProgramPoint(point @ ProgramPointRef {
+        ProgramPointSelector::ProgramPoint(point @ ProgramPointRef {
             region:
                 CodeRegionRef::Region(_)
                 | CodeRegionRef::Loop(_)
                 | CodeRegionRef::Label(_),
             ..
-        }) => recorded_snapshots.get(selector).ok_or_else(|| {
-            recorded_snapshots
+        }) => recorded_states.get(selector).ok_or_else(|| {
+            recorded_states
                 .ambiguous_exit_refusal(selector)
                 .unwrap_or_else(|| format!(
-                    "no state snapshot was recorded for `{}`; run `step()` across that statement before using it in `at(...)`",
+                    "no symbolic state was recorded for `{}`; run `step()` across that statement before using it in `at(...)`",
                     describe_program_point_ref(point)
                 ))
         }),
-        SnapshotSelector::ProgramPoint(
+        ProgramPointSelector::ProgramPoint(
             point @ ProgramPointRef {
                 region: CodeRegionRef::Path(_),
                 ..
             },
         ) => {
-            let region = recorded_snapshots.source_point(point)?;
-            recorded_snapshots.get(selector).ok_or_else(|| {
-                if let Some(refusal) = recorded_snapshots
-                    .ambiguous_exit_refusal(&SnapshotSelector::ProgramPoint(region.clone()))
+            let region = recorded_states.source_point(point)?;
+            recorded_states.get(selector).ok_or_else(|| {
+                if let Some(refusal) = recorded_states
+                    .ambiguous_exit_refusal(&ProgramPointSelector::ProgramPoint(region.clone()))
                 {
                     return refusal;
                 }
                 format!(
-                    "no state snapshot was recorded for `{}`, which is `{}`; run `step()` across that statement before using it in `at(...)`",
+                    "no symbolic state was recorded for `{}`, which is `{}`; run `step()` across that statement before using it in `at(...)`",
                     describe_program_point_ref(point),
                     crate::surface::diagnostics::describe_program_point_ref_as_recorded(&region)
                 )
             })
         }
-        SnapshotSelector::ProgramPoint(point) => Err(format!(
+        ProgramPointSelector::ProgramPoint(point) => Err(format!(
             "`at({}, ...)` is not supported in concrete evaluation yet",
             describe_program_point_ref(point)
         )),
@@ -262,7 +262,7 @@ pub(in crate::surface) fn offset_pointer_by_elements(
     element_width: u32,
 ) -> Pointer {
     // Contract and execution indices retain the same shared structure,
-    // including a loaded index's snapshot and read kind. The common producer
+    // including a loaded index's state and read kind. The common producer
     // unwraps transitional registered names before constructing that index.
     let mut discarded_facts = crate::kernel::ExecutionFacts::new();
     let elements = crate::kernel::canonicalized_offset_index_term(elements, &mut discarded_facts);

@@ -1501,17 +1501,17 @@ fn framed_pointer_fragments_rejoin_through_their_checked_read_endpoint() {
             offset: PointerOffsetTerm::Constant(0),
         };
         let read = |context: &PureFactContext, memory: &Memory| {
-            let snapshot = crate::kernel::intern_memory_ref(memory);
+            let retained_state = crate::kernel::intern_memory_ref(memory);
             let variable = crate::kernel::load_variable_for_cell_with_origin(
-                &snapshot,
+                &retained_state,
                 &field,
                 LoadKind::of_type(ProgramType::Int32Pointer).unwrap(),
                 C_POINTER_BYTE_WIDTH,
-                &snapshot,
+                &retained_state,
             );
             let pointer = Pointer::loaded(&MachineTerm::Variable(variable)).unwrap();
-            context.register_pointer_read(&pointer, &snapshot, &field);
-            PointerValue::from_read(pointer, ProgramType::Int32Pointer, &snapshot, &field)
+            context.register_pointer_read(&pointer, &retained_state, &field);
+            PointerValue::from_read(pointer, ProgramType::Int32Pointer, &retained_state, &field)
         };
         let source = read(&PureFactContext::new(), &Memory::new());
         let before = Memory::new().store(field.clone(), ProgramValue::Pointer(source.clone()));
@@ -1626,16 +1626,16 @@ fn framed_pointer_read_selects_interior_writes_under_live_authority() {
             offset: PointerOffsetTerm::Constant(0),
         };
         let read = |context: &PureFactContext, memory: &Memory| {
-            let snapshot = crate::kernel::intern_memory_ref(memory);
+            let retained_state = crate::kernel::intern_memory_ref(memory);
             let variable = crate::kernel::load_variable_for_cell_with_origin(
-                &snapshot,
+                &retained_state,
                 &field,
                 LoadKind::of_type(ProgramType::Int32Pointer).unwrap(),
                 C_POINTER_BYTE_WIDTH,
-                &snapshot,
+                &retained_state,
             );
             let pointer = Pointer::loaded(&MachineTerm::Variable(variable)).unwrap();
-            context.register_pointer_read(&pointer, &snapshot, &field);
+            context.register_pointer_read(&pointer, &retained_state, &field);
             pointer
         };
         let source = read(&PureFactContext::new(), &Memory::new());
@@ -1768,17 +1768,17 @@ fn an_indexed_read_supplier_does_not_resolve_its_pointer_history() {
                 ProgramValue::Int32(1u32.into()),
             );
         }
-        let snapshot = crate::kernel::intern_memory_ref(&memory);
+        let retained_state = crate::kernel::intern_memory_ref(&memory);
         let variable = crate::kernel::load_variable_for_cell_with_origin(
-            &snapshot,
+            &retained_state,
             &field,
             LoadKind::of_type(ProgramType::Int32Pointer).unwrap(),
             C_POINTER_BYTE_WIDTH,
-            &snapshot,
+            &retained_state,
         );
         let pointer = Pointer::loaded(&MachineTerm::Variable(variable)).unwrap();
         let context = PureFactContext::new();
-        context.register_pointer_read(&pointer, &snapshot, &field);
+        context.register_pointer_read(&pointer, &retained_state, &field);
         let resources = ResourceContext::new().unchecked_with_fact(ResourceFact::own_memory(
             MemoryRange::new_with_element_width(pointer.clone(), 0u32.into(), 8u32.into(), 1),
         ));

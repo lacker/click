@@ -89,7 +89,7 @@ fn a_narrow_equality_does_not_decide_a_wide_one() {
 }
 
 #[test]
-fn quantified_loadable_alpha_query_ignores_unrelated_snapshot_size() {
+fn quantified_loadable_alpha_query_ignores_unrelated_state_size() {
     let mut work = Vec::new();
     for size in [8usize, 16, 32, 64] {
         let mut source_memory = Memory::new();
@@ -235,7 +235,7 @@ fn proper_conjunct_index_walks_deep_conjunction_iteratively() {
 }
 
 #[test]
-fn snapshot_blind_same_bucket_lookup_scales_without_deep_dedup() {
+fn memory_erased_same_bucket_lookup_scales_without_deep_dedup() {
     let mut samples = Vec::new();
     for size in [4usize, 16, 64, 128] {
         let mut memories = Vec::with_capacity(size + 1);
@@ -246,7 +246,7 @@ fn snapshot_blind_same_bucket_lookup_scales_without_deep_dedup() {
                     block: "same-bucket-facts".into(),
                     offset: PointerOffsetTerm::Constant(0),
                 },
-                // Distinct snapshots without contradictory literal
+                // Distinct states without contradictory literal
                 // premises: each read may consistently equal zero.
                 ProgramValue::Int32(MachineTerm::Variable(Variable(986_000 + value as u64))),
             );
@@ -286,9 +286,9 @@ fn snapshot_blind_same_bucket_lookup_scales_without_deep_dedup() {
             true,
         );
         let proof_facts = ProofFacts::from_ordered(&facts);
-        let key = snapshot_blind_proposition_key(&required);
+        let key = memory_erased_proposition_key(&required);
         let bucket_len = proof_facts
-            .by_snapshot_blind
+            .by_memory_erased
             .get(&key)
             .map(PersistentSequence::len)
             .unwrap_or(0);

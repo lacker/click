@@ -2,7 +2,7 @@
 
 A smart modular `step()` names statement-entry facts in its simple
 certificate. This lets a fact produced by one opaque call survive a later call
-whose disjoint footprint changes the memory snapshot.
+whose disjoint footprint changes the memory state.
 
 ```c filename=initialize_box.c
 struct box {

@@ -2175,10 +2175,10 @@ fn condition_fact_matching_ignores_unrelated_local_memory() {
 }
 
 /// Pins what the order check reads: the bounds are stated about loads at one
-/// snapshot and asked about the same cells at another that differs by a
+/// state and asked about the same cells at another that differs by a
 /// store to an unrelated local. The order walk used to relate the two loads
 /// by resolving them across that store; the difference graph files each
-/// snapshot's load as its own term, so the order is left unproved. Execution
+/// state's load as its own term, so the order is left unproved. Execution
 /// recording the equality of the two loads when it resolves one would let
 /// the graph treat them as one node.
 #[test]
@@ -2456,11 +2456,11 @@ mod loadable_range_narrowing {
         ));
     }
 
-    /// Loadability is a claim about one memory snapshot. A snapshot in which
+    /// Loadability is a claim about one memory state. A state in which
     /// the block is no longer there does not inherit the assumed range, so the
     /// order facts alone never carry the conclusion across.
     #[test]
-    fn a_different_memory_snapshot_is_refused() {
+    fn a_different_memory_state_is_refused() {
         let assumed = Memory::new().with_block("data", 4096);
         let elsewhere = Memory::new().with_block("other", 4096);
         let [a, b, c, d] = endpoints();
@@ -4832,11 +4832,11 @@ fn assumptions_prove_forall_int32_array_range_body() {
 }
 
 #[test]
-fn loadability_transports_to_snapshot_with_symbolic_index_bounds() {
+fn loadability_transports_to_state_with_symbolic_index_bounds() {
     let index = MachineTerm::Variable(Variable(190));
     let cursor = MachineTerm::Variable(Variable(191));
     let range_memory = Memory::new();
-    let snapshot_memory = Memory::new().with_block("local:j", 4);
+    let state_memory = Memory::new().with_block("local:j", 4);
     let base = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -4875,7 +4875,7 @@ fn loadability_transports_to_snapshot_with_symbolic_index_bounds() {
     assert!(crate::kernel::search::ProofSearch::proves(
         &(assumptions),
         &Proposition::MemoryLoadable {
-            memory: snapshot_memory,
+            memory: state_memory,
             base: base.offset_by_int32_elements(index),
             bytes: MachineTerm::constant(4),
             wide: false,
@@ -5705,12 +5705,12 @@ fn derived_order_contradiction_resolves_load_endpoints() {
     );
 }
 
-/// Pins the cross-snapshot reach of the order-conflict fallback: loads of one
-/// untouched cell from two snapshots related by a recorded effect are equal,
+/// Pins the cross-state reach of the order-conflict fallback: loads of one
+/// untouched cell from two states related by a recorded effect are equal,
 /// so a strict order between them is a contradiction. Neither form is an
 /// equality-graph edge.
 #[test]
-fn derived_order_contradiction_bridges_snapshot_loads() {
+fn derived_order_contradiction_bridges_state_loads() {
     let preserved = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -8097,7 +8097,7 @@ fn lazy_finite_forall_certificates_require_exact_complete_instance_tables() {
 }
 
 #[test]
-fn pointer_predicate_matching_preserves_types_arguments_snapshots_and_scope() {
+fn pointer_predicate_matching_preserves_types_arguments_states_and_scope() {
     fn fact(
         name: &str,
         state: ExecutionState,
@@ -8503,7 +8503,7 @@ fn exact_condition_check_ignores_unrelated_implications() {
     );
 }
 
-/// A snapshot-equivalent offset fact is read from the facts filed under the
+/// A state-equivalent offset fact is read from the facts filed under the
 /// query's offset shape, and an alpha-equal existential from the goal's
 /// identity bucket. Both once scanned every fact, so a miss grew with
 /// unrelated facts.
@@ -8560,7 +8560,7 @@ fn offset_and_existential_matches_ignore_unrelated_facts() {
             // Keying the facts assumed since the last query is index upkeep.
             context.build_stated_proposition_index();
             let (offset, offset_work) = crate::instrumentation::measure_deterministic_work(|| {
-                context.has_pointer_offset_snapshot_fact(&scaled, &PointerOffsetTerm::Constant(4))
+                context.has_pointer_offset_state_fact(&scaled, &PointerOffsetTerm::Constant(4))
             });
             let (exists, exists_work) = crate::instrumentation::measure_deterministic_work(|| {
                 context.proves_atomic_without_search(&existential)

@@ -85,7 +85,7 @@ fn remove_owned_key(
 }
 
 // The raw interval summary can decide an access at a plain origin plus a
-// constant displacement. Symbolic indexing and snapshot matching need the
+// constant displacement. Symbolic indexing and state matching need the
 // shape payload instead; their membership is a checked judgment, not an
 // ordering of affine vectors.
 fn plain_origin(mut offset: &PointerOffsetTerm) -> bool {

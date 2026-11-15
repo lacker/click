@@ -2,7 +2,7 @@
 //!
 //! This module owns the declarative import/lock format.  Process ownership is
 //! deliberately delegated to `compiler_process`; this layer validates the
-//! invocation and snapshots dependencies during explicit refresh. Ordinary
+//! invocation and states dependencies during explicit refresh. Ordinary
 //! loading checks the recorded artifact without running the compiler.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -459,7 +459,7 @@ struct Context<'a> {
     toolchain_generation: BTreeMap<String, FileState>,
     roots: Vec<PathBuf>,
     exclusions: BTreeSet<PathBuf>,
-    before: RootSnapshot,
+    before: SourceRootInventory,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -473,7 +473,7 @@ struct FileState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct RootSnapshot {
+struct SourceRootInventory {
     entries: BTreeMap<String, FileState>,
     bytes: u64,
 }
@@ -778,9 +778,9 @@ fn make_context<'a>(
     let exclusions = output_exclusions(config)?;
     let (toolchain, toolchain_generation) = discover_toolchain(config)?;
     let invocation_sha256 = invocation_digest(config, &toolchain);
-    let before = snapshot_roots(&roots, &exclusions)?;
+    let before = inventory_roots(&roots, &exclusions)?;
     if current_config_digest(config)? != config.config_bytes_sha256 {
-        return Err("import config changed while the input snapshot was taken".into());
+        return Err("import config changed while the source inventory was recorded".into());
     }
     Ok(Context {
         config,
@@ -1628,22 +1628,22 @@ fn output_exclusions(config: &Config) -> Result<BTreeSet<PathBuf>, String> {
     Ok(result)
 }
 
-fn snapshot_roots(
+fn inventory_roots(
     roots: &[PathBuf],
     exclusions: &BTreeSet<PathBuf>,
-) -> Result<RootSnapshot, String> {
+) -> Result<SourceRootInventory, String> {
     let mut entries = BTreeMap::new();
     let mut bytes = 0;
     let mut roots = roots.to_vec();
     roots.sort();
     let selected = prune_roots(roots);
     for root in selected {
-        snapshot_path(&root, exclusions, &mut entries, &mut bytes, 0)?;
+        program_point_path(&root, exclusions, &mut entries, &mut bytes, 0)?;
     }
-    Ok(RootSnapshot { entries, bytes })
+    Ok(SourceRootInventory { entries, bytes })
 }
 
-fn snapshot_path(
+fn program_point_path(
     path: &Path,
     exclusions: &BTreeSet<PathBuf>,
     entries: &mut BTreeMap<String, FileState>,
@@ -1698,7 +1698,7 @@ fn snapshot_path(
         }
         children.sort_by_key(|x| x.file_name());
         for child in children {
-            snapshot_path(&child.path(), exclusions, entries, bytes, depth + 1)?;
+            program_point_path(&child.path(), exclusions, entries, bytes, depth + 1)?;
         }
     }
     Ok(())
@@ -1756,7 +1756,7 @@ fn file_state(path: &Path, metadata: &fs::Metadata) -> Result<FileState, String>
 }
 
 fn verify_roots(context: &Context<'_>) -> Result<(), String> {
-    let after = snapshot_roots(&context.roots, &context.exclusions)?;
+    let after = inventory_roots(&context.roots, &context.exclusions)?;
     if after != context.before {
         return Err(
             "compiler input roots changed while preprocessing; retry after quiescing the build"
@@ -1800,7 +1800,7 @@ fn discover_toolchain(
     )?;
     let mut resource_files = BTreeMap::new();
     if include.is_dir() {
-        for (path, state) in snapshot_roots(&[include], &BTreeSet::new())?.entries {
+        for (path, state) in inventory_roots(&[include], &BTreeSet::new())?.entries {
             if state.kind == 1 {
                 resource_files.insert(path.clone(), state.content_sha256.clone());
             }
@@ -1957,7 +1957,7 @@ fn resolve_source(config: &Config, path: &str) -> Result<PathBuf, String> {
 fn resolve_artifact(config: &Config, path: &str) -> Result<PathBuf, String> {
     absolute_path(Path::new(path), &config.config_directory)
 }
-// Root aliases could change while their canonical target snapshot stayed
+// Root aliases could change while their canonical target state stayed
 // fixed. This first profile rejects them, including symlinks before `..`.
 fn reject_symlink_components(path: &Path) -> Result<(), String> {
     let mut prefix = PathBuf::new();
@@ -2888,7 +2888,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn nonregular_inputs_and_cancelled_snapshots_fail_promptly() {
+    fn nonregular_inputs_and_cancelled_states_fail_promptly() {
         use std::os::unix::ffi::OsStrExt;
         let path = std::env::temp_dir().join(format!("click-import-fifo-{}", std::process::id()));
         let _cleanup = RemoveFile(path.clone());
@@ -2901,7 +2901,7 @@ mod tests {
         );
         assert!(file_digest(&path).unwrap_err().contains("regular"));
         let cancelled = crate::instrumentation::with_deadline(Duration::ZERO, || {
-            snapshot_roots(&[path], &BTreeSet::new())
+            inventory_roots(&[path], &BTreeSet::new())
         });
         assert!(cancelled.unwrap_err().contains("deadline"));
     }
@@ -2924,8 +2924,8 @@ mod tests {
                 roots.push(file);
             }
             roots.sort();
-            let compact = snapshot_roots(std::slice::from_ref(&input), &BTreeSet::new()).unwrap();
-            let overlapping = snapshot_roots(&roots, &BTreeSet::new()).unwrap();
+            let compact = inventory_roots(std::slice::from_ref(&input), &BTreeSet::new()).unwrap();
+            let overlapping = inventory_roots(&roots, &BTreeSet::new()).unwrap();
             assert_eq!(compact.entries.len(), 2 * size + 1);
             assert_eq!(
                 overlapping, compact,

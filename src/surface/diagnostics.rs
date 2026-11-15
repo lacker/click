@@ -527,7 +527,7 @@ fn describe_context_facts_with_result(
     result: Option<&ProgramValue>,
 ) -> String {
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+        crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(parameter_binding);
     if let Some(result) = result {
         labels.source_value_type(result);
     }
@@ -538,7 +538,7 @@ fn describe_context_facts_with_result(
 fn describe_context_facts_labeled(
     pure_facts: &[Proposition],
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
 ) -> String {
     let item_limit = diagnostic_item_limit();
     let mut total = 0;
@@ -571,7 +571,7 @@ fn describe_context_facts_labeled(
 /// The bounded spelling of a fact list against the current function's
 /// parameters: a diagnostic that reports several fact lists (the condition
 /// paths of an undecided C `if`, for one) must not print a kernel debug dump
-/// of every memory snapshot those facts read.
+/// of every memory state those facts read.
 pub(super) fn describe_pure_facts_for_diagnostic(
     pure_facts: &[Proposition],
     parameter_binding: ParameterBinding<'_>,
@@ -580,7 +580,7 @@ pub(super) fn describe_pure_facts_for_diagnostic(
         return "[]".to_string();
     }
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+        crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(parameter_binding);
     let text = describe_bounded_list(pure_facts, |fact| {
         crate::surface::proof_diagnostics::render::render_proposition_labeled(fact, &mut labels)
     });
@@ -924,7 +924,7 @@ pub(super) fn condition_kind(condition: &ConditionTerm) -> &'static str {
 }
 
 /// A fact's shape with every memory label fresh: two facts that differ only
-/// in which snapshots their reads name compare equal.
+/// in which states their reads name compare equal.
 pub(super) fn pure_fact_shape(
     fact: &Proposition,
     parameter_binding: ParameterBinding<'_>,
@@ -938,7 +938,7 @@ pub(super) fn describe_pure_fact(
     parameter_binding: ParameterBinding<'_>,
 ) -> String {
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+        crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(parameter_binding);
     let mut text =
         crate::surface::proof_diagnostics::render::render_proposition_labeled(fact, &mut labels);
     text.push_str(&labels.trace_legend());
@@ -989,7 +989,7 @@ pub(super) fn describe_missing_pure_fact(
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
 ) -> String {
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+        crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(parameter_binding);
     let requirement = if concrete_named_contract_fact(required).is_some() {
         describe_required_pure_fact(required, parameter_binding)
     } else {
@@ -1009,7 +1009,7 @@ fn describe_missing_fact_context(
     pure_facts: &[Proposition],
     resource_facts: &[ResourceFact],
     execution_pure_facts: &(impl ExecutionFactSource + ?Sized),
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
 ) -> String {
     let available = describe_context_facts_labeled(pure_facts, execution_pure_facts, labels);
     let resources = crate::surface::proof_diagnostics::render::render_resource_facts_labeled(
@@ -1227,7 +1227,7 @@ pub(super) fn describe_goal_proof_context(
     case_facts: &[Proposition],
     resource_facts: &[ResourceFact],
     result: Option<&ProgramValue>,
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
 ) -> String {
     // The returned value's checked type decides how a constant beside it
     // prints, even when the value has no source name.
@@ -1272,7 +1272,7 @@ pub(super) fn describe_proof_context(
     // One label set, so a placeholder in a resource's hidden record is the
     // value the pure facts give the same name.
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+        crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(parameter_binding);
     let pure = describe_context_facts_labeled(pure_facts, execution_pure_facts, &mut labels);
     let resources = crate::surface::proof_diagnostics::render::render_resource_facts_labeled(
         resource_facts,
@@ -1435,7 +1435,7 @@ pub(in crate::surface) fn step_result_expression(step: u32) -> Option<ContractEx
         Some(local) => {
             let steps = layout.source_path_spelling(region, ProgramPointKind::Entry)?;
             Some(ContractExpression::At {
-                selector: crate::surface::SnapshotSelector::ProgramPoint(
+                selector: crate::surface::ProgramPointSelector::ProgramPoint(
                     crate::surface::ProgramPointRef {
                         region: CodeRegionRef::Path(steps),
                         kind: ProgramPointKind::Entry,
@@ -1814,8 +1814,8 @@ pub(super) fn describe_runtime_error(
             }
         }
         crate::kernel::RuntimeError::UnestablishedAssemblyFact { assembled, fact, source } => {
-            use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_proposition_labeled};
-            let mut labels = SnapshotLabels::naming(parameter_binding);
+            use crate::surface::proof_diagnostics::render::{MemoryStateLabels, render_proposition_labeled};
+            let mut labels = MemoryStateLabels::naming(parameter_binding);
             let requirement = match source.as_deref() {
                 Some(source) => describe_assembly_body_fact_source(source, &mut labels),
                 None => render_proposition_labeled(fact, &mut labels),
@@ -1848,8 +1848,8 @@ pub(super) fn describe_runtime_error(
             }
         }
         crate::kernel::RuntimeError::ContractResourceDiagnostic { reason, held, required, memory } => {
-            use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_resource_fact_labeled};
-            let mut labels = SnapshotLabels::naming(parameter_binding);
+            use crate::surface::proof_diagnostics::render::{MemoryStateLabels, render_resource_fact_labeled};
+            let mut labels = MemoryStateLabels::naming(parameter_binding);
             let mut message = format!("function contract could not be applied: {reason}");
             if let Some(memory) = memory {
                 message.push_str(&format!(
@@ -1865,8 +1865,8 @@ pub(super) fn describe_runtime_error(
             message
         }
         crate::kernel::RuntimeError::PendingCallObligations(pending) => {
-            use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_proposition_labeled};
-            let mut labels = SnapshotLabels::naming(parameter_binding);
+            use crate::surface::proof_diagnostics::render::{MemoryStateLabels, render_proposition_labeled};
+            let mut labels = MemoryStateLabels::naming(parameter_binding);
             let mut message = "call cannot finish with unresolved proof obligations:".to_string();
             for obligation in pending.iter() {
                 if let Some(context) = obligation.context() {
@@ -2168,7 +2168,7 @@ pub(super) fn describe_resource_subject(resource: &ResourceSubject) -> String {
             name,
             at: Some(selector),
             ..
-        } => format!("at({}, {name})", describe_snapshot_selector(selector)),
+        } => format!("at({}, {name})", describe_program_point_selector(selector)),
         ResourceSubject::Parameter { name, .. } | ResourceSubject::Instance { name, .. } => {
             name.clone()
         }
@@ -2924,7 +2924,7 @@ pub(super) fn describe_unestablished_assembly_fact(
     };
     let missing = match source.as_deref() {
         Some(source) => {
-            let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
+            let mut labels = crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(
                 parameter_binding,
             );
             let requirement = describe_assembly_body_fact_source(source, &mut labels);
@@ -2953,7 +2953,7 @@ pub(super) fn describe_unestablished_assembly_fact(
 
 fn describe_assembly_body_fact_source(
     source: &crate::kernel::ResourceBodyFactSource,
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
 ) -> String {
     let bindings = source
         .bindings
@@ -3193,7 +3193,7 @@ pub(super) fn describe_missing_range_end_note(
     )
 }
 
-/// The snapshot and pointer a still-unresolved comparison side loads from, if
+/// The state and pointer a still-unresolved comparison side loads from, if
 /// that side is exactly one load. A resolved side is a value and reads
 /// nothing.
 /// The explanation for two evaluated sides that are reads of one address of
@@ -3397,7 +3397,7 @@ pub(super) fn describe_unseparated_write(
             pointer: &load,
             bytes: crate::kernel::load_access_width_or_widest(&memory, &load),
         },
-        &resource_tracker::ProgramPoint::at(&memory),
+        &resource_tracker::VersionPoint::at(&memory),
     );
     describe_resource_version_mismatch(
         &explanation,
@@ -3444,7 +3444,7 @@ pub(super) fn describe_unheld_model_field_initializer(
 
 /// The first model field in `expression` that `state` cannot resolve, skipping
 /// the subtrees that resolve somewhere else: `old(..)` and `at(..)` read their
-/// own snapshot, so a field they name is not this state's to hold. A shape
+/// own state, so a field they name is not this state's to hold. A shape
 /// this bounded walk does not enter contributes nothing, and then the caller
 /// falls back to the kernel's own sentence rather than guessing.
 fn unheld_model_field_access<'a>(
@@ -3465,7 +3465,7 @@ fn unheld_model_field_access<'a>(
                 }
             }
             // A loop invariant reads `old(..)` at the loop's entry, which is
-            // the state it is checked against, so there it is not a snapshot
+            // the state it is checked against, so there it is not a state
             // of its own.
             ContractExpression::Old(inner) if through_old => pending.push(inner),
             ContractExpression::Old(_) | ContractExpression::At { .. } => {}
@@ -3543,7 +3543,7 @@ pub(in crate::surface) fn describe_consumed_instance_field_read(
                 pending.push(body);
             }
             ClickProposition::PredicateCall { arguments, .. } => expressions.extend(arguments),
-            // A snapshot proposition reads its own state.
+            // A state proposition reads its own state.
             ClickProposition::At { .. }
             | ClickProposition::ChangesOnly { .. }
             | ClickProposition::Separate { .. }
@@ -3609,7 +3609,7 @@ pub(in crate::surface) fn describe_consumed_instance_field_read(
     ))
 }
 
-/// Reads at different addresses in one snapshot need an address or value
+/// Reads at different addresses in one state need an address or value
 /// equality, not a framing condition. Materialization may expose this directly
 /// by giving both reads their original memory identity.
 pub(super) fn describe_read_address_mismatch(
@@ -3654,8 +3654,8 @@ pub(super) fn describe_two_sided_version_mismatch(
             pointer: &left_load,
             bytes: crate::kernel::load_access_width_or_widest(&left_memory, &left_load),
         },
-        &resource_tracker::ProgramPoint::at(&left_memory),
-        &resource_tracker::ProgramPoint::at(&right_memory),
+        &resource_tracker::VersionPoint::at(&left_memory),
+        &resource_tracker::VersionPoint::at(&right_memory),
     );
     // Both labels name real program points, so the sentence is written
     // against the earlier of the two: that is the one the value may have
@@ -3702,7 +3702,7 @@ pub(super) fn describe_proposition_version_mismatch_explained(
     let message = describe_resource_version_mismatch(
         &explanation,
         if internal {
-            "the snapshot the other side reads"
+            "the memory state the other side reads"
         } else {
             premise_point
         },
@@ -3768,16 +3768,17 @@ pub(crate) fn proposition_version_explanation(
         .find_map(|premise| {
             let mismatch = resource_tracker::version_mismatch(goal, premise)?;
             // Compare shapes without their construction legends. Each side
-            // gets fresh local labels; differing snapshot derivations belong
+            // gets fresh local labels; differing state derivations belong
             // to the explanation, not this diagnostic shape comparison.
             let shape = |fact: &Proposition| {
                 // The typed notation with fresh labels spells two reads of
                 // one place alike whatever memory each reads, which is the
                 // shape this compares.
                 let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
-                let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
-                    parameter_binding,
-                );
+                let mut labels =
+                    crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(
+                        parameter_binding,
+                    );
                 crate::surface::proof_diagnostics::render::render_proposition_labeled(
                     fact,
                     &mut labels,
@@ -3801,7 +3802,7 @@ pub(crate) fn proposition_version_explanation(
 /// inequality for two indexes into one array, a filled-in `separate(..)` for
 /// two objects nothing separates. A repair is printed only where it is known
 /// to work; where none does, the text says what is missing instead. It prints
-/// no memory contents: the structured report labels the blocking snapshot and
+/// no memory contents: the structured report labels the blocking state and
 /// both addresses separately. Later steps are recorded memory transitions.
 pub(super) fn describe_resource_version_mismatch(
     explanation: &resource_tracker::Explanation,
@@ -3971,8 +3972,8 @@ struct AccessWidths {
 /// the whole byte question, so it is read back off the recorded edge the walk
 /// stopped below — the same edge the tracker classified. `None` for every
 /// other step, and for a point that records no edge at all.
-fn recorded_store_byte_width(at: Option<&resource_tracker::ProgramPoint>) -> Option<u32> {
-    match at?.snapshot().derivation()?.as_ref() {
+fn recorded_store_byte_width(at: Option<&resource_tracker::VersionPoint>) -> Option<u32> {
+    match at?.shared_memory().derivation()?.as_ref() {
         crate::kernel::MemoryDerivation::Store { value, .. } => {
             Some(value.program_type().byte_width())
         }
@@ -6576,18 +6577,18 @@ pub(super) fn describe_pointee_place(base: &str) -> String {
     }
 }
 
-/// A snapshot of `expression`. `result` exists only once the function
-/// returns, so a snapshot before the return cannot spell it; it has one
-/// value along a path, though, so the snapshot is written around the parts
+/// A state of `expression`. `result` exists only once the function
+/// returns, so a state before the return cannot spell it; it has one
+/// value along a path, though, so the state is written around the parts
 /// of a C fragment that do not mention it and `result` stays outside, as in
 /// `(result as uint64) + at(function.entry, node->word & 1)`.
-fn describe_snapshot_expression(
-    selector: Option<&SnapshotSelector>,
+fn describe_program_point_expression(
+    selector: Option<&ProgramPointSelector>,
     expression: &ContractExpression,
 ) -> String {
     // A read at a call's parameter point is a read through the call's copy
     // of its argument: `R.parameter(v).f[i]`.
-    if let Some(SnapshotSelector::ProgramPoint(point)) = selector
+    if let Some(ProgramPointSelector::ProgramPoint(point)) = selector
         && point.kind == ProgramPointKind::Parameters
         && let Some(read) = parameter_point_read(&point.region, expression)
     {
@@ -6595,15 +6596,15 @@ fn describe_snapshot_expression(
     }
     let wrap = |text: String| match selector {
         None => format!("old({text})"),
-        Some(selector) => format!("at({}, {text})", describe_snapshot_selector(selector)),
+        Some(selector) => format!("at({}, {text})", describe_program_point_selector(selector)),
     };
-    if crate::surface::snapshot_can_name_result(selector) {
+    if crate::surface::program_point_can_name_result(selector) {
         return wrap(describe_contract_expression(expression));
     }
-    describe_contract_snapshot(expression, &wrap)
+    describe_contract_state(expression, &wrap)
 }
 
-fn describe_contract_snapshot(
+fn describe_contract_state(
     expression: &ContractExpression,
     wrap: &dyn Fn(String) -> String,
 ) -> String {
@@ -6618,12 +6619,12 @@ fn describe_contract_snapshot(
         | ContractExpression::ProgramExpression(ProgramExpression::Value(_)) => {
             describe_contract_expression(operand)
         }
-        operand => describe_contract_snapshot(operand, wrap),
+        operand => describe_contract_state(operand, wrap),
     };
     let binary =
         |left, operator, right| format!("({} {operator} {})", operand(left), operand(right));
     match expression {
-        ContractExpression::ProgramExpression(expression) => describe_c_snapshot(expression, wrap),
+        ContractExpression::ProgramExpression(expression) => describe_c_state(expression, wrap),
         // `result` and a scalar cast of it read no state.
         ContractExpression::Binding(_) => describe_contract_expression(expression),
         ContractExpression::CUnary { operand, lowered }
@@ -6644,13 +6645,13 @@ fn describe_contract_snapshot(
         ContractExpression::BitwiseAnd(left, right) => binary(left, "&", right),
         ContractExpression::BitwiseOr(left, right) => binary(left, "|", right),
         ContractExpression::BitwiseXor(left, right) => binary(left, "^", right),
-        // Any other shape keeps its snapshot whole; the parser then names
-        // the snapshot that cannot hold `result`.
+        // Any other shape keeps its state whole; the parser then names
+        // the state that cannot hold `result`.
         expression => wrap(describe_contract_expression(expression)),
     }
 }
 
-fn describe_c_snapshot(expression: &ProgramExpression, wrap: &dyn Fn(String) -> String) -> String {
+fn describe_c_state(expression: &ProgramExpression, wrap: &dyn Fn(String) -> String) -> String {
     let mut names = BTreeSet::new();
     crate::surface::collect_program_expression_variables(expression, &mut names);
     if !names.contains("result") {
@@ -6658,7 +6659,7 @@ fn describe_c_snapshot(expression: &ProgramExpression, wrap: &dyn Fn(String) -> 
     }
     let operand = |operand: &ProgramExpression| match operand {
         ProgramExpression::Value(_) => describe_program_expression(operand),
-        operand => describe_c_snapshot(operand, wrap),
+        operand => describe_c_state(operand, wrap),
     };
     let binary =
         |left, operator, right| format!("({} {operator} {})", operand(left), operand(right));
@@ -6680,8 +6681,8 @@ fn describe_c_snapshot(expression: &ProgramExpression, wrap: &dyn Fn(String) -> 
         ProgramExpression::BitwiseXor(left, right) => binary(left, "^", right),
         ProgramExpression::Equal(left, right) => binary(left, "==", right),
         ProgramExpression::NotEqual(left, right) => binary(left, "!=", right),
-        // Any other shape keeps its snapshot whole; the parser then names
-        // the snapshot that cannot hold `result`.
+        // Any other shape keeps its state whole; the parser then names
+        // the state that cannot hold `result`.
         expression => wrap(describe_program_expression(expression)),
     }
 }
@@ -6705,7 +6706,7 @@ const MAX_STATEMENT_HEAD_BYTES: usize = 512;
 ///
 /// `Debug` on a statement is an implementation dump: a `While` node carries
 /// its whole body, every lowered invariant and effect check, every resource
-/// spec, and the snapshots inside them, so its size has no relation to what
+/// spec, and the states inside them, so its size has no relation to what
 /// the reader of a refusal needs. What a refusal needs is which statement the
 /// cursor is on, and for a loop or a branch, the guard that produced the
 /// successors it is complaining about.
@@ -7169,7 +7170,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         ContractExpression::Field { base, field, .. }
             if matches!(base.as_ref(), ContractExpression::RegionParameter { .. })
                 || matches!(base.as_ref(), ContractExpression::At {
-                    selector: SnapshotSelector::ProgramPoint(point),
+                    selector: ProgramPointSelector::ProgramPoint(point),
                     ..
                 } if point.kind == ProgramPointKind::Parameters) =>
         {
@@ -7217,11 +7218,11 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
                 _ => format!("count({})", describe_resource_clause(resource)),
             }
         }
-        ContractExpression::Old(expression) => describe_snapshot_expression(None, expression),
+        ContractExpression::Old(expression) => describe_program_point_expression(None, expression),
         ContractExpression::At {
             selector,
             expression,
-        } => describe_snapshot_expression(Some(selector), expression),
+        } => describe_program_point_expression(Some(selector), expression),
         ContractExpression::Negate(expression) => {
             format!("-{}", describe_contract_expression(expression))
         }
@@ -7504,16 +7505,16 @@ pub(super) fn aligned_sugar(proposition: &ClickProposition) -> Option<(&ProgramE
     aligned_comparison_sugar(left, right)
 }
 
-/// The same sugar for an alignment fact read at one snapshot, whose sides
+/// The same sugar for an alignment fact read at one state, whose sides
 /// are each qualified `at(S, address(p) & (n - 1)) == at(S, 0u64)`, as a
 /// function-entry alignment fact is when it is cited after execution. It
 /// renders as `at(S, aligned(p, n))`. The pointer-to-`uint64` conversion
 /// inside has no cast spelling in Click (only `address(p)` or `aligned`),
 /// so rendering the qualified sides expression by expression would emit an
 /// unparseable `p as uint64`.
-pub(super) fn snapshot_aligned_sugar(
+pub(super) fn program_point_aligned_sugar(
     proposition: &ClickProposition,
-) -> Option<(&SnapshotSelector, &ProgramExpression, u64)> {
+) -> Option<(&ProgramPointSelector, &ProgramExpression, u64)> {
     let ClickProposition::Comparison {
         left: ContractExpression::At {
             selector,
@@ -7575,10 +7576,10 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
     printing::print_proposition(proposition, printing::PropositionSpelling::Diagnostic)
 }
 
-pub(super) fn describe_snapshot_selector(selector: &SnapshotSelector) -> String {
+pub(super) fn describe_program_point_selector(selector: &ProgramPointSelector) -> String {
     match selector {
-        SnapshotSelector::ProgramPoint(point) => describe_program_point_ref(point),
-        SnapshotSelector::Mark(name) => name.clone(),
+        ProgramPointSelector::ProgramPoint(point) => describe_program_point_ref(point),
+        ProgramPointSelector::Mark(name) => name.clone(),
     }
 }
 

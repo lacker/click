@@ -250,12 +250,12 @@ fn full_pointer_rewrite_changes_read_storage_without_inventing_its_origin() {
 #[test]
 fn memory_relationship_rewrite_transports_only_a_complete_pointer_carrier() {
     let _session = crate::kernel::VerificationSession::enter();
-    let snapshot = intern_memory(Memory::new());
+    let retained_state = intern_memory(Memory::new());
     let storage = Pointer::symbolic(Variable(424_100));
     let source = PointerValue::from_read(
         Pointer::symbolic(Variable(424_101)),
         ProgramType::Int32Pointer,
-        &snapshot,
+        &retained_state,
         &storage,
     );
     let target_base = Pointer {
@@ -304,18 +304,18 @@ fn memory_relationship_rewrite_transports_only_a_complete_pointer_carrier() {
 #[test]
 fn a_full_pointer_rewrite_does_not_adopt_another_read_carrier_at_the_same_address() {
     let _session = crate::kernel::VerificationSession::enter();
-    let snapshot = intern_memory(Memory::new());
+    let retained_state = intern_memory(Memory::new());
     let raw = Pointer::symbolic(Variable(424_110));
     let source = PointerValue::from_read(
         raw.clone(),
         ProgramType::Int32Pointer,
-        &snapshot,
+        &retained_state,
         &Pointer::symbolic(Variable(424_111)),
     );
     let unrelated = PointerValue::from_read(
         raw,
         ProgramType::Int32Pointer,
-        &snapshot,
+        &retained_state,
         &Pointer::symbolic(Variable(424_112)),
     );
     let target = PointerValue::new(

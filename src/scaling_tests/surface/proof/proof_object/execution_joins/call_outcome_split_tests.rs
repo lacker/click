@@ -139,7 +139,7 @@ fn call_outcome_split_does_not_copy_the_proofs_facts() {
             ExecutionProofState::at_entry(
                 ExecutionState::new().with_population_creation_tracking(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),

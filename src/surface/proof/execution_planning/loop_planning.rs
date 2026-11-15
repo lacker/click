@@ -107,7 +107,7 @@ fn loop_ranking_surfaces(
 }
 
 /// Pair the kernel's selected loop-head clauses with generated spellings that
-/// explicitly read the iteration-entry snapshot. The written, unqualified
+/// explicitly read the iteration-entry state. The written, unqualified
 /// clauses retain their source meaning in the enclosing presentation map.
 fn record_loop_entry_invariants(
     surface_propositions: &mut SurfacePropositionMap,
@@ -124,7 +124,7 @@ fn record_loop_entry_invariants(
         .iter()
         .zip(preservation.invariant_propositions())
         .map(|(surface, kernel)| {
-            let anchored = surface_at_snapshot(
+            let anchored = surface_at_program_point(
                 surface,
                 &ProgramPointRef {
                     region: CodeRegionRef::Region(statement_index),
@@ -353,7 +353,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         .initialize_source_index
         .unwrap_or(source.loop_source_index);
     let initialize_site = source.proof_site.as_ref();
-    let mut recorded_snapshots = context.recorded_snapshots.clone();
+    let mut recorded_states = context.recorded_states.clone();
     for label in environment
         .function_block
         .structural_clauses()
@@ -361,9 +361,9 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
         .into_iter()
         .filter_map(StructuralClause::label)
     {
-        recorded_snapshots.label_loop(loop_index, label);
+        recorded_states.label_loop(loop_index, label);
     }
-    recorded_snapshots.insert(
+    recorded_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Entry,
@@ -429,7 +429,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             environment.initial_state,
             &context.state,
             None,
-            &recorded_snapshots,
+            &recorded_states,
         ),
         &context.surface_propositions,
         environment.spec_definitions,
@@ -666,7 +666,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     loop_index: usize,
     preservation: &crate::kernel::LoopPreservationContext,
     pure_facts: &PureFactList,
-    enclosing_snapshots: &RecordedSnapshots,
+    enclosing_states: &RecordedStates,
     body: &ProgramStatement,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<AutomaticLoopBody, ClickError> {
@@ -689,7 +689,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     };
     // A preservation proof is nested in the enclosing execution proof.
     // Its marks still name fixed states; share their persistent map prefix.
-    let mut recorded_snapshots = enclosing_snapshots.clone();
+    let mut recorded_states = enclosing_states.clone();
     let constants = ExecutionProofConstants {
         proof_site: environment.frontier_loop_source.proof_site.clone(),
         source_layout,
@@ -697,15 +697,15 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
         function_source_registry: environment.function_source_registry.clone(),
         ..ExecutionProofConstants::default()
     };
-    record_statement_program_snapshot_state(
-        &mut recorded_snapshots,
+    record_statement_program_state(
+        &mut recorded_states,
         environment.function_block,
         loop_body_statement_index,
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    record_loop_program_snapshot_state(
-        &mut recorded_snapshots,
+    record_loop_program_state(
+        &mut recorded_states,
         environment.function_block,
         loop_index,
         ProgramPointKind::Entry,
@@ -727,7 +727,7 @@ pub(in crate::surface::proof) fn plan_automatic_loop_preservation_body(
     let mut body_execution = ExecutionProofState::at_entry(
         preservation.state().clone(),
         frontier,
-        recorded_snapshots,
+        recorded_states,
         surface_propositions,
         PersistentSequence::default(),
     );
@@ -908,7 +908,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     first_generated_tactic_index: usize,
     preservation: &crate::kernel::LoopPreservationContext,
     pure_facts: &PureFactList,
-    enclosing_snapshots: &RecordedSnapshots,
+    enclosing_states: &RecordedStates,
     invariant_checks: &[LoopInvariantCheck],
     ranking_measures: &[crate::kernel::RankingComponent],
     structural_measure: Option<&str>,
@@ -930,7 +930,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
 
     // A trailing shared closer can have a different checked body on each
     // execution leaf. Capture the whole phase so those bodies stay where
-    // their premises and memory snapshots were established.
+    // their premises and memory states were established.
     let capture_shared_closer = tactics.last().is_some_and(|tactic| {
         matches!(
             tactic,
@@ -980,7 +980,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionFrontier::default()
     };
     // Inner marks remain local to this proof's persistent-map version.
-    let mut recorded_snapshots = enclosing_snapshots.clone();
+    let mut recorded_states = enclosing_states.clone();
     let nested_tactic_capture = expansion_capture
         .as_deref()
         .and_then(|capture| capture.nested_for_site(preserve_site));
@@ -990,12 +990,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         invariant_body_context: Some(Arc::new(InvariantBodyContext {
             loop_index,
             loop_entry_state: preservation.loop_entry_state().clone(),
-            loop_entry_selector: Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
+            loop_entry_selector: Some(ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Loop(loop_index),
                 kind: ProgramPointKind::Entry,
             })),
             iteration_entry_state: preservation.state().clone(),
-            iteration_entry_selector: Some(SnapshotSelector::ProgramPoint(ProgramPointRef {
+            iteration_entry_selector: Some(ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Region(loop_body_statement_index),
                 kind: ProgramPointKind::Entry,
             })),
@@ -1022,15 +1022,15 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionProofConstants::default()
     };
     let mut surface_propositions = environment.surface_propositions.clone();
-    record_statement_program_snapshot_state(
-        &mut recorded_snapshots,
+    record_statement_program_state(
+        &mut recorded_states,
         environment.function_block,
         loop_body_statement_index,
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    record_code_region_program_snapshot_state(
-        &mut recorded_snapshots,
+    record_code_region_program_state(
+        &mut recorded_states,
         environment.function_block,
         CodeRegion::Loop(loop_index),
         ProgramPointKind::Entry,
@@ -1070,12 +1070,12 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 environment.initial_state,
                 preservation.state(),
                 None,
-                &recorded_snapshots,
+                &recorded_states,
             ),
             environment.spec_definitions,
         )
     {
-        let surface = surface_at_snapshot(
+        let surface = surface_at_program_point(
             &loop_condition,
             &ProgramPointRef {
                 region: CodeRegionRef::Region(loop_body_statement_index),
@@ -1107,7 +1107,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut body_execution = ExecutionProofState::at_entry(
         preservation.state().clone(),
         frontier,
-        recorded_snapshots,
+        recorded_states,
         surface_propositions,
         PersistentSequence::default(),
     );
@@ -1157,7 +1157,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let invariant_premise_surfaces = invariant_surfaces
         .iter()
         .map(|surface| {
-            surface_at_snapshot(
+            surface_at_program_point(
                 surface,
                 &ProgramPointRef {
                     region: CodeRegionRef::Region(loop_body_statement_index),
@@ -1171,7 +1171,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     let mut break_exits = Vec::new();
     // The points each leaving path recorded during its pass, from the start
     // of the pass on: after the loop they name that pass's points.
-    let pass_start = enclosing_snapshots.history_mark();
+    let pass_start = enclosing_states.history_mark();
     let mut exit_points = Vec::new();
     let mut return_exits = Vec::new();
     let mut return_proofs = Vec::new();
@@ -1541,7 +1541,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
             exit_points.push(
                 context_execution
                     .presentation
-                    .recorded_snapshots
+                    .recorded_states
                     .recorded_since(&pass_start),
             );
             // The exit is this path's own state and the facts it retained

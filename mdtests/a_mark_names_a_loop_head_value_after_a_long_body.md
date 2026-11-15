@@ -1,8 +1,8 @@
 # A mark names a loop-head value after a long body
 
 A failure report spells a value no current local holds as a local's value at
-a recorded snapshot. The loop below decrements `k` first and then runs forty
-more statements, so no recent statement snapshot holds the value `k` had at
+a recorded state. The loop below decrements `k` first and then runs forty
+more statements, so no recent statement state holds the value `k` had at
 the iteration's entry; the proof's `mark iteration` does. The report names
 that value `at(iteration, k)` rather than `<unnamed A>`.
 

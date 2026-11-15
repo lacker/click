@@ -34,5 +34,5 @@ void caller(struct node* child, int32* slot) {
 ```
 
 ```expect
-fail: resource instance `b` is not owned at this snapshot
+fail: resource instance `b` is not owned at this state
 ```

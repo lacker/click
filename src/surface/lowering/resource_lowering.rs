@@ -1934,7 +1934,7 @@ pub(in crate::surface) fn lower_resource_clause_at_current_locals_with_assumptio
     )
 }
 
-/// Explicit snapshot arguments keep their function-entry state while ordinary
+/// Explicit state arguments keep their function-entry state while ordinary
 /// arguments use the current C bindings. Both states reach the existing typed
 /// resource-argument evaluator; no argument is rewritten to a different cursor.
 pub(in crate::surface) fn lower_resource_clause_at_current_locals_with_entry_and_assumptions(
@@ -2175,8 +2175,8 @@ fn lower_resource_clause_with_values_mode_at_entry(
         }
         ResourceClause::Quantified { quantity, resource } => {
             let original_quantity = quantity.clone();
-            let (quantity, quantity_snapshot) =
-                resource_argument_to_typed_program_expression_with_snapshot(
+            let (quantity, quantity_state_source) =
+                resource_argument_to_typed_program_expression_with_state(
                     quantity,
                     crate::languages::interface::InterfaceType::Int32,
                 )?;
@@ -2189,10 +2189,10 @@ fn lower_resource_clause_with_values_mode_at_entry(
                 base_assumptions.clone()
             };
             let array_refs = clause_parameters.array_refs();
-            let quantity = evaluate_resource_argument_with_snapshot(
+            let quantity = evaluate_resource_argument_with_state(
                 &original_quantity,
                 &quantity,
-                quantity_snapshot,
+                quantity_state_source,
                 &assumptions,
                 ContractEnvironment::new(values, array_refs),
                 entry_state,
@@ -2300,15 +2300,15 @@ fn lower_resource_clause_with_values_mode_at_entry(
                 resource_arguments.iter().zip(parameter_types).enumerate()
             {
                 let original_argument = argument.clone();
-                let (argument, argument_snapshot) =
-                    resource_argument_to_typed_program_expression_with_snapshot(
+                let (argument, argument_state_source) =
+                    resource_argument_to_typed_program_expression_with_state(
                         argument,
                         *parameter_type,
                     )?;
-                let value = evaluate_resource_argument_with_snapshot(
+                let value = evaluate_resource_argument_with_state(
                     &original_argument,
                     &argument,
-                    argument_snapshot,
+                    argument_state_source,
                     &assumptions,
                     ContractEnvironment::new(values, array_refs),
                     entry_state,
@@ -2559,22 +2559,22 @@ fn lower_resource_clause_with_values_mode_at_entry(
     }
 }
 
-fn evaluate_resource_argument_with_snapshot(
+fn evaluate_resource_argument_with_state(
     original: &ContractExpression,
     lowered: &ProgramExpression,
-    snapshot: crate::kernel::ResourceSnapshot,
+    retained_state: crate::kernel::ResourceStateSource,
     assumptions: &PureFactContext,
     contract_environment: ContractEnvironment<'_>,
     entry_state: &ExecutionState,
     state: &ExecutionState,
     result: Option<&ProgramValue>,
 ) -> Result<ProgramValue, String> {
-    if snapshot == crate::kernel::ResourceSnapshot::Entry {
+    if retained_state == crate::kernel::ResourceStateSource::Entry {
         let direct = crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
             original,
             assumptions,
             contract_environment,
-            FixedStateFrame::new(entry_state, state, result, &RecordedSnapshots::new()),
+            FixedStateFrame::new(entry_state, state, result, &RecordedStates::new()),
             SpecDefinitions::new(
                 &PredicateEnvironment::new(&[]),
                 &ClickFunctionEnvironment::new(&[]),
@@ -2662,8 +2662,8 @@ fn lower_resource_clause_facts_with_values_mode_at_entry(
             .collect(),
         ResourceClause::Quantified { quantity, resource } => {
             let original_quantity = quantity.clone();
-            let (quantity, quantity_snapshot) =
-                resource_argument_to_typed_program_expression_with_snapshot(
+            let (quantity, quantity_state_source) =
+                resource_argument_to_typed_program_expression_with_state(
                     quantity,
                     crate::languages::interface::InterfaceType::Int32,
                 )?;
@@ -2676,10 +2676,10 @@ fn lower_resource_clause_facts_with_values_mode_at_entry(
                 base_assumptions.clone()
             };
             let array_refs = clause_parameters.array_refs();
-            let quantity = evaluate_resource_argument_with_snapshot(
+            let quantity = evaluate_resource_argument_with_state(
                 &original_quantity,
                 &quantity,
-                quantity_snapshot,
+                quantity_state_source,
                 &assumptions,
                 ContractEnvironment::new(values, array_refs),
                 entry_state,
@@ -2764,22 +2764,22 @@ pub(in crate::surface) fn resource_argument_to_typed_program_expression(
 }
 
 /// Lowers a declared-resource argument together with the state that supplies
-/// its value.  The surrounding resource clause still has its own snapshot
+/// its value.  The surrounding resource clause still has its own state
 /// (entry for requirements, post for produced resources); `old(...)` selects
 /// the entry state for only this argument.
-pub(in crate::surface) fn resource_argument_to_typed_program_expression_with_snapshot(
+pub(in crate::surface) fn resource_argument_to_typed_program_expression_with_state(
     argument: &ContractExpression,
     parameter_type: InterfaceType,
-) -> Result<(ProgramExpression, crate::kernel::ResourceSnapshot), ClickError> {
+) -> Result<(ProgramExpression, crate::kernel::ResourceStateSource), ClickError> {
     if let ContractExpression::Old(inner) = argument {
         return Ok((
             resource_argument_to_typed_program_expression(inner, parameter_type)?,
-            crate::kernel::ResourceSnapshot::Entry,
+            crate::kernel::ResourceStateSource::Entry,
         ));
     }
     Ok((
         resource_argument_to_typed_program_expression(argument, parameter_type)?,
-        crate::kernel::ResourceSnapshot::Current,
+        crate::kernel::ResourceStateSource::Current,
     ))
 }
 

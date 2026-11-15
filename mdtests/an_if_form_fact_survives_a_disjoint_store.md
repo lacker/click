@@ -5,7 +5,7 @@ whatever term reads the cell. The plain form `a[m] > 0` always did. A fact
 that reads the same cell inside an `if` condition, or under a bitwise
 operator, was not carried: matching the fact across the store compared load
 atoms only under `+`, `-` and `*`, and every other term had to be identical,
-snapshot included. `solve` refused with "`a[m]` may have changed", though an
+state included. `solve` refused with "`a[m]` may have changed", though an
 explicit `transport` carried the fact.
 
 The refusing companion, with no `m != i`, is

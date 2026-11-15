@@ -995,7 +995,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                     PropositionKnownContext::Pure => facts.pure_known_available(proposition),
                     PropositionKnownContext::Materialized => {
                         // Alpha-equivalent quantified and Integer facts remain
-                        // materialized when their exact snapshot-aware keys match.
+                        // materialized when their exact state-aware keys match.
                         // This does not admit cross-effect transport.
                         facts.pure_known_available(proposition)
                     }
@@ -2127,7 +2127,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         let scope = InvariantBodyScope {
             root: root.clone(),
             binding: super::execution::CheckedLoopInvariantLowerings {
-                snapshot: execution.core.state.clone(),
+                retained_state: execution.core.state.clone(),
                 checks: checks.to_vec(),
                 ranking_measures: ranking_measures.to_vec(),
                 facts: branch.state.facts.clone(),
@@ -2175,7 +2175,7 @@ impl<L: Clone, P: Clone, T: Clone, S: Clone>
         }
         if !scope
             .binding
-            .snapshot
+            .retained_state
             .shares_storage_with(&execution.core.state)
             || !scope
                 .binding
@@ -2340,7 +2340,9 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             .checked_invariant_lowerings
             .as_ref()
             .ok_or("invariant closure is missing prepared lowering evidence")?;
-        if !evidence.snapshot.shares_storage_with(&execution.core.state)
+        if !evidence
+            .retained_state
+            .shares_storage_with(&execution.core.state)
             || !evidence.facts.shares_premises_with(&branch.state.facts)
             || !evidence
                 .effects
@@ -2781,7 +2783,7 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
     }
 
     /// Retains the addressed goal under updated facts, preserving any
-    /// execution snapshot it already borrowed.
+    /// execution state it already borrowed.
     pub(crate) fn with_facts_at(&self, at: BranchId, facts: ProofFacts) -> Self {
         let Some(branch) = self.get(at) else {
             unreachable!("a fact successor requires the addressed open branch");
@@ -2796,7 +2798,7 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
         )
     }
 
-    /// Retains the addressed goal under an updated execution snapshot and
+    /// Retains the addressed goal under an updated execution state and
     /// facts. The successor preserves the goal's kind.
     pub(crate) fn replace_execution_at(
         &self,
@@ -3248,7 +3250,7 @@ mod tests {
     }
 
     #[test]
-    fn materialized_known_accepts_same_snapshot_alpha_facts_only() {
+    fn materialized_known_accepts_same_state_alpha_facts_only() {
         use crate::kernel::proof::{
             ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition,
         };

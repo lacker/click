@@ -6,11 +6,11 @@ use super::*;
 
 /// Carrying `defined(p[0])` out of `other and defined(p[0])` across one
 /// disjoint store costs the same beside 16, 64 or 256 unrelated stores made
-/// before the source snapshot and as many unrelated facts in the querying
+/// before the source state and as many unrelated facts in the querying
 /// context: conjunction elimination reads only the source's conjunction
 /// spine, and the definedness leaf, decided here by the kernel's typed-read
 /// no-write walk standing in for the single-fact route, reads only the steps
-/// between its two snapshots.
+/// between its two states.
 #[test]
 fn conjunct_elimination_is_flat_against_unrelated_history_and_facts() {
     let _session = crate::kernel::VerificationSession::enter();
@@ -47,7 +47,7 @@ fn conjunct_elimination_is_flat_against_unrelated_history_and_facts() {
             pointer: base.clone(),
             value_type: ProgramType::UInt8,
         };
-        // Built outside the measurement: interning a snapshot is paid by
+        // Built outside the measurement: interning a state is paid by
         // whoever builds it, not by the frame.
         let other = Proposition::ConditionIs(ConditionTerm::Variable(Variable(49_999)), true);
         let source = Proposition::And(Box::new(other), Box::new(defined(&before)));
@@ -95,7 +95,7 @@ fn conjunct_elimination_is_flat_against_unrelated_history_and_facts() {
     );
 }
 
-/// Measure a cold query after constructing and interning its input snapshots.
+/// Measure a cold query after constructing and interning its input states.
 fn load_equality_work(earlier: u32, between: u32, written: bool) -> usize {
     let _session = crate::kernel::VerificationSession::enter();
     let base = Pointer {
@@ -138,10 +138,10 @@ fn load_equality_work(earlier: u32, between: u32, written: bool) -> usize {
     work
 }
 
-/// A first load-equality query pays for the snapshot delta, never the stores
+/// A first load-equality query pays for the state delta, never the stores
 /// before both endpoints, even if the queried cell was written before them.
 #[test]
-fn load_equality_ignores_history_before_both_snapshots() {
+fn load_equality_ignores_history_before_both_states() {
     for written in [false, true] {
         let costs = [16u32, 64, 256].map(|size| load_equality_work(size, 1, written));
         eprintln!("load equality work, written={written}: {costs:?}");
@@ -153,11 +153,11 @@ fn load_equality_ignores_history_before_both_snapshots() {
 }
 
 /// The bounded walk still visits the intervening steps; it cannot accept
-/// snapshots by ignoring their delta or by using a warm answer.
+/// states by ignoring their delta or by using a warm answer.
 #[test]
-fn load_equality_work_tracks_the_snapshot_delta() {
+fn load_equality_work_tracks_the_state_delta() {
     let costs = [1u32, 4, 16].map(|between| load_equality_work(256, between, true));
-    eprintln!("load equality work by snapshot delta: {costs:?}");
+    eprintln!("load equality work by state delta: {costs:?}");
     assert!(
         costs.windows(2).all(|p| p[0] < p[1] && p[1] <= 4 * p[0]),
         "load equality work: {costs:?}"

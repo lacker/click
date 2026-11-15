@@ -1248,12 +1248,12 @@ fn two_authority_control_import_checks_each_custody_and_scope() {
                 resource: Box::new(reference),
                 schema: ResourceFieldSchema::new(vec![]).unwrap(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let cell = SpecExpression::MemoryLoad {
@@ -1308,12 +1308,12 @@ fn two_authority_control_import_checks_each_custody_and_scope() {
                 )),
                 schema: ResourceFieldSchema::new(vec![]).unwrap(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     definition.contains.push(wildcard);
@@ -1477,12 +1477,12 @@ fn checked_control_import_observes_only_its_exact_entry_population() {
                 resource: Box::new(reference),
                 schema: ResourceFieldSchema::new(vec![]).unwrap(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let cell = SpecExpression::MemoryLoad {
@@ -3680,12 +3680,12 @@ fn authority_contract_entry_retains_only_authenticated_member_bounds() {
                 resource: Box::new(member_spec.clone()),
                 schema: description.schema().clone(),
             }),
-            snapshot: ResourceSnapshot::Current,
+            state_source: ResourceStateSource::Current,
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let function = program_function(

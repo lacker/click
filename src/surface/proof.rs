@@ -70,14 +70,14 @@ use crate::kernel::proof::{
 };
 
 pub(in crate::surface) use crate::kernel::proof::{
-    SnapshotBlindPropositionKey, snapshot_blind_proposition_key,
+    MemoryErasedPropositionKey, memory_erased_proposition_key,
 };
 use claim_proofs::finish_ordered_proof;
 pub(super) use claim_proofs::{
     finish_contract_body_root, prove_claim_by_tactics, prove_claims_by_grouped_script,
     prove_claims_by_implicit_tail,
 };
-pub(in crate::surface) use cursor_execution::surface_snapshot_selector;
+pub(in crate::surface) use cursor_execution::surface_program_point_selector;
 use cursor_execution::*;
 
 #[cfg(test)]
@@ -269,7 +269,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn snapshot_annotation_rejects_deep_logic_without_using_the_native_stack() {
+    fn state_annotation_rejects_deep_logic_without_using_the_native_stack() {
         let mut surface = ClickProposition::Comparison {
             left: ContractExpression::CBinding("value".to_string()),
             operator: ComparisonOperator::Equal,
@@ -277,7 +277,7 @@ mod certificate_tests {
                 ProgramValue::Int32(MachineTerm::constant(0)),
             )),
         };
-        for _ in 0..=SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
+        for _ in 0..=PROGRAM_POINT_ANNOTATION_DEPTH_LIMIT {
             surface = ClickProposition::Not(Box::new(surface));
         }
         let point = ProgramPointRef {
@@ -285,8 +285,8 @@ mod certificate_tests {
             kind: ProgramPointKind::Entry,
         };
 
-        let error = surface_at_snapshot(&surface, &point)
-            .expect_err("deep snapshot annotation must stop structurally");
+        let error = surface_at_program_point(&surface, &point)
+            .expect_err("deep state annotation must stop structurally");
         assert!(
             error.message().contains("structural depth bound"),
             "{error}"
@@ -294,7 +294,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn snapshot_index_finds_a_late_exact_selector_inside_a_quantifier() {
+    fn state_index_finds_a_late_exact_selector_inside_a_quantifier() {
         let early_memory = Memory::new().with_block("early", 4);
         let target_memory = Memory::new().with_block("target", 4);
         let pointer = Pointer {
@@ -327,26 +327,26 @@ mod certificate_tests {
             region: CodeRegionRef::Region(99),
             kind: ProgramPointKind::Entry,
         };
-        let mut states = RecordedSnapshots::new();
+        let mut states = RecordedStates::new();
         states.insert(early, ExecutionState::new().with_memory(early_memory));
         states.insert(
             late.clone(),
             ExecutionState::new().with_memory(target_memory),
         );
 
-        let (exact, compatible) = snapshot_indexed_selectors(&kernel, &states);
+        let (exact, compatible) = state_indexed_selectors(&kernel, &states);
         assert_eq!(
             exact
                 .iter()
                 .map(|(selector, _)| *selector)
                 .collect::<Vec<_>>(),
-            vec![&SnapshotSelector::ProgramPoint(late)]
+            vec![&ProgramPointSelector::ProgramPoint(late)]
         );
         assert!(compatible.is_empty());
     }
 
     #[test]
-    fn missing_snapshot_form_reports_a_concise_indexed_failure() {
+    fn missing_state_form_reports_a_concise_indexed_failure() {
         let target_memory = Memory::new().with_block("target", 4);
         let pointer = Pointer {
             block: "target".into(),
@@ -372,7 +372,7 @@ mod certificate_tests {
             ExecutionView::new(
                 &ExecutionFrontier::default(),
                 &ExecutionFacts::new(),
-                &RecordedSnapshots::new(),
+                &RecordedStates::new(),
                 &SurfacePropositionMap::default(),
                 None,
             ),
@@ -386,19 +386,19 @@ mod certificate_tests {
                 &ClickFunctionEnvironment::new(&[]),
             ),
         )
-        .expect_err("an unrecorded snapshot should have no surface form");
+        .expect_err("an unrecorded state should have no surface form");
 
         assert!(
             error
                 .message()
-                .contains("0 exact and 0 compatible recorded snapshots"),
+                .contains("0 exact and 0 compatible recorded states"),
             "{error}"
         );
         assert!(!error.message().contains("Memory"), "{error}");
     }
 
     #[test]
-    fn snapshot_variant_search_reaches_a_candidate_after_eight() {
+    fn state_variant_search_reaches_a_candidate_after_eight() {
         let base = ClickProposition::Comparison {
             left: ContractExpression::CBinding("value".to_string()),
             operator: ComparisonOperator::Equal,
@@ -408,14 +408,14 @@ mod certificate_tests {
         };
         let selectors = (0..20)
             .map(|index| {
-                SnapshotSelector::ProgramPoint(ProgramPointRef {
+                ProgramPointSelector::ProgramPoint(ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
                 })
             })
             .collect::<Vec<_>>();
-        let variants = comparison_snapshot_variants(&base, &selectors)
-            .expect("comparison should have snapshot variants");
+        let variants = comparison_state_variants(&base, &selectors)
+            .expect("comparison should have state variants");
         let position = variants
             .iter()
             .position(|candidate| {
@@ -423,7 +423,7 @@ mod certificate_tests {
                     candidate,
                     ClickProposition::Comparison {
                         left: ContractExpression::At {
-                            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+                            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                                 region: CodeRegionRef::Region(2),
                                 kind: ProgramPointKind::Entry,
                             }),
@@ -561,7 +561,7 @@ mod certificate_tests {
         let mut execution = ExecutionProofState::at_entry(
             ExecutionState::new(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         );
@@ -2013,7 +2013,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
             collect_called_predicates(proposition, &mut pending_predicates);
         }
     }
-    // Predicate facts carry their resource-state snapshot opaquely. Register
+    // Predicate facts carry their resource-state state opaquely. Register
     // every family a reachable predicate may observe before constructing
     // those facts so zero populations remain observable across later opaque
     // calls.
@@ -2033,7 +2033,7 @@ pub(super) fn initial_claim_context_with_caller_owner(
     for family in &observed_population_families {
         state = state.with_observed_population_family(family.clone());
     }
-    // Keep an authority-only snapshot before folded composite cells or
+    // Keep an authority-only state before folded composite cells or
     // observable body facts are materialized.  Those conveniences are valid
     // for lowering the proof's later pure context, but they must not help the
     // entry resource evaluator bootstrap a load that the clause set does not
@@ -2627,7 +2627,7 @@ fn collect_conjunctive_loadability_segments(
             collect_conjunctive_loadability_segments(left, segments);
             collect_conjunctive_loadability_segments(right, segments);
         }
-        // A loadability atom under a branch, negation, quantifier, snapshot,
+        // A loadability atom under a branch, negation, quantifier, state,
         // or range binder is not unconditional entry authority.
         ClickProposition::Comparison { .. }
         | ClickProposition::FloatClassification { .. }

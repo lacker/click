@@ -133,7 +133,7 @@ then retains the actual pointer and execution alongside the original borrow.
 Stores retain source provenance in their existing checked store certificate,
 after memory checks succeed. Completed reads retain a private receipt even when
 a cached scalar returns without minting a new load variable. Read receipts match
-their exact memory snapshot, pointer and type; rewritten facts discard that
+their exact memory state, pointer and type; rewritten facts discard that
 provenance. These private consequences are not path selectors. Source-bearing
 producer records survive composition as a selected delta, without deduplicating
 two operations that happen to have the same semantic memory proposition.

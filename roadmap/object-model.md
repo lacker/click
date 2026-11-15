@@ -32,7 +32,7 @@ distinguishes checked witnesses from broader claims still needing coverage.
 now verifies with its original C and contract. Its proof states the three
 ownership-derived separation facts needed to frame the node's fields across
 the root store. Generated prerequisites retain lexical names, typed reads,
-and the selected snapshots of pointer arguments. Ordinary verification,
+and the selected states of pointer arguments. Ordinary verification,
 expansion, cold checking and retained replay pass, and storing null is refused.
 See the [repair evidence](../design/object-model-current-audit.md#pointer-field-resource-fold-baseline-failure-and-repair).
 
@@ -113,7 +113,7 @@ Keep the repaired getter and pointer-field fold witnesses green.
 Record any confirmed residual defect at its current reproduction; a missing
 coverage check is not itself a demonstrated semantic bug.
 
-Retain typed cells, allocation identities/generations, immutable snapshots and
+Retain typed cells, allocation identities/generations, immutable states and
 indexed resource ranges. Keep storage, object/type validity, initialization,
 values and access authority distinct. Address equality supports aliasing but
 does not manufacture designation. Construction binds the actual destination;

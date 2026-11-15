@@ -236,7 +236,7 @@ fn allocation_result_names_use_one_index_as_recorded_history_grows() {
         let function = crate::languages::c::syntax::parse_function(&source).unwrap();
         let layout =
             crate::surface::lowering::SourceExecutionLayout::for_function(&function).unwrap();
-        let mut snapshots = RecordedSnapshots::new().with_source_layout(layout.clone());
+        let mut retained_states = RecordedStates::new().with_source_layout(layout.clone());
         let mut last = Pointer::null();
         let mut last_region = 0;
         let mut insertion_work = 0;
@@ -249,7 +249,7 @@ fn allocation_result_names_use_one_index_as_recorded_history_grows() {
                 .source_path_region(&[SourcePathStep::Statement(n + 1)], ProgramPointKind::Exit)
                 .unwrap();
             let (_, work) = crate::persistent::measure_persistent_work(|| {
-                snapshots.insert(
+                retained_states.insert(
                     ProgramPointRef {
                         region: CodeRegionRef::Region(last_region),
                         kind: ProgramPointKind::Exit,
@@ -265,7 +265,7 @@ fn allocation_result_names_use_one_index_as_recorded_history_grows() {
         insertion_samples.push((count, insertion_work));
         let ((answer, work), indexed) = crate::persistent::measure_persistent_work(|| {
             crate::instrumentation::measure_deterministic_work(|| {
-                snapshots.allocation_result(&last)
+                retained_states.allocation_result(&last)
             })
         });
         assert_eq!(answer, Some(CodeRegionRef::Region(last_region)));
@@ -647,7 +647,7 @@ fn nested_fold_match_call_surface_work_ignores_unrelated_locals() {
 }
 
 #[test]
-fn array_argument_snapshot_lookup_ignores_unrelated_recorded_history() {
+fn array_argument_state_lookup_ignores_unrelated_recorded_history() {
     let _session = crate::kernel::VerificationSession::enter();
     let pointer = ProgramValue::pointer(Pointer::symbolic(Variable(981_400)));
     let cell = Pointer {
@@ -661,7 +661,7 @@ fn array_argument_snapshot_lookup_ignores_unrelated_recorded_history() {
                 .with_block("selected-array-memory", 4)
                 .store(cell.clone(), int32(1)),
         );
-    let selector = SnapshotSelector::from(ProgramPointRef {
+    let selector = ProgramPointSelector::from(ProgramPointRef {
         region: CodeRegionRef::Region(0),
         kind: ProgramPointKind::Exit,
     });
@@ -673,7 +673,7 @@ fn array_argument_snapshot_lookup_ignores_unrelated_recorded_history() {
     let mut samples = Vec::new();
     let mut baseline = None;
     for size in [8, 32, 128, 512] {
-        let mut points = RecordedSnapshots::new();
+        let mut points = RecordedStates::new();
         points.insert(selector.clone(), selected.clone());
         for index in 1..=size {
             points.insert(
@@ -725,6 +725,6 @@ fn array_argument_snapshot_lookup_ignores_unrelated_recorded_history() {
     }
     assert!(
         samples[3] < samples[0] * 4 + 128,
-        "snapshot lookup scanned history: {samples:?}"
+        "state lookup scanned history: {samples:?}"
     );
 }

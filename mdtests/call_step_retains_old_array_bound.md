@@ -1,9 +1,9 @@
-# A call step retains the original snapshot of its array-element bound
+# A call step retains the original state of its array-element bound
 
 A write to `visited` leaves `left` unchanged. The observed resource supplies
-the bound at the current snapshot; the call reads the same cell through its
-entry snapshot. Keep the call theorem's original bound when transporting its
-facts to the statement exit. Instantiate the held entry-snapshot bound
+the bound at the current state; the call reads the same cell through its
+entry state. Keep the call theorem's original bound when transporting its
+facts to the statement exit. Instantiate the held entry-state bound
 explicitly before the call: simple call checking no longer scans all ambient
 conditions for a memory-equivalent spelling.
 

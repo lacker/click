@@ -2,7 +2,7 @@
 
 A resource model can name a pointer differently from the C argument that owns
 its bytes. An exact pointer equality lets `rewrite` change the base of an
-explicit `viewable` goal. It preserves the memory snapshot and byte extent;
+explicit `viewable` goal. It preserves the memory state and byte extent;
 the existing ownership still supplies the required authority.
 
 ```c filename=alias.c

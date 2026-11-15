@@ -3,7 +3,7 @@
 The caller knows `length <= capacity` and passes `capacity + 1` to an opaque
 helper. The omitted proof's implicit tail must retain a valid derivation of the helper's weaker
 requirement even when the two field loads acquire different materialized
-memory-snapshot spellings.
+memory-state spellings.
 
 ```c filename=accept_larger_capacity.c
 int32 accept_larger_capacity(int32 length, int32 capacity) {

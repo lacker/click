@@ -114,7 +114,7 @@ residual resources holds
 rule for a kept region beside the one a call lends).
 
 The proof carries an occupancy invariant: every cell outside the live regions
-is free, spelled against the snapshots at which the regions were allocated
+is free, spelled against the states at which the regions were allocated
 (`k < at(z1, first->start) or at(z1, first->end) <= k`). Each allocation
 extends it from the callee's per-cell frame, each read and write preserves it
 through the callee's clause that every occupancy cell is unchanged, and each

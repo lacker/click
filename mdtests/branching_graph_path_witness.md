@@ -1,6 +1,6 @@
 # Finite paths through a two-successor graph
 
-`walk_frame` relates two graph snapshots by equality of their successor cells
+`walk_frame` relates two graph states by equality of their successor cells
 inside `0..n`. Bounded successors keep every recursive step in that range.
 Logical reads are total, so this pure theorem needs no memory permission or
 implicit validity premises. Both directions of branching are checked.

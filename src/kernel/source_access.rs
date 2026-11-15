@@ -182,7 +182,7 @@ enum ReferenceObservation {
     Read {
         source: Arc<ReferenceAccessSourceId>,
         pointer: Pointer,
-        snapshot: MemorySnapshotIdentity,
+        retained_state: MemoryStateIdentity,
         value_type: ProgramType,
     },
     Borrow(ReferenceBorrowObservation),
@@ -197,7 +197,7 @@ impl ReferenceObservationSource {
         Self(Some(Arc::new(ReferenceObservation::Read {
             source,
             pointer,
-            snapshot: MemorySnapshotIdentity::of(memory),
+            retained_state: MemoryStateIdentity::of(memory),
             value_type,
         })))
     }
@@ -210,9 +210,9 @@ impl ReferenceObservationSource {
     }
     pub(super) fn matches_proposition(&self, proposition: &Proposition) -> bool {
         self.0.as_deref().is_none_or(|observation| match observation {
-            ReferenceObservation::Read { source: _, pointer: expected, snapshot, value_type: expected_type } => matches!(proposition,
+            ReferenceObservation::Read { source: _, pointer: expected, retained_state, value_type: expected_type } => matches!(proposition,
                 Proposition::MemoryReadDefined { memory, pointer, value_type }
-                if *snapshot == MemorySnapshotIdentity::of(memory) && expected == pointer && expected_type == value_type),
+                if *retained_state == MemoryStateIdentity::of(memory) && expected == pointer && expected_type == value_type),
             ReferenceObservation::Borrow(birth) => matches!(proposition,
                 Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true)
                 if left.as_ref() == &birth.pointer && right.as_ref() == &birth.pointer),

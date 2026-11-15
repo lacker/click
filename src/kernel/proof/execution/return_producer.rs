@@ -110,7 +110,7 @@ impl ReturnRewriteProducer {
         }
         // The ordinary proof operation owns these root facts. Retain its
         // checked delta instead of trying to prove its premises a second time
-        // against the earlier C snapshot (which lacks later observations).
+        // against the earlier C state (which lacks later observations).
         let delta = base
             .introduced_since(&self.base)
             .ok_or("return proof has a different fact lineage")?;

@@ -36,7 +36,7 @@ pub(super) enum Mode {
     /// Exact Click spelling, refusing unnamed operands.
     #[cfg_attr(not(test), allow(dead_code))]
     Exact,
-    /// Exact spelling that also refuses every read, whose snapshot an
+    /// Exact spelling that also refuses every read, whose state an
     /// unqualified source spelling would hide.
     ExactIdentity,
 }
@@ -188,7 +188,7 @@ fn cast(type_name: &str, value: Spelled) -> Spelled {
     spelled(format!("{} as {target}", operand(value, CAST)), CAST)
 }
 
-pub(super) fn display(proposition: &Proposition, labels: &mut SnapshotLabels) -> Option<String> {
+pub(super) fn display(proposition: &Proposition, labels: &mut MemoryStateLabels) -> Option<String> {
     printer(labels, Mode::ExactIdentity)
         .proposition(proposition, 0)
         .map(|value| value.text)
@@ -196,7 +196,7 @@ pub(super) fn display(proposition: &Proposition, labels: &mut SnapshotLabels) ->
 }
 
 /// The total source spelling of one proposition.
-pub(super) fn source(proposition: &Proposition, labels: &mut SnapshotLabels) -> String {
+pub(super) fn source(proposition: &Proposition, labels: &mut MemoryStateLabels) -> String {
     bounded(
         printer(labels, Mode::Source)
             .proposition(proposition, 0)
@@ -204,7 +204,7 @@ pub(super) fn source(proposition: &Proposition, labels: &mut SnapshotLabels) -> 
     )
 }
 
-pub(super) fn source_resource_fact(fact: &ResourceFact, labels: &mut SnapshotLabels) -> String {
+pub(super) fn source_resource_fact(fact: &ResourceFact, labels: &mut MemoryStateLabels) -> String {
     bounded(printer(labels, Mode::Source).resource_fact(fact))
 }
 
@@ -220,21 +220,21 @@ pub(super) fn hidden_record_fields(names: &[&str]) -> Option<()> {
 pub(super) fn source_hidden_record(
     schema: &[(String, crate::kernel::ResourceFieldType)],
     fields: &[AlgebraicValue],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> Option<String> {
     printer(labels, Mode::Source)
         .hidden_record(schema, fields)
         .map(bounded)
 }
 
-pub(super) fn source_resource(resource: &Resource, labels: &mut SnapshotLabels) -> String {
+pub(super) fn source_resource(resource: &Resource, labels: &mut MemoryStateLabels) -> String {
     bounded(printer(labels, Mode::Source).resource(resource))
 }
 
 /// The total source spelling of one C value.
 pub(super) fn source_value(
     value: &crate::kernel::ProgramValue,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     bounded(
         printer(labels, Mode::Source)
@@ -244,7 +244,7 @@ pub(super) fn source_value(
 }
 
 /// The total source spelling of one exact-arithmetic term.
-pub(super) fn integer(value: &IntegerTerm, labels: &mut SnapshotLabels) -> String {
+pub(super) fn integer(value: &IntegerTerm, labels: &mut MemoryStateLabels) -> String {
     bounded(
         printer(labels, Mode::Source)
             .integer(value, 0)
@@ -253,7 +253,7 @@ pub(super) fn integer(value: &IntegerTerm, labels: &mut SnapshotLabels) -> Strin
 }
 
 #[cfg(test)]
-pub(super) fn render(proposition: &Proposition, labels: &mut SnapshotLabels) -> Option<String> {
+pub(super) fn render(proposition: &Proposition, labels: &mut MemoryStateLabels) -> Option<String> {
     printer(labels, Mode::Exact)
         .proposition(proposition, 0)
         .map(|value| value.text)
@@ -274,7 +274,7 @@ fn bounded(mut text: String) -> String {
     text
 }
 
-fn printer(labels: &mut SnapshotLabels, mode: Mode) -> Printer<'_> {
+fn printer(labels: &mut MemoryStateLabels, mode: Mode) -> Printer<'_> {
     Printer {
         labels,
         mode,
@@ -285,7 +285,7 @@ fn printer(labels: &mut SnapshotLabels, mode: Mode) -> Printer<'_> {
 }
 
 struct Printer<'a> {
-    labels: &'a mut SnapshotLabels,
+    labels: &'a mut MemoryStateLabels,
     mode: Mode,
     remaining: usize,
     /// Names of the binders in scope, innermost last.
@@ -524,7 +524,7 @@ impl Printer<'_> {
                         // The logical resource-state argument is implicit.
                         Term::ExecutionState(_) => continue,
                         // Each array argument is a (memory, pointer) pair.
-                        // Its snapshot is part of the argument's identity.
+                        // Its state is part of the argument's identity.
                         Term::Memory(memory) => {
                             let pointer @ Term::ProgramValue(crate::kernel::ProgramValue::Pointer(
                                 _,
@@ -789,7 +789,7 @@ impl Printer<'_> {
                     if left != right && **left != Pointer::null() && **right != Pointer::null() {
                         return None;
                     }
-                    let pointer = |p: &Pointer, labels: &SnapshotLabels| {
+                    let pointer = |p: &Pointer, labels: &MemoryStateLabels| {
                         if p == &Pointer::null() {
                             Some("0".to_owned())
                         } else {
@@ -1970,7 +1970,7 @@ impl Printer<'_> {
         if self.before_return
             && self
                 .labels
-                .snapshot_pointer_name(pointer)
+                .state_pointer_name(pointer)
                 .is_some_and(names_result)
         {
             return Some(atom(self.labels.placeholder_pointer(pointer)));
@@ -1983,7 +1983,7 @@ impl Printer<'_> {
         }
         // An address inside an allocation a local held is spelled from that
         // local: `(char *)at(region(2).exit, p) + k * 4`.
-        if self.labels.snapshot_pointer_name(pointer).is_none()
+        if self.labels.state_pointer_name(pointer).is_none()
             && pointer.offset != PointerOffsetTerm::Constant(0)
             && let Some(base) = self.labels.block_base_name(pointer).map(str::to_owned)
             && base.len() <= 256
@@ -2318,8 +2318,8 @@ impl Printer<'_> {
                 if !text.starts_with('…') {
                     return text;
                 }
-                // A base only a recorded snapshot names, a call's result.
-                let (parameters, arguments) = self.labels.naming_with_snapshot_values();
+                // A base only a recorded state names, a call's result.
+                let (parameters, arguments) = self.labels.naming_with_state_values();
                 crate::surface::diagnostics::describe_memory_range(
                     range,
                     ParameterBinding::new(&parameters, &arguments),
@@ -2952,7 +2952,7 @@ mod tests {
                 Variable(8),
             ))),
         ];
-        let mut labels = SnapshotLabels::naming(ParameterBinding::new(&parameters, &arguments));
+        let mut labels = MemoryStateLabels::naming(ParameterBinding::new(&parameters, &arguments));
         for (value, expected) in [
             (
                 -2147483648.0_f64,
@@ -3006,7 +3006,7 @@ mod tests {
 
     #[test]
     fn named_pure_function_facts_keep_their_surface_arguments() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(7), "r".into());
         let application = crate::kernel::SharedPureApplication::intern(
             "size".into(),
@@ -3023,7 +3023,7 @@ mod tests {
 
     #[test]
     fn unnamed_operands_keep_their_context_without_becoming_exact_citations() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         for depth in [0, 16, 64, 256] {
             let mut term = MachineTerm::Variable(Variable(999));
             for _ in 0..depth {
@@ -3049,7 +3049,7 @@ mod tests {
 
     #[test]
     fn source_facts_share_placeholder_identities_within_one_report() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         let first = equality(MachineTerm::Variable(Variable(998)));
         let second = equality(MachineTerm::Variable(Variable(999)));
         assert_eq!(source(&first, &mut labels), "<unnamed A> == 0");
@@ -3064,7 +3064,7 @@ mod tests {
             "size",
             ProgramValue::UInt64(MachineTerm::Variable(Variable(94))),
         );
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &state);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &state);
         let value = MachineTerm::legacy_cast(
             MachineCastSpelling::UInt32From64,
             Box::new(MachineTerm::Variable(Variable(94))),
@@ -3087,7 +3087,7 @@ mod tests {
 
     #[test]
     fn source_constants_print_in_the_type_of_their_comparison() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(7), "a".into());
         labels.source_name(Variable(8), "u".into());
         labels.source_types.insert(Variable(8), ProgramType::UInt32);
@@ -3132,7 +3132,7 @@ mod tests {
             (MachineIntegerType::Int64, ProgramType::Int64),
             (MachineIntegerType::UInt64, ProgramType::UInt64),
         ] {
-            let mut labels = SnapshotLabels::default();
+            let mut labels = MemoryStateLabels::default();
             labels.source_name(Variable(7), "a".into());
             labels.source_name(Variable(8), "b".into());
             labels.source_types.insert(Variable(7), source_type);
@@ -3172,7 +3172,7 @@ mod tests {
 
     #[test]
     fn source_spelling_uses_minimal_parentheses_and_click_connectives() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(7), "a".into());
         labels.source_name(Variable(8), "b".into());
         let a = || Box::new(MachineTerm::Variable(Variable(7)));
@@ -3212,7 +3212,7 @@ mod tests {
     }
 
     #[test]
-    fn predicate_array_arguments_keep_their_individual_snapshots() {
+    fn predicate_array_arguments_keep_their_individual_states() {
         let pointer = ProgramValue::Pointer(PointerValue::new(
             Pointer {
                 block: PointerBlock::Concrete("global:cells".into()),
@@ -3229,7 +3229,7 @@ mod tests {
         let current = before
             .clone()
             .with_memory(Memory::new().with_block("global:cells", 16));
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &current);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &current);
         labels.source_state(&before, ENTRY_POINT.into());
         labels.source_state(&copied, "copied".into());
         let predicate = |memories: [&Memory; 3]| Proposition::Predicate {
@@ -3270,7 +3270,7 @@ mod tests {
             .with_local("m", cell("m"))
             .with_local("p", cell("p"))
             .with_memory(Memory::new().with_block("global:m", 4));
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &state);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &state);
         let fact = |name: String, arguments: Vec<Term>| Proposition::Predicate { name, arguments };
         let held = fact(
             crate::kernel::MUTEX_HELD_PREDICATE_NAME.into(),
@@ -3318,7 +3318,7 @@ mod tests {
             crate::kernel::C_CONTRACT_RESULT_NAME,
             ProgramValue::Int32(MachineTerm::Variable(Variable(7))),
         );
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &state);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &state);
         assert_eq!(
             source(&equality(MachineTerm::Variable(Variable(7))), &mut labels),
             "result == 0"
@@ -3341,7 +3341,7 @@ mod tests {
         let after = before
             .clone()
             .with_memory(Memory::new().with_block("global:cells", 8));
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &after);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &after);
         labels.source_state(&before, "pre".into());
         let load = |memory: &Memory, kind| {
             equality(MachineTerm::MemoryLoad(
@@ -3386,7 +3386,7 @@ mod tests {
         };
         let before = ExecutionState::new().with_memory(Memory::new().with_block("global:a", 4));
         let after = ExecutionState::new().with_memory(Memory::new().with_block("global:a", 8));
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &after);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &after);
         labels.source_state(&before, "pre".into());
         labels.source_result(&ProgramValue::Int32(MachineTerm::Variable(index)));
         // An allocation no local holds is the returned pointer.
@@ -3423,7 +3423,7 @@ mod tests {
             .with_local("i", ProgramValue::Int32(MachineTerm::Variable(Variable(8))));
         let (names, values) = crate::surface::diagnostics::local_naming_tables(&entry);
         let mut labels =
-            SnapshotLabels::with_state(ParameterBinding::new(&names, &values), &current);
+            MemoryStateLabels::with_state(ParameterBinding::new(&names, &values), &current);
         assert_eq!(
             render(&equality(MachineTerm::Variable(Variable(7))), &mut labels),
             Some("old(i) == 0".into())
@@ -3444,7 +3444,7 @@ mod resource_tests {
     };
 
     #[test]
-    fn resource_arguments_keep_the_same_read_snapshots_as_proposition_operands() {
+    fn resource_arguments_keep_the_same_read_states_as_proposition_operands() {
         let pointer = Pointer {
             block: PointerBlock::Concrete("global:cells".into()),
             offset: PointerOffsetTerm::Constant(0),
@@ -3471,7 +3471,7 @@ mod resource_tests {
                 ))],
             )
         };
-        let mut labels = SnapshotLabels::with_state(ParameterBinding::default(), &after);
+        let mut labels = MemoryStateLabels::with_state(ParameterBinding::default(), &after);
         labels.source_state(&before, "pre".into());
         assert_eq!(
             source_resource_fact(&resource(before.memory()), &mut labels),
@@ -3510,7 +3510,7 @@ mod resource_tests {
             })]
             .into(),
         };
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(987551), "left_model".into());
         labels.source_name(Variable(987552), "right_model".into());
         let left = ResourceFact::own_quantity(resource(987551), MachineTerm::constant(2));

@@ -1,4 +1,4 @@
-//! A snapshot's cell map: concrete cells plus symbolic runs of seeded cells.
+//! A state's cell map: concrete cells plus symbolic runs of seeded cells.
 //!
 //! A contract that holds a constant range, `views a[0..N]`, makes every
 //! element of it a known cell at entry: the cell at `a + i` holds the load of
@@ -57,8 +57,8 @@
 //! depend on the order its runs were added in.
 use super::alias_candidates::BlockKeyed;
 use super::{
-    AliasCandidates, Pointer, PointerBlock, PointerOffsetTerm, ProgramType, ProgramValue,
-    SharedMemory, SnapshotMap, SnapshotMapChange, SnapshotSet,
+    AliasCandidates, HashedOrdMap, HashedOrdMapChange, HashedOrdSet, Pointer, PointerBlock,
+    PointerOffsetTerm, ProgramType, ProgramValue, SharedMemory,
 };
 use crate::kernel::primitives::LoadKind;
 use crate::kernel::primitives::MachineTerm;
@@ -81,7 +81,7 @@ fn native_cell<'a>(
 /// Disjoint, non-adjacent, ascending half-open index intervals.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct IndexIntervals {
-    intervals: SnapshotSet<(u32, u32)>,
+    intervals: HashedOrdSet<(u32, u32)>,
 }
 
 impl IndexIntervals {
@@ -269,7 +269,7 @@ pub(crate) enum RunValueMode {
     /// so two constant runs over the same slots are one run exactly when
     /// they hold one value.
     Constant(ProgramValue),
-    /// An immutable snapshot copy. Slot i reads source_base + i * stride,
+    /// An immutable state copy. Slot i reads source_base + i * stride,
     /// rather than its destination address. Used only for scalar elements.
     Copy { source_base: Pointer },
 }
@@ -791,13 +791,15 @@ pub(crate) fn cell_run_value(element_type: ProgramType, load: MachineTerm) -> Pr
                 _ => None,
             };
             let value = Pointer::loaded(&load).expect("a pointer cell's canonical read is a load");
-            if let Some(MachineTerm::MemoryLoad(snapshot, address, LoadKind::Int32)) = definition {
+            if let Some(MachineTerm::MemoryLoad(retained_state, address, LoadKind::Int32)) =
+                definition
+            {
                 crate::kernel::equality_graph::EqualityGraph::default()
-                    .register_pointer_read_definition(&value, &snapshot, &address);
+                    .register_pointer_read_definition(&value, &retained_state, &address);
                 return ProgramValue::Pointer(crate::kernel::PointerValue::from_read(
                     value,
                     program_type,
-                    &snapshot,
+                    &retained_state,
                     &address,
                 ));
             }
@@ -957,12 +959,12 @@ pub(crate) struct DroppedRunSlots {
     pub(crate) elements: IndexIntervals,
 }
 
-/// A snapshot's cells: the concrete map and the seeded runs, in canonical
+/// A state's cells: the concrete map and the seeded runs, in canonical
 /// form, the runs indexed by [`RunKey`] (see the module comment).
 #[derive(Default)]
 pub(crate) struct CellStore {
-    concrete: SnapshotMap<Pointer, StoredMemoryValue>,
-    runs: SnapshotMap<RunKey, CellRun>,
+    concrete: HashedOrdMap<Pointer, StoredMemoryValue>,
+    runs: HashedOrdMap<RunKey, CellRun>,
     /// The held runs, by the bytes from their first slot to their last on
     /// their line ([`CoverLine`]): each line's covered bytes cut into
     /// disjoint segments, keyed by line and first byte, each naming the runs
@@ -975,7 +977,7 @@ pub(crate) struct CellStore {
     /// The logical cell map, built on first need when there are runs. A
     /// single-cell mutation updates it in place; any other resets it. A
     /// function of the two maps above.
-    logical: OnceLock<SnapshotMap<Pointer, StoredMemoryValue>>,
+    logical: OnceLock<HashedOrdMap<Pointer, StoredMemoryValue>>,
     ordered_index: std::sync::Mutex<Option<OrderedIndexCache>>,
     pointer_reachable_index: std::sync::Mutex<Option<PointerReachableIndex>>,
     parameter_partition_index: std::sync::Mutex<Option<ParameterPartitionIndex>>,
@@ -983,15 +985,15 @@ pub(crate) struct CellStore {
 
 #[derive(Clone)]
 struct ParameterPartitionIndex {
-    cells: SnapshotMap<Pointer, StoredMemoryValue>,
-    runs: SnapshotMap<RunKey, CellRun>,
+    cells: HashedOrdMap<Pointer, StoredMemoryValue>,
+    runs: HashedOrdMap<RunKey, CellRun>,
     known_runs: crate::persistent::PersistentMap<Pointer, std::sync::Arc<Vec<RunKey>>>,
-    unknown_runs: SnapshotMap<RunKey, ()>,
-    run_bases: SnapshotMap<RunKey, Pointer>,
+    unknown_runs: HashedOrdMap<RunKey, ()>,
+    run_bases: HashedOrdMap<RunKey, Pointer>,
     resources: crate::kernel::ResourceContext,
-    known: SnapshotMap<(Pointer, Pointer), ()>,
-    unknown: SnapshotMap<Pointer, ()>,
-    bases: SnapshotMap<Pointer, Pointer>,
+    known: HashedOrdMap<(Pointer, Pointer), ()>,
+    unknown: HashedOrdMap<Pointer, ()>,
+    bases: HashedOrdMap<Pointer, Pointer>,
 }
 
 /// The concrete cells a pointer value can reach, with their values: every
@@ -1002,22 +1004,22 @@ struct ParameterPartitionIndex {
 /// rebuilds it.
 #[derive(Clone)]
 struct PointerReachableIndex {
-    cells: SnapshotMap<Pointer, StoredMemoryValue>,
+    cells: HashedOrdMap<Pointer, StoredMemoryValue>,
     generation: u64,
-    reachable: SnapshotMap<Pointer, StoredMemoryValue>,
-    external: SnapshotMap<Pointer, StoredMemoryValue>,
+    reachable: HashedOrdMap<Pointer, StoredMemoryValue>,
+    external: HashedOrdMap<Pointer, StoredMemoryValue>,
 }
 
 #[derive(Clone)]
 struct OrderedIndexCache {
-    cells: SnapshotMap<Pointer, StoredMemoryValue>,
+    cells: HashedOrdMap<Pointer, StoredMemoryValue>,
     chains: crate::kernel::assumptions::variable_chains::VariableChains,
     block: PointerBlock,
     base: PointerOffsetTerm,
     stride: i64,
     root: Variable,
-    known: SnapshotMap<usize, Pointer>,
-    unknown: SnapshotMap<Pointer, ()>,
+    known: HashedOrdMap<usize, Pointer>,
+    unknown: HashedOrdMap<Pointer, ()>,
 }
 
 impl Clone for CellStore {
@@ -1164,9 +1166,9 @@ impl CellStore {
             );
             for change in index.cells.diff(&self.concrete) {
                 let key = match change {
-                    SnapshotMapChange::Added(key)
-                    | SnapshotMapChange::Changed(key)
-                    | SnapshotMapChange::Removed(key) => key,
+                    HashedOrdMapChange::Added(key)
+                    | HashedOrdMapChange::Changed(key)
+                    | HashedOrdMapChange::Removed(key) => key,
                 };
                 if key.block == PointerBlock::ExternalArgument {
                     changes.insert(key.clone(), self.concrete.contains_key(key));
@@ -1177,11 +1179,11 @@ impl CellStore {
                 .flat_owned_memory_ranges()
                 .diff(resources.flat_owned_memory_ranges())
             {
-                let added = matches!(change, SnapshotMapChange::Added(_));
+                let added = matches!(change, HashedOrdMapChange::Added(_));
                 let range = match change {
-                    SnapshotMapChange::Added(range)
-                    | SnapshotMapChange::Changed(range)
-                    | SnapshotMapChange::Removed(range) => range,
+                    HashedOrdMapChange::Added(range)
+                    | HashedOrdMapChange::Changed(range)
+                    | HashedOrdMapChange::Removed(range) => range,
                 };
                 if let Some(base) =
                     crate::kernel::assumptions::parameter_partition_root(range.base())
@@ -1224,11 +1226,11 @@ impl CellStore {
             runs: self.runs.clone(),
             known_runs: Default::default(),
             unknown_runs: Default::default(),
-            run_bases: SnapshotMap::new(),
+            run_bases: HashedOrdMap::new(),
             resources: resources.clone(),
-            known: SnapshotMap::new(),
-            unknown: SnapshotMap::new(),
-            bases: SnapshotMap::new(),
+            known: HashedOrdMap::new(),
+            unknown: HashedOrdMap::new(),
+            bases: HashedOrdMap::new(),
         });
         for (key, present) in changes {
             crate::instrumentation::record_deterministic_work(1);
@@ -1390,7 +1392,7 @@ impl CellStore {
     /// lineage. Costs the cells changed since that lineage last asked.
     pub(in crate::kernel) fn caught_up_pointer_reachable(
         &self,
-    ) -> SnapshotMap<Pointer, StoredMemoryValue> {
+    ) -> HashedOrdMap<Pointer, StoredMemoryValue> {
         self.caught_up_load_reachable(false)
     }
 
@@ -1398,29 +1400,29 @@ impl CellStore {
     /// Maintain that projection beside the general reachable map by delta.
     pub(in crate::kernel) fn caught_up_external_reachable(
         &self,
-    ) -> SnapshotMap<Pointer, StoredMemoryValue> {
+    ) -> HashedOrdMap<Pointer, StoredMemoryValue> {
         self.caught_up_load_reachable(true)
     }
 
-    fn caught_up_load_reachable(&self, external: bool) -> SnapshotMap<Pointer, StoredMemoryValue> {
+    fn caught_up_load_reachable(&self, external: bool) -> HashedOrdMap<Pointer, StoredMemoryValue> {
         let generation = super::memory_state::never_address_taken_generation();
         let mut guard = self.pointer_reachable_index.lock().unwrap();
         let mut index = guard
             .take()
             .filter(|index| index.generation == generation)
             .unwrap_or_else(|| PointerReachableIndex {
-                cells: SnapshotMap::new(),
+                cells: HashedOrdMap::new(),
                 generation,
-                reachable: SnapshotMap::new(),
-                external: SnapshotMap::new(),
+                reachable: HashedOrdMap::new(),
+                external: HashedOrdMap::new(),
             });
         let changes = index
             .cells
             .diff(&self.concrete)
             .map(|change| match change {
-                super::persistent_map::SnapshotMapChange::Added(key)
-                | super::persistent_map::SnapshotMapChange::Changed(key) => key.clone(),
-                super::persistent_map::SnapshotMapChange::Removed(key) => key.clone(),
+                super::persistent_map::HashedOrdMapChange::Added(key)
+                | super::persistent_map::HashedOrdMapChange::Changed(key) => key.clone(),
+                super::persistent_map::HashedOrdMapChange::Removed(key) => key.clone(),
             })
             .collect::<Vec<_>>();
         for key in changes {
@@ -1511,7 +1513,7 @@ impl CellStore {
             .collect::<Vec<_>>();
         // Reachable is a subset of concrete. Equal lengths and no rejected
         // entries mean this projection changes nothing. Keep the original
-        // persistent root: rebuilding an equal map makes snapshot interning
+        // persistent root: rebuilding an equal map makes state interning
         // compare every cell again for each fresh unresolved address.
         if rejected.is_empty() && reachable.len() == self.concrete.len() {
             return Some(visited);
@@ -1580,13 +1582,13 @@ impl CellStore {
         if let Some(previous) = &index {
             for change in previous.cells.diff(&self.concrete) {
                 match change {
-                    super::persistent_map::SnapshotMapChange::Added(key) => {
+                    super::persistent_map::HashedOrdMapChange::Added(key) => {
                         changes.push((key.clone(), true))
                     }
-                    super::persistent_map::SnapshotMapChange::Removed(key) => {
+                    super::persistent_map::HashedOrdMapChange::Removed(key) => {
                         changes.push((key.clone(), false))
                     }
-                    super::persistent_map::SnapshotMapChange::Changed(_) => {}
+                    super::persistent_map::HashedOrdMapChange::Changed(_) => {}
                 }
             }
         } else {
@@ -1598,8 +1600,8 @@ impl CellStore {
                 base: base.clone(),
                 stride,
                 root: span.root,
-                known: SnapshotMap::new(),
-                unknown: SnapshotMap::new(),
+                known: HashedOrdMap::new(),
+                unknown: HashedOrdMap::new(),
             });
         }
         let mut index = index.unwrap();
@@ -1671,7 +1673,7 @@ impl CellStore {
 
     /// The concrete cells alone, without any run: what a caller that only
     /// ever asks about cells outside every run may read directly.
-    pub(crate) fn concrete(&self) -> &SnapshotMap<Pointer, StoredMemoryValue> {
+    pub(crate) fn concrete(&self) -> &HashedOrdMap<Pointer, StoredMemoryValue> {
         &self.concrete
     }
 
@@ -1688,7 +1690,7 @@ impl CellStore {
 
     /// The runs on which the two stores' run maps differ, as `(held here,
     /// held in other)` per differing key, ascending; see
-    /// [`SnapshotMap::diff`], which skips shared subtrees and charges one
+    /// [`HashedOrdMap::diff`], which skips shared subtrees and charges one
     /// unit per difference.
     pub(crate) fn run_diff<'a>(
         &'a self,
@@ -1995,7 +1997,7 @@ impl CellStore {
     /// The whole cell map, exactly as per-cell seeding would have stored it.
     /// O(1) without runs; with runs it is built once per store, at a cost of
     /// every live slot, and kept up to date through single-cell mutations.
-    pub(crate) fn logical(&self) -> &SnapshotMap<Pointer, StoredMemoryValue> {
+    pub(crate) fn logical(&self) -> &HashedOrdMap<Pointer, StoredMemoryValue> {
         if self.runs.is_empty() {
             return &self.concrete;
         }
@@ -2156,17 +2158,17 @@ impl CellStore {
         let mut holes_differ = false;
         for change in self.runs.diff(&other.runs) {
             match change {
-                SnapshotMapChange::Removed(key) => {
+                HashedOrdMapChange::Removed(key) => {
                     if observable(self.runs.get(key).expect("a removed key is held")) {
                         return None;
                     }
                 }
-                SnapshotMapChange::Added(key) => {
+                HashedOrdMapChange::Added(key) => {
                     if observable(other.runs.get(key).expect("an added key is held")) {
                         return None;
                     }
                 }
-                SnapshotMapChange::Changed(key) => {
+                HashedOrdMapChange::Changed(key) => {
                     holes_differ |= observable(self.runs.get(key).expect("a changed key is held"));
                 }
             }
@@ -2283,13 +2285,13 @@ impl CellStore {
         self.logical().range(range).map(native_cell)
     }
 
-    /// The entries on which the two stores differ; see [`SnapshotMap::diff`].
+    /// The entries on which the two stores differ; see [`HashedOrdMap::diff`].
     /// Two stores over the same runs differ exactly where their concrete maps
     /// do, by the canonical form.
     pub(crate) fn diff<'a>(
         &'a self,
         other: &'a Self,
-    ) -> impl Iterator<Item = SnapshotMapChange<'a, Pointer>> + 'a {
+    ) -> impl Iterator<Item = HashedOrdMapChange<'a, Pointer>> + 'a {
         if self.runs == other.runs {
             self.concrete.diff(&other.concrete)
         } else {
@@ -2310,11 +2312,12 @@ impl CellStore {
                 .concrete
                 .diff(&self.concrete)
                 .filter_map(|change| match change {
-                    SnapshotMapChange::Added(pointer) | SnapshotMapChange::Changed(pointer) => self
-                        .concrete
-                        .get(pointer)
-                        .map(|value| (pointer, value.native())),
-                    SnapshotMapChange::Removed(_) => None,
+                    HashedOrdMapChange::Added(pointer) | HashedOrdMapChange::Changed(pointer) => {
+                        self.concrete
+                            .get(pointer)
+                            .map(|value| (pointer, value.native()))
+                    }
+                    HashedOrdMapChange::Removed(_) => None,
                 })
                 .collect(),
             None => self.concrete.iter().map(native_cell).collect(),
@@ -2374,15 +2377,15 @@ impl CellStore {
             std::collections::BTreeMap::<&PointerBlock, usize>::new();
         for change in self.runs.diff(&other.runs) {
             let (run, slots) = match change {
-                SnapshotMapChange::Removed(key) => {
+                HashedOrdMapChange::Removed(key) => {
                     let run = self.runs.get(key).expect("a removed key is held");
                     (run, run.live_intervals())
                 }
-                SnapshotMapChange::Added(key) => {
+                HashedOrdMapChange::Added(key) => {
                     let run = other.runs.get(key).expect("an added key is held");
                     (run, run.live_intervals())
                 }
-                SnapshotMapChange::Changed(key) => {
+                HashedOrdMapChange::Changed(key) => {
                     let left = self.runs.get(key).expect("a changed key is held");
                     let right = other.runs.get(key).expect("a changed key is held");
                     let slots = left
@@ -2459,7 +2462,7 @@ impl CellStore {
         differing.pointers.is_empty() && differing.run_slots.is_empty()
     }
 
-    /// See [`SnapshotMap::eq_relative_to`].
+    /// See [`HashedOrdMap::eq_relative_to`].
     pub(crate) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
         self.runs.eq_relative_to(&other.runs, &base.runs)
             && self
@@ -2467,7 +2470,7 @@ impl CellStore {
                 .eq_relative_to(&other.concrete, &base.concrete)
     }
 
-    /// See [`SnapshotMap::is_without`], over the logical maps: `self` is
+    /// See [`HashedOrdMap::is_without`], over the logical maps: `self` is
     /// `before` with exactly the cells at `removed` gone, which is what the
     /// two stores' differing pointers say when each of them is absent here.
     pub(crate) fn is_without(&self, before: &Self, removed: &[&Pointer]) -> bool {
@@ -2586,10 +2589,10 @@ impl CellStore {
         for other in others {
             for change in held.concrete.diff(&other.concrete) {
                 match change {
-                    SnapshotMapChange::Added(pointer) => {
+                    HashedOrdMapChange::Added(pointer) => {
                         blocks.insert(pointer.block.clone());
                     }
-                    SnapshotMapChange::Removed(pointer) | SnapshotMapChange::Changed(pointer) => {
+                    HashedOrdMapChange::Removed(pointer) | HashedOrdMapChange::Changed(pointer) => {
                         cells.insert(pointer.clone());
                     }
                 }
@@ -3400,7 +3403,7 @@ mod tests {
     }
 
     // Exercise every mutation and lookup in the deterministic streams. Check
-    // adjacent snapshots every step and all retained snapshots at doubling
+    // adjacent states every step and all retained states at doubling
     // checkpoints and the final step, rather than every historical pair.
     #[test]
     #[ignore = "nightly: model-based mutation and retained-history regression"]
@@ -3535,7 +3538,7 @@ mod tests {
                 }
                 // Check every transition, and the full retained history at
                 // doubling checkpoints and at the final (deepest) state.
-                // Keep every snapshot alive so copy-on-write sharing is unchanged.
+                // Keep every state alive so copy-on-write sharing is unchanged.
                 let compare_all = (step + 1).is_power_of_two() || step + 1 == 60;
                 let comparisons = if compare_all {
                     &history[..]
@@ -3674,7 +3677,7 @@ mod tests {
     /// `Memory::same_contents_as` looks through the cell cache's layout and
     /// through nothing else. A block that is read-only on one side, a block
     /// one side lacks, an ended automatic object, and a forget mark (a
-    /// snapshot identity: the marked memory is not known to be the one it
+    /// state identity: the marked memory is not known to be the one it
     /// forgot from) each keep two memories with the same cells apart.
     #[test]
     fn same_contents_as_keeps_every_other_component_exact() {

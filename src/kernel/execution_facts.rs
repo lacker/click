@@ -704,7 +704,7 @@ mod sealed {
 
 /// Read evidence without requiring contiguous storage. Only the kernel's
 /// storage adapters implement this trait, keeping borrowed traversal and
-/// persistent snapshots consistent.
+/// persistent states consistent.
 pub trait ExecutionFactSource: sealed::Sealed {
     fn fact_iter(&self) -> impl DoubleEndedIterator<Item = &ExecutionPureFact> + ExactSizeIterator;
     fn persistent_facts(&self) -> ExecutionFacts {

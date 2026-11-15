@@ -2,7 +2,7 @@
 
 `rewrite` uses one exact pointer equality, including when a field load names
 the pointer with a constant byte displacement. The load keeps its memory
-snapshot. The matched resource's `kid` and the C field `p->kid` have different
+state. The matched resource's `kid` and the C field `p->kid` have different
 symbolic block spellings, so this exercises more than offset equality within
 one block.
 

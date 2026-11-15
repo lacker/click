@@ -167,13 +167,13 @@ All compiler-read inputs, including unused modules and included data, must
 appear exactly once in `files`. rustc dep-info checks that closure. A mismatch lists missing entries in
 `crate.files` and extra configured entries, with bounded lists. If a module or
 include is omitted, rustc may fail before emitting dep-info because only the
-configured files are copied into the private compiler snapshot. That error
+configured files are copied into the private compiler state. That error
 retains rustc's filename/module diagnostic and explains how to check
-`crate.files`; it never expands the compiler snapshot implicitly. Files must
+`crate.files`; it never expands the compiler state implicitly. Files must
 be regular, use normalized relative paths, and stay inside the unit root without symlinks. Environment-dependent source macros are rejected.
 
 
-Extraction compiles a private snapshot of those bytes. The aggregate source
+Extraction compiles a private state of those bytes. The aggregate source
 hash covers every input, and configuration hashes bind the root, edition,
 features, and entry points. Ordinary loading rechecks the full closure
 without executing a compiler. Crate artifacts use the versioned
@@ -1152,7 +1152,7 @@ byte offsets. Array storage must fit the current signed-word memory model
 
 Compiler storage starts for local scalar arrays create checked fresh backing at
 that point, including inside symbolic iterator loops. Plain record storage
-starts also restore backing for array-field snapshot copies. The loop contract
+starts also restore backing for array-field state copies. The loop contract
 need not list compiler-created local arrays as input resources. Re-entry checks
 live loans and replaces the previous object's identity; initialization and
 complete source/destination copy authority remain required.
@@ -2055,3 +2055,9 @@ argument is refused. This uses the same call-ranked expression measure for
 unchanged `countdown(n - 1)` functions at both widths;
 `tests/rust_import.rs::rust_recursive_countdown_refuses_unchanged_argument`
 keeps the negative control.
+
+The importer profile retains historical opaque identity tags in its manifest
+and existing project locks. Those tags are compatibility data. Renaming
+verifier implementation types or documentation does not change the frontend semantic profile. Program
+source files remain covered by their import-lock digests and require an
+explicit lock refresh when changed.

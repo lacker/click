@@ -235,7 +235,7 @@ fn cells_definition() -> Vec<CompositeResourceDefinition> {
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     vec![CompositeResourceDefinition::new(
@@ -265,7 +265,7 @@ mod scaling_tests {
 }
 
 #[test]
-fn iterated_element_selection_checks_pointer_reads_across_snapshots() {
+fn iterated_element_selection_checks_pointer_reads_across_states() {
     let source = Pointer {
         block: "iterated-pointer-slot".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -289,7 +289,7 @@ fn iterated_element_selection_checks_pointer_reads_across_snapshots() {
     let current_base = read(&after, &source);
     assert_ne!(held_base, current_base);
     let iterated = IteratedMemory::new(
-        "snapshot-cells",
+        "retained_state-cells",
         held_base,
         4,
         1,

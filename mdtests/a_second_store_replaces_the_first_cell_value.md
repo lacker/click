@@ -1,6 +1,6 @@
 # a cell fact from after one store does not survive the next store to it
 
-Each snapshot names its own read of a cell, so the value this proof reads after
+Each state names its own read of a cell, so the value this proof reads after
 the first store is not the value it reads after the second. A read that kept one
 identity across both stores would make the stale fact available here.
 

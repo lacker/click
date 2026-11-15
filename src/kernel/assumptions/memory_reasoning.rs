@@ -84,7 +84,7 @@ fn authorized_access_element_length(byte_width: u32, element_width: u32) -> Opti
 /// How many bytes the access at this address reads, for a separation question
 /// whose caller holds only the address.
 ///
-/// The C type at an address does not vary with the snapshot a framing walk
+/// The C type at an address does not vary with the state a framing walk
 /// happens to start from, so the address-keyed half of the record
 /// [`crate::kernel::eval::symbolic_load_value`] writes is the answer, and the
 /// widest scalar stands in where no typed load was ever seen. Over-stating a
@@ -249,7 +249,7 @@ impl PureFactContext {
                 return true;
             }
             // Allocation bookkeeping and local cleanup have one adjacent
-            // entry. Select its fact by snapshot key, without enumerating
+            // entry. Select its fact by state key, without enumerating
             // other facts about this address. The edge check below must prove
             // that cleanup did not retire this cell.
             let current = crate::kernel::intern_memory_ref(memory);
@@ -281,7 +281,7 @@ impl PureFactContext {
                     return true;
                 }
             }
-            // A snapshot bucket is not a premise list. A selected source must
+            // A state bucket is not a premise list. A selected source must
             // retain its type, address, lifetime, and value-preserving edge.
             if facts.len() != 1 {
                 return false;
@@ -457,7 +457,7 @@ impl PureFactContext {
     }
 
     /// Carry a native liveness range, or a checked subrange, through
-    /// memory snapshots. Counts are compared as complete unsigned 64-bit
+    /// memory states. Counts are compared as complete unsigned 64-bit
     /// values; this does not transport byte values. Retirement is checked at
     /// the evidence's address, just as for ordinary read ranges.
     pub(crate) fn proves_native_memory_loadable(
@@ -492,7 +492,7 @@ impl PureFactContext {
         }
         // A count no larger than a 32-bit constant range at this base names
         // bytes inside that range, which the narrow prover carries through
-        // snapshots. It is consulted only when this base indexes such a
+        // states. It is consulted only when this base indexes such a
         // range, so a refusal stays independent of other addresses' facts.
         let narrow_cover = self
             .memory_loadable_exact_candidates_for_base(base)
@@ -671,7 +671,7 @@ impl PureFactContext {
         bytes: &MachineTerm,
     ) -> bool {
         // The loadable prover is the one consumer of the extended DAG
-        // bridging: a loadability fact carrying one memory snapshot must
+        // bridging: a loadability fact carrying one memory state must
         // discharge a load carrying another. Scoping the power here
         // keeps execution pruning and solve planning byte-identical to the
         // pre-arc path (see api.rs).
@@ -853,7 +853,7 @@ impl PureFactContext {
             fact_memory == memory
                 // Stores change cell contents, not whether the surrounding
                 // stack blocks or heap allocations are live. Pointer terms
-                // retain their source snapshot, so a stored-to index field
+                // retain their source state, so a stored-to index field
                 // cannot silently retarget the earlier region.
                 || (fact_memory.blocks.get(&fact_base.block)
                     == memory.blocks.get(&fact_base.block)
@@ -968,8 +968,8 @@ impl PureFactContext {
                     continue;
                 }
                 // Historical proposition facts cannot be concatenated with
-                // each other to manufacture a fact at the current snapshot.
-                // The cross-snapshot case is specifically an earlier prefix
+                // each other to manufacture a fact at the current state.
+                // The cross-state case is specifically an earlier prefix
                 // extended by a cell materialized by the current store.
                 if prefix_fact.is_some()
                     && suffix_fact.is_some()
@@ -1154,7 +1154,7 @@ impl PureFactContext {
     }
 
     /// Callers establish that the source range is available in the relevant
-    /// snapshot before comparing its base and 32-bit byte extent.
+    /// state before comparing its base and 32-bit byte extent.
     fn same_base_and_loadable_extent_match(
         &self,
         range_base: &Pointer,
@@ -1334,7 +1334,7 @@ impl PureFactContext {
     /// (`c == d`) is accepted and claims nothing, matching the empty-range case
     /// in `proves_memory_loadable_inner`. No product is rescaled and no new
     /// byte count is formed: `(d - c) * w` is the goal's own lowered extent.
-    /// The snapshot side condition stays with the caller, which has already
+    /// The state side condition stays with the caller, which has already
     /// established that the assumed range is still available in the goal's
     /// memory.
     ///
@@ -2583,7 +2583,7 @@ impl PureFactContext {
         };
         // Most execution-time separation certificates name the exact ranges
         // being accessed. Resolve those structurally before asking the
-        // snapshot-aware containment prover, which may itself inspect memory
+        // state-aware containment prover, which may itself inspect memory
         // loads and is deliberately the more expensive second phase.
         let mut candidates = self.memory_separation_candidates(&left.block, &right.block);
         let record_candidate = |proposition: &Proposition| {
@@ -2960,7 +2960,7 @@ impl PureFactContext {
     ) -> Option<SharedMachineIntegerTerm> {
         let pointer = &self.pointer_in_block(pointer, &base.block)?;
         // Exact syntax and direct offset arithmetic are authoritative on
-        // their own. Resolve them before snapshot-aware equality: generated
+        // their own. Resolve them before state-aware equality: generated
         // range endpoints commonly retain a literal base plus an index, and
         // sending that shape through memory resolution first recursively
         // compares every nested load in the base expression.
@@ -3162,7 +3162,7 @@ impl PureFactContext {
 
     /// An exact ordering fact whose operands match the queried condition's
     /// operands modulo load variables: facts may write a load atom at
-    /// a recorded snapshot while the query carries the placeholder load or
+    /// a recorded state while the query carries the placeholder load or
     /// the load variable, and all of those are one atom. Bounded by
     /// the exact fact set and term size.
     pub(in crate::kernel) fn exact_ordering_modulo_canonical_atoms(
@@ -4179,7 +4179,7 @@ impl PureFactContext {
         if self.bitvector_terms_equal_for_transport_views(left, right) {
             return true;
         }
-        // Only selected load leaves cross the snapshot machinery's native boundary.
+        // Only selected load leaves cross the state machinery's native boundary.
         let source = |v: MachineOperandView<'_>| {
             v.read_source().map(|s| s.into_owned()).or_else(|| {
                 v.variable()
@@ -5371,9 +5371,9 @@ impl PureFactContext {
     /// Expansion is definitional and runs against no assumptions, so it
     /// cannot re-enter the prover that called it, and its result is a pure
     /// function of the composition and the armed definitions — memoized per
-    /// thread. Composite bodies are evaluated over an empty snapshot: the
+    /// thread. Composite bodies are evaluated over an empty state: the
     /// segments this answers for are the ones whose addresses do not depend
-    /// on field values, and a body that needs a live snapshot simply does
+    /// on field values, and a body that needs a live state simply does
     /// not expand here.
     fn range_proven_disjoint_from_pointer(&self, range: &MemoryRange, pointer: &Pointer) -> bool {
         if range.base.blocks_proven_distinct(pointer) {
@@ -5463,7 +5463,7 @@ impl PureFactContext {
             range.element_width(),
         ) {
             // Literal constants first; otherwise resolve each bound through
-            // equality facts with per-load snapshot bridging, so a range
+            // equality facts with per-load state bridging, so a range
             // like data[split..split+1] with split provably 1 proves
             // disjoint from data[0].
             let resolve = |term: MachineOperandView<'_>| {

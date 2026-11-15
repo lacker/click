@@ -809,7 +809,7 @@ enum TimingEvent {
         elapsed: Duration,
     },
     Operation(ProfileOperation),
-    /// Structured snapshot captured at the cooperative deadline checkpoint,
+    /// Structured state captured at the cooperative deadline checkpoint,
     /// before scope guards close the active tactic or phase.
     Interrupted(InterruptedWork),
     /// A recognized kind the profiler does not consume.

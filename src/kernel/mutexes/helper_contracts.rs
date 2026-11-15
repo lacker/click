@@ -156,7 +156,7 @@ fn same_preserved_access(left: &ResourceSpec, right: &ResourceSpec) -> bool {
         && left.mutex_authority_binding() == right.mutex_authority_binding()
         && left.role() == right.role()
         && left.access() == right.access()
-        && left.snapshot() == right.snapshot()
+        && left.state_source() == right.state_source()
         && left.quantity() == right.quantity()
 }
 
@@ -668,7 +668,7 @@ mod tests {
     use super::*;
     use crate::kernel::{
         ExecutionBudget, FunctionOutcome, ProgramExpression, ProgramFunction, ProgramType,
-        ProgramValue, ResourceAccessMode, ResourceContext, ResourceQuantity, ResourceSnapshot,
+        ProgramValue, ResourceAccessMode, ResourceContext, ResourceQuantity, ResourceStateSource,
         program_function, program_skip,
     };
 
@@ -677,29 +677,29 @@ mod tests {
     }
 
     fn spec(guard: bool, role: ResourceTransferRole) -> ResourceSpec {
-        let snapshot = if role == ResourceTransferRole::Produce {
-            ResourceSnapshot::Post
+        let retained_state = if role == ResourceTransferRole::Produce {
+            ResourceStateSource::Post
         } else {
-            ResourceSnapshot::Entry
+            ResourceStateSource::Entry
         };
         let address = ProgramExpression::Value(ProgramValue::pointer(mutex()));
         ResourceSpec::new(
             if guard {
                 ResourceTerm::MutexGuard {
                     mutex: Box::new(address),
-                    snapshot,
+                    state_source: retained_state,
                 }
             } else {
                 ResourceTerm::MutexUse {
                     mutex: Box::new(address),
-                    snapshot,
+                    state_source: retained_state,
                     protected: None,
                 }
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             role,
-            snapshot,
+            retained_state,
         )
         .unwrap()
         .with_mutex_authority_binding(

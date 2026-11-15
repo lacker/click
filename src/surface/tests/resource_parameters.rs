@@ -323,12 +323,14 @@ fn conjunction_nodes_keep_multiplicity_and_session_identity() {
         repeated,
         crate::kernel::Resource::star(a.clone(), a.clone())
     );
-    let snapshot = crate::kernel::VerificationSession::capture_state();
+    let retained_state = crate::kernel::VerificationSession::capture_state();
     let entry_count = crate::kernel::VerificationSession::state_entry_count();
     let other = crate::kernel::Resource::star(repeated.clone(), a.clone());
     assert_ne!(repeated, other);
     assert!(crate::kernel::VerificationSession::state_entry_count() > entry_count);
-    assert!(crate::kernel::VerificationSession::restore_state(&snapshot));
+    assert!(crate::kernel::VerificationSession::restore_state(
+        &retained_state
+    ));
     assert_eq!(
         entry_count,
         crate::kernel::VerificationSession::state_entry_count()

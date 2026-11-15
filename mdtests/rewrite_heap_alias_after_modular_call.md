@@ -1,9 +1,9 @@
 # Rewriting a heap alias after a modular call
 
-This focused synthetic regression isolates the snapshot bridge needed by the
+This focused synthetic regression isolates the state bridge needed by the
 frozen shared-parent caller. A call changes the counter and preserves the
 payload. Rewriting the holder's child pointer must retain the observed memory
-snapshot so the payload guarantee remains available. This does not establish
+state so the payload guarantee remains available. This does not establish
 the complete shared-parent lifecycle.
 
 ```c filename=rewrite.c

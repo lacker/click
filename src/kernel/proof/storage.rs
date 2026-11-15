@@ -860,22 +860,22 @@ mod persistent_vector_publication_tests {
             );
             assert_eq!(root[size / 2].value, size / 2);
             assert_eq!(fork[size / 2].value, size);
-            let snapshot = fork.clone();
-            assert_eq!(snapshot.as_slice()[size / 2].value, size);
+            let retained_state = fork.clone();
+            assert_eq!(retained_state.as_slice()[size / 2].value, size);
             fork.push(Counted {
                 value: size + 1,
                 copies: copies.clone(),
             });
-            assert_eq!(snapshot.len(), size);
+            assert_eq!(retained_state.len(), size);
             assert_eq!(fork.len(), size + 1);
             for item in fork.iter_mut() {
                 item.value += 1;
             }
             assert_eq!(fork[size / 2].value, size + 1);
-            assert_eq!(snapshot[size / 2].value, size);
+            assert_eq!(retained_state[size / 2].value, size);
             drop(root);
-            assert_eq!(snapshot[size / 2].value, size);
-            let mut iter = snapshot.iter();
+            assert_eq!(retained_state[size / 2].value, size);
+            let mut iter = retained_state.iter();
             assert_eq!(iter.next().unwrap().value, 0);
             assert_eq!(iter.next_back().unwrap().value, size - 1);
             assert_eq!(iter.len(), size - 2);

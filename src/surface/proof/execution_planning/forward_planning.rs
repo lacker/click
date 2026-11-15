@@ -264,7 +264,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                                     loop_index,
                                     preservation,
                                     &pure_facts,
-                                    &context.recorded_snapshots,
+                                    &context.recorded_states,
                                     body,
                                     environment,
                                 )
@@ -309,7 +309,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             first_generated_tactic_index,
                             preservation,
                             &pure_facts,
-                            &context.recorded_snapshots,
+                            &context.recorded_states,
                             invariant_checks,
                             ranking_measures,
                             structural_measure.as_deref(),
@@ -348,7 +348,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         state: preservation.state().clone(),
                         pure_facts,
                         surface_propositions: context.surface_propositions.clone(),
-                        recorded_snapshots: context.recorded_snapshots.clone(),
+                        recorded_states: context.recorded_states.clone(),
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
                         // The head state this context carries holds the
@@ -587,7 +587,7 @@ fn split_execution_proof_branch_contexts(
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
                 surface_propositions: context.surface_propositions.clone(),
-                recorded_snapshots: context.recorded_snapshots.clone(),
+                recorded_states: context.recorded_states.clone(),
                 case_path: {
                     let mut case_path = context.case_path.clone();
                     case_path.push(ProofCaseChoice {
@@ -627,8 +627,8 @@ fn advance_execution_proof_statement(
 ) -> Result<Vec<PlanningExecutionContext>, ClickError> {
     let mut advanced = Vec::new();
     for (context_index, mut context) in contexts.into_iter().enumerate() {
-        record_code_region_program_snapshot_state(
-            &mut context.recorded_snapshots,
+        record_code_region_program_state(
+            &mut context.recorded_states,
             environment.function_block,
             CodeRegion::Statement(statement_index),
             ProgramPointKind::Entry,
@@ -730,7 +730,7 @@ fn advance_execution_proof_statement(
         }
         for transition in transitions {
             let mut surface_propositions = context.surface_propositions.clone();
-            let mut recorded_snapshots = context.recorded_snapshots.clone();
+            let mut recorded_states = context.recorded_states.clone();
             if let StatementOutcome::Normal(exit_state)
             | StatementOutcome::Return {
                 state: exit_state, ..
@@ -742,21 +742,21 @@ fn advance_execution_proof_statement(
                     exit_state,
                     &transition.execution_facts,
                 );
-                recorded_snapshots.record_effect(Some(&footprint));
-                record_code_region_program_snapshot_state(
-                    &mut recorded_snapshots,
+                recorded_states.record_effect(Some(&footprint));
+                record_code_region_program_state(
+                    &mut recorded_states,
                     environment.function_block,
                     CodeRegion::Statement(statement_index),
                     ProgramPointKind::Exit,
                     *exit_state.clone(),
                 );
-                recorded_snapshots.record_read_events(statement_index, &transition.execution_facts);
+                recorded_states.record_read_events(statement_index, &transition.execution_facts);
                 if let Some(result) = &transition.call_result {
-                    recorded_snapshots.record_call_result(statement_index, Some(result.clone()));
+                    recorded_states.record_call_result(statement_index, Some(result.clone()));
                 }
                 if let Some(parameters) = &transition.call_parameters {
-                    record_code_region_program_snapshot_state(
-                        &mut recorded_snapshots,
+                    record_code_region_program_state(
+                        &mut recorded_states,
                         environment.function_block,
                         CodeRegion::Statement(statement_index),
                         ProgramPointKind::Parameters,
@@ -775,19 +775,19 @@ fn advance_execution_proof_statement(
                     .map(str::to_string)
                     .collect::<Vec<_>>();
                 for label in &loop_labels {
-                    recorded_snapshots.label_loop(loop_index, label);
+                    recorded_states.label_loop(loop_index, label);
                 }
                 let entry_point = ProgramPointRef {
                     region: CodeRegionRef::Loop(loop_index),
                     kind: ProgramPointKind::Entry,
                 };
-                recorded_snapshots.insert(entry_point, context.state.clone());
+                recorded_states.insert(entry_point, context.state.clone());
                 if let StatementOutcome::Normal(exit_state) = &transition.outcome {
                     let exit_point = ProgramPointRef {
                         region: CodeRegionRef::Loop(loop_index),
                         kind: ProgramPointKind::Exit,
                     };
-                    recorded_snapshots.insert(exit_point.clone(), *exit_state.clone());
+                    recorded_states.insert(exit_point.clone(), *exit_state.clone());
                     // A loop that leaves on one path names that pass's
                     // points after it: its calls, its test, its body's
                     // statements, as the pass recorded them. Several leaving
@@ -797,10 +797,10 @@ fn advance_execution_proof_statement(
                         .and_then(|points| points.get(context_index))
                         .map(Vec::as_slice)
                     {
-                        recorded_snapshots.record_region_points(points);
+                        recorded_states.record_region_points(points);
                     }
                     if let Some(iterations) = &transition.loop_iterations {
-                        recorded_snapshots.record_loop_iterations(loop_index, iterations);
+                        recorded_states.record_loop_iterations(loop_index, iterations);
                     }
                     if let Some(loop_clause) = environment
                         .function_block
@@ -822,7 +822,7 @@ fn advance_execution_proof_statement(
                             &exit_condition,
                             &transition.pure_facts,
                             ParameterBinding::new(environment.parsed_function.parameters(), environment.arguments),
-                            FixedStateFrame::new(environment.initial_state, exit_state, None, &recorded_snapshots),
+                            FixedStateFrame::new(environment.initial_state, exit_state, None, &recorded_states),
                             environment.spec_definitions,
                         )
                         .map_err(|message| {
@@ -831,7 +831,8 @@ fn advance_execution_proof_statement(
                             ))
                         })?;
                         if transition.pure_facts.contains(&lowered_exit_condition) {
-                            let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
+                            let exit_surface =
+                                surface_at_program_point(&exit_condition, &exit_point)?;
                             surface_propositions
                                 .record_lowering(&exit_surface, &lowered_exit_condition)?;
                         }
@@ -843,7 +844,7 @@ fn advance_execution_proof_statement(
                     state: *state,
                     pure_facts: transition.pure_facts,
                     surface_propositions,
-                    recorded_snapshots,
+                    recorded_states,
                     case_path: context.case_path.clone(),
                     next_opaque_call: context.next_opaque_call,
                     next_kernel_variable: context.next_kernel_variable,
@@ -857,7 +858,7 @@ fn advance_execution_proof_statement(
                         state: *state,
                         pure_facts: transition.pure_facts,
                         surface_propositions,
-                        recorded_snapshots,
+                        recorded_states,
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
                         next_kernel_variable: context.next_kernel_variable,
@@ -965,7 +966,7 @@ fn loop_entry_branches(
                 entries[indices[0]].state(),
             )
             .ok_or_else(|| ClickError::new("loop entry guard has no source spelling"))?;
-            let condition = surface_at_snapshot(
+            let condition = surface_at_program_point(
                 &surface,
                 &ProgramPointRef {
                     region: CodeRegionRef::Region(

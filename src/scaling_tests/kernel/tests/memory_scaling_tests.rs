@@ -1,7 +1,7 @@
-//! Deterministic scaling regressions for kernel memory snapshots.
+//! Deterministic scaling regressions for kernel memory states.
 //!
-//! A snapshot's maps are persistent and carry cached content hashes, so one
-//! store, and interning the snapshot it produces, must cost work logarithmic
+//! A state's maps are persistent and carry cached content hashes, so one
+//! store, and interning the state it produces, must cost work logarithmic
 //! in the unrelated memory beside it rather than proportional to it. Each
 //! test measures charged deterministic work at several sizes and prints the
 //! numbers in its assertion messages.
@@ -235,7 +235,7 @@ fn interning_a_one_store_derivative_is_logarithmic_in_unrelated_cells() {
         let _session = crate::kernel::VerificationSession::enter();
         let base = memory_with_unrelated_cells(size);
         let interned_base = intern_memory_ref(&base);
-        // Derive the snapshot directly rather than through `store`, which
+        // Derive the state directly rather than through `store`, which
         // would already have interned it while recording its edge.
         let mut derived = base.clone();
         std::sync::Arc::make_mut(&mut derived.cells)
@@ -274,7 +274,7 @@ fn equal_content_reached_by_different_routes_interns_to_one_id() {
             .store(second, scaling_value(2))
             .store(first, scaling_value(1));
         // Recording the second route's last store found the first route's
-        // snapshot and handed back its storage: equal snapshots carried by
+        // state and handed back its storage: equal states carried by
         // execution share roots, so facts embedding them compare in O(1).
         assert!(
             forward.same_storage_roots(&backward),
@@ -299,15 +299,15 @@ fn equal_content_reached_by_different_routes_interns_to_one_id() {
         assert_eq!(again.arena_id(), forward_id);
         rehits.push((size, work));
     }
-    eprintln!("re-interning a deduplicated snapshot (N, units): {rehits:?}");
+    eprintln!("re-interning a deduplicated state (N, units): {rehits:?}");
     assert!(
         rehits.iter().all(|(_, work)| *work == 0),
-        "re-interning a structurally deduplicated snapshot must be a shallow hit: {rehits:?}"
+        "re-interning a structurally deduplicated state must be a shallow hit: {rehits:?}"
     );
 }
 
 /// A statement executed twice from one base (planned, then checked) derives
-/// the same snapshot twice. The second derivation is recognized as the base's
+/// the same state twice. The second derivation is recognized as the base's
 /// recorded child by comparing only what each changed from the base, and it
 /// hands back the child's storage, so facts built from either execution
 /// compare by root identity.
@@ -1093,7 +1093,7 @@ fn a_store_beside_fields_of_one_heap_object_is_linear_in_the_cached_cells() {
 /// owner's field, the new allocation's cell and the owner's block all stop
 /// at the last call. So each call costs the same, and N calls cost linear
 /// work: an earlier call is never re-examined. The sizes use disjoint
-/// variables, so no snapshot or memo is shared between them.
+/// variables, so no state or memo is shared between them.
 #[test]
 #[ignore = "nightly: 1.7s in the parallel gate"]
 fn consecutive_reallocating_calls_cost_the_same_each() {
@@ -1151,9 +1151,9 @@ fn consecutive_reallocating_calls_cost_the_same_each() {
                     .with_heap_allocation_claim(data(call + 1), HeapExtent::int32(bytes.clone()))
                     .expect("a fresh claim");
                 let point =
-                    crate::kernel::resource_tracker::ProgramPoint::at(&intern_memory_ref(&next));
+                    crate::kernel::resource_tracker::VersionPoint::at(&intern_memory_ref(&next));
                 for cell in [&field, &data(call + 1)] {
-                    crate::kernel::resource_tracker::last_same_point(
+                    crate::kernel::resource_tracker::last_same_version_point(
                         crate::kernel::resource_tracker::TrackedResource::Cell {
                             pointer: cell,
                             bytes: 4,
@@ -1161,7 +1161,7 @@ fn consecutive_reallocating_calls_cost_the_same_each() {
                         &point,
                     );
                 }
-                crate::kernel::resource_tracker::last_same_point(
+                crate::kernel::resource_tracker::last_same_version_point(
                     crate::kernel::resource_tracker::TrackedResource::Block(
                         &PointerBlock::ExternalArgument,
                     ),
@@ -1174,17 +1174,17 @@ fn consecutive_reallocating_calls_cost_the_same_each() {
             last = work;
         }
         // The field is named at the last call's havoc, not at any earlier one.
-        let named = crate::kernel::resource_tracker::last_same_point(
+        let named = crate::kernel::resource_tracker::last_same_version_point(
             crate::kernel::resource_tracker::TrackedResource::Cell {
                 pointer: &field,
                 bytes: 4,
             },
-            &crate::kernel::resource_tracker::ProgramPoint::at(&intern_memory_ref(&memory)),
+            &crate::kernel::resource_tracker::VersionPoint::at(&intern_memory_ref(&memory)),
         )
         .expect("the walk has an answer");
         assert!(
             matches!(
-                named.snapshot().derivation().as_deref(),
+                named.shared_memory().derivation().as_deref(),
                 Some(MemoryDerivation::CallHavoc { .. })
             ),
             "the field is named at the last call's havoc"
@@ -2065,7 +2065,7 @@ fn wide_shifted_suffix_coverage_ignores_unrelated_bounds() {
 }
 
 // Observer transport must use the exact equality index, even with many
-// unrelated facts and a later snapshot containing an unrelated write.
+// unrelated facts and a later state containing an unrelated write.
 #[test]
 fn wide_range_observer_transport_ignores_unrelated_equalities() {
     for same_value_class in [false, true] {
@@ -2152,12 +2152,12 @@ impl std::hash::Hasher for CountingHasher {
 
 /// Every call publishes an effect summary naming the memory before and after
 /// it, and facts are hashed whenever they are inserted or looked up. An atomic
-/// proposition used to hash its debug text, which printed every snapshot it
+/// proposition used to hash its debug text, which printed every state it
 /// names, so a fact about a memory cost the size of that memory and each call
 /// in a long function paid more than the last (512 calls: 7.3 s, 2.1 times
 /// the linear cost). The hasher is uncharged, so no work budget saw it. A
-/// proposition now hashes a snapshot by its cached content hash: the bytes it
-/// feeds a hasher do not depend on how much memory the snapshot holds.
+/// proposition now hashes a state by its cached content hash: the bytes it
+/// feeds a hasher do not depend on how much memory the state holds.
 #[test]
 fn hashing_a_memory_fact_is_constant_in_the_memory_size() {
     use std::hash::Hash;
@@ -2830,8 +2830,8 @@ fn pointer_frame_through_seeded_cells_ignores_run_length() {
         let context = PureFactContext::new();
         // Prepare a partial write: discard the cached whole pointer, but
         // do not perform the write yet. This records cache-only forgetting.
-        let seed_snapshot = crate::kernel::intern_memory(seeded.clone());
-        let seeded_read = Pointer::loaded_value(&seed_snapshot, &field);
+        let seed_state = crate::kernel::intern_memory(seeded.clone());
+        let seeded_read = Pointer::loaded_value(&seed_state, &field);
         let forgotten = seeded.without_possible_aliasing_cells(&field, 4, &context);
         assert!(!forgotten.has_known_cell_at(&field));
         let before = Pointer::loaded_value(&source, &field);
@@ -2936,9 +2936,9 @@ fn repeated_pointer_frame_work(compare_to_entry: bool, compose: bool) -> Vec<(u3
                 memory = memory
                     .clone()
                     .store(write.clone(), ProgramValue::Int32(index.into()));
-                let snapshot = crate::kernel::intern_memory_ref(&memory);
+                let retained_state = crate::kernel::intern_memory_ref(&memory);
                 let current = PointerValue::new(
-                    Pointer::loaded_value(&snapshot, &field),
+                    Pointer::loaded_value(&retained_state, &field),
                     ProgramType::Int32Pointer,
                 );
                 let reference = if compare_to_entry {
@@ -2988,7 +2988,7 @@ fn repeated_pointer_frame_work(compare_to_entry: bool, compose: bool) -> Vec<(u3
 #[test]
 fn adjacent_pointer_frame_checks_have_near_linear_total_work() {
     let samples = repeated_pointer_frame_work(false, false);
-    eprintln!("adjacent-snapshot pointer checks: {samples:?}");
+    eprintln!("adjacent-state pointer checks: {samples:?}");
     for pair in samples.windows(2) {
         assert!(pair[1].1 <= pair[0].1 * 3, "adjacent control: {samples:?}");
     }
@@ -2996,7 +2996,7 @@ fn adjacent_pointer_frame_checks_have_near_linear_total_work() {
 
 /// Regression for the remaining implicit history walk: this calls the kernel checking entry used by
 /// explicit `transport`, with no smart tactic/planner. Each query names the
-/// entry snapshot and current snapshot in constant space; the input contains
+/// entry state and current state in constant space; the input contains
 /// N stores and N checks, not an explicitly enumerated N-by-N history proof.
 #[test]
 fn repeated_pointer_frame_queries_have_near_linear_total_work() {
@@ -3304,7 +3304,7 @@ fn symbolic_store_into_loaded_run_bounds_logical_slot_work() {
                 );
                 assert!(
                     memory.has_known_cell_at(&base.offset_by_bytes(4)),
-                    "the parent snapshot stays intact"
+                    "the parent state stays intact"
                 );
                 work.push(units);
             }

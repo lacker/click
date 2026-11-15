@@ -86,9 +86,9 @@ fn separation_candidates_preserve_derived_aliases_and_loaded_bases() {
     // No condition names `a`: the owner's loaded base must remain a
     // candidate because the memory edge itself resolves it to `a`.
     let slot = Pointer::symbolic(Variable(989_799));
-    let snapshot = Memory::new().store(slot.clone(), ProgramValue::Int32(a.clone()));
+    let retained_state = Memory::new().store(slot.clone(), ProgramValue::Int32(a.clone()));
     let loaded = MachineTerm::MemoryLoad(
-        crate::kernel::intern_memory(snapshot),
+        crate::kernel::intern_memory(retained_state),
         Box::new(slot),
         LoadKind::Int32,
     );
@@ -148,13 +148,13 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
         ResourceAccessMode::View,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     assert_eq!(memory_view.family(), ResourceFamily::Memory);
     assert_eq!(memory_view.access(), ResourceAccessMode::View);
     assert_eq!(memory_view.role(), ResourceTransferRole::Borrow);
-    assert_eq!(memory_view.snapshot(), ResourceSnapshot::Entry);
+    assert_eq!(memory_view.state_source(), ResourceStateSource::Entry);
     assert_eq!(
         memory_view.clone().with_clause_position(0, 2),
         memory_view.clone().with_clause_position(1, 9)
@@ -165,7 +165,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     assert!(memory_owner.memory_segment().is_some());
@@ -177,7 +177,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
         vec![],
         vec![],
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let token_owner = ResourceSpec::declared(
@@ -187,19 +187,19 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
         vec![],
         vec![],
         ResourceTransferRole::Produce,
-        ResourceSnapshot::Post,
+        ResourceStateSource::Post,
     )
     .unwrap();
     assert_eq!(composite_view.family(), ResourceFamily::Composite);
     assert_eq!(token_owner.family(), ResourceFamily::Token);
     assert_eq!(token_owner.role(), ResourceTransferRole::Produce);
-    assert_eq!(token_owner.snapshot(), ResourceSnapshot::Post);
+    assert_eq!(token_owner.state_source(), ResourceStateSource::Post);
 
     let counted = ResourceSpec::quantified(
         crate::kernel::program_expression::int32_literal(3),
         token_owner.clone(),
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     assert!(matches!(counted.quantity(), ResourceQuantity::Count(_)));
@@ -214,7 +214,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
             ResourceAccessMode::Own,
             ResourceQuantity::Count(crate::kernel::program_expression::int32_literal(2)),
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         ),
         Err(ResourceSpecError::InvalidQuantity {
             family: ResourceFamily::Memory,
@@ -226,7 +226,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
             crate::kernel::program_expression::int32_literal(2),
             composite_view,
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         ),
         Err(ResourceSpecError::InvalidAccess {
             family: ResourceFamily::Composite,
@@ -242,7 +242,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
         resource: Box::new(ResourceTerm::Composite {
             name: "cell".into(),
             arguments: vec![],
-            argument_snapshots: vec![],
+            argument_state_sources: vec![],
             parameter_types: vec![],
         }),
     };
@@ -252,7 +252,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
             ResourceAccessMode::View,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         ),
         Err(ResourceSpecError::InvalidAccess {
             family: ResourceFamily::Instance,
@@ -265,7 +265,7 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .is_ok()
     );
@@ -278,14 +278,14 @@ fn normalized_resource_specs_validate_families_and_preserve_transfer_metadata() 
                 resource: Box::new(ResourceTerm::Token {
                     name: "token".into(),
                     arguments: vec![],
-                    argument_snapshots: vec![],
+                    argument_state_sources: vec![],
                     parameter_types: vec![],
                 }),
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         ),
         Err(ResourceSpecError::InvalidNestedTerm(_))
     ));
@@ -299,13 +299,13 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
         ResourceTerm::Token {
             name: "permit".into(),
             arguments: vec![quantity.clone()],
-            argument_snapshots: vec![ResourceSnapshot::Current],
+            argument_state_sources: vec![ResourceStateSource::Current],
             parameter_types: vec![ProgramType::Int32],
         },
         ResourceAccessMode::Own,
         ResourceQuantity::Count(quantity),
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let substituted = crate::kernel::reasoning::substitute_bitvector_variable_in_resource_spec(
@@ -315,7 +315,7 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
     );
     assert_eq!(substituted.access(), ResourceAccessMode::Own);
     assert_eq!(substituted.role(), ResourceTransferRole::Borrow);
-    assert_eq!(substituted.snapshot(), ResourceSnapshot::Entry);
+    assert_eq!(substituted.state_source(), ResourceStateSource::Entry);
     assert!(matches!(
         substituted.quantity(),
         ResourceQuantity::Count(ProgramExpression::Value(ProgramValue::Int32(
@@ -335,7 +335,7 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
         schema,
         ResourceSpec::composite(ResourceAccessMode::Own, "cell".into(), vec![], vec![]),
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let inner = instance
@@ -344,7 +344,7 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
     assert_eq!(inner.access(), ResourceAccessMode::Own);
     assert_eq!(inner.quantity(), &ResourceQuantity::One);
     assert_eq!(inner.role(), ResourceTransferRole::Borrow);
-    assert_eq!(inner.snapshot(), ResourceSnapshot::Entry);
+    assert_eq!(inner.state_source(), ResourceStateSource::Entry);
 
     assert!(matches!(
         ResourceSpec::new(
@@ -355,14 +355,14 @@ fn validated_resource_rebuilds_preserve_metadata_and_instance_bodies() {
                 resource: Box::new(ResourceTerm::Composite {
                     name: "cell".into(),
                     arguments: vec![],
-                    argument_snapshots: vec![],
+                    argument_state_sources: vec![],
                     parameter_types: vec![],
                 }),
             },
             ResourceAccessMode::View,
             ResourceQuantity::One,
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         ),
         Err(ResourceSpecError::InvalidAccess {
             family: ResourceFamily::Instance,
@@ -446,7 +446,7 @@ fn owned_range_read_survives_learning_a_symbolic_pointer_alias() {
 #[test]
 fn owned_memory_consumption_survives_a_late_transitive_displaced_alias() {
     // An unfold can publish a cell before a later proof arm establishes the
-    // equality used by fold. Keep the resource snapshot fixed while the pure
+    // equality used by fold. Keep the resource state fixed while the pure
     // context forks and learns the two links in either order.
     let owner_root = Pointer::symbolic(Variable(210));
     let owner = Pointer {
@@ -884,7 +884,7 @@ fn inactive_instance_quantity_does_not_imply_nonnegativity() {
         vec![],
         vec![],
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     definition.contains = vec![
@@ -892,7 +892,7 @@ fn inactive_instance_quantity_does_not_imply_nonnegativity() {
             crate::kernel::program_expression::variable("value"),
             unit,
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap()
         .with_guard(SpecProposition::Comparison {
@@ -1094,7 +1094,7 @@ fn independent_children_kernel_consumes_names_and_accepts_replacements() {
             .instance_consumption(Variable(503))
             .is_none()
     );
-    // Refolding and unfolding a sibling snapshot do not change the original.
+    // Refolding and unfolding a sibling state do not change the original.
     assert!(matches!(
         raw.resources().instance_consumption(left.identity()),
         Some(InstanceConsumption::Unfold)
@@ -1891,7 +1891,7 @@ fn resource_instance_contract_selects_current_fields_without_promising_preservat
             vec![ProgramType::Int32],
         ),
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     for instance in [before, after] {
@@ -2795,7 +2795,7 @@ fn resource_common_descendant_visits_only_branch_local_changes() {
         let normalized_root = root.clone().normalized(&assumptions);
         assert!(
             normalized_root.shares_storage_with(&root),
-            "no-op normalization must preserve a size-{size} snapshot by identity"
+            "no-op normalization must preserve a size-{size} state by identity"
         );
         let left = root
             .clone()
@@ -4210,7 +4210,7 @@ fn dependent_pair_entry_fixture() -> (
             vec![argument],
             vec![ProgramType::Int32Pointer],
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Entry,
+            ResourceStateSource::Entry,
         )
         .unwrap()
     };
@@ -5182,7 +5182,7 @@ fn v11_unbound_owner_observation_composite_still_expands() {
                 Vec::new(),
                 Vec::new(),
                 ResourceTransferRole::Consume,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
             )
             .unwrap(),
         ],
@@ -5223,7 +5223,7 @@ fn v11_composite_expansion_refuses_equal_ambient_child_without_destination() {
                 Vec::new(),
                 Vec::new(),
                 ResourceTransferRole::Consume,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
             )
             .unwrap(),
         ],
@@ -6381,7 +6381,7 @@ fn named_population_members_keep_identity_and_fields_independent_of_count() {
 }
 
 #[test]
-fn predicate_population_snapshot_reads_saved_count_without_transfer_rights() {
+fn predicate_population_state_reads_saved_count_without_transfer_rights() {
     let pointer = Pointer {
         block: PointerBlock::Heap(940_601),
         offset: PointerOffsetTerm::Constant(0),
@@ -6420,7 +6420,7 @@ fn predicate_population_snapshot_reads_saved_count_without_transfer_rights() {
     let (one, _) = empty
         .checked_population_member_exchange(&selected, true, &definition, &assumptions)
         .unwrap();
-    let snapshot = one.resource_state_snapshot();
+    let retained_state = one.resource_state_source();
     let (two, _) = one
         .checked_population_member_exchange(&selected, true, &definition, &assumptions)
         .unwrap();
@@ -6433,18 +6433,22 @@ fn predicate_population_snapshot_reads_saved_count_without_transfer_rights() {
             .unwrap()
             .0
     };
-    assert_eq!(read(&snapshot), int32(1));
-    assert_eq!(read(&snapshot.resource_state_snapshot()), int32(1));
+    assert_eq!(read(&retained_state), int32(1));
+    assert_eq!(read(&retained_state.resource_state_source()), int32(1));
     assert_eq!(read(&two), int32(2));
     assert!(
-        !snapshot
+        !retained_state
             .resources()
             .satisfies_fact(&authority, &assumptions)
     );
-    assert!(!snapshot.resources().satisfies_fact(&selected, &assumptions));
-    // Even explicitly supplying custody cannot turn a logical snapshot into
+    assert!(
+        !retained_state
+            .resources()
+            .satisfies_fact(&selected, &assumptions)
+    );
+    // Even explicitly supplying custody cannot turn a logical state into
     // a second branch of the linear population ledger.
-    let forged = snapshot.with_resource_context(one.resources().clone());
+    let forged = retained_state.with_resource_context(one.resources().clone());
     let instance = ResourceInstance::new(
         Variable::allocate_fresh().unwrap(),
         "member".into(),

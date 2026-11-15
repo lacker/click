@@ -2,7 +2,7 @@
 
 Facts about intermediate execution states are proved in the ordinary forward
 proof, at the frontier where they hold. Static statement points can still name
-the corresponding entry and exit snapshots.
+the corresponding entry and exit states.
 
 ```c filename=frontier_local_statement_facts.c
 int32 frontier_local_statement_facts(int32 flag) {

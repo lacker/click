@@ -29,7 +29,7 @@ fn integer_theorem_argument_capture_scales_with_unused_bindings_and_applications
         let array_refs = BTreeMap::new();
         let algebraic_values = BTreeMap::new();
         let integer_values = crate::persistent::PersistentMap::default();
-        let snapshots = RecordedSnapshots::default();
+        let retained_states = RecordedStates::default();
         let context = TheoremApplicationContext {
             values: &values,
             array_refs: &array_refs,
@@ -37,7 +37,7 @@ fn integer_theorem_argument_capture_scales_with_unused_bindings_and_applications
             pre_state: &state,
             post_state: &state,
             result: None,
-            recorded_snapshots: &snapshots,
+            recorded_states: &retained_states,
             integer_values: &integer_values,
             pointer_element_widths: BTreeMap::new(),
         };

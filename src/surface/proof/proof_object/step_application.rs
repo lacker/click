@@ -1127,7 +1127,7 @@ impl<'a> Proof<'a> {
         // invariant re-lowers against the post-body state, whereas this
         // obligation's `n` is the retained iteration-entry value.  Preserve
         // that distinction in the certificate's source premises; the
-        // snapshot annotation is checked by the normal direct lowering path.
+        // state annotation is checked by the normal direct lowering path.
         let anchored_surface_premises = if self.goal().is_some_and(is_positive_predecessor_goal)
             && let ProofContext::Execution(context) = self.context.as_ref()
             && let Some(bundle) = context.constants.invariant_body_context.as_deref()
@@ -1136,7 +1136,7 @@ impl<'a> Proof<'a> {
             surface_premises
                 .iter()
                 .map(|premise| {
-                    surface_at_snapshot(premise, selector).unwrap_or_else(|_| premise.clone())
+                    surface_at_program_point(premise, selector).unwrap_or_else(|_| premise.clone())
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -3460,7 +3460,7 @@ impl<'a> Proof<'a> {
             self.facts().assumptions(),
             argument,
             context.spec_definitions,
-            &RecordedSnapshots::new(),
+            &RecordedStates::new(),
             &mut active_functions,
         )
         .map_err(|message| {
@@ -3686,7 +3686,7 @@ fn trace_resource_fact(
     }
     // The reached state's locals name what the step introduced, a call's
     // result temporary as `<region>.result` among them.
-    let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::with_state(
+    let mut labels = crate::surface::proof_diagnostics::render::MemoryStateLabels::with_state(
         context.parameter_binding(),
         reached,
     );

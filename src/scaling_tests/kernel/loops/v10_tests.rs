@@ -38,7 +38,7 @@ fn loop_view_partition_uses_alias_graph_without_scanning_ambient_ranges() {
         ResourceAccessMode::View,
         ResourceQuantity::One,
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let mut costs = Vec::new();

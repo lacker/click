@@ -362,7 +362,7 @@ same function-entry M0. M0
 survives the loop's havoc because it is a closed term over entry symbols and
 `collect_execution_environment_variables_uncached` reserves every variable it
 names, so no fresh iteration value is handed out on top of one; a measure that
-reads memory names the entry memory snapshot, and only an invariant the user
+reads memory names the entry memory state, and only an invariant the user
 writes relates the iteration's reading to it.
 
 `VerifiedLoopRule` records the anchor its own body was stepped under. The
@@ -507,8 +507,8 @@ explicit certified path obligation. The call rule does not invoke the general
 contextual prover to rediscover those range proofs during lowering; their
 authority is the already certified callee contract.
 
-When two certified execution paths use different memory snapshots, resource
-representation comparison unfolds each composite against its own snapshot.
+When two certified execution paths use different memory states, resource
+representation comparison unfolds each composite against its own state.
 Unfolding replaces the folded parent with its children while they are
 evaluated; keeping both parent and children would create a false ownership
 overlap. The composite definition supplies the checked `contains` and
@@ -650,7 +650,7 @@ its format, and its range is its format's: no range fact is filed for it.
   it is closed by `normalize()`.
 - Every narrow load is its own load at its own type: the read's variable is
   registered at its kind, the equality graph names it by its exact cell,
-  and it is a load application of its snapshot, address and kind
+  and it is a load application of its state, address and kind
   (`Application::NarrowLoad`), equal to a stored value of its width
   (`CellRead::Narrow`). The `int8` and `uint8` reads of one byte are two
   loads related by the 8-bit sign cast (byte R-mem). A read of a canonical
@@ -775,7 +775,7 @@ the widths a rule supports; it asks the module
 | Observation value relations (W) | `SharedMachineIntegerTerm::value_reading`, `machine_value_reading`, `IntegerTerm::value_read`, `SharedIntegerTerm::read_through`; the readers: Integer affine atoms (`collect_integer_affine_terms`), `ConditionTerm` identity of Integer comparisons, `range::observation_range`, `native_comparison_of_integer_observation`, `native_comparison_through_integer_operations`, `identity::mathematical`, `conversion::cast`, the Integer rewrite's occurrence match | `IntegerTerm::from_machine` builds an observation as written and folds no conversion; its value is related, not rewritten: `to_integer(widen(v)) == to_integer(v)` for a value-preserving widening at any width, `to_integer` of σ(x) at `int32` or `uint32` is `x` read at that format, and a conversion observed at a type containing its destination is observed at the destination. The reading is computed once per interned observation (at most three conversions) and per Integer node (`read_through`), cached on the node, so each reader's step is O(1) after the first; terms are printed as written |
 | Native narrow nodes | `CarrierWidth::Bits8`, `Bits16`, `CarrierWidth::native`, `is_native_narrow_operator`; `MachineTerm::narrow_constant`, `machine_binary`, `machine_unary`; the e-graph's `Node::MachineNarrow` and `narrow_constants` | an 8- or 16-bit operator `+ - * & \| ^ << ~`, constant, binder or load is a value of its own width, `(a op b) mod 2^N`; narrow constant atoms are keyed by their unsigned bits, a cast of a constant class folds to the destination's constant, and a narrow equation is decided by one class (true) or two different constants (false) |
 | Narrow-cast word (K7') | `representation::narrow_carrier_mask`; the e-graph's `narrow_cast_node`, `narrow_cast_word` | the 32-bit widening of `Cast(S -> F, x)` into an 8- or 16-bit `F` at `w`'s format meets `w & m`, or `((w & m) ^ s) - s` for a signed `F`, with `w` the operand's word (`int32` or `uint32`), a 64-bit operand's `uint32` low word, or a narrow operand's widening (its `uint32` one where the graph has only that, else its `int32` one); the other widening is interned only where a term names it, and is then σ of the first by the sibling relation, so its word is σ of the masked word |
-| Narrow loads and byte R-mem | `Application::NarrowLoad`, `CellRead::Narrow`, `Node::NarrowRead`, `enqueue_narrow_load`, `enqueue_signed_byte_read` | an 8- or 16-bit read is a load application of its snapshot, address and kind, equal to a stored value of its width and, for a canonical projection, to the same read of its recorded source (one indexed edge); the `int8` read of a byte is `Cast(UInt8 -> Int8, u)` of its `uint8` read `u` |
+| Narrow loads and byte R-mem | `Application::NarrowLoad`, `CellRead::Narrow`, `Node::NarrowRead`, `enqueue_narrow_load`, `enqueue_signed_byte_read` | an 8- or 16-bit read is a load application of its state, address and kind, equal to a stored value of its width and, for a canonical projection, to the same read of its recorded source (one indexed edge); the `int8` read of a byte is `Cast(UInt8 -> Int8, u)` of its `uint8` read `u` |
 | Promoted comparison reading | `comparison::integer_readings_with_promotions`, `integer_comparisons_of_widenings`; `integer_affine_claims` | a signed `int32` comparison whose sides are narrow widenings or constants is the Integer comparison of the sides' values (`0 <= widen(x)` is `0 <= to_integer(x)`); a native 8- or 16-bit comparison has the readings of its promoted spelling |
 | Native narrow comparison (one fact, K8) | `ConditionTerm::comparison_fact`, `as_fact_comparison`, `ComparisonSide`; `comparison::narrow_comparison_as_int32`, `narrow_fact_widening`, `native_narrow_comparison`; `condition_match_key`; the `adjust_*` wrappers of `PureFactContext` and `EqualityGraph::add_condition` | a specification or Rust comparison `a R b` of two values of one 8- or 16-bit format `S` is native at `S`, and is the same fact as the `int32` comparison of the operands' widenings (a constant side in `S`'s range reads as its value): identity, hashing, order and every structural fact key read both as one, in O(1) per side; the 32-bit indexes also file a native fact under its `int32` spelling. Terms are built and printed as written; C comparisons and a written `x as int32 R c` stay promoted |
 | Sign cast σ (K1 deleted) | `MachineTerm::sign_cast32`, `sign_cast32_operand`; the e-graph's `intern_conversion` and `convert_like` (σ an `Int32Unary::Cast` node); the difference graph's `link_parts` and `structural_interval`; `into_index_word32` (G1) | σ(x) between `int32` and `uint32` is a node of its own wherever a term is built: no constructor, observation, e-graph or difference-graph reader peels it. The e-graph relates it to `x` by R0 and R-dist (σ of a sign-free operator is the operator at the other format over σ of its operands; σ of a low word is that low word), the difference graph links either 32-bit reading of σ(x) to the same reading of `x` with offset 0, and an element index alone reads σ's operand in `int32` index coordinates. The constructor folds a constant and keeps σ of σ as written; R0 puts σ(σ(x)) in `x`'s class. Two smart-search readers see through one σ at a side's root: `σ(x) == x` is a vacuous rewrite and no rewrite candidate (`is_sign_cast32_of`, `equality_is_vacuous`, `connected_equalities`), and `σ(y) <=u c` below the sign bit is the signed range of `y` (`unsigned_upper_bound_below_sign_bit`) |
@@ -1035,7 +1035,7 @@ address-backed return slot is `uint8*`. The return transition accepts only
 those two modeled data-pointer views, retags the address at that boundary, and
 copies every modeled leaf into a fresh `__return` block. Consequently a
 postcondition such as `result.inner.flag == source.inner.flag` compares the
-fresh result cell with the source snapshot without turning the returned
+fresh result cell with the source state without turning the returned
 aggregate into an alias or weakening ordinary pointer-return type checks.
 
 Positional initializers for copyable struct-valued locals use the same
@@ -1261,8 +1261,8 @@ Click never runs code. Stepping a statement records what the statement means
 in four parts, on each path it opens:
 
 1. **Terms for its values.** Each operand becomes a term at the current state:
-   a variable's current value, a read `load(snapshot, address)` at the
-   snapshot it reads (a proof spells it `at(point, e)`), or arithmetic,
+   a variable's current value, a read `load(retained_state, address)` at the
+   state it reads (a proof spells it `at(point, e)`), or arithmetic,
    comparison and pure-function application over other terms.
 2. **Facts.** Equalities and other facts join the path's fact context: the
    assignment `x = e` adds `x == <term of e>` to the e-graph, and operations
@@ -1421,7 +1421,7 @@ field and a join's abstraction all draw from it, so no two of them share an
 identity. Reserved-set probing narrows what one stream issues; it is not what
 keeps allocators apart. Fresh reservations include the free Integer
 identities inside every specification application argument, whatever the
-result sort, while execution-memory snapshots stay opaque (regressions in
+result sort, while execution-memory states stay opaque (regressions in
 `src/kernel/tests/execution_tests.rs`).
 
 - **A rule that abstracts a state takes the counter and returns where it
@@ -1504,8 +1504,8 @@ statement or call and the environment by collecting them. Its fact context's
 variables are reserved by a bound instead: `PureFactContext` keeps an upper
 bound on the execution-range variables its facts mention
 (`ExecutionVariableCeiling`), and the counter skips past it. Filing a fact
-reads only its syntax; a fact that names a memory snapshot is queued and taken
-whole, the snapshot's variables included, the first time an execution asks,
+reads only its syntax; a fact that names a memory state is queued and taken
+whole, the state's variables included, the first time an execution asks,
 so asking at every call costs what was filed since the last call.
 
 Direct contract `forall` certification introduces its witness through
@@ -1524,7 +1524,7 @@ fold range.
 
 The witness range carries the same obligation. `intro` on `forall v. body`
 replaces `v` by a free identity that must name nothing the state names,
-including program variables, the store, the memory snapshot and resources,
+including program variables, the store, the memory state and resources,
 not only the facts; so it comes from its own range rather than from the
 facts' unused identities
 (`the_universal_witness_range_is_disjoint_from_every_other_producer`,
@@ -1611,7 +1611,7 @@ layout leaves a scope. The layout indexes normal and abrupt exits once; each
 exit visits only the declarations it retires. The event retains the exact
 before and after states; branch validation and return certification check the
 retirement. This includes a `for` initializer's scope. The saved loop-exit
-snapshot still names its final index for proof provenance; the subsequent
+state still names its final index for proof provenance; the subsequent
 execution state has retired its storage.
 
 A lowered `ForStep` ends the body locals before evaluating the update clause,
@@ -1628,7 +1628,7 @@ still applies. The operation accepts a named object projection, not a loaded or
 aliased C pointer; it creates no memory view or resource. Pointer-valued fields
 are shallow values: a following dereference uses current C memory and requires
 its own permission. Historical field reads resolve the object's address in the
-selected entry snapshot. Materialized aggregate results belong to the caller
+selected entry state. Materialized aggregate results belong to the caller
 and survive the callee's exit.
 
 The contract return value uses an internal binding that no C identifier can
@@ -1732,7 +1732,7 @@ resource without adding a no-op C branch. Registering an unresolved result
 records a memory-preserving `HeapAllocationPending` edge, so every preexisting
 load remains transportable while the outcome is undecided. Its null arm removes
 the metadata and returns to the pre-allocation memory identity. Its success arm
-records `HeapAllocated` from the pending snapshot and creates a
+records `HeapAllocated` from the pending state and creates a
 fresh heap allocation with an exact, possibly symbolic size, marks its cells
 uninitialized, and produces complete owned memory plus the
 exclusive `allocation(base, bytes)` lifetime resource. Returning a different
@@ -1853,7 +1853,7 @@ verified-call chains from repeatedly scanning every earlier call fact.
 
 Smart execution and exact certification share the same bounded order
 derivations. In particular, a strict upper bound justifies the non-wrapping
-step from `x` to `x + 1` even when the two `x` loads use memory snapshots
+step from `x` to `x + 1` even when the two `x` loads use memory states
 connected by deterministic derivation edges. Resource separation also treats
 intrinsically distinct pointer blocks as context-free evidence. Consequently,
 an opaque-call premise proved during search always has a checked derivation

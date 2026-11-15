@@ -59,7 +59,7 @@ target: ((gparent->__rb_parent_color & ~3) as (struct rb_node *)) == ugp
 ```
 
 The read is eight bytes at `gparent`. Its two framing walks cross seven and
-seventeen memory steps, then reach the loop-effect snapshot without proving
+seventeen memory steps, then reach the loop-effect state without proving
 the queried bytes separate. The trace also contains the later pointer-field
 stores and four-byte cells seeded by unfolding resources. Whether this is
 another instance of

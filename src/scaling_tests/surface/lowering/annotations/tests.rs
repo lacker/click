@@ -46,7 +46,7 @@ fn integer_certificate_lowering_scales_with_nodes_not_unrelated_bindings() {
 }
 
 #[test]
-fn proposition_snapshot_selection_matches_full_context_without_unrelated_bindings() {
+fn proposition_state_selection_matches_full_context_without_unrelated_bindings() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let entry = ExecutionState::new().with_local("used", int32(1));
@@ -57,7 +57,7 @@ fn proposition_snapshot_selection_matches_full_context_without_unrelated_binding
     };
     let proposition = ClickProposition::And(
         Box::new(atom(ContractExpression::At {
-            selector: SnapshotSelector::Mark("before".into()),
+            selector: ProgramPointSelector::Mark("before".into()),
             expression: Box::new(ContractExpression::Binding("used".into())),
         })),
         Box::new(atom(ContractExpression::Old(Box::new(
@@ -70,8 +70,8 @@ fn proposition_snapshot_selection_matches_full_context_without_unrelated_binding
         for index in 0..size {
             state = state.with_local(format!("unused{index}"), int32(index));
         }
-        let mut snapshots = RecordedSnapshots::new();
-        snapshots.insert(SnapshotSelector::Mark("before".into()), state);
+        let mut retained_states = RecordedStates::new();
+        retained_states.insert(ProgramPointSelector::Mark("before".into()), state);
         let (mut lowerer, context) = fixed_state_elaboration(
             BTreeMap::new(),
             BTreeMap::new(),
@@ -79,7 +79,7 @@ fn proposition_snapshot_selection_matches_full_context_without_unrelated_binding
             BTreeMap::from([("used".into(), int32(1))]),
             BTreeMap::from([("used".into(), int32(9)), ("late".into(), int32(3))]),
             None,
-            &snapshots,
+            &retained_states,
             SpecDefinitions::new(&predicates, &functions),
             BTreeSet::new(),
             BTreeMap::new(),
@@ -96,7 +96,7 @@ fn proposition_snapshot_selection_matches_full_context_without_unrelated_binding
                     .click_proposition_to_spec_proposition(&proposition, &context)
                     .unwrap();
                 let projected = lowerer
-                    .snapshot_environment(&SnapshotSelector::Mark("before".into()), &context)
+                    .point_environment(&ProgramPointSelector::Mark("before".into()), &context)
                     .unwrap()
                     .unwrap();
                 (selected, projected)
@@ -113,7 +113,7 @@ fn proposition_snapshot_selection_matches_full_context_without_unrelated_binding
     }
     assert!(
         costs.iter().all(|cost| *cost == costs[0]),
-        "snapshot selection costs: {costs:?}"
+        "state selection costs: {costs:?}"
     );
 }
 
@@ -199,7 +199,7 @@ fn mathematical_lowering_keeps_repeated_squares_shared_without_evaluation() {
         Box::new(ContractExpression::Binding("selected".into())),
     );
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let (mut lowerer, mut context) = fixed_state_elaboration(
@@ -209,7 +209,7 @@ fn mathematical_lowering_keeps_repeated_squares_shared_without_evaluation() {
         BTreeMap::new(),
         BTreeMap::new(),
         None,
-        &snapshots,
+        &retained_states,
         SpecDefinitions::new(&predicates, &functions),
         BTreeSet::new(),
         BTreeMap::new(),

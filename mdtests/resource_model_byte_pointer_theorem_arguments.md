@@ -1,7 +1,7 @@
 # Resource-model pointers preserve their declared element type
 
 A matched byte pointer remains byte-addressed when supplied to a theorem,
-including pointer arithmetic and entry/label snapshots.
+including pointer arithmetic and entry/label states.
 
 ```c filename=simple.c
 void keep(const uint8* p, int32 i) {}

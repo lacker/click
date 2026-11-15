@@ -1281,7 +1281,7 @@ impl PureFactContext {
     /// spells read `OrderFactsByLower`: a constant node connects to any edge
     /// whose lower end is a constant at least as large, one range read, and
     /// with extended bridging a load connects to its forms at other
-    /// snapshots, filed under its pointer and kind.
+    /// states, filed under its pointer and kind.
     pub(in crate::kernel) fn has_exact_order_path(
         &self,
         left: &MachineTerm,
@@ -4031,7 +4031,7 @@ mod shared_read_equality_rule_tests {
             offset: PointerOffsetTerm::Constant(0),
         };
         let wrong_address = read(after.clone(), &unrelated);
-        let wrong_snapshot = read(
+        let wrong_state = read(
             after.clone().store(
                 pointer.clone(),
                 ProgramValue::Int32(MachineTerm::constant(31)),
@@ -4052,7 +4052,7 @@ mod shared_read_equality_rule_tests {
         for (candidate, expected) in [
             (&right, Some(true)),
             (&wrong_address, None),
-            (&wrong_snapshot, None),
+            (&wrong_state, None),
         ] {
             let candidate_shared = shared(candidate);
             for operands in [

@@ -46,7 +46,7 @@ fn nested_case_partition_reuses_decisions_without_relowering_or_forking() {
             call_routes: Vec::new(),
             branch_decisions: decisions,
             surface_propositions: SurfacePropositionMap::default(),
-            recorded_snapshots: RecordedSnapshots::default(),
+            recorded_states: RecordedStates::default(),
             generated_load_bindings: PersistentMap::default(),
             match_arms: PersistentMap::default(),
             case_obligations: PersistentMap::default(),
@@ -160,7 +160,7 @@ fn flat_haves_before_a_case_use_linear_work_and_constant_traversal_stack() {
             case_obligations: PersistentMap::default(),
             checked_haves: PersistentMap::default(),
             surface_propositions: SurfacePropositionMap::default(),
-            recorded_snapshots: RecordedSnapshots::default(),
+            recorded_states: RecordedStates::default(),
             generated_load_bindings: PersistentMap::default(),
         };
         let root = ProofFacts::default();

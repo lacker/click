@@ -823,7 +823,7 @@ fn fold_atom_for_claim(
 ///
 /// This is intentionally a small, context-free conversion. The returned
 /// atom map contains only checked source identities: variables, machine
-/// observations, pure applications, snapshot-aware opaque folds, and complete
+/// observations, pure applications, state-aware opaque folds, and complete
 /// symbolic products and truncating terms. An
 /// arbitrary deep Integer term is never used directly as a map key.
 /// Every Integer affine claim `proposition` holds exactly when. A native
@@ -1636,17 +1636,17 @@ mod tests {
     }
 
     #[test]
-    fn fold_atom_identity_retains_the_exact_memory_snapshot() {
+    fn fold_atom_identity_retains_the_exact_memory_state() {
         use crate::kernel::{
             IntegerRangeFoldIndex, MachineIntegerType, MachineTerm, Memory, Pointer,
             PointerOffsetTerm, ProgramValue, SharedIntegerRangeEndpoint, SharedMachineIntegerTerm,
         };
         let pointer = Pointer {
-            block: "affine-fold-snapshot".into(),
+            block: "affine-fold-retained_state".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
         let before =
-            crate::kernel::intern_memory(Memory::new().with_block("affine-fold-snapshot", 8));
+            crate::kernel::intern_memory(Memory::new().with_block("affine-fold-retained_state", 8));
         let after = crate::kernel::intern_memory(before.as_ref().clone().store(
             pointer.clone(),
             ProgramValue::Int32(MachineTerm::constant(7)),
@@ -1681,11 +1681,11 @@ mod tests {
         ));
         assert!(claim(&renamed_goal).terms.is_empty());
 
-        let changed_snapshot_goal = proposition(ConditionTerm::IntegerEqual(
+        let changed_state_goal = proposition(ConditionTerm::IntegerEqual(
             before_fold.into(),
             after_fold.into(),
         ));
-        assert_eq!(claim(&changed_snapshot_goal).terms.len(), 2);
+        assert_eq!(claim(&changed_state_goal).terms.len(), 2);
     }
 
     #[test]

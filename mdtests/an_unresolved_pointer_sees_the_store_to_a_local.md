@@ -7,9 +7,9 @@ refused by substitution. This one drops that clause: nothing at all connects
 frame `q[0]` across `x = 1` is a proof that the store's address is not the
 read's — which there is none of, because `q` really is `&x`.
 
-The route this pins is the snapshot comparison behind fact transport. Its
+The route this pins is the state comparison behind fact transport. Its
 cell-by-cell check used to skip every cell in a `local:` block before asking
-anything, so two snapshots differing only in `local:x` were declared to agree
+anything, so two states differing only in `local:x` were declared to agree
 about a load through an unresolved pointer. A store to a *global* was never
 skipped, which is why the global-aliasing attack was refused while this one was
 not; the skip is gone and both are now decided by one rule.

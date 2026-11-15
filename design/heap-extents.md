@@ -224,7 +224,7 @@ the `UInt64` kind.
    `CPendingReallocation.old_bytes` and `CBlock`'s size
    (`CBlock::extent`, `CMemory::block_extent`, `live_heap_block_extent`);
    `AllocationSize` carries `kind`. Every extent is `Int32`. An `Int32` extent
-   hashes and prints as its byte term, so snapshot hashes, load names and
+   hashes and prints as its byte term, so state hashes, load names and
    traces are unchanged; equality and ordering compare the kind after the
    bytes. Threaded through the kind: the token
    (`own_heap_allocation`/`own_designated_allocation` build `int32` or

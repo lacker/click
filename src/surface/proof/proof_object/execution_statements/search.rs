@@ -72,7 +72,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 &resolved_source,
                 facts,
                 context.parameter_binding(),
-                FixedStateFrame::new(pre_state, state, None, &view.execution.presentation.recorded_snapshots),
+                FixedStateFrame::new(pre_state, state, None, &view.execution.presentation.recorded_states),
                 context.spec_definitions,
             )
             .map_err(|message| {
@@ -98,7 +98,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 &resolved_target,
                 facts,
                 context.parameter_binding(),
-                FixedStateFrame::new(pre_state, state, None, &view.execution.presentation.recorded_snapshots),
+                FixedStateFrame::new(pre_state, state, None, &view.execution.presentation.recorded_states),
                 context.spec_definitions,
             )
             .map_err(|message| {
@@ -134,7 +134,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     // trying further proof routes after its budget expired.
                     use crate::surface::proof_diagnostics::render;
                     let _typed = render::TypedNotationScope::enter();
-                    let mut labels = render::SnapshotLabels::with_state(
+                    let mut labels = render::MemoryStateLabels::with_state(
                         context.parameter_binding(), state,
                     );
                     let source = render::render_proposition_labeled(&source, &mut labels);

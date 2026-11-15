@@ -29,7 +29,7 @@ pub(super) fn describe_invariant_closure_error(error: ClickError) -> ClickError 
         (!matches!(goal, Proposition::And(_, _))).then(|| {
             crate::surface::proof_diagnostics::render::render_proposition_labeled(
                 goal,
-                &mut crate::surface::proof_diagnostics::render::SnapshotLabels::ambient(),
+                &mut crate::surface::proof_diagnostics::render::MemoryStateLabels::ambient(),
             )
         })
     });
@@ -125,7 +125,7 @@ mod ranking_diagnostic_tests {
 }
 
 /// The C `if` condition standing at this frontier, spelled at that
-/// statement's entry snapshot, when the case split about to happen is exactly
+/// statement's entry state, when the case split about to happen is exactly
 /// that C branch.
 ///
 /// A proof-level case over anything else records nothing: only a decision the
@@ -162,7 +162,7 @@ fn program_branch_condition_at_frontier(
     if surface_program_condition(&source, &execution.core.state)? != *condition {
         return Ok(None);
     }
-    Ok(Some(surface_at_snapshot(
+    Ok(Some(surface_at_program_point(
         condition,
         &ProgramPointRef {
             region: CodeRegionRef::Region(statement_index),
@@ -222,16 +222,16 @@ impl<'a> Proof<'a> {
         }
         let goal = self.goal()?;
         let (parameters, arguments) = self.diagnostic_naming_tables();
-        let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
+        let mut labels = crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(
             ParameterBinding::new(&parameters, &arguments),
         );
         // A value the back-edge locals no longer hold, such as the
-        // iteration's entry value of a counter, reads at the snapshot that
+        // iteration's entry value of a counter, reads at the state that
         // recorded it.
         if let Some(execution) = self.execution() {
-            super::register_recorded_snapshot_names(
+            super::register_recorded_state_names(
                 &mut labels,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             );
         }
         // The pass's own count, `iterations`.
@@ -248,8 +248,8 @@ impl<'a> Proof<'a> {
         );
         lowered.push_str(&labels.trace_legend());
         // The back-edge locals do not name a value read at an earlier
-        // snapshot, which the lowered spelling elides. The synthesized form
-        // names that snapshot even where it does not lower back exactly, as
+        // state, which the lowered spelling elides. The synthesized form
+        // names that state even where it does not lower back exactly, as
         // an unsigned order does not.
         if lowered.contains('…')
             && let Some(surface) = self.bundle_member_surface(goal, false)
@@ -370,7 +370,7 @@ impl<'a> Proof<'a> {
 
     /// One bundle member's source form, synthesized at the current state
     /// with the iteration entry, and failing that the loop entry, as the one
-    /// further snapshot, and kept only when it lowers alpha-equivalently to
+    /// further state, and kept only when it lowers alpha-equivalently to
     /// `goal`. A member at the loop entry has no source form in the whole
     /// bundle's synthesis, which names only the iteration entry, so a
     /// written `both` over a bundle reaches its members through this too.
@@ -383,15 +383,15 @@ impl<'a> Proof<'a> {
 
     /// [`Self::synthesized_bundle_member_surface`], or with `checked` false
     /// the synthesized form whether or not it lowers back to `goal`. Only a
-    /// refusal reads the unchecked form, to name the snapshots a member
+    /// refusal reads the unchecked form, to name the states a member
     /// compares; nothing proves or records it.
     fn bundle_member_surface(&self, goal: &Proposition, checked: bool) -> Option<ClickProposition> {
         let context = self.execution_context()?;
         let execution = self.execution()?;
         let bundle = context.constants.invariant_body_context.as_deref()?;
-        let synthesize_at = |state: &ExecutionState, selector: &SnapshotSelector| {
+        let synthesize_at = |state: &ExecutionState, selector: &ProgramPointSelector| {
             let synthesize = || {
-                crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_snapshot(
+                crate::surface::proof::surface_synthesis::synthesize_surface_proposition_at_entry_post_and_state(
                     goal,
                     context.parameter_binding(),
                     context.old_reference_state(&execution.core.frontier, &execution.core.state),
@@ -527,7 +527,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             ),
             context.spec_definitions,
             &BTreeSet::new(),
@@ -879,10 +879,10 @@ impl<'a> Proof<'a> {
                 &checked.execution.core.state,
             ) {
                 // At a call successor, a synthesized `old(...)` names the
-                // callee's entry snapshot, while the same surface syntax in
+                // callee's entry state, while the same surface syntax in
                 // the caller names the caller's function entry. Do not cache
                 // that ambiguous spelling as caller provenance. Explicit
-                // Snapshot-qualified forms (including proof marks) retain the exact
+                // MemoryState-qualified forms (including proof marks) retain the exact
                 // call-frontier identity needed to name such a fact later.
                 if proposition_contains_old_expression(&surface) {
                     continue;
@@ -1034,7 +1034,7 @@ impl<'a> Proof<'a> {
                 ContractEnvironment::new(&values, &array_refs),
                 pre_state,
                 before,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
                 context.spec_definitions,
             )
             .map_err(|message| {
@@ -1213,12 +1213,12 @@ impl<'a> Proof<'a> {
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let mut presentation = execution.presentation.clone();
-        let selector = SnapshotSelector::Mark(name.to_string());
-        if presentation.recorded_snapshots.contains_key(&selector) {
+        let selector = ProgramPointSelector::Mark(name.to_string());
+        if presentation.recorded_states.contains_key(&selector) {
             return Err(self.step_error(format!("duplicate proof mark `{name}`")));
         }
         presentation
-            .recorded_snapshots
+            .recorded_states
             .insert(selector, (*execution.core.state).clone());
         self.state
             .replace_frontier_presentation(presentation)
@@ -1227,7 +1227,7 @@ impl<'a> Proof<'a> {
 
     /// This frontier with the by-value parameters of the call `candidate`
     /// prepared, as that preparation bound them: the call's parameter point
-    /// (`R.parameter(name)`), copied from the candidate's recorded snapshots.
+    /// (`R.parameter(name)`), copied from the candidate's recorded states.
     /// The call's requirements read those parameters, so a step proves them
     /// here, at its pre-state, with that point named. Only the presentation
     /// changes; the facts and the proof node are this frontier's.
@@ -1241,10 +1241,10 @@ impl<'a> Proof<'a> {
         let Some(point) = &prepared.presentation.surface_record.last_call_parameters else {
             return self.clone();
         };
-        let Some(bound) = prepared.presentation.recorded_snapshots.get(point) else {
+        let Some(bound) = prepared.presentation.recorded_states.get(point) else {
             return self.clone();
         };
-        if execution.presentation.recorded_snapshots.get(point) == Some(bound)
+        if execution.presentation.recorded_states.get(point) == Some(bound)
             && execution
                 .presentation
                 .surface_record
@@ -1257,7 +1257,7 @@ impl<'a> Proof<'a> {
         let point = point.clone();
         let mut presentation = execution.presentation.clone();
         presentation
-            .recorded_snapshots
+            .recorded_states
             .insert(point.clone(), bound.clone());
         presentation.surface_record.last_call_parameters = Some(point);
         let Ok(state) = self.state.replace_frontier_presentation(presentation) else {
@@ -1330,7 +1330,7 @@ impl<'a> Proof<'a> {
         };
         // `have` publication keeps its source spelling and certificate facts
         // beside the logical context. Carry only the appended suffix, preserving
-        // the candidate's new call bindings, snapshots, and typed read evidence.
+        // the candidate's new call bindings, states, and typed read evidence.
         let retained = proven
             .presentation
             .surface_record
@@ -1681,11 +1681,11 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         // A mid-execution case condition may name the current statement's
-        // entry snapshot before any step has crossed it; record it so the
+        // entry state before any step has crossed it; record it so the
         // form lowers, exactly as the checked `if` did.
         record_current_statement_entry(
             &base_execution.core.frontier,
-            &mut base_execution.presentation.recorded_snapshots,
+            &mut base_execution.presentation.recorded_states,
             &base_execution.core.state,
             context.function_block,
             context.function,
@@ -1695,7 +1695,7 @@ impl<'a> Proof<'a> {
             "if",
         )?;
         // A split that is this statement's own C `if` records the decision the
-        // C program made, at the entry snapshot where it was made, so a later
+        // C program made, at the entry state where it was made, so a later
         // bundle closer can name it after the loop body has overwritten the
         // cells the condition read.
         let c_branch_condition =

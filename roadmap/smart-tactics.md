@@ -426,7 +426,7 @@ The retained-instance route is covered by a discovery guard and the fixed-call
 instance-count scaling regression. The arena proof uses explicit separation
 and preservation for its selected retained headers and cells. Automatic
 statement-exit fact restatement is removed; calls publish producer facts at
-their original snapshots rather than searching for extra current-state facts.
+their original states rather than searching for extra current-state facts.
 
 Experimental removal: `ProofSearch::call_frame` no longer opens retained
 non-argument-direct composite bodies to discover hidden memory ranges. It
@@ -481,7 +481,7 @@ separately. A derivation edge named `CellsForgotten` does not itself establish
 an unbounded history search: the inspected cell-source route counts real hops
 against `max_hops` and gates its extended bridge.
 
-Keep the read/store/explicit transport fixed while growing prior snapshots,
+Keep the read/store/explicit transport fixed while growing prior states,
 cached cells, compact runs and holes independently. Measure cold misses and
 repeated adjacent/non-adjacent reads; grow genuinely overwritten pieces as a
 separate output-sized control. Retain exact typed-read identity, initialization,
@@ -581,7 +581,7 @@ For whichever slice is selected:
 
 Persistent branches retain their parent contexts. Proof repairs preserve the
 original C and contracts, using explicit separation and ordinary preservation/equality steps
-at exact footprint entry/exit snapshots. Whole-region preservation must be
+at exact footprint entry/exit states. Whole-region preservation must be
 explicit composition, not a hidden transition walk. Inconclusive checking
 cannot establish equality or preservation, and explicit proof application must
 not reconstruct identities or search for intermediate states.

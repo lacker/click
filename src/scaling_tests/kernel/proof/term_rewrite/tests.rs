@@ -223,7 +223,8 @@ fn registered_load_rewrite_keeps_branching_pointer_dag_compact() {
             panic!("registered load carrier changed shape")
         };
         assert!(!machine.has_boxed_operand());
-        let (snapshot, pointer, kind) = machine.operand_view().read().expect("structural read");
+        let (retained_state, pointer, kind) =
+            machine.operand_view().read().expect("structural read");
         assert_eq!(kind, crate::kernel::LoadKind::Int32);
         assert_ne!(
             pointer,
@@ -231,9 +232,9 @@ fn registered_load_rewrite_keeps_branching_pointer_dag_compact() {
                 .unwrap()
                 .1
         );
-        assert_eq!(snapshot, &memory);
+        assert_eq!(retained_state, &memory);
         assert!(pointer.offset.native_scaled_values_for_output().iter().all(
-            |value| matches!(value, MachineTerm::MemoryLoad(snapshot, _, _) if snapshot == &memory)
+            |value| matches!(value, MachineTerm::MemoryLoad(retained_state, _, _) if retained_state == &memory)
         ));
         last_load = Some(load);
         work.push(measured);
@@ -586,7 +587,7 @@ fn integer_fold_nested_capture_and_nocapture_work_scales_linearly() {
 }
 
 #[test]
-fn checked_fold_collectors_bound_mixed_carrier_payloads_and_opaque_snapshots() {
+fn checked_fold_collectors_bound_mixed_carrier_payloads_and_opaque_states() {
     fn integer_index_fold(body: IntegerTerm, accumulator: Variable, item: Variable) -> IntegerTerm {
         IntegerTerm::range_fold(
             crate::kernel::IntegerRangeFoldIndex::Integer {
@@ -613,7 +614,7 @@ fn checked_fold_collectors_bound_mixed_carrier_payloads_and_opaque_snapshots() {
         )
     }
 
-    fn memory_snapshot(depth: usize) -> crate::kernel::SharedMemory {
+    fn memory_state_identity(depth: usize) -> crate::kernel::SharedMemory {
         let block = PointerBlock::Concrete("checked-fold-opaque".into());
         let mut memory = Memory::new().with_block(block.clone(), depth as u32 + 1);
         for offset in 0..depth {
@@ -628,9 +629,9 @@ fn checked_fold_collectors_bound_mixed_carrier_payloads_and_opaque_snapshots() {
         crate::kernel::intern_memory(memory)
     }
 
-    // Memory snapshots are opaque to lexical collection. Keep the
+    // Memory states are opaque to lexical collection. Keep the
     // expression and its carrier payload fixed while changing only the
-    // snapshot size; the checked rewrite work must stay unchanged.
+    // state size; the checked rewrite work must stay unchanged.
     let fixed_source = Variable(3_010_000);
     let fixed_accumulator = Variable(3_010_001);
     let fixed_item = Variable(3_010_002);
@@ -642,9 +643,9 @@ fn checked_fold_collectors_bound_mixed_carrier_payloads_and_opaque_snapshots() {
             fixed_item,
         );
     }
-    let mut snapshot_work = Vec::new();
-    for snapshot_size in [0usize, 256] {
-        let memory = memory_snapshot(snapshot_size);
+    let mut state_work = Vec::new();
+    for state_size in [0usize, 256] {
+        let memory = memory_state_identity(state_size);
         let pointer = Pointer {
             block: PointerBlock::Concrete("checked-fold-opaque".into()),
             offset: PointerOffsetTerm::Constant(0),
@@ -674,14 +675,14 @@ fn checked_fold_collectors_bound_mixed_carrier_payloads_and_opaque_snapshots() {
         });
         assert!(!result.0 && !result.1);
         assert!(matches!(result.2, Term::Integer(_)));
-        snapshot_work.push(work);
+        state_work.push(work);
     }
-    assert_eq!(snapshot_work[0], snapshot_work[1]);
+    assert_eq!(state_work[0], state_work[1]);
 
     let mut integer_to_c_work = Vec::new();
     let mut c_to_integer_work = Vec::new();
     for depth in [8usize, 16, 32, 64] {
-        let memory = memory_snapshot(depth);
+        let memory = memory_state_identity(depth);
         let pointer = Pointer {
             block: PointerBlock::Concrete("checked-fold-opaque".into()),
             offset: PointerOffsetTerm::Constant(0),

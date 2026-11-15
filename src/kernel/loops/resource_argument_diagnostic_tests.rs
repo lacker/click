@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn missing_argument_read_retains_the_actual_snapshot_and_permission() {
+fn missing_argument_read_retains_the_actual_state_and_permission() {
     let state = ExecutionState::new().with_local(
         "p",
         ProgramValue::pointer(Pointer::symbolic(Variable(985_910))),

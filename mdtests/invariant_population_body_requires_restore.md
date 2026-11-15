@@ -2,7 +2,7 @@
 
 The active population body is authoritative, not an excuse to retain a stale
 fact after mutation. Closing `open` fails when the body invariant is false at
-the new C-memory snapshot.
+the new C-memory state.
 
 ```c filename=invariant_population_restore_wrap.c
 struct object {

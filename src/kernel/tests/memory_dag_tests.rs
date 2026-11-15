@@ -4,7 +4,7 @@ use crate::kernel::binary_node;
 use crate::kernel::binary_term;
 
 #[test]
-fn rewritten_load_store_witness_binds_value_address_and_snapshot() {
+fn rewritten_load_store_witness_binds_value_address_and_state() {
     // The load is an `int32` one: a stored value answers only for a read of
     // its own width, and an unrecorded width is the widest scalar access.
     crate::kernel::eval::declare_load_access_width(&arc_pointer(4), 4);
@@ -469,7 +469,7 @@ fn nested_checked_load_equality_captures_keep_evidence_with_the_inner_owner() {
 // id) plus the havoc-identity property that must hold by construction.
 
 #[test]
-fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
+fn a_store_records_the_edge_from_the_state_it_wrote() {
     let base = Memory::new().with_block("arg-memory", 16);
     let after = base.clone().store(
         arc_pointer(4),
@@ -478,7 +478,7 @@ fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
 
     let derivation = crate::kernel::intern_memory_ref(&after)
         .derivation()
-        .expect("a store records how the snapshot was produced");
+        .expect("a store records how the state was produced");
     match derivation.as_ref() {
         MemoryDerivation::Store {
             base: recorded_base,
@@ -811,7 +811,7 @@ fn store_hop_retains_direct_or_composed_separated_range_authority() {
     );
     let derivation = crate::kernel::intern_memory_ref(&after)
         .derivation()
-        .expect("the written snapshot retains its store");
+        .expect("the written state retains its store");
     assert!(
         !composed.checks(derivation.as_ref(), &load, 4, &PureFactContext::new()),
         "the retained composition must still be present during checking"
@@ -891,7 +891,7 @@ fn entry_separation_does_not_frame_a_store_after_its_bases_become_equal() {
         .store(left.clone(), ProgramValue::Int32(MachineTerm::constant(7)));
     let derivation = crate::kernel::intern_memory_ref(&after)
         .derivation()
-        .expect("the written snapshot retains its store");
+        .expect("the written state retains its store");
     assert!(
         !retained.checks(derivation.as_ref(), &right, 4, &assumptions),
         "a retained hop must be refused after its own ranges become overlapping"
@@ -1023,7 +1023,7 @@ fn separated_range_store_hop_retains_symbolic_membership_bounds() {
 #[test]
 fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
     // Storing a value and then storing it back re-interns the original
-    // snapshot, which is the shortest cycle the DAG could otherwise grow.
+    // state, which is the shortest cycle the DAG could otherwise grow.
     // First-wins recording keeps the older edge, so following `base` still
     // strictly decreases and terminates.
     let base = Memory::new().with_block("arg-memory", 16);
@@ -1130,7 +1130,7 @@ fn call_havoc_marker_identity_includes_symbolic_write_set() {
         MachineTerm::Variable(Variable(70_004)),
     );
 
-    // The marker variable and parent snapshot intentionally match. A
+    // The marker variable and parent state intentionally match. A
     // lossy hash of only constant bounds and the base block would make these
     // two derived memories equal and let first-wins attach the first range
     // list to the second call.
@@ -1148,7 +1148,7 @@ fn call_havoc_marker_identity_includes_symbolic_write_set() {
     );
     assert_ne!(
         first, second,
-        "different symbolic write sets need distinct snapshots"
+        "different symbolic write sets need distinct states"
     );
 
     let first = crate::kernel::intern_memory_ref(&first);
@@ -1156,7 +1156,7 @@ fn call_havoc_marker_identity_includes_symbolic_write_set() {
     assert_ne!(first.arena_id(), second.arena_id());
     let MemoryDerivation::CallHavoc { mutable_ranges, .. } = second
         .derivation()
-        .expect("the second snapshot retains its own call-havoc edge")
+        .expect("the second state retains its own call-havoc edge")
         .as_ref()
         .clone()
     else {
@@ -1182,7 +1182,7 @@ fn a_store_that_changes_nothing_records_no_edge_to_itself() {
         assert_ne!(
             derivation.base().arena_id(),
             node.arena_id(),
-            "a snapshot must never be recorded as derived from itself"
+            "a state must never be recorded as derived from itself"
         );
     }
 }
@@ -1206,7 +1206,7 @@ fn loop_havoc_is_its_own_edge_kind_and_keeps_its_marker_block() {
     );
     let derivation = crate::kernel::intern_memory_ref(&after)
         .derivation()
-        .expect("loop havoc records how the snapshot was produced");
+        .expect("loop havoc records how the state was produced");
     match derivation.as_ref() {
         MemoryDerivation::LoopHavoc {
             base: recorded_base,
@@ -1237,7 +1237,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
     let read = arc_pointer(0);
 
     // A call havoc changes the block set (it adds its marker block), so
-    // the snapshot-diff matcher refuses to look at the cells at all. The
+    // the state-diff matcher refuses to look at the cells at all. The
     // recorded edge carries the call's mutable ranges, so the walk can
     // still cross it for a pointer provably outside them. This is the
     // case the DAG answers and value bridging cannot.
@@ -1254,7 +1254,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
             &read,
             &PureFactContext::new()
         ),
-        "the snapshot-diff matcher is expected not to cross the marker block"
+        "the state-diff matcher is expected not to cross the marker block"
     );
     assert!(
         checked_memory_load_equality(&base, &called, &read, &PureFactContext::new()),
@@ -1361,7 +1361,7 @@ fn loop_kept_frame_preserves_only_complete_pointer_reads() {
     let prefix = havoc(4);
     assert_ne!(
         complete, prefix,
-        "different retained frames need different snapshots"
+        "different retained frames need different states"
     );
     let unchanged = |after: &Memory| {
         crate::kernel::memory_provenance::complete_pointer_reads_equal_across_frame(
@@ -1472,18 +1472,18 @@ fn loan_havoc_may_forget_a_run_crossing_the_interval_index_boundary() {
     );
 }
 
-/// Stage 4: the DAG-guided cell lookup answers load equality for snapshots
+/// Stage 4: the DAG-guided cell lookup answers load equality for states
 /// that are *siblings*, which the stage-2 walk cannot do because it only ever
-/// asks whether one snapshot is reachable from the other.
+/// asks whether one state is reachable from the other.
 ///
 /// Two calls, each havocking a range disjoint from the loaded cell, produce
-/// two snapshots neither of which derives from the other. Value bridging
+/// two states neither of which derives from the other. Value bridging
 /// refuses them outright — each carries its own `call-havoc:N` marker block,
-/// so the block sets differ and the snapshot matcher stops before looking at
+/// so the block sets differ and the state matcher stops before looking at
 /// any cell. Resolving both against the write history lands them on one
-/// common ancestor, and the loads are equal with no snapshot comparison.
+/// common ancestor, and the loads are equal with no state comparison.
 #[test]
-fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
+fn sibling_states_resolve_one_cell_to_a_common_ancestor() {
     let base = Memory::new().with_block("arg-memory", 16);
     let read = arc_pointer(0);
     let load_in = |memory: &Memory| {
@@ -1510,7 +1510,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
             &read,
             &PureFactContext::new()
         ),
-        "the two marker blocks are expected to stop the snapshot matcher"
+        "the two marker blocks are expected to stop the state matcher"
     );
     assert!(
         PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&right)),
@@ -1530,14 +1530,14 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     assert_eq!(
         retained_memory_dag_path(&evidence.left)[0].derived.as_ref(),
         &left,
-        "the left proof names the exact derived snapshot"
+        "the left proof names the exact derived state"
     );
     assert_eq!(
         retained_memory_dag_path(&evidence.right)[0]
             .derived
             .as_ref(),
         &right,
-        "the right proof names the exact derived snapshot"
+        "the right proof names the exact derived state"
     );
     assert_eq!(
         evidence.left.node(),
@@ -1684,7 +1684,7 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
         }
     ));
     assert!(offset_derivation.check(&assumptions));
-    // The snapshot is not a certificate for another path's assumptions.
+    // The state is not a certificate for another path's assumptions.
     assert!(
         !offset_derivation.check(&PureFactContext::new()),
         "pointer-offset certificate checking must also require the separation and order premises"
@@ -1693,7 +1693,7 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
 
 /// The owned-string loadable shape: the loadability fact and its bound facts
 /// write `len` as a load at contract
-/// entry, while the index the goal extracts writes it at a later snapshot
+/// entry, while the index the goal extracts writes it at a later state
 /// separated by a block declaration, stores, and a cell-forgetting prune —
 /// exactly the edges (`BlockDeclared`, `CellsForgotten`) that used to leave
 /// the two forms in disjoint DAG components. The loadable prover's
@@ -1752,7 +1752,7 @@ fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
             true,
         );
 
-    // The later snapshot: a local declared, a distinct cell written, and the
+    // The later state: a local declared, a distinct cell written, and the
     // write-path prune that forgets it again. Its `len` load is a different
     // form of the same cell.
     let later = entry
@@ -1773,7 +1773,7 @@ fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
         crate::kernel::LoadKind::Int32,
     );
 
-    // loadable(buffer[len]) with `len` written at the later snapshot.
+    // loadable(buffer[len]) with `len` written at the later state.
     let goal_base = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Add(
@@ -1804,11 +1804,11 @@ fn a_store_to_the_loaded_cell_is_not_crossable() {
 }
 
 /// The premise-availability path matches two forms of one fact whose load
-/// atoms carry different memory snapshots. The match is decided by proof, not
-/// by ignoring the snapshots: an unframed call havoc between the two snapshots
+/// atoms carry different memory states. The match is decided by proof, not
+/// by ignoring the states: an unframed call havoc between the two states
 /// blocks it, and an effect summary that frames the loaded pointer restores it.
 #[test]
-fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
+fn conditions_equal_modulo_proven_states_needs_frame_evidence() {
     let before = Memory::new()
         .with_block("arg-memory", 8)
         .with_block("call-havoc:0", 0);
@@ -1835,22 +1835,22 @@ fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
         )
     };
 
-    // Same snapshot: the two forms are literally one condition.
+    // Same state: the two forms are literally one condition.
     assert!(
         PureFactContext::new()
-            .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&before))
+            .conditions_equal_modulo_proven_states(&condition(&before), &condition(&before))
     );
 
-    // A call havoc stands between the snapshots and nothing frames the load,
+    // A call havoc stands between the states and nothing frames the load,
     // so the later form is a different fact, not another form.
     assert!(
         !PureFactContext::new()
-            .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
+            .conditions_equal_modulo_proven_states(&condition(&before), &condition(&after)),
         "an unframed call havoc must not be matched away"
     );
 
     // With an effect summary whose mutable range misses the loaded pointer,
-    // the two snapshots provably agree there and the forms match.
+    // the two states provably agree there and the forms match.
     let effect = Proposition::MemoryEffectSummary {
         before: before.clone(),
         after: after.clone(),
@@ -1883,7 +1883,7 @@ fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
     );
 
     // Framing never relaxes the structure: a different condition stays
-    // different however well the snapshots are framed.
+    // different however well the states are framed.
     let other = ConditionTerm::equal(
         MachineTerm::Variable(Variable(78)),
         MachineTerm::add(
@@ -1941,7 +1941,7 @@ fn sibling_materialization_cells_must_not_launder_a_havoc() {
 /// materialization cells keeps only the cells the projected memory itself
 /// holds. A cell the source holds but a later havoc erased was written over:
 /// carrying it across the jump would record the havocked cell's old value
-/// in the snapshot the load names (bounded-pool's `pool_transfer` call read
+/// in the state the load names (bounded-pool's `pool_transfer` call read
 /// `source->checked_out` as its value before `pool_checkout`).
 #[test]
 fn a_load_projection_jump_does_not_restore_a_havocked_cell() {
@@ -2003,7 +2003,7 @@ fn symbolic_descriptor(identity: u64) -> Pointer {
 
 /// A pointer cell holding exactly the pointer a load of that cell reads is a
 /// materialization like an integer one: the cell is named at its source, so a
-/// load of a neighbouring cell through the materialized snapshot keeps the
+/// load of a neighbouring cell through the materialized state keeps the
 /// name it has at the source. Only the pointer a typed load of *this* cell
 /// produces qualifies: another cell's load, or the same load scaled at a
 /// width other than the pointee's, is a write the load cannot pass over.
@@ -2054,7 +2054,7 @@ fn a_materialized_pointer_cell_is_named_at_its_source() {
 
 /// The pointer form of `sibling_materialization_cells_must_not_launder_a_havoc`:
 /// a materialized pointer cell that survives a havoc must not carry a load
-/// the havoc may have written back to the pre-havoc snapshot.
+/// the havoc may have written back to the pre-havoc state.
 #[test]
 fn a_materialized_pointer_cell_must_not_launder_a_havoc() {
     let pristine = Memory::new().with_block("arg-memory", 32);
@@ -2114,7 +2114,7 @@ fn a_symbolic_store_requires_the_current_paths_separation_order() {
     let written = symbolic_element_pointer(&index);
     let kept = symbolic_element_pointer(&length);
     // `kept` is never materialized: the observable is the canonical form of
-    // its load, which only a crossed store edge keeps at the base snapshot.
+    // its load, which only a crossed store edge keeps at the base state.
     let base = Memory::new().with_block("arg-memory", 64);
     let ordered = PureFactContext::new().assume_condition(
         ConditionTerm::signed_less_than(index.clone(), length.clone()),
@@ -2328,9 +2328,9 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
     let local = || PointerBlock::Concrete("local:f:i".to_string());
     let one = || ProgramValue::Int32(MachineTerm::constant(1));
     let epoch = |memory: &Memory, block: PointerBlock| {
-        crate::kernel::resource_tracker::last_same_point(
+        crate::kernel::resource_tracker::last_same_version_point(
             crate::kernel::resource_tracker::TrackedResource::Block(&block),
-            &crate::kernel::resource_tracker::ProgramPoint::at(&crate::kernel::intern_memory(
+            &crate::kernel::resource_tracker::VersionPoint::at(&crate::kernel::intern_memory(
                 memory.clone(),
             )),
         )
@@ -2341,7 +2341,7 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
 
     // Declaring an object writes nothing, and a declaration proven distinct
     // from the subject is crossed too, so an epoch reaches back past the
-    // declarations that precede it. The assertions below name the snapshot the
+    // declarations that precede it. The assertions below name the state the
     // walk actually reaches rather than "the entry state".
     let just_g = Memory::new().with_block(global(), 16);
     let globals = just_g.clone().with_block(other_global(), 16);
@@ -2352,7 +2352,7 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
     assert_eq!(
         epoch(&after_global_store, PointerBlock::ExternalArgument),
         after_global_store,
-        "a store to a global may write the array argument, so the epoch is the live snapshot"
+        "a store to a global may write the array argument, so the epoch is the live state"
     );
     // The same for the opaque object identity a parameter can carry.
     assert_eq!(
@@ -2399,7 +2399,7 @@ fn an_array_refs_epoch_stops_at_a_store_that_may_alias_it() {
     );
 }
 
-/// The block-epoch memo is keyed by interned snapshot, and interning dedups
+/// The block-epoch memo is keyed by interned state, and interning dedups
 /// by content, so an entry left behind by one verification would answer a
 /// content-equal query in the next one — from a DAG history that
 /// verification never built. `VerificationSession` clears it with the other
@@ -2416,9 +2416,9 @@ fn a_session_reset_empties_the_block_epoch_memo() {
             },
             ProgramValue::Int32(MachineTerm::constant(1)),
         );
-    crate::kernel::resource_tracker::last_same_point(
+    crate::kernel::resource_tracker::last_same_version_point(
         crate::kernel::resource_tracker::TrackedResource::Block(&PointerBlock::ExternalArgument),
-        &crate::kernel::resource_tracker::ProgramPoint::at(&crate::kernel::intern_memory(memory)),
+        &crate::kernel::resource_tracker::VersionPoint::at(&crate::kernel::intern_memory(memory)),
     );
     assert!(
         crate::kernel::resource_tracker::block_version_memo_len() > 0,
@@ -2521,7 +2521,7 @@ fn a_store_forgets_the_wider_cell_whose_bytes_it_overwrites() {
 }
 
 /// Canonicalization for a load drops a cell it decides the load cannot
-/// observe, which makes two snapshots compare equal at that load. The
+/// observe, which makes two states compare equal at that load. The
 /// interval it decides that by has to admit the widest load the kernel
 /// performs, because the `MemoryLoad` term it is answering for carries no
 /// width of its own.
@@ -2597,10 +2597,10 @@ fn canonical_load_form_keeps_a_cell_a_wide_read_covers() {
     );
 }
 
-/// Two snapshots a store separates do not agree about a load whose bytes it
+/// Two states a store separates do not agree about a load whose bytes it
 /// wrote, however clean the two addresses look.
 ///
-/// "Do these snapshots hold one value for this load" is answered by scanning
+/// "Do these states hold one value for this load" is answered by scanning
 /// the cells they differ on and asking whether each is separate from the
 /// load. That question used to be asked of the *addresses* alone, and `p + 1`
 /// is a different address from `p` under every test the kernel has while
@@ -2611,7 +2611,7 @@ fn canonical_load_form_keeps_a_cell_a_wide_read_covers() {
 /// Both directions are pinned: a write the read's bytes cover blocks the
 /// agreement, and one past its last byte still does not.
 #[test]
-fn a_store_inside_a_read_stops_two_snapshots_agreeing_about_it() {
+fn a_store_inside_a_read_stops_two_states_agreeing_about_it() {
     let bare = PureFactContext::new();
     let read = arc_pointer(0);
     crate::kernel::eval::declare_load_access_width(&read, 4);
@@ -2625,32 +2625,32 @@ fn a_store_inside_a_read_stops_two_snapshots_agreeing_about_it() {
     for offset in 1..4 {
         let after = byte_written_at(offset);
         assert!(
-            !crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+            !crate::kernel::reasoning::memory_states_proven_equal_at_pointer(
                 &base, &after, &read, &bare
             ),
             "a one-byte write {offset} bytes into a four-byte read is a byte the read \
-             returns, so the two snapshots do not agree about it"
+             returns, so the two states do not agree about it"
         );
     }
 
     let after = byte_written_at(4);
     assert!(
-        crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+        crate::kernel::reasoning::memory_states_proven_equal_at_pointer(
             &base, &after, &read, &bare
         ),
-        "a write past the read's last byte leaves the two snapshots agreeing about it"
+        "a write past the read's last byte leaves the two states agreeing about it"
     );
 }
 
 /// A recorded store inside a read refutes the equality of the two loads
-/// around it, at every offset its bytes reach, whatever the snapshots kept.
+/// around it, at every offset its bytes reach, whatever the states kept.
 ///
-/// This is the rule the snapshot comparisons and the canonical-form
+/// This is the rule the state comparisons and the canonical-form
 /// comparison now answer to. Both are read from *state*: a cell map records
 /// what is known at a point, and a canonical form drops what it can prove
 /// irrelevant. Neither records that a store happened, and a store into the
 /// middle of a cell drops the cell it partly overwrites, so the two
-/// snapshots around it can be identical where it is concerned. The recorded
+/// states around it can be identical where it is concerned. The recorded
 /// history has the store either way, and one walk over it is all three
 /// routes' answer.
 ///
@@ -2709,10 +2709,10 @@ fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
                 "the memoized answer to the repeated question is the same answer"
             );
             assert!(
-                !crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+                !crate::kernel::reasoning::memory_states_proven_equal_at_pointer(
                     &base, &after, &read, &bare
                 ),
-                "the snapshot comparison answers to that history"
+                "the state comparison answers to that history"
             );
             assert!(
                 !bare.proves_atomic_without_search(&Proposition::ConditionIs(
@@ -2730,19 +2730,19 @@ fn a_store_inside_a_read_refutes_the_load_equality_at_every_offset() {
             "a write past the read's last byte writes none of its bytes"
         );
         assert!(
-            crate::kernel::reasoning::memory_snapshots_proven_equal_at_pointer(
+            crate::kernel::reasoning::memory_states_proven_equal_at_pointer(
                 &base,
                 &past_the_end,
                 &read,
                 &bare
             ),
-            "and the two snapshots still agree about the read"
+            "and the two states still agree about the read"
         );
     }
 }
 
 /// The gate the load-side distinct-cell reduction now applies before dropping
-/// a cell: dropping it names the load at a snapshot that no longer records it,
+/// a cell: dropping it names the load at a state that no longer records it,
 /// so the cell's bytes have to miss the read. The reduction had only
 /// `pointers_proven_distinct_for_memory_resolution`, which is about addresses.
 #[test]
@@ -2890,14 +2890,14 @@ fn a_gap_that_may_wrap_or_differ_is_not_decided() {
     );
 }
 
-/// Two snapshots that differ on a cell inside a read do not hold one value for
+/// Two states that differ on a cell inside a read do not hold one value for
 /// it. `memories_directly_match_for_pointer_load` decided each differing cell
 /// from the two *addresses* — a constant nonzero byte offset was enough — and
 /// an address is not the question: a four-byte cell at `q + 4` is a different
 /// address from `q` under every test the kernel has while holding the upper
 /// half of an eight-byte read there.
 #[test]
-fn a_differing_cell_inside_a_read_stops_the_two_snapshots_matching() {
+fn a_differing_cell_inside_a_read_stops_the_two_states_matching() {
     let bare = PureFactContext::new();
     for (block, read_bytes) in [("narrow-cell-memory", 4u32), ("wide-cell-memory", 8)] {
         let read = Pointer {
@@ -2924,7 +2924,7 @@ fn a_differing_cell_inside_a_read_stops_the_two_snapshots_matching() {
                     &bare,
                 ),
                 "a cell {offset} bytes into a {read_bytes}-byte read is a byte that read \
-                 returns, so the two snapshots do not hold one value for it"
+                 returns, so the two states do not hold one value for it"
             );
         }
         assert!(
@@ -2966,17 +2966,17 @@ fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
     let ranges = vec![int32_range(&owner), int32_range(&data)];
     let assumptions = PureFactContext::new();
     let named = |memory: &Memory, cell: &Pointer| {
-        crate::kernel::resource_tracker::last_same_point(
+        crate::kernel::resource_tracker::last_same_version_point(
             crate::kernel::resource_tracker::TrackedResource::Cell {
                 pointer: cell,
                 bytes: 4,
             },
-            &crate::kernel::resource_tracker::ProgramPoint::at(&intern_memory_ref(memory)),
+            &crate::kernel::resource_tracker::VersionPoint::at(&intern_memory_ref(memory)),
         )
-        .map(|point| point.snapshot().clone())
+        .map(|point| point.shared_memory().clone())
     };
     // The allocation's claim is live before the call, so retiring it changes
-    // the snapshot and records the edge.
+    // the state and records the edge.
     let havoc = |variable| {
         Memory::new()
             .with_heap_allocation_claim(data.clone(), HeapExtent::int32(4))
@@ -3006,14 +3006,14 @@ fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
         retained_memory_dag_path(&cell)[0].justification,
         MemoryDagHopJustification::RetirementInsideItsCallHavoc
     ));
-    let retired_snapshot = intern_memory_ref(&retired);
-    let derivation = retired_snapshot.derivation().expect("the retirement edge");
+    let retired_state = intern_memory_ref(&retired);
+    let derivation = retired_state.derivation().expect("the retirement edge");
     let crate::kernel::resource_tracker::step_effect::StepEffect::Separate(
         crate::kernel::resource_tracker::step_effect::Separation::Cell(justification),
     ) = with_extended_dag_bridging(|| {
         crate::kernel::resource_tracker::step_effect::affects(
             &derivation,
-            &retired_snapshot,
+            &retired_state,
             crate::kernel::resource_tracker::TrackedResource::Cell {
                 pointer: &owner,
                 bytes: 4,
@@ -3056,7 +3056,7 @@ fn a_retirement_inside_its_calls_havoc_names_cells_at_the_call() {
 }
 
 /// A disjoint call preserves the cell's version. Constant normalization
-/// reads the established relation without searching pairs of load snapshots,
+/// reads the established relation without searching pairs of load states,
 /// both for the read and for a value explicitly equated to it.
 #[test]
 fn constant_normalization_bridges_a_load_across_a_call() {
@@ -3248,7 +3248,7 @@ fn direct_pointer_reads_retain_their_projection_definitions() {
 }
 
 #[test]
-fn pointer_read_producer_closes_seeded_snapshot_equality_in_the_shared_graph() {
+fn pointer_read_producer_closes_seeded_state_equality_in_the_shared_graph() {
     let a = Pointer::symbolic(Variable(98_330));
     let b = Pointer::symbolic(Variable(98_331));
     let old = intern_memory(Memory::new());
@@ -3627,7 +3627,7 @@ fn read_identity_refuses_changed_sources_constant_runs_and_unrecorded_pruning() 
 }
 
 #[test]
-fn read_identity_is_immutable_when_a_snapshot_was_interned_before_its_edge() {
+fn read_identity_is_immutable_when_a_state_was_interned_before_its_edge() {
     let address = Pointer::symbolic(Variable(98_450));
     let original = intern_memory(Memory::new());
     let run = CellRun::new(
@@ -4089,12 +4089,12 @@ fn seeded_scalar_no_write_witness_rejects_changed_or_represented_values() {
     assert!(!witness.checks(&write, &other, 4, &assumptions));
 }
 
-/// Recording the edge of a snapshot the recording itself interns cannot
+/// Recording the edge of a state the recording itself interns cannot
 /// change any earlier answer, since no earlier question could name that
-/// snapshot, so it leaves the derivation generation that keys negative memos
+/// state, so it leaves the derivation generation that keys negative memos
 /// alone. Bumping it at every program step emptied those memos at every step.
 #[test]
-fn recording_a_fresh_snapshot_keeps_the_derivation_generation() {
+fn recording_a_fresh_state_keeps_the_derivation_generation() {
     let _session = crate::kernel::VerificationSession::enter();
     let cell = Pointer {
         block: "generation-block".into(),
@@ -4112,7 +4112,7 @@ fn recording_a_fresh_snapshot_keeps_the_derivation_generation() {
     assert_eq!(
         crate::kernel::primitives::memory_derivation_generation(),
         before,
-        "a fresh snapshot's edge invalidates no earlier answer"
+        "a fresh state's edge invalidates no earlier answer"
     );
 }
 
@@ -4170,7 +4170,7 @@ fn full_pointer_read_survives_a_join_of_stores_to_its_sibling() {
         ))),
     });
     // The explicit join summary names the common write footprint of both arms.
-    // Comparing the distant snapshots alone no longer searches their histories.
+    // Comparing the distant states alone no longer searches their histories.
     let effect = Proposition::MemoryEffectSummary {
         before: before.memory().clone(),
         after: joined.memory().clone(),
@@ -4658,7 +4658,7 @@ fn stated_separation_frames_equal_model_and_program_origins() {
 }
 
 #[test]
-fn an_abstract_value_seeded_unchanged_is_its_source_snapshots_load() {
+fn an_abstract_value_seeded_unchanged_is_its_source_states_load() {
     let address = Pointer::symbolic(Variable(98_470));
     let original = intern_memory(Memory::new());
     let seeded = original.memory().clone().with_seeded_cells(
@@ -4695,12 +4695,12 @@ fn an_abstract_value_seeded_unchanged_is_its_source_snapshots_load() {
 }
 
 /// The abstract-value counterpart of
-/// `conditions_equal_modulo_proven_snapshots_needs_frame_evidence`: a fact
-/// stating the value a field of abstract type holds at one snapshot proves
-/// the same equality read at another snapshot only when the two snapshots
+/// `conditions_equal_modulo_proven_states_needs_frame_evidence`: a fact
+/// stating the value a field of abstract type holds at one state proves
+/// the same equality read at another state only when the two states
 /// are proven to agree at the field.
 #[test]
-fn an_abstract_value_fact_carries_across_snapshots_only_with_frame_evidence() {
+fn an_abstract_value_fact_carries_across_states_only_with_frame_evidence() {
     let before = Memory::new()
         .with_block("arg-memory", 16)
         .with_block("call-havoc:0", 0);
@@ -4728,7 +4728,7 @@ fn an_abstract_value_fact_carries_across_snapshots_only_with_frame_evidence() {
 
     assert!(
         !stated(PureFactContext::new())
-            .proves_algebraic_condition_modulo_snapshots(&read(&after), true),
+            .proves_algebraic_condition_modulo_states(&read(&after), true),
         "an unframed call havoc must not carry the value"
     );
 
@@ -4792,7 +4792,7 @@ fn abstract_reads_follow_address_equalities_in_the_shared_graph() {
     );
     assert!(
         context.equality_graph.are_algebraic_equal(&a, &b),
-        "equal addresses give equal abstract reads of the same snapshot"
+        "equal addresses give equal abstract reads of the same state"
     );
     let changed = intern_memory(memory.memory().clone().store(left.clone(), int32(9)));
     assert!(

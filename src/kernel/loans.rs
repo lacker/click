@@ -24,7 +24,7 @@ use super::primitives::{
 };
 use super::{
     MachineTerm, MemoryRange, PureFactContext, Resource, ResourceContext, ResourceDescription,
-    ResourceFact, ResourceOccurrenceId, ResourceSnapshot, ResourceTransferRole, Variable,
+    ResourceFact, ResourceOccurrenceId, ResourceStateSource, ResourceTransferRole, Variable,
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::cmp::Ordering;
@@ -1765,7 +1765,7 @@ impl CompositeLoanBacking {
 }
 
 /// Checked backing for a view of live automatic storage. Retain the memory
-/// snapshot whose allocation bounds and lifetime were checked. The loan ledger
+/// state whose allocation bounds and lifetime were checked. The loan ledger
 /// enforces the lifetime restriction; fields are private to this module.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LocalViewBacking {
@@ -2786,7 +2786,7 @@ pub(crate) fn plan_stable_view_transfer_with_protocol_effect(
         return Err(StableViewPlanError::InvalidRequirement);
     }
     if requirements.iter().any(|requirement| {
-        requirement.snapshot == ResourceSnapshot::Post
+        requirement.state_source == ResourceStateSource::Post
             || requirement.role == ResourceTransferRole::Produce
             || (requirement.fact.is_view() && requirement.role != ResourceTransferRole::Borrow)
     }) {
@@ -3999,7 +3999,7 @@ impl StableViewTransferPlan {
 
     /// Recover only this suspended call's loans against the parent's current
     /// context. Other children may have opened loans since entry, so recovery
-    /// must keep the checked terminal ledger, never restore the entry snapshot.
+    /// must keep the checked terminal ledger, never restore the entry state.
     pub(crate) fn recover_suspended_views(
         mut self,
         ledger: LoanLedger,

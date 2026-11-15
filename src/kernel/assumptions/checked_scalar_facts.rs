@@ -6,7 +6,7 @@ use crate::kernel::{MachineOperandView, equality_graph::MachineAtom};
 use crate::persistent::{PersistentMap, PersistentSet};
 
 // Arithmetic has shared syntax identities. Opaque legacy leaves must stay in
-// this context's index: globally interning a memory load compares snapshots
+// this context's index: globally interning a memory load compares states
 // from independent verification arenas and charges unrelated memory contents.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(in crate::kernel) enum ScalarOperandKey {
@@ -91,7 +91,7 @@ impl ScalarOperandKey {
     }
 }
 
-// Inspect only the selected numeric syntax, never call arguments, snapshots,
+// Inspect only the selected numeric syntax, never call arguments, states,
 // or ambient facts. Other opaque leaves keep their existing context-local key.
 fn selected_call_expression(root: MachineOperandView<'_>) -> bool {
     let mut pending = vec![root];

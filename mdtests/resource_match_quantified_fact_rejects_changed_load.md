@@ -1,7 +1,7 @@
 # A changed covered load invalidates a matched quantified fact
 
 Matching a folded resource publishes its selected arm's bounded universal
-fact, but the fact remains tied to the memory snapshot it describes. Writing a
+fact, but the fact remains tied to the memory state it describes. Writing a
 different value into the covered interval invalidates that fact, so folding
 the unchanged model back is rejected.
 

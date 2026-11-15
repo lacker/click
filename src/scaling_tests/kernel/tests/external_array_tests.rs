@@ -5,7 +5,7 @@
 use super::*;
 
 #[test]
-fn external_array_unknown_snapshots_and_noop_maps_scale_with_representation() {
+fn external_array_unknown_states_and_noop_maps_scale_with_representation() {
     let mut samples = Vec::new();
     for count in [8, 1024, 1_000_000] {
         let _session = crate::kernel::VerificationSession::enter();

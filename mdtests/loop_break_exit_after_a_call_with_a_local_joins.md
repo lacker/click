@@ -15,7 +15,7 @@ counter that names re-entered declarations. The join reconciles each:
 - its counter is the largest of theirs, so no ended block's identity is
   issued again;
 - its memory keeps the cells every exit holds and takes a freshly minted
-  snapshot identity, with no recorded history, so a later load of a cell it
+  state identity, with no recorded history, so a later load of a cell it
   does not hold is related to no earlier load.
 
 The unchanged Linux `__rb_insert` needs this: its rotation exits call

@@ -1,6 +1,6 @@
 # Return views preserve old loads across predicate and fact changes
 
-A memory postcondition uses the entry snapshot, while the later predicate
+A memory postcondition uses the entry state, while the later predicate
 claim needs its explicitly unfolded body. Exact closers share prepared views;
 an intervening unfold or new fact starts a fresh preparation scope.
 

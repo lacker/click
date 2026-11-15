@@ -81,7 +81,7 @@ pub(in crate::kernel) fn map_index_with_fold(
 }
 
 /// Reuse work across roots in one substitution scope. Callers own the memo;
-/// neither snapshots nor substitutions may change while it is reused.
+/// neither states nor substitutions may change while it is reused.
 pub(in crate::kernel) fn map_index_with_fold_and_cache(
     value: &SharedMachineIntegerTerm,
     map_leaf: impl Fn(&MachineTerm) -> Option<MachineTerm>,
@@ -129,7 +129,7 @@ fn map_index_with_guard(
         ));
     };
     // Authority is local to this invocation: no answer survives a changed
-    // snapshot, fact context, registry, or direct-versus-general frame policy.
+    // state, fact context, registry, or direct-versus-general frame policy.
     let mut pending = vec![(root, false)];
     while let Some((node, finish)) = pending.pop() {
         if crate::instrumentation::deadline_exceeded_with_work(1) {
@@ -299,17 +299,18 @@ mod tests {
     use crate::kernel::{KernelTermExport, VerificationSession};
 
     #[test]
-    fn common_call_indices_keep_roots_and_original_read_snapshots() {
+    fn common_call_indices_keep_roots_and_original_read_states() {
         use crate::kernel::{KernelTermImport, PureFunctionArgument, SharedPureApplication};
         let _session = VerificationSession::enter();
-        let before = crate::kernel::intern_memory(Memory::new().with_block("call-snapshot", 8));
-        let address = Memory::global_pointer("call-snapshot");
+        let before =
+            crate::kernel::intern_memory(Memory::new().with_block("call-retained_state", 8));
+        let address = Memory::global_pointer("call-retained_state");
         let after = before
             .memory()
             .clone()
             .store(address.clone(), ProgramValue::Int32(7u32.into()));
         let application = SharedPureApplication::intern(
-            "snapshot_call".into(),
+            "state_call".into(),
             vec![PureFunctionArgument::Value(ProgramValue::Int32(
                 MachineTerm::MemoryLoad(before.clone(), address.into(), LoadKind::Int32),
             ))],
@@ -594,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn framed_index_transport_retains_read_authority_at_each_snapshot() {
+    fn framed_index_transport_retains_read_authority_at_each_state() {
         let _session = VerificationSession::enter();
         let pointer = Pointer {
             block: "transport-index".into(),
@@ -870,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_index_normalization_keeps_snapshot_kind_and_context_authority() {
+    fn exact_index_normalization_keeps_state_kind_and_context_authority() {
         let _session = VerificationSession::enter();
         let pointer = Memory::global_pointer("exact-index");
         let initial = Memory::new().with_block("exact-index", 16);

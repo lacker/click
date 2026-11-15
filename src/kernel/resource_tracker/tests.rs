@@ -20,8 +20,8 @@ fn one() -> ProgramValue {
     ProgramValue::Int32(MachineTerm::constant(1))
 }
 
-fn point(memory: &Memory) -> ProgramPoint {
-    ProgramPoint::at(&intern_memory(memory.clone()))
+fn point(memory: &Memory) -> VersionPoint {
+    VersionPoint::at(&intern_memory(memory.clone()))
 }
 
 fn entry_memory() -> Memory {
@@ -270,12 +270,12 @@ fn a_call_havoc_carries_a_block_outside_its_write_set_only() {
 
 /// A loop havoc forgets this block's cached cell values whatever its write set
 /// says, and is crossed all the same when the write set is in another object:
-/// forgetting a cached value removes what the newer snapshot knows, and the
+/// forgetting a cached value removes what the newer state knows, and the
 /// argument names the older one, whose values stay true of an object the write
 /// set excludes.
 ///
 /// This is a unit test because no C loop reaches it yet: the loop rule
-/// assembles its abstract head memory by rebuilding the snapshot's maps, which
+/// assembles its abstract head memory by rebuilding the state's maps, which
 /// records no derivation edge, so the recorded execution stops connecting the
 /// two points one step below the havoc.
 #[test]
@@ -464,7 +464,7 @@ fn a_release_of_another_object_keeps_one_version() {
 /// A release edge's base is the memory the `free` started from, with the
 /// constructor that made it: a trace legend explains it, and a walk across
 /// the release reaches the history before it. A base interned after the
-/// release dropped its live entry was a snapshot no constructor recorded,
+/// release dropped its live entry was a state no constructor recorded,
 /// printed as an internal error in every trace through a `free`.
 #[test]
 fn a_release_is_based_on_the_memory_it_started_from() {
@@ -730,7 +730,7 @@ fn a_version_mismatch_names_the_resource_and_both_points() {
     assert_eq!(version_mismatch(&fact(&after), &other), None);
 }
 
-/// The version memos are keyed by interned snapshot, and interning dedups by
+/// The version memos are keyed by interned state, and interning dedups by
 /// content, so an entry left behind by one verification would answer a
 /// content-equal query in the next one from a history that verification never
 /// built. `VerificationSession` clears them with the other canonical-form
@@ -738,7 +738,7 @@ fn a_version_mismatch_names_the_resource_and_both_points() {
 #[test]
 fn a_session_reset_empties_the_version_memos() {
     let memory = entry_memory().store(at(block("local:f:i"), 0), one());
-    last_same_point(
+    last_same_version_point(
         TrackedResource::Block(&PointerBlock::ExternalArgument),
         &point(&memory),
     );
@@ -906,7 +906,7 @@ mod saved_states {
     fn a_model_field_has_no_naming_walk() {
         let memory = entry_memory();
         let resource = rank();
-        assert!(last_same_point(resource, &point(&memory)).is_none());
+        assert!(last_same_version_point(resource, &point(&memory)).is_none());
         assert!(last_same(resource, &point(&memory)).is_none());
         assert!(resource.lives_in_a_saved_state());
     }
@@ -1058,7 +1058,7 @@ mod footprints {
 
 /// A store at an index the path's facts place off a cell is crossed when the
 /// cell's value is read on that path, and only there. The store dropped the
-/// cached cell, so the snapshot after it answers nothing by itself, and the
+/// cached cell, so the state after it answers nothing by itself, and the
 /// assumption-free naming walk stops at the store. Under `u != 0` the value
 /// is the earlier `3`; under `u == 0` the store writes the cell, so it is the
 /// stored `7`; with no fact about `u` there is none — never the `3`.
@@ -1389,7 +1389,7 @@ fn named_cell_stop_retains_the_decision_made_by_its_walk() {
     let read = Pointer::symbolic(crate::kernel::Variable(981_201));
     let write = Pointer::symbolic(crate::kernel::Variable(981_202));
     let memory = intern_memory(Memory::new().store(write.clone(), one()));
-    let here = ProgramPoint::at(&memory);
+    let here = VersionPoint::at(&memory);
     let named = last_same_named_cell(&read, 4, &here).expect("named cell");
     assert!(matches!(
         named.stopped_by.reason,
@@ -1495,7 +1495,7 @@ fn structural_read_dependencies_keep_the_observed_point_and_exact_width() {
     let reads = reads_of_proposition(&fact);
     assert_eq!(reads.len(), 1);
     assert_eq!(reads[0].resource, OwnedResource::Cell { pointer, bytes: 4 });
-    assert_eq!(reads[0].point, ProgramPoint::at(&origin));
+    assert_eq!(reads[0].point, VersionPoint::at(&origin));
     assert_eq!(crate::kernel::eval::load_variable_registry_len(), 0);
 }
 
@@ -1519,7 +1519,8 @@ fn a_cell_version_point_is_the_same_whichever_point_is_asked_first() {
     );
     let after_store = after_loop.clone().store(at(block("global:h"), 4), one());
     let cell = at(block("global:h"), 0);
-    let ask = |memory: &Memory| cell_last_same_point(&intern_memory(memory.clone()), &cell, 4);
+    let ask =
+        |memory: &Memory| cell_last_same_version_point(&intern_memory(memory.clone()), &cell, 4);
     clear_version_memos();
     let store_first = (ask(&after_store), ask(&after_loop));
     clear_version_memos();

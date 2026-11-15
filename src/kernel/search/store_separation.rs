@@ -9,7 +9,7 @@
 //! runs the statement again. A requested `--trace-proof` reads the same
 //! inspection to show which cells a traced step dropped. Checking never calls
 //! this.
-use crate::kernel::primitives::SnapshotMapChange;
+use crate::kernel::primitives::HashedOrdMapChange;
 use crate::kernel::{
     CompareRelation, MachineIntegerType, Memory, Pointer, Proposition, SharedMachineIntegerTerm,
 };
@@ -53,8 +53,8 @@ pub(crate) fn cells_forgotten_beside_stores(
     for change in before.cells.concrete().diff(after.cells.concrete()) {
         crate::instrumentation::record_deterministic_work(1);
         match change {
-            SnapshotMapChange::Removed(pointer) => forgotten.push(pointer),
-            SnapshotMapChange::Added(pointer) | SnapshotMapChange::Changed(pointer) => {
+            HashedOrdMapChange::Removed(pointer) => forgotten.push(pointer),
+            HashedOrdMapChange::Added(pointer) | HashedOrdMapChange::Changed(pointer) => {
                 written.push(pointer)
             }
         }

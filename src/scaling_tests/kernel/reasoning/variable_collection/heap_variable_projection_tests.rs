@@ -89,7 +89,7 @@ fn shared_machine_variable_bookkeeping_reuses_prefixes_in_each_collection_mode()
 }
 
 #[test]
-fn shared_machine_variable_collection_keeps_snapshot_deferral_and_load_addresses() {
+fn shared_machine_variable_collection_keeps_state_deferral_and_load_addresses() {
     use crate::kernel::{
         KernelTerm, MachineBinaryOp, MachineIntegerType, SharedMachineIntegerTerm,
     };

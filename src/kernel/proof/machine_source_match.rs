@@ -2,7 +2,7 @@
 //!
 //! Opaque native leaves use the existing native equality rule, but their
 //! enclosing shared DAG is never exported. These keys are matching evidence,
-//! not new term identities: the original typed operands and snapshots survive.
+//! not new term identities: the original typed operands and states survive.
 use crate::kernel::*;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_opaque_sources_keep_types_snapshots_and_refusals() {
+    fn selected_opaque_sources_keep_types_states_and_refusals() {
         let _session = VerificationSession::enter();
         let memory = intern_memory(Memory::new().with_block("opaque-source", 16));
         let later = intern_memory(memory.memory().clone().with_block("later", 16));

@@ -180,7 +180,7 @@ fn a_late_alias_rechecks_only_the_reads_of_its_own_address_class() {
         let read_at = Pointer::symbolic(Variable(973_000));
         let mut memory = Memory::new().with_block("other", 8 * size as u32);
         let mut graph = EqualityGraph::default();
-        // One unresolved read of `read_at` in each of `size` snapshots.
+        // One unresolved read of `read_at` in each of `size` states.
         for i in 0..size {
             memory = memory.store(
                 Pointer {

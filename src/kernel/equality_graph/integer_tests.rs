@@ -115,7 +115,7 @@ fn integer_order_truth_follows_aliases_without_merging_unrelated_true_facts() {
 }
 
 #[test]
-fn integer_observations_keep_machine_types_and_read_snapshots() {
+fn integer_observations_keep_machine_types_and_read_states() {
     let _session = crate::kernel::VerificationSession::enter();
     let bits = MachineTerm::Variable(Variable(920_131));
     let signed = I::from_machine(M::Int32, bits.clone()).unwrap();

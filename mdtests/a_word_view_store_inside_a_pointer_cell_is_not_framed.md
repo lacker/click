@@ -9,7 +9,7 @@ there.
 
 It was here because it reached the answer by a route the byte-view files do
 not: both sides are pointer values, and the equality of their scaled
-offsets was decided by comparing the two loads' origin snapshots cell by
+offsets was decided by comparing the two loads' origin states cell by
 cell. An `int` store into an `int *` object is itself undefined (C11
 6.5p7), and the strict-aliasing check now refuses the store before any goal
 is reached. A word store into a pointer cell through a non-character type

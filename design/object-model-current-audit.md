@@ -68,7 +68,7 @@ regressions, not an assertion that every operation in the same category works.
 | Initialization and joins | `surface/lowering/resource_lowering.rs`, shared initialized-memory state | `naming_symbolic_construction_storage_does_not_initialize_it`, `symbolic_construction_initialization_survives_havoc_and_intersects_at_join`; ownership and naming cannot substitute for writes. |
 | Modular initialization | `surface/parser.rs`, `surface/lowering/resource_lowering.rs`, `kernel/functions/call_initialization.rs`, produced-memory transfer in `kernel/functions.rs` | `an_initializer_produces_the_memory_it_initialized.md`, `produces_refuses_memory_the_function_did_not_write.md`, `verified_call_initialization_tests`, and the new `cpp_initializer_produces_written_memory.md`. |
 | Lifetime and backing | `languages/cpp/lifetime.rs`, construction retirement and allocation generations | `cpp_reference_into_destroyed_local_backing_cannot_be_read_offline` passes. `cpp_external_backing_reference_survives_descriptor_destruction_offline` failed at the getter call before destruction on the original baseline and passes after the metadata repair below. Its writable counterpart passes too. |
-| Typed/byte values | `kernel/eval/byte_view.rs`, `kernel/tests/byte_view_tests.rs`, byte-representation design | Complete declared uint32 assembly, partial-write refusals, same-snapshot observations and no byte forging of pointer cells. This is a selected target rule, not arbitrary retyping. |
+| Typed/byte values | `kernel/eval/byte_view.rs`, `kernel/tests/byte_view_tests.rs`, byte-representation design | Complete declared uint32 assembly, partial-write refusals, same-state observations and no byte forging of pointer cells. This is a selected target rule, not arbitrary retyping. |
 | Native type admission | `languages/cpp/schema.rs`, `languages/cpp/validity.rs`, `languages/cpp/scalar.rs`, parameter lowering | Checked record identities and layouts, supported reference/pointer forms, authenticated `std::byte`, restricted casts; `cpp_native_pointer_artifacts_reject_pointee_substitution_offline` and `nested_record_artifacts_reject_wrong_identity_extent_constness_and_cycles`. This is not yet the full interface matrix below. |
 
 All source paths in the table are relative to `src/`; Markdown witnesses are
@@ -126,7 +126,7 @@ cleanup's compiler-generated captures.
 `record_memory_derivation` now retains the predecessor's byte-read identity for
 `BlockDeclared` and `ObjectInitializationRecorded`, as it already does for
 byte-preserving observation/cache transitions. These edges write no values.
-The current snapshot still supplies type, lifetime, initialization and access
+The current state still supplies type, lifetime, initialization and access
 checks. An actual write retains its distinct identity; neither numeric address
 equality nor a metadata transition manufactures a loan or ownership.
 
@@ -179,7 +179,7 @@ The store itself was already working. Prerequisite reconstruction now retains
 proof-local binder names in a persistent index updated from changed bindings;
 spells 64-bit reads at their retained interpretation; keeps full Click operands
 through casts; and selects recorded array-argument memories and pointer reads
-by their defining snapshots. The round-trip checks remain in place, and no
+by their defining states. The round-trip checks remain in place, and no
 kernel inference or fact-dependent lowering was added.
 
 The C, resource definitions and function contract are unchanged. The proof
@@ -194,7 +194,7 @@ checks ordinary verification, expansion, retained replay, cold checking of the
 expanded claim with implicit solving disabled, and refusal of a body that
 stores null. It is a named nightly regression. Focused source tests cover
 binder shadowing/forks, signed and unsigned word reads, casted calls, and
-recorded array snapshots. The gate covers 32/64-bit calls; the complete
+recorded array states. The gate covers 32/64-bit calls; the complete
 ten-format sweep is a named nightly check. Multi-size controls grow binder/alias populations
 and unrelated recorded history. This does not close the larger rbtree reports
 or replace the remaining native-interface matrix.

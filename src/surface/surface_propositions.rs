@@ -12,7 +12,7 @@
 //! pair already recorded whole is not walked again, and a lookup costs its
 //! query plus the depth of the answer's position.
 use super::{
-    ClickError, ClickProposition, ClickType, ContractExpression, SnapshotSelector,
+    ClickError, ClickProposition, ClickType, ContractExpression, ProgramPointSelector,
     clone_click_proposition_iteratively, proof,
 };
 use crate::kernel::{CompareRelation, MachineIntegerType};
@@ -31,7 +31,7 @@ pub struct SurfacePropositionMap {
 #[derive(Clone, Debug, Default)]
 pub(in crate::surface) struct SurfacePropositionStorage {
     /// Source names for qualified storage reads, independent of the heap
-    /// snapshot. These are synthesis hints, never evidence of a fact.
+    /// state. These are synthesis hints, never evidence of a fact.
     pub(in crate::surface) qualified_load_sources: PersistentMap<Pointer, ContractExpression>,
     /// Every interned kernel node: an atom by value, a connective by its
     /// payload and children's identities.
@@ -43,16 +43,16 @@ pub(in crate::surface) struct SurfacePropositionStorage {
     /// acquire the same debug rendering.
     surface_atoms: PersistentMap<String, Vec<(Arc<ClickProposition>, NodeId)>>,
     surface_connectives: PersistentMap<String, Vec<(SurfaceConnective, NodeId)>>,
-    /// Snapshot-blind keys of kernel connectives, by their children's keys.
+    /// MemoryState-blind keys of kernel connectives, by their children's keys.
     blind_connectives: PersistentMap<BlindConnective, NodeId>,
     /// Each recorded kernel's surface forms, in recording order.
     by_kernel: PersistentMap<NodeId, OrderedNodes<SurfaceRef>>,
     /// Each recorded surface's kernel lowerings, in recording order.
     by_surface: PersistentMap<NodeId, OrderedNodes<KernelRef>>,
     /// Recorded kernel facts grouped by a structural key that forgets only
-    /// memory snapshot identities. Typed proof steps use this to recover a
+    /// memory state identities. Typed proof steps use this to recover a
     /// check-equivalent surface form without scanning ambient facts.
-    by_snapshot_blind: PersistentMap<BlindKey, PersistentMap<NodeId, KernelRef>>,
+    by_memory_erased: PersistentMap<BlindKey, PersistentMap<NodeId, KernelRef>>,
     /// Recorded universally quantified kernel facts.
     universal_kernels: PersistentMap<NodeId, KernelRef>,
     /// The conjuncts of a recorded kernel conjunction whose surface form is
@@ -91,7 +91,7 @@ enum KernelConnective {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SurfaceConnective {
     At {
-        selector: SnapshotSelector,
+        selector: ProgramPointSelector,
         body: NodeId,
     },
     And(NodeId, NodeId),
@@ -126,12 +126,12 @@ enum SurfaceConnective {
     },
 }
 
-/// [`proof::snapshot_blind_proposition_key`], by identity: an atom's own key,
+/// [`proof::memory_erased_proposition_key`], by identity: an atom's own key,
 /// a quantifier's exact identity (a quantifier's key is the exact
 /// proposition), or an interned connective of such keys.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum BlindKey {
-    Atom(proof::SnapshotBlindPropositionKey),
+    Atom(proof::MemoryErasedPropositionKey),
     Exact(NodeId),
     Connective(NodeId),
 }
@@ -605,7 +605,7 @@ fn surface_identities(
     Identities { ids, atoms }
 }
 
-/// Each kernel node's snapshot-blind key, children before parents: `None`
+/// Each kernel node's state-blind key, children before parents: `None`
 /// where the key names a quantifier or connective key never interned.
 fn blind_keys(
     interner: &mut impl Interner,
@@ -632,7 +632,7 @@ fn blind_keys(
                 continue;
             }
             atom => {
-                keys[index] = Some(BlindKey::Atom(proof::snapshot_blind_proposition_key(atom)));
+                keys[index] = Some(BlindKey::Atom(proof::memory_erased_proposition_key(atom)));
                 continue;
             }
         };
@@ -767,8 +767,8 @@ impl SurfacePropositionMap {
             && left.by_kernel.shares_root_with(&right.by_kernel)
             && left.by_surface.shares_root_with(&right.by_surface)
             && left
-                .by_snapshot_blind
-                .shares_root_with(&right.by_snapshot_blind)
+                .by_memory_erased
+                .shares_root_with(&right.by_memory_erased)
             && left
                 .blind_connectives
                 .shares_root_with(&right.blind_connectives)
@@ -875,7 +875,7 @@ impl SurfacePropositionMap {
                 // Only a side that names a qualified object records anything
                 // here, so the kernel form is resolved only for one. Resolving
                 // restores every load the form mentions, the cached values of
-                // any memory snapshot it carries included, and a statement's
+                // any memory state it carries included, and a statement's
                 // fact carries the whole memory: doing it for every recorded
                 // comparison made each `step()` cost the square of the cells
                 // the proof knew.
@@ -955,14 +955,14 @@ impl SurfacePropositionMap {
             }
             let blind = recording.kernel_blind[kernel_index as usize]
                 .clone()
-                .expect("a recorded kernel node has an interned snapshot-blind key");
-            let existing = storage.by_snapshot_blind.get(&blind);
+                .expect("a recorded kernel node has an interned state-blind key");
+            let existing = storage.by_memory_erased.get(&blind);
             if !existing.is_some_and(|facts| facts.contains_key(&kernel_id)) {
                 let facts = existing
                     .cloned()
                     .unwrap_or_default()
                     .with_inserted(kernel_id, recording.kernel_ref(kernel_index));
-                storage.by_snapshot_blind = storage.by_snapshot_blind.with_inserted(blind, facts);
+                storage.by_memory_erased = storage.by_memory_erased.with_inserted(blind, facts);
             }
             let lowerings = storage
                 .by_surface
@@ -1040,7 +1040,7 @@ impl SurfacePropositionMap {
             | (ClickProposition::Implies(_, _), _)
             | (ClickProposition::ForAll { .. }, _)
             | (ClickProposition::Exists { .. }, _) => {
-                // The kernel form can embed whole memory snapshots; bound the
+                // The kernel form can embed whole memory states; bound the
                 // rendering so the diagnostic stays a diagnostic.
                 let kernel = format!("{kernel:?}");
                 let kernel = if kernel.len() > 600 {
@@ -1119,7 +1119,7 @@ impl SurfacePropositionMap {
             .flat_map(|containers| containers.nodes().map(|(_, kernel)| kernel.get()))
     }
 
-    pub(in crate::surface) fn snapshot_blind_kernels(
+    pub(in crate::surface) fn memory_erased_kernels(
         &self,
         kernel: &Proposition,
     ) -> impl Iterator<Item = &Proposition> {
@@ -1128,7 +1128,7 @@ impl SurfacePropositionMap {
         let ids = kernel_identities(&mut finder, &tree).ids;
         let key = blind_keys(&mut finder, &tree, &ids).swap_remove(0);
         in_proposition_order(
-            key.and_then(|key| self.storage.by_snapshot_blind.get(&key))
+            key.and_then(|key| self.storage.by_memory_erased.get(&key))
                 .into_iter()
                 .flat_map(|facts| facts.iter().map(|(_, node)| node)),
         )
@@ -1254,7 +1254,7 @@ fn in_proposition_order<'a>(
 }
 
 /// The access a comparison side makes to a qualified object, with any
-/// snapshot selector around it removed, or `None` when the side names
+/// program point selector around it removed, or `None` when the side names
 /// something else.
 ///
 /// A qualified object reaches its cells through the accessors the language

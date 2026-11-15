@@ -8,8 +8,8 @@ pub(in crate::kernel) use selected_atoms::clear_selected_atom_cache;
 use super::fact_keys::{IntegerConditionAlphaKey, integer_condition_alpha_key};
 use super::fact_reasoning::*;
 use super::{
-    PersistentSequence, QuantifiedEquivalenceKey, SnapshotBlindPropositionKey,
-    quantified_equivalence_index_key, snapshot_blind_proposition_key,
+    MemoryErasedPropositionKey, PersistentSequence, QuantifiedEquivalenceKey,
+    memory_erased_proposition_key, quantified_equivalence_index_key,
 };
 use crate::kernel::assumptions::observation_comparisons::PropositionKey;
 use crate::kernel::binary_node;
@@ -148,7 +148,7 @@ mod disjunction_projection_tests {
     }
 
     #[test]
-    fn projection_respects_changed_read_snapshots() {
+    fn projection_respects_changed_read_states() {
         let pointer = Pointer {
             block: "projection-cell".into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -218,23 +218,23 @@ thread_local! {
 }
 
 /// The variables facts handed to their fact sets' reservations on this
-/// thread so far, beyond those of snapshots already reserved.
+/// thread so far, beyond those of states already reserved.
 #[cfg(test)]
 pub(crate) fn reserved_fact_variable_entries() -> usize {
     RESERVED_FACT_VARIABLES.with(std::cell::Cell::get)
 }
 
-/// Adds `fact`'s variables to `pending` and the snapshots they reserve to
-/// `snapshots`: afterwards every variable `proposition_variables(fact)`
-/// lists is in `reserved` or `pending`, and every snapshot named in
-/// `snapshots` has all its variables there. Several facts accumulate into
+/// Adds `fact`'s variables to `pending` and the states they reserve to
+/// `retained_states`: afterwards every variable `proposition_variables(fact)`
+/// lists is in `reserved` or `pending`, and every state named in
+/// `retained_states` has all its variables there. Several facts accumulate into
 /// one plain set, so a variable many of them mention costs one persistent
 /// insertion when the caller commits `pending`.
 fn reserve_fact_variables(
     fact: &Proposition,
     reserved: &PersistentSet<Variable>,
     pending: &mut BTreeSet<Variable>,
-    snapshots: &mut crate::kernel::reasoning::variable_collection::ReservedSnapshots,
+    retained_states: &mut crate::kernel::reasoning::variable_collection::ReservedStates,
 ) {
     // Only the debug cross-check reads the already reserved set.
     #[cfg(not(debug_assertions))]
@@ -248,7 +248,8 @@ fn reserve_fact_variables(
         (pending.clone(), whole)
     });
     let variables = crate::kernel::reasoning::variable_collection::proposition_variables_reserving(
-        fact, snapshots,
+        fact,
+        retained_states,
     );
     #[cfg(test)]
     RESERVED_FACT_VARIABLES.with(|count| count.set(count.get() + variables.len()));
@@ -289,15 +290,15 @@ fn commit_reserved_variables(
 pub(crate) struct ProofFacts {
     ordered: PersistentSequence<Arc<Proposition>>,
     reserved_variables: PersistentSet<Variable>,
-    /// The interned snapshots whose every variable `reserved_variables`
-    /// holds, so a fact naming one again, or naming a snapshot derived from
+    /// The interned states whose every variable `reserved_variables`
+    /// holds, so a fact naming one again, or naming a state derived from
     /// one, reserves only what differs (`proposition_variables_reserving`).
-    reserved_snapshots: crate::kernel::reasoning::variable_collection::ReservedSnapshots,
+    reserved_states: crate::kernel::reasoning::variable_collection::ReservedStates,
     prioritized: Option<Arc<PrioritizedProofFacts>>,
     top_level_exact: PersistentSet<Arc<Proposition>>,
     exact: PersistentSet<Arc<Proposition>>,
     /// Exact typed call payloads ignore only the native/shared argument
-    /// carrier choice; they retain snapshot, argument order and type keys.
+    /// carrier choice; they retain state, argument order and type keys.
     call_payloads: PersistentSet<CallPayloadKey>,
     /// Every strict subtree of an available top-level conjunction. This is
     /// the exact structural authority for `extract`; top-level facts are not
@@ -312,8 +313,8 @@ pub(crate) struct ProofFacts {
     /// Atomic exact facts after the same direct-load normalization used by
     /// condition check. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
-    by_snapshot_blind:
-        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
+    by_memory_erased:
+        PersistentMap<MemoryErasedPropositionKey, PersistentSequence<Arc<Proposition>>>,
     /// True Integer comparison facts keyed by the typed alpha form of both
     /// operands. This is the bounded equivalence boundary for checked
     /// restatements whose range-fold binders were freshly allocated.
@@ -337,7 +338,7 @@ pub(crate) struct ProofFacts {
     /// True finite-float classifications retain their shared fact identity so
     /// a reflexive comparison does not publish the same premise twice.
     finite_classifications_by_key:
-        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
+        PersistentMap<MemoryErasedPropositionKey, PersistentSequence<Arc<Proposition>>>,
     /// Exact algebraic equalities keyed by their root terms.  Goal-local
     /// constructor disequality rewrites need the variable-to-constructor
     /// premise without scanning unrelated proposition facts.
@@ -355,9 +356,9 @@ pub(crate) struct ProofFacts {
     /// Selected load identities checked while presenting a rewritten goal.
     rewritten_load_evidence: PersistentSequence<CheckedLoadEquality>,
     implications_by_consequent:
-        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+        PersistentMap<MemoryErasedPropositionKey, PersistentSequence<ImplicationCandidate>>,
     /// Alpha-invariant selection for quantified implication consequents.
-    /// Checked equivalence still guards snapshot and free-variable identity.
+    /// Checked equivalence still guards state and free-variable identity.
     implications_by_quantified_consequent:
         PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<ImplicationCandidate>>,
     assumptions: PureFactContext,
@@ -366,7 +367,7 @@ pub(crate) struct ProofFacts {
 }
 
 /// A statement transition places its explicitly transported successor facts
-/// before the ambient facts retained at their original snapshots. Prefix
+/// before the ambient facts retained at their original states. Prefix
 /// batches preserve that semantic order without copying the ambient sequence.
 struct PrioritizedProofFacts {
     parent: Option<Arc<PrioritizedProofFacts>>,
@@ -409,7 +410,7 @@ struct IntegerConditionAlphaCandidate {
 
 /// A bounded-comparison selector for equality rewrite provenance. Complex
 /// arithmetic operands remain on the kernel-derivation path; this index covers
-/// the atomic value/snapshot operands that outcome arithmetic rewrites need.
+/// the atomic value/state operands that outcome arithmetic rewrites need.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum BitvectorEqualityAtomKey {
     Constant(u32),
@@ -770,7 +771,7 @@ impl ProofFacts {
                             ConditionTerm::IntegerGreaterEqual(c, d),
                         ) => {
                             // Retain checked native load evidence when spelling
-                            // the same word observation at another snapshot.
+                            // the same word observation at another state.
                             // Its numeric format and all other Integer structure
                             // remain exact; this is not arithmetic transport.
                             let pairs = Vec::new();
@@ -1090,14 +1091,14 @@ impl ProofFacts {
     pub(crate) fn from_source(facts: &(impl PropositionSource + ?Sized)) -> Self {
         let mut ordered = PersistentSequence::default();
         let reserved_variables = PersistentSet::default();
-        let mut reserved_snapshots =
-            crate::kernel::reasoning::variable_collection::ReservedSnapshots::default();
+        let mut reserved_states =
+            crate::kernel::reasoning::variable_collection::ReservedStates::default();
         let mut top_level_exact = PersistentSet::default();
         let mut exact = PersistentSet::default();
         let mut call_payloads = PersistentSet::default();
         let mut proper_conjuncts = PersistentSet::default();
         let mut quantified_proper_conjuncts = PersistentMap::default();
-        let mut by_snapshot_blind = PersistentMap::default();
+        let mut by_memory_erased = PersistentMap::default();
         let mut by_integer_condition_alpha = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
         let mut guarded_implications_by_atom = PersistentMap::default();
@@ -1118,7 +1119,7 @@ impl ProofFacts {
                 fact,
                 &reserved_variables,
                 &mut pending_variables,
-                &mut reserved_snapshots,
+                &mut reserved_states,
             );
             if top_level_exact.contains(fact) {
                 continue;
@@ -1153,7 +1154,7 @@ impl ProofFacts {
                         quantified_conjunct_projections,
                         &conjunct,
                     );
-                    by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                    by_memory_erased = index_state_fact(by_memory_erased, &conjunct);
                     by_integer_condition_alpha =
                         index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                     bitvector_equalities_by_atom =
@@ -1171,7 +1172,7 @@ impl ProofFacts {
             }
             guarded_implications_by_atom =
                 index_guarded_implication_fact(guarded_implications_by_atom, fact);
-            by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
+            by_memory_erased = index_state_fact(by_memory_erased, fact);
             by_integer_condition_alpha =
                 index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
             bitvector_equalities_by_atom =
@@ -1192,14 +1193,14 @@ impl ProofFacts {
         Self {
             ordered,
             reserved_variables,
-            reserved_snapshots,
+            reserved_states,
             prioritized: None,
             top_level_exact,
             exact,
             call_payloads,
             proper_conjuncts,
             quantified_proper_conjuncts,
-            by_snapshot_blind,
+            by_memory_erased,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
             guarded_implications_by_atom,
@@ -1303,7 +1304,7 @@ impl ProofFacts {
         let mut call_payloads = self.call_payloads.clone();
         let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut quantified_proper_conjuncts = self.quantified_proper_conjuncts.clone();
-        let mut by_snapshot_blind = self.by_snapshot_blind.clone();
+        let mut by_memory_erased = self.by_memory_erased.clone();
         let mut by_integer_condition_alpha = self.by_integer_condition_alpha.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
         let mut finite_classifications_by_key = self.finite_classifications_by_key.clone();
@@ -1332,7 +1333,7 @@ impl ProofFacts {
                     quantified_conjunct_projections,
                     &conjunct,
                 );
-                by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
+                by_memory_erased = index_state_fact(by_memory_erased, &conjunct);
                 by_integer_condition_alpha =
                     index_integer_condition_fact(by_integer_condition_alpha, conjunct.as_ref());
                 bitvector_equalities_by_atom =
@@ -1350,7 +1351,7 @@ impl ProofFacts {
         }
         let guarded_implications_by_atom =
             index_guarded_implication_fact(self.guarded_implications_by_atom.clone(), &fact);
-        by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
+        by_memory_erased = index_state_fact(by_memory_erased, &fact);
         by_integer_condition_alpha =
             index_integer_condition_fact(by_integer_condition_alpha, fact.as_ref());
         bitvector_equalities_by_atom =
@@ -1376,26 +1377,26 @@ impl ProofFacts {
             fact.as_ref(),
         );
         let mut pending_variables = BTreeSet::new();
-        let mut reserved_snapshots = self.reserved_snapshots.clone();
+        let mut reserved_states = self.reserved_states.clone();
         reserve_fact_variables(
             fact.as_ref(),
             &self.reserved_variables,
             &mut pending_variables,
-            &mut reserved_snapshots,
+            &mut reserved_states,
         );
         let reserved_variables =
             commit_reserved_variables(self.reserved_variables.clone(), pending_variables);
         Self {
             ordered,
             reserved_variables,
-            reserved_snapshots,
+            reserved_states,
             prioritized: self.prioritized.clone(),
             top_level_exact: self.top_level_exact.with_value(Arc::clone(&fact)),
             exact,
             call_payloads,
             proper_conjuncts,
             quantified_proper_conjuncts,
-            by_snapshot_blind,
+            by_memory_erased,
             by_integer_condition_alpha,
             bitvector_equalities_by_atom,
             guarded_implications_by_atom,
@@ -1454,7 +1455,7 @@ impl ProofFacts {
     /// Scanning up from `Variable(0)` for an identity no *fact* mentions was
     /// the earlier rule, and it is wrong twice over. The facts are not the
     /// whole state a witness has to stay clear of: a C proof also carries
-    /// program variables, a symbolic store, a memory snapshot and a resource
+    /// program variables, a symbolic store, a memory state and a resource
     /// context, and `Variable(0)` is a C identity by the reserved-range
     /// registry, so the first candidate that rule tried was a live program
     /// variable of the function being proved. Taking the identity from a range
@@ -1829,7 +1830,7 @@ impl ProofFacts {
     }
 
     /// Availability modulo the shared equality closure for deterministic
-    /// rewriting. This admits no unfolding or cross-snapshot transport.
+    /// rewriting. This admits no unfolding or cross-state transport.
     pub(crate) fn materialization_available(&self, required: &Proposition) -> bool {
         self.available(required)
     }
@@ -1857,7 +1858,7 @@ impl ProofFacts {
 
     /// Availability of a proposition to the explicit pure `known`
     /// judgment used inside fixed-state proofs. This deliberately excludes
-    /// cross-effect snapshot transport: such a transport needs its own
+    /// cross-effect state transport: such a transport needs its own
     /// retained proof step before a later `known` step may consume it.
     pub(crate) fn pure_known_available(&self, required: &Proposition) -> bool {
         self.materialization_available(required)
@@ -2029,8 +2030,8 @@ impl ProofFacts {
     }
 
     /// Availability accepted by explicit check, answered from persistent
-    /// indexes. Snapshot-blind buckets only select structurally compatible
-    /// candidates; the kernel still proves every cross-snapshot match.
+    /// indexes. MemoryState-blind buckets only select structurally compatible
+    /// candidates; the kernel still proves every cross-state match.
     pub(crate) fn available_across_effects(
         &self,
         required: &Proposition,
@@ -2045,17 +2046,17 @@ impl ProofFacts {
 
     /// Returns one actual available fact accepted by explicit check. Smart
     /// syntax selection needs the retained fact, not merely a yes/no answer:
-    /// its recorded surface form may carry a statement snapshot that the
+    /// its recorded surface form may carry a statement state that the
     /// freshly lowered theorem requirement no longer exposes.
     pub(crate) fn matching_fact_across_effects(
         &self,
         required: &Proposition,
         framing: &(impl ExecutionFactSource + ?Sized),
     ) -> Option<Proposition> {
-        let keys = [snapshot_blind_proposition_key(required)];
+        let keys = [memory_erased_proposition_key(required)];
         let mut indexed_candidates = Vec::new();
         for key in &keys {
-            if let Some(bucket) = self.by_snapshot_blind.get(key) {
+            if let Some(bucket) = self.by_memory_erased.get(key) {
                 for candidate in bucket.iter() {
                     if !indexed_candidates.contains(candidate.as_ref()) {
                         indexed_candidates.push(candidate.as_ref().clone());
@@ -2065,7 +2066,7 @@ impl ProofFacts {
         }
         // Preserve the legacy selector's canonical materialization choice,
         // but search only the requirement's persistent shape bucket. The
-        // chosen sibling snapshot can have a stable recorded `at(...)`
+        // chosen sibling state can have a stable recorded `at(...)`
         // form even when the freshly lowered requirement is also present.
         if let Some(candidate) = exactly_available_fact(required, &indexed_candidates) {
             return Some(candidate.clone());
@@ -2101,7 +2102,7 @@ impl ProofFacts {
 
         let mut candidates = Vec::new();
         for key in keys {
-            let Some(bucket) = self.by_snapshot_blind.get(&key) else {
+            let Some(bucket) = self.by_memory_erased.get(&key) else {
                 continue;
             };
             for candidate in bucket.iter() {
@@ -2217,7 +2218,7 @@ impl ProofFacts {
         };
         if self
             .implications_by_consequent
-            .get(&snapshot_blind_proposition_key(required))
+            .get(&memory_erased_proposition_key(required))
             .is_some_and(|bucket| {
                 bucket.iter().any(|candidate| {
                     candidate.whole.is_none()
@@ -2249,7 +2250,7 @@ impl ProofFacts {
     ) -> Option<(Proposition, Proposition)> {
         let bucket = self
             .implications_by_consequent
-            .get(&snapshot_blind_proposition_key(required))?;
+            .get(&memory_erased_proposition_key(required))?;
         bucket.iter().find_map(|candidate| {
             let whole = candidate.whole.as_ref()?;
             if &candidate.consequent != required
@@ -2315,13 +2316,13 @@ impl ProofFacts {
             return true;
         }
 
-        // The snapshot-blind index already bounds candidate selection. Check
+        // The state-blind index already bounds candidate selection. Check
         // each candidate in place rather than cloning a deduplicated Vec:
         // duplicate entries can only arise from index aliases, and a bridge
         // succeeds if any one indexed fact supplies it. This keeps the loop
         // lookup output-sized and avoids an uncharged deep Proposition Eq.
-        let key = snapshot_blind_proposition_key(required);
-        self.by_snapshot_blind.get(&key).is_some_and(|bucket| {
+        let key = memory_erased_proposition_key(required);
+        self.by_memory_erased.get(&key).is_some_and(|bucket| {
             bucket.iter().any(|candidate| {
                 if crate::instrumentation::deadline_exceeded_with_work(1) {
                     return false;
@@ -2356,8 +2357,8 @@ impl ProofFacts {
         {
             return true;
         }
-        let key = super::fact_keys::snapshot_blind_nonoverflow_key(&query);
-        self.by_snapshot_blind.get(&key).is_some_and(|bucket| {
+        let key = super::fact_keys::memory_erased_nonoverflow_key(&query);
+        self.by_memory_erased.get(&key).is_some_and(|bucket| {
             bucket.iter().any(|candidate| {
                 if crate::instrumentation::deadline_exceeded_with_work(1) {
                     return false;
@@ -2598,7 +2599,7 @@ impl ProofFacts {
         &self,
         required: &Proposition,
     ) -> Option<Arc<Proposition>> {
-        let key = snapshot_blind_proposition_key(required);
+        let key = memory_erased_proposition_key(required);
         self.finite_classifications_by_key
             .get(&key)
             .and_then(|bucket| {
@@ -2718,10 +2719,7 @@ impl ProofFacts {
     }
 
     #[cfg(test)]
-    pub(crate) fn implication_bucket_len(
-        &self,
-        key: &SnapshotBlindPropositionKey,
-    ) -> Option<usize> {
+    pub(crate) fn implication_bucket_len(&self, key: &MemoryErasedPropositionKey) -> Option<usize> {
         self.implications_by_consequent
             .get(key)
             .map(PersistentSequence::len)
@@ -2871,24 +2869,24 @@ fn highest_universal_witness(variables: impl DoubleEndedIterator<Item = Variable
         .next()
 }
 
-fn index_snapshot_fact(
-    mut by_snapshot_blind: PersistentMap<
-        SnapshotBlindPropositionKey,
+fn index_state_fact(
+    mut by_memory_erased: PersistentMap<
+        MemoryErasedPropositionKey,
         PersistentSequence<Arc<Proposition>>,
     >,
     fact: &Arc<Proposition>,
-) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>> {
-    for key in [snapshot_blind_proposition_key(fact)] {
+) -> PersistentMap<MemoryErasedPropositionKey, PersistentSequence<Arc<Proposition>>> {
+    for key in [memory_erased_proposition_key(fact)] {
         if !key.requires_checked_match() {
             continue;
         }
-        let mut bucket = by_snapshot_blind.get(&key).cloned().unwrap_or_default();
+        let mut bucket = by_memory_erased.get(&key).cloned().unwrap_or_default();
         if !bucket.iter().any(|candidate| candidate == fact) {
             bucket.push(fact.clone());
-            by_snapshot_blind = by_snapshot_blind.with_inserted(key, bucket);
+            by_memory_erased = by_memory_erased.with_inserted(key, bucket);
         }
     }
-    by_snapshot_blind
+    by_memory_erased
 }
 
 fn index_integer_condition_fact(
@@ -3137,9 +3135,9 @@ fn index_guarded_implication_fact(
 }
 
 fn index_finite_classification_fact(
-    mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>>,
+    mut index: PersistentMap<MemoryErasedPropositionKey, PersistentSequence<Arc<Proposition>>>,
     fact: &Arc<Proposition>,
-) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Arc<Proposition>>> {
+) -> PersistentMap<MemoryErasedPropositionKey, PersistentSequence<Arc<Proposition>>> {
     if !matches!(
         fact.as_ref(),
         Proposition::ConditionIs(
@@ -3150,7 +3148,7 @@ fn index_finite_classification_fact(
     ) {
         return index;
     }
-    let key = snapshot_blind_proposition_key(fact.as_ref());
+    let key = memory_erased_proposition_key(fact.as_ref());
     let mut bucket = index.get(&key).cloned().unwrap_or_default();
     if !bucket.iter().any(|candidate| Arc::ptr_eq(candidate, fact)) {
         bucket.push(fact.clone());
@@ -3698,14 +3696,14 @@ fn index_quantified_conjunct_projections(
 }
 
 fn index_implication_consequents(
-    mut index: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+    mut index: PersistentMap<MemoryErasedPropositionKey, PersistentSequence<ImplicationCandidate>>,
     mut quantified_index: PersistentMap<
         QuantifiedEquivalenceKey,
         PersistentSequence<ImplicationCandidate>,
     >,
     fact: &Proposition,
 ) -> (
-    PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
+    PersistentMap<MemoryErasedPropositionKey, PersistentSequence<ImplicationCandidate>>,
     PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<ImplicationCandidate>>,
 ) {
     let mut depth = 0;
@@ -3736,7 +3734,7 @@ fn index_implication_consequents(
             let mut conjuncts = Vec::new();
             collect_owned_atomic_conjuncts(consequent, &mut conjuncts);
             for conjunct in &conjuncts {
-                let key = snapshot_blind_proposition_key(conjunct);
+                let key = memory_erased_proposition_key(conjunct);
                 let mut bucket = index.get(&key).cloned().unwrap_or_default();
                 bucket.push(ImplicationCandidate {
                     antecedents: antecedents.clone(),
@@ -3747,8 +3745,8 @@ fn index_implication_consequents(
             }
         }
         let normalized = consequent.clone();
-        let mut keys = vec![snapshot_blind_proposition_key(consequent)];
-        let normalized_key = snapshot_blind_proposition_key(&normalized);
+        let mut keys = vec![memory_erased_proposition_key(consequent)];
+        let normalized_key = memory_erased_proposition_key(&normalized);
         if !keys.contains(&normalized_key) {
             keys.push(normalized_key);
         }
@@ -4001,7 +3999,7 @@ mod integer_equality_fact_index_tests {
                 MachineTerm::MemoryLoad(
                     memory.clone(),
                     Box::new(Pointer {
-                        block: "snapshot-alpha-facts".into(),
+                        block: "retained_state-alpha-facts".into(),
                         offset: PointerOffsetTerm::Constant(0),
                     }),
                     crate::kernel::LoadKind::Int32,
@@ -4260,12 +4258,12 @@ mod integer_equality_fact_index_tests {
     }
 
     #[test]
-    fn integer_alpha_fact_lookup_keeps_inequality_snapshot_identity() {
+    fn integer_alpha_fact_lookup_keeps_inequality_state_identity() {
         let before =
-            crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha-facts", 8));
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha-facts", 8));
         let changed = crate::kernel::intern_memory(before.as_ref().clone().store(
             Pointer {
-                block: "snapshot-alpha-facts".into(),
+                block: "retained_state-alpha-facts".into(),
                 offset: PointerOffsetTerm::Constant(0),
             },
             ProgramValue::Int32(MachineTerm::constant(7)),
@@ -4278,7 +4276,7 @@ mod integer_equality_fact_index_tests {
             IntegerTerm::constant_i64(9),
             explicit_load_fold(&before, Variable(200_500), Variable(200_501)),
         );
-        let changed_snapshot_fact = less_equal(
+        let changed_state_fact = less_equal(
             IntegerTerm::constant_i64(9),
             explicit_load_fold(&changed, Variable(200_500), Variable(200_501)),
         );
@@ -4290,7 +4288,7 @@ mod integer_equality_fact_index_tests {
         );
         assert!(
             facts
-                .matching_fact_across_effects(&changed_snapshot_fact, &[])
+                .matching_fact_across_effects(&changed_state_fact, &[])
                 .is_none()
         );
     }
@@ -4325,7 +4323,7 @@ mod integer_equality_fact_index_tests {
             Some(Variable(207_001)),
             4,
         );
-        let changed_snapshot = loadable_forall(
+        let changed_memory_state = loadable_forall(
             &changed_memory,
             Variable(207_100),
             "quantified-viewable",
@@ -4360,14 +4358,14 @@ mod integer_equality_fact_index_tests {
             Some(source.clone())
         );
         for mismatch in [
-            changed_snapshot,
+            changed_memory_state,
             changed_pointer,
             changed_width,
             free_mismatch,
         ] {
             assert!(
                 facts.matching_fact_across_effects(&mismatch, &[]).is_none(),
-                "viewability alpha matching must retain snapshot, pointer, width, and free IDs"
+                "viewability alpha matching must retain state, pointer, width, and free IDs"
             );
         }
     }
@@ -4450,7 +4448,7 @@ mod integer_equality_fact_index_tests {
     }
 
     #[test]
-    fn implication_extract_renames_existential_but_keeps_snapshot_and_antecedent() {
+    fn implication_extract_renames_existential_but_keeps_state_and_antecedent() {
         let block = "implication-existential-viewable";
         let memory = Memory::new().with_block(block, 32);
         let changed_memory = memory.clone().store(
@@ -4462,7 +4460,7 @@ mod integer_equality_fact_index_tests {
         );
         let consequent = loadable_exists(&memory, "callee", Variable(207_700), block, None, 4);
         let renamed = loadable_exists(&memory, "caller", Variable(207_800), block, None, 4);
-        let changed_snapshot =
+        let changed_memory_state =
             loadable_exists(&changed_memory, "caller", Variable(207_800), block, None, 4);
         let antecedent = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
         let implication = Proposition::Implies(Box::new(antecedent.clone()), Box::new(consequent));
@@ -4471,7 +4469,7 @@ mod integer_equality_fact_index_tests {
 
         let facts = ProofFacts::from_ordered(&[implication, antecedent]);
         assert!(facts.contains_discharged_implication_consequent(&renamed));
-        assert!(!facts.contains_discharged_implication_consequent(&changed_snapshot));
+        assert!(!facts.contains_discharged_implication_consequent(&changed_memory_state));
     }
 
     #[test]
@@ -4630,7 +4628,7 @@ mod integer_equality_fact_index_tests {
                         crate::instrumentation::VerificationEvent::TacticStarted(tactic.clone()),
                     );
                     let result = crate::instrumentation::measure_deterministic_work(|| {
-                        crate::kernel::proof::fact_keys::snapshot_quantified_alpha_equivalent(
+                        crate::kernel::proof::fact_keys::state_quantified_alpha_equivalent(
                             &source, &renamed,
                         )
                     });
@@ -4751,12 +4749,12 @@ mod integer_equality_fact_index_tests {
     }
 
     #[test]
-    fn integer_alpha_fact_lookup_requires_the_same_load_snapshot() {
+    fn integer_alpha_fact_lookup_requires_the_same_load_state() {
         let before =
-            crate::kernel::intern_memory(Memory::new().with_block("snapshot-alpha-facts", 8));
+            crate::kernel::intern_memory(Memory::new().with_block("retained_state-alpha-facts", 8));
         let changed = crate::kernel::intern_memory(before.as_ref().clone().store(
             Pointer {
-                block: "snapshot-alpha-facts".into(),
+                block: "retained_state-alpha-facts".into(),
                 offset: PointerOffsetTerm::Constant(0),
             },
             ProgramValue::Int32(MachineTerm::constant(7)),
@@ -4769,7 +4767,7 @@ mod integer_equality_fact_index_tests {
             IntegerTerm::constant_i64(9),
             explicit_load_fold(&before, Variable(206_100), Variable(206_101)),
         );
-        let changed_snapshot_fact = equality(
+        let changed_state_fact = equality(
             IntegerTerm::constant_i64(9),
             explicit_load_fold(&changed, Variable(206_100), Variable(206_101)),
         );
@@ -4781,7 +4779,7 @@ mod integer_equality_fact_index_tests {
         );
         assert!(
             facts
-                .matching_fact_across_effects(&changed_snapshot_fact, &[])
+                .matching_fact_across_effects(&changed_state_fact, &[])
                 .is_none()
         );
     }
@@ -5288,10 +5286,10 @@ mod integer_witness_freshness_tests {
 }
 
 #[cfg(test)]
-mod pointer_snapshot_transport_tests {
+mod pointer_memory_transport_tests {
     use super::*;
     mod scaling_tests {
-        include!("../../scaling_tests/kernel/proof/facts/pointer_snapshot_transport_tests.rs");
+        include!("../../scaling_tests/kernel/proof/facts/pointer_memory_transport_tests.rs");
     }
 }
 

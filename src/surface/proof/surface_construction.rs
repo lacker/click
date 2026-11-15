@@ -17,7 +17,7 @@ fn checked_surface_fact_in_state_with_assumptions(
                 view.old_reference_state(state),
                 state,
                 None,
-                view.recorded_snapshots,
+                view.recorded_states,
             ),
             spec_definitions,
         )
@@ -74,7 +74,7 @@ fn checked_surface_fact_in_state_with_assumptions(
             else {
                 continue;
             };
-            for selector in view.recorded_snapshots.keys_newest_first() {
+            for selector in view.recorded_states.keys_newest_first() {
                 let candidate = ClickProposition::PredicateCall {
                     name: surface_name.clone(),
                     arguments: surface_arguments
@@ -95,10 +95,10 @@ fn checked_surface_fact_in_state_with_assumptions(
     if !kernel_memories.is_empty()
         && kernel_memories
             .iter()
-            .any(|memory| !memory.has_same_snapshot_markers(state.memory()))
+            .any(|memory| !memory.has_same_state_markers(state.memory()))
     {
         return Err(ClickError::new(format!(
-            "kernel fact belongs to a different recorded memory snapshot: {kernel:?}"
+            "kernel fact belongs to a different recorded memory state: {kernel:?}"
         )));
     }
     let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, view.effect_facts)
@@ -122,21 +122,23 @@ fn checked_surface_fact_in_state_with_assumptions(
     // already substituted.
     let round_trip_matches =
         |lowered: &Proposition| lowered == kernel || *lowered == resolved_kernel;
-    // A fact that contains a scalar read is anchored to the snapshot its
+    // A fact that contains a scalar read is anchored to the state its
     // cell was read from; synthesize it through the selector recorded for
-    // that snapshot, so the form stays correct in every later proof state
+    // that state, so the form stays correct in every later proof state
     // where the certificate is checked, rather than a plain form
     // that is correct only until the cell changes.
     if crate::kernel::proposition_mentions_scalar_read(kernel) {
-        let (exact_snapshots, compatible_snapshots) =
-            snapshot_indexed_selectors(&resolved_kernel, view.recorded_snapshots);
-        for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
-            let Some(candidate) =
-                synthesize_surface_proposition(&resolved_kernel, parameter_binding, snapshot_state)
-            else {
+        let (exact_states, compatible_states) =
+            state_indexed_selectors(&resolved_kernel, view.recorded_states);
+        for (selector, reference_state) in exact_states.iter().chain(&compatible_states) {
+            let Some(candidate) = synthesize_surface_proposition(
+                &resolved_kernel,
+                parameter_binding,
+                reference_state,
+            ) else {
                 continue;
             };
-            let Ok(anchored) = surface_at_snapshot(&candidate, *selector) else {
+            let Ok(anchored) = surface_at_program_point(&candidate, *selector) else {
                 continue;
             };
             if check(&anchored).as_ref().is_ok_and(&round_trip_matches) {
@@ -185,7 +187,7 @@ fn checked_surface_fact_in_state_with_assumptions(
     }
 }
 
-fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<Memory> {
+fn proposition_state_memories(proposition: &Proposition) -> Vec<Memory> {
     if !matches!(
         proposition,
         Proposition::And(_, _)
@@ -243,21 +245,21 @@ fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<Memory> {
     memories
 }
 
-type SnapshotMatches<'a> = Vec<(&'a SnapshotSelector, &'a ExecutionState)>;
+type RecordedStateMatches<'a> = Vec<(&'a ProgramPointSelector, &'a ExecutionState)>;
 
-pub(super) fn snapshot_indexed_selectors<'a>(
+pub(super) fn state_indexed_selectors<'a>(
     kernel: &Proposition,
-    recorded_snapshots: &'a RecordedSnapshots,
-) -> (SnapshotMatches<'a>, SnapshotMatches<'a>) {
-    let memories = proposition_snapshot_memories(kernel);
+    recorded_states: &'a RecordedStates,
+) -> (RecordedStateMatches<'a>, RecordedStateMatches<'a>) {
+    let memories = proposition_state_memories(kernel);
     let mut exact = Vec::new();
     let mut compatible = Vec::new();
-    for (selector, state) in recorded_snapshots.iter_newest_first() {
+    for (selector, state) in recorded_states.iter_newest_first() {
         if memories.iter().any(|memory| memory == state.memory()) {
             exact.push((selector, state));
         } else if memories
             .iter()
-            .any(|memory| memory.has_same_snapshot_markers(state.memory()))
+            .any(|memory| memory.has_same_state_markers(state.memory()))
         {
             compatible.push((selector, state));
         }
@@ -295,7 +297,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     available: &[Proposition],
     assumptions: &PureFactContext,
     indexed_available: Option<&ProofFacts>,
-    allow_snapshot_blind_candidates: bool,
+    allow_memory_erased_candidates: bool,
     parameter_binding: ParameterBinding<'_>,
     state: &ExecutionState,
     spec_definitions: SpecDefinitions<'_>,
@@ -316,7 +318,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     // (symbolic contract loads allowed), but the emitted certificate is
     // checked by the ordinary executor, whose strict lowering requires every
     // load to be justified. A form that only lowers permissively —
-    // for example a snapshot fact whose `at(...)` anchor was dropped so its
+    // for example a state fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
     let strictly_available = |surface: &ClickProposition| {
         lower_fixed_state_proposition_with_assumptions(
@@ -327,7 +329,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                 view.old_reference_state(state),
                 state,
                 None,
-                view.recorded_snapshots,
+                view.recorded_states,
             ),
             spec_definitions,
         )
@@ -375,7 +377,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
                     view.old_reference_state(state),
                     state,
                     None,
-                    view.recorded_snapshots,
+                    view.recorded_states,
                 ),
                 spec_definitions,
             )
@@ -385,8 +387,8 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             return Ok(surface);
         }
     }
-    // A snapshot-indexed form paired with this exact available kernel fact
-    // is checkable through the recorded-snapshot map. Requiring
+    // A state-indexed form paired with this exact available kernel fact
+    // is checkable through the recorded-state map. Requiring
     // it to lower again against the current heap would incorrectly demand that
     // old loads remain loadable now. Current-state forms do not have that
     // stable anchor and still go through `strictly_available` below.
@@ -395,8 +397,8 @@ fn checked_surface_comparison_fact_in_state_with_availability(
         .surfaces(kernel)
         .cloned()
         .collect::<Vec<_>>();
-    if allow_snapshot_blind_candidates {
-        for candidate in view.surface_propositions.snapshot_blind_kernels(kernel) {
+    if allow_memory_erased_candidates {
+        for candidate in view.surface_propositions.memory_erased_kernels(kernel) {
             for surface in view.surface_propositions.surfaces(candidate) {
                 if !recorded_surfaces.contains(surface) {
                     recorded_surfaces.push(surface.clone());
@@ -435,7 +437,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             // A recorded pair can name a program point outside the current
             // view scope (for example a function-prefix statement inside a
             // loop-region proof). The candidate lowering resolves recorded
-            // snapshots without demanding current loadability, so it is the
+            // states without demanding current loadability, so it is the
             // right scope check here.
             && lower_surface_candidate_in_state_with_assumptions(
                 view,
@@ -450,7 +452,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             return Ok(surface.clone());
         }
     }
-    // A fact that contains a scalar read is anchored to the snapshot the
+    // A fact that contains a scalar read is anchored to the state the
     // cell was read from, so its program-point-anchored surface forms stay
     // correct at every later proof state, while a plain current-state form
     // is correct only until the cell changes: anchored forms are tried first
@@ -480,7 +482,7 @@ fn checked_surface_comparison_fact_in_state_with_availability(
         .map_err(|error| {
         ClickError::new(format!("could not resolve checked surface loads: {error}"))
     })?;
-    // Load variables represent loads whose snapshots the snapshot index needs;
+    // Load variables represent loads whose states the state index needs;
     // resolve through the registry when no defining fact is in scope, and
     // index points from the load term rather than the kernel variable.
     let resolved_kernel = if &resolved_kernel == kernel {
@@ -490,17 +492,17 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     } else {
         resolved_kernel
     };
-    let (exact_snapshots, compatible_snapshots) =
-        snapshot_indexed_selectors(&resolved_kernel, view.recorded_snapshots);
+    let (exact_states, compatible_states) =
+        state_indexed_selectors(&resolved_kernel, view.recorded_states);
     if let Some(surface) =
         synthesize_surface_proposition(&resolved_kernel, parameter_binding, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
     }
-    for (_, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
+    for (_, reference_state) in exact_states.iter().chain(&compatible_states) {
         if let Some(surface) =
-            synthesize_surface_proposition(&resolved_kernel, parameter_binding, snapshot_state)
+            synthesize_surface_proposition(&resolved_kernel, parameter_binding, reference_state)
             && !bases.contains(&surface)
         {
             bases.push(surface);
@@ -533,9 +535,9 @@ fn checked_surface_comparison_fact_in_state_with_availability(
     if !prefer_anchored && let Some(base) = plain_base_candidate(&bases) {
         return Ok(base);
     }
-    for (selector, _) in exact_snapshots.iter().chain(&compatible_snapshots) {
+    for (selector, _) in exact_states.iter().chain(&compatible_states) {
         for base in &bases {
-            if let Ok(candidate) = surface_at_snapshot(base, *selector)
+            if let Ok(candidate) = surface_at_program_point(base, *selector)
                 && lower_surface_candidate_in_state_with_assumptions(
                     view,
                     &candidate,
@@ -557,25 +559,25 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             else {
                 continue;
             };
-            let at_snapshot = |expression: &ContractExpression| ContractExpression::At {
+            let at_program_point = |expression: &ContractExpression| ContractExpression::At {
                 selector: (*selector).clone(),
                 expression: Box::new(expression.clone()),
             };
             let candidates = [
                 ClickProposition::Comparison {
-                    left: at_snapshot(left),
+                    left: at_program_point(left),
                     operator: *operator,
-                    right: at_snapshot(right),
+                    right: at_program_point(right),
                 },
                 ClickProposition::Comparison {
-                    left: at_snapshot(left),
+                    left: at_program_point(left),
                     operator: *operator,
                     right: right.clone(),
                 },
                 ClickProposition::Comparison {
                     left: left.clone(),
                     operator: *operator,
-                    right: at_snapshot(right),
+                    right: at_program_point(right),
                 },
             ];
             for candidate in candidates {
@@ -595,13 +597,13 @@ fn checked_surface_comparison_fact_in_state_with_availability(
             }
         }
     }
-    for indexed_snapshots in [&exact_snapshots, &compatible_snapshots] {
-        let selectors = indexed_snapshots
+    for indexed_states in [&exact_states, &compatible_states] {
+        let selectors = indexed_states
             .iter()
             .map(|(selector, _)| (*selector).clone())
             .collect::<Vec<_>>();
         for base in &bases {
-            let Some(variants) = comparison_snapshot_variants(base, &selectors) else {
+            let Some(variants) = comparison_state_variants(base, &selectors) else {
                 continue;
             };
             for candidate in variants {
@@ -644,9 +646,9 @@ fn checked_surface_comparison_fact_in_state_with_availability(
         )));
     }
     Err(ClickError::new(format!(
-        "comparison fact has no checkable surface form at this proof state ({} exact and {} compatible recorded snapshots, {} structural bases)",
-        exact_snapshots.len(),
-        compatible_snapshots.len(),
+        "comparison fact has no checkable surface form at this proof state ({} exact and {} compatible recorded states, {} structural bases)",
+        exact_states.len(),
+        compatible_states.len(),
         bases.len(),
     )))
 }

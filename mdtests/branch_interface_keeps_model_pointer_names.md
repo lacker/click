@@ -1,7 +1,7 @@
 # A branch interface retains its model-bound pointer spelling
 
 The interface exports a packed word using the outer model binding `id`.
-A later snapshot rewrite cancels the extra word. Verification used to pass,
+A later state rewrite cancels the extra word. Verification used to pass,
 but expansion printed an internal pointer as `…` instead of retaining `id`.
 
 ```c filename=probe.c

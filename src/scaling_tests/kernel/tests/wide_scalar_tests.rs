@@ -215,7 +215,7 @@ fn selected_wide_read_value_bounds_unselected_call_history() {
     }
 }
 
-// A named-call cache may give two aliases different recorded read snapshots.
+// A named-call cache may give two aliases different recorded read states.
 // Congruence must retain all eight bytes, reject overwritten histories, and
 // avoid visiting unrelated cells or selected facts.
 #[test]
@@ -262,15 +262,19 @@ fn selected_wide_read_congruence_preserves_history_width_and_scales() {
             &selected,
             Some(&kept),
         );
-        let read = |snapshot: &Memory, pointer: &Pointer, kind| {
-            MachineTerm::MemoryLoad(intern_memory_ref(snapshot), Box::new(pointer.clone()), kind)
+        let read = |retained_state: &Memory, pointer: &Pointer, kind| {
+            MachineTerm::MemoryLoad(
+                intern_memory_ref(retained_state),
+                Box::new(pointer.clone()),
+                kind,
+            )
         };
         let current = read(&after, &read_pointer, LoadKind::Bits64);
-        let same_snapshot = read(&after, &owned_pointer, LoadKind::Bits64);
+        let same_state = read(&after, &owned_pointer, LoadKind::Bits64);
         let earlier = read(&memory, &owned_pointer, LoadKind::Bits64);
         crate::kernel::memory_provenance::clear_canonical_form_caches();
         let (found, work) = crate::instrumentation::measure_deterministic_work(|| {
-            matches(&current, &same_snapshot, &selected) && matches(&current, &earlier, &selected)
+            matches(&current, &same_state, &selected) && matches(&current, &earlier, &selected)
         });
         assert!(found, "{count} unrelated cells and facts");
         if let Some(previous) = previous_work {
@@ -278,7 +282,7 @@ fn selected_wide_read_congruence_preserves_history_width_and_scales() {
         }
         previous_work = Some(work);
         assert!(matches(&earlier, &current, &selected));
-        assert!(!matches(&current, &same_snapshot, &PureFactContext::new()));
+        assert!(!matches(&current, &same_state, &PureFactContext::new()));
         assert!(!matches(
             &current,
             &read(&after, &callee, LoadKind::Bits64),

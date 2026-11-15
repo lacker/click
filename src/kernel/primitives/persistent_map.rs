@@ -1,10 +1,10 @@
 //! Persistent ordered collections with a cached content hash.
 //!
-//! Kernel memory snapshots are interned by content and share their maps with
-//! every snapshot derived from them. A `std` `BTreeMap` behind an `Arc` must
+//! Kernel memory states are interned by content and share their maps with
+//! every state derived from them. A `std` `BTreeMap` behind an `Arc` must
 //! be cloned whole before a shared map can change, and hashing or comparing
 //! it visits every entry, so one store into a memory of `n` cells cost O(n)
-//! twice over. These wrappers keep the snapshot's maps as persistent B-trees
+//! twice over. These wrappers keep the state's maps as persistent B-trees
 //! (`imbl::OrdMap` / `imbl::OrdSet`): a clone is O(1), and an insert or
 //! removal copies only the O(log n) path it changes.
 //!
@@ -35,12 +35,12 @@ fn map_entry_hash<K: Hash, V: Hash>(key: &K, value: &V) -> u64 {
 }
 
 /// A persistent ordered map with an O(1) content hash.
-pub(crate) struct SnapshotMap<K, V> {
+pub(crate) struct HashedOrdMap<K, V> {
     map: imbl::OrdMap<K, V>,
     hash: u64,
 }
 
-impl<K, V> SnapshotMap<K, V> {
+impl<K, V> HashedOrdMap<K, V> {
     pub(crate) fn new() -> Self {
         Self {
             map: imbl::OrdMap::new(),
@@ -69,7 +69,7 @@ impl<K, V> SnapshotMap<K, V> {
     }
 }
 
-impl<K: Ord, V> SnapshotMap<K, V> {
+impl<K: Ord, V> HashedOrdMap<K, V> {
     pub(crate) fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -116,8 +116,8 @@ impl<K: Ord, V> SnapshotMap<K, V> {
     }
 }
 
-/// One entry on which two snapshot maps differ; see [`SnapshotMap::diff`].
-pub(crate) enum SnapshotMapChange<'a, K> {
+/// One entry on which two state maps differ; see [`HashedOrdMap::diff`].
+pub(crate) enum HashedOrdMapChange<'a, K> {
     /// Present only in the first map.
     Removed(&'a K),
     /// Present only in the second map.
@@ -126,7 +126,7 @@ pub(crate) enum SnapshotMapChange<'a, K> {
     Changed(&'a K),
 }
 
-impl<'a, K> SnapshotMapChange<'a, K> {
+impl<'a, K> HashedOrdMapChange<'a, K> {
     pub(crate) fn key(&self) -> &'a K {
         match self {
             Self::Removed(key) | Self::Added(key) | Self::Changed(key) => key,
@@ -134,7 +134,7 @@ impl<'a, K> SnapshotMapChange<'a, K> {
     }
 }
 
-impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
+impl<K: Ord, V: PartialEq> HashedOrdMap<K, V> {
     /// The entries on which `self` and `other` differ, in ascending key
     /// order.
     ///
@@ -145,14 +145,14 @@ impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
     pub(crate) fn diff<'a>(
         &'a self,
         other: &'a Self,
-    ) -> impl Iterator<Item = SnapshotMapChange<'a, K>> + 'a {
+    ) -> impl Iterator<Item = HashedOrdMapChange<'a, K>> + 'a {
         self.map.diff(&other.map).map(|change| {
             crate::instrumentation::record_deterministic_work(1);
             match change {
-                imbl::ordmap::DiffItem::Remove(key, _) => SnapshotMapChange::Removed(key),
-                imbl::ordmap::DiffItem::Add(key, _) => SnapshotMapChange::Added(key),
+                imbl::ordmap::DiffItem::Remove(key, _) => HashedOrdMapChange::Removed(key),
+                imbl::ordmap::DiffItem::Add(key, _) => HashedOrdMapChange::Added(key),
                 imbl::ordmap::DiffItem::Update { old: (key, _), .. } => {
-                    SnapshotMapChange::Changed(key)
+                    HashedOrdMapChange::Changed(key)
                 }
             }
         })
@@ -165,7 +165,7 @@ impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
     /// Two maps derived from one base share every subtree neither update
     /// touched, so each diff walks only the changed paths (see
     /// [`Self::diff`]), and the comparison costs the changes rather than the
-    /// maps: this is what a re-derived snapshot pays to be recognized as an
+    /// maps: this is what a re-derived state pays to be recognized as an
     /// earlier child of the same base. Equal changes from one base mean equal
     /// maps whatever the maps share, so the answer never depends on sharing;
     /// only the cost does. Charges one unit per compared change, plus the
@@ -226,7 +226,7 @@ impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
         let mut expected = removed.iter();
         for change in before.diff(self) {
             match change {
-                SnapshotMapChange::Removed(key) if expected.next() == Some(&key) => {}
+                HashedOrdMapChange::Removed(key) if expected.next() == Some(&key) => {}
                 _ => return false,
             }
         }
@@ -234,7 +234,7 @@ impl<K: Ord, V: PartialEq> SnapshotMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone + Hash, V: Clone + Hash> SnapshotMap<K, V> {
+impl<K: Ord + Clone + Hash, V: Clone + Hash> HashedOrdMap<K, V> {
     /// Sets each key of `other` to its value there and keeps this map's
     /// other keys, as extending it by `other`'s entries would. Walks only the
     /// paths the two maps do not share, charging one unit per difference, so
@@ -315,7 +315,7 @@ impl<K: Ord + Clone + Hash, V: Clone + Hash> SnapshotMap<K, V> {
     }
 }
 
-impl<K, V> Clone for SnapshotMap<K, V> {
+impl<K, V> Clone for HashedOrdMap<K, V> {
     /// O(1): the persistent root is shared.
     fn clone(&self) -> Self {
         Self {
@@ -325,19 +325,19 @@ impl<K, V> Clone for SnapshotMap<K, V> {
     }
 }
 
-impl<K, V> Default for SnapshotMap<K, V> {
+impl<K, V> Default for HashedOrdMap<K, V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: std::fmt::Debug + Ord, V: std::fmt::Debug> std::fmt::Debug for SnapshotMap<K, V> {
+impl<K: std::fmt::Debug + Ord, V: std::fmt::Debug> std::fmt::Debug for HashedOrdMap<K, V> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_map().entries(self.map.iter()).finish()
     }
 }
 
-impl<K, V> Hash for SnapshotMap<K, V> {
+impl<K, V> Hash for HashedOrdMap<K, V> {
     /// O(1): the cached content hash and the length.
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.hash);
@@ -345,7 +345,7 @@ impl<K, V> Hash for SnapshotMap<K, V> {
     }
 }
 
-impl<K: Ord, V: PartialEq> PartialEq for SnapshotMap<K, V> {
+impl<K: Ord, V: PartialEq> PartialEq for HashedOrdMap<K, V> {
     /// O(1) when the maps share a root or differ in cached hash or length;
     /// otherwise elementwise, charging one work unit per entry compared.
     fn eq(&self, other: &Self) -> bool {
@@ -369,15 +369,15 @@ impl<K: Ord, V: PartialEq> PartialEq for SnapshotMap<K, V> {
     }
 }
 
-impl<K: Ord, V: Eq> Eq for SnapshotMap<K, V> {}
+impl<K: Ord, V: Eq> Eq for HashedOrdMap<K, V> {}
 
-impl<K: Ord, V: Ord> PartialOrd for SnapshotMap<K, V> {
+impl<K: Ord, V: Ord> PartialOrd for HashedOrdMap<K, V> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<K: Ord, V: Ord> Ord for SnapshotMap<K, V> {
+impl<K: Ord, V: Ord> Ord for HashedOrdMap<K, V> {
     /// Lexicographic over entries, as for `BTreeMap`. O(1) for a shared
     /// root; otherwise O(n) in the length of the common prefix.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -388,7 +388,7 @@ impl<K: Ord, V: Ord> Ord for SnapshotMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone + Hash, V: Clone + Hash> FromIterator<(K, V)> for SnapshotMap<K, V> {
+impl<K: Ord + Clone + Hash, V: Clone + Hash> FromIterator<(K, V)> for HashedOrdMap<K, V> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let mut map = Self::new();
         map.extend(iter);
@@ -396,7 +396,7 @@ impl<K: Ord + Clone + Hash, V: Clone + Hash> FromIterator<(K, V)> for SnapshotMa
     }
 }
 
-impl<K: Ord + Clone + Hash, V: Clone + Hash> Extend<(K, V)> for SnapshotMap<K, V> {
+impl<K: Ord + Clone + Hash, V: Clone + Hash> Extend<(K, V)> for HashedOrdMap<K, V> {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
         for (key, value) in iter {
             self.insert(key, value);
@@ -404,7 +404,7 @@ impl<K: Ord + Clone + Hash, V: Clone + Hash> Extend<(K, V)> for SnapshotMap<K, V
     }
 }
 
-impl<'a, K: Ord, V> IntoIterator for &'a SnapshotMap<K, V> {
+impl<'a, K: Ord, V> IntoIterator for &'a HashedOrdMap<K, V> {
     type Item = (&'a K, &'a V);
     type IntoIter = imbl::ordmap::Iter<'a, K, V, imbl::shared_ptr::DefaultSharedPtr>;
 
@@ -413,7 +413,7 @@ impl<'a, K: Ord, V> IntoIterator for &'a SnapshotMap<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V: Clone> IntoIterator for SnapshotMap<K, V> {
+impl<K: Ord + Clone, V: Clone> IntoIterator for HashedOrdMap<K, V> {
     type Item = (K, V);
     type IntoIter = imbl::ordmap::ConsumingIter<K, V, imbl::shared_ptr::DefaultSharedPtr>;
 
@@ -423,12 +423,12 @@ impl<K: Ord + Clone, V: Clone> IntoIterator for SnapshotMap<K, V> {
 }
 
 /// A persistent ordered set with an O(1) content hash.
-pub(crate) struct SnapshotSet<K> {
+pub(crate) struct HashedOrdSet<K> {
     set: imbl::OrdSet<K>,
     hash: u64,
 }
 
-impl<K> SnapshotSet<K> {
+impl<K> HashedOrdSet<K> {
     pub(crate) fn new() -> Self {
         Self {
             set: imbl::OrdSet::new(),
@@ -446,7 +446,7 @@ impl<K> SnapshotSet<K> {
     }
 }
 
-impl<K: Ord> SnapshotSet<K> {
+impl<K: Ord> HashedOrdSet<K> {
     pub(crate) fn contains<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
@@ -490,9 +490,9 @@ impl<K: Ord> SnapshotSet<K> {
     }
 }
 
-impl<K: Ord> SnapshotSet<K> {
+impl<K: Ord> HashedOrdSet<K> {
     /// Whether `self == other`, for two sets each derived from `base`; see
-    /// [`SnapshotMap::eq_relative_to`].
+    /// [`HashedOrdMap::eq_relative_to`].
     pub(crate) fn eq_relative_to(&self, other: &Self, base: &Self) -> bool {
         if self.set.ptr_eq(&other.set) {
             return true;
@@ -526,7 +526,7 @@ impl<K: Ord> SnapshotSet<K> {
     }
 }
 
-impl<K: Ord + Clone + Hash> SnapshotSet<K> {
+impl<K: Ord + Clone + Hash> HashedOrdSet<K> {
     /// Inserts one element; `true` when it was absent. O(log n).
     pub(crate) fn insert(&mut self, key: K) -> bool {
         let added = entry_hash(&key);
@@ -572,7 +572,7 @@ impl<K: Ord + Clone + Hash> SnapshotSet<K> {
     }
 }
 
-impl<K> Clone for SnapshotSet<K> {
+impl<K> Clone for HashedOrdSet<K> {
     /// O(1): the persistent root is shared.
     fn clone(&self) -> Self {
         Self {
@@ -582,19 +582,19 @@ impl<K> Clone for SnapshotSet<K> {
     }
 }
 
-impl<K> Default for SnapshotSet<K> {
+impl<K> Default for HashedOrdSet<K> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: std::fmt::Debug + Ord> std::fmt::Debug for SnapshotSet<K> {
+impl<K: std::fmt::Debug + Ord> std::fmt::Debug for HashedOrdSet<K> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_set().entries(self.set.iter()).finish()
     }
 }
 
-impl<K> Hash for SnapshotSet<K> {
+impl<K> Hash for HashedOrdSet<K> {
     /// O(1): the cached content hash and the length.
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(self.hash);
@@ -602,7 +602,7 @@ impl<K> Hash for SnapshotSet<K> {
     }
 }
 
-impl<K: Ord> PartialEq for SnapshotSet<K> {
+impl<K: Ord> PartialEq for HashedOrdSet<K> {
     /// O(1) when the sets share a root or differ in cached hash or length;
     /// otherwise elementwise, charging one work unit per element compared.
     fn eq(&self, other: &Self) -> bool {
@@ -626,15 +626,15 @@ impl<K: Ord> PartialEq for SnapshotSet<K> {
     }
 }
 
-impl<K: Ord> Eq for SnapshotSet<K> {}
+impl<K: Ord> Eq for HashedOrdSet<K> {}
 
-impl<K: Ord> PartialOrd for SnapshotSet<K> {
+impl<K: Ord> PartialOrd for HashedOrdSet<K> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<K: Ord> Ord for SnapshotSet<K> {
+impl<K: Ord> Ord for HashedOrdSet<K> {
     /// Lexicographic over elements, as for `BTreeSet`. O(1) for a shared
     /// root; otherwise O(n) in the length of the common prefix.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -645,7 +645,7 @@ impl<K: Ord> Ord for SnapshotSet<K> {
     }
 }
 
-impl<K: Ord + Clone + Hash> FromIterator<K> for SnapshotSet<K> {
+impl<K: Ord + Clone + Hash> FromIterator<K> for HashedOrdSet<K> {
     fn from_iter<I: IntoIterator<Item = K>>(iter: I) -> Self {
         let mut set = Self::new();
         set.extend(iter);
@@ -653,7 +653,7 @@ impl<K: Ord + Clone + Hash> FromIterator<K> for SnapshotSet<K> {
     }
 }
 
-impl<K: Ord + Clone + Hash> Extend<K> for SnapshotSet<K> {
+impl<K: Ord + Clone + Hash> Extend<K> for HashedOrdSet<K> {
     fn extend<I: IntoIterator<Item = K>>(&mut self, iter: I) {
         for key in iter {
             self.insert(key);
@@ -661,7 +661,7 @@ impl<K: Ord + Clone + Hash> Extend<K> for SnapshotSet<K> {
     }
 }
 
-impl<'a, K: Ord> IntoIterator for &'a SnapshotSet<K> {
+impl<'a, K: Ord> IntoIterator for &'a HashedOrdSet<K> {
     type Item = &'a K;
     type IntoIter = imbl::ordset::Iter<'a, K, imbl::shared_ptr::DefaultSharedPtr>;
 
@@ -670,7 +670,7 @@ impl<'a, K: Ord> IntoIterator for &'a SnapshotSet<K> {
     }
 }
 
-impl<K: Ord + Clone> IntoIterator for SnapshotSet<K> {
+impl<K: Ord + Clone> IntoIterator for HashedOrdSet<K> {
     type Item = K;
     type IntoIter = imbl::ordset::ConsumingIter<K, imbl::shared_ptr::DefaultSharedPtr>;
 
@@ -691,17 +691,17 @@ mod tests {
     fn equal_content_hashes_equally_across_insertion_orders() {
         let forward = (0..64)
             .map(|key| (key, key * 3))
-            .collect::<SnapshotMap<_, _>>();
+            .collect::<HashedOrdMap<_, _>>();
         let backward = (0..64)
             .rev()
             .map(|key| (key, key * 3))
-            .collect::<SnapshotMap<_, _>>();
+            .collect::<HashedOrdMap<_, _>>();
         assert!(!forward.ptr_eq(&backward));
         assert_eq!(forward.content_hash(), backward.content_hash());
         assert_eq!(hash_of(&forward), hash_of(&backward));
         assert_eq!(forward, backward);
 
-        let mut built = SnapshotMap::new();
+        let mut built = HashedOrdMap::new();
         for key in 0..80 {
             built.insert(key, key * 3);
         }
@@ -711,8 +711,8 @@ mod tests {
         assert_eq!(built.content_hash(), forward.content_hash());
         assert_eq!(built, forward);
 
-        let set_forward = (0..40).collect::<SnapshotSet<_>>();
-        let set_backward = (0..40).rev().collect::<SnapshotSet<_>>();
+        let set_forward = (0..40).collect::<HashedOrdSet<_>>();
+        let set_backward = (0..40).rev().collect::<HashedOrdSet<_>>();
         assert_eq!(set_forward.content_hash(), set_backward.content_hash());
         assert_eq!(set_forward, set_backward);
     }
@@ -726,7 +726,7 @@ mod tests {
         for size in [16, 64, 256, 1024] {
             let entry = (0..size)
                 .map(|key| (key, key))
-                .collect::<SnapshotMap<_, _>>();
+                .collect::<HashedOrdMap<_, _>>();
             let mut havocked = entry.clone();
             havocked.insert(size, 0);
             havocked.insert(3, 99);
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn mutations_update_the_cached_hash() {
-        let mut map = (0..8).map(|key| (key, key)).collect::<SnapshotMap<_, _>>();
+        let mut map = (0..8).map(|key| (key, key)).collect::<HashedOrdMap<_, _>>();
         let original = map.content_hash();
 
         assert_eq!(map.insert(3, 99), Some(3));
@@ -777,14 +777,14 @@ mod tests {
         let evens = (0..8)
             .filter(|key| key % 2 == 0)
             .map(|key| (key, key))
-            .collect::<SnapshotMap<_, _>>();
+            .collect::<HashedOrdMap<_, _>>();
         assert_eq!(map.content_hash(), evens.content_hash());
         assert_eq!(map, evens);
         map.clear();
         assert_eq!(map.content_hash(), 0);
         assert!(map.is_empty());
 
-        let mut set = (0..8).collect::<SnapshotSet<_>>();
+        let mut set = (0..8).collect::<HashedOrdSet<_>>();
         let original = set.content_hash();
         assert!(!set.insert(4));
         assert_eq!(set.content_hash(), original);
@@ -800,7 +800,7 @@ mod tests {
         let map = keys
             .iter()
             .map(|key| (*key, key * 10))
-            .collect::<SnapshotMap<_, _>>();
+            .collect::<HashedOrdMap<_, _>>();
         let std_map = keys
             .iter()
             .map(|key| (*key, key * 10))
@@ -818,14 +818,14 @@ mod tests {
         assert_eq!(pairs(&mut map.range(12..)), Vec::new());
         assert_eq!(format!("{map:?}"), format!("{std_map:?}"));
 
-        let smaller = (0..3).map(|key| (key, 0)).collect::<SnapshotMap<_, _>>();
+        let smaller = (0..3).map(|key| (key, 0)).collect::<HashedOrdMap<_, _>>();
         let larger = (0..3)
             .map(|key| (key, i32::from(key == 2)))
-            .collect::<SnapshotMap<_, _>>();
+            .collect::<HashedOrdMap<_, _>>();
         assert!(smaller < larger);
         assert_eq!(smaller.cmp(&smaller.clone()), std::cmp::Ordering::Equal);
 
-        let set = keys.iter().copied().collect::<SnapshotSet<_>>();
+        let set = keys.iter().copied().collect::<HashedOrdSet<_>>();
         let std_set = keys
             .iter()
             .copied()
@@ -840,7 +840,7 @@ mod tests {
     #[test]
     fn equality_charges_only_the_elements_it_compares() {
         let n = 200;
-        let map = (0..n).map(|key| (key, key)).collect::<SnapshotMap<_, _>>();
+        let map = (0..n).map(|key| (key, key)).collect::<HashedOrdMap<_, _>>();
         let shared = map.clone();
         let (equal, work) = crate::instrumentation::measure_deterministic_work(|| map == shared);
         assert!(equal);
@@ -849,7 +849,7 @@ mod tests {
         let rebuilt = (0..n)
             .rev()
             .map(|key| (key, key))
-            .collect::<SnapshotMap<_, _>>();
+            .collect::<HashedOrdMap<_, _>>();
         let (equal, work) = crate::instrumentation::measure_deterministic_work(|| map == rebuilt);
         assert!(equal);
         assert_eq!(

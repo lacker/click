@@ -518,14 +518,14 @@ impl PureFactContext {
                                 )
                         )
                     // Two terms for one value that differ only
-                    // representationally (memory snapshots embedded in loads,
+                    // representationally (memory states embedded in loads,
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls use complete,
                     // input-linear worklists.
                     //
                     // Canonicalization drops what it can prove irrelevant to
                     // the load, which makes it exactly the kind of structural
-                    // route that cannot see a store the snapshots no longer
+                    // route that cannot see a store the states no longer
                     // record. It answers to the recorded history like the
                     // others; see `load_equality_lacks_recorded_evidence`.
                     || *value
@@ -588,7 +588,7 @@ impl PureFactContext {
                 self.proves_memory_loadable(memory, base, bytes)
                     // Loadability survives writes: an assumed loadable fact
                     // for the same range transports across any chain of
-                    // recorded effects connecting the snapshots. Its
+                    // recorded effects connecting the states. Its
                     // candidates are the loadable facts filed under the
                     // base's block, not every proposition fact.
                     || self.memory_loadable_candidates_for_base(base).any(|fact| {
@@ -4006,7 +4006,7 @@ impl PureFactContext {
                         && self.bitvector_terms_equal_for_transport(fact_right, target_left)
             }
             // A pointer-value fact carries operand by operand, each pair one
-            // value as the snapshot-modulo matchers read it: the same
+            // value as the state-modulo matchers read it: the same
             // designation, at a proven-equal address or as one complete read
             // across the frame (`n->right` before a call, `old(n)->right`
             // after it).
@@ -4048,10 +4048,10 @@ impl PureFactContext {
                         && self.pointer_offset_terms_equal_for_transport(fact_right, target_left)
                     || fact_left == target_left
                         && self.pointer_offset_terms_equal_for_transport(fact_right, target_right)
-                    || self.pointer_offset_terms_snapshot_equivalent(fact_left, target_left)
-                        && self.pointer_offset_terms_snapshot_equivalent(fact_right, target_right)
-                    || self.pointer_offset_terms_snapshot_equivalent(fact_left, target_right)
-                        && self.pointer_offset_terms_snapshot_equivalent(fact_right, target_left)
+                    || self.pointer_offset_terms_state_equivalent(fact_left, target_left)
+                        && self.pointer_offset_terms_state_equivalent(fact_right, target_right)
+                    || self.pointer_offset_terms_state_equivalent(fact_left, target_right)
+                        && self.pointer_offset_terms_state_equivalent(fact_right, target_left)
             }
             (
                 ConditionTerm::Overflows {
@@ -4584,7 +4584,7 @@ impl PureFactContext {
         }
     }
 
-    fn pointer_offset_terms_snapshot_equivalent(
+    fn pointer_offset_terms_state_equivalent(
         &self,
         left: &PointerOffsetTerm,
         right: &PointerOffsetTerm,
@@ -4604,13 +4604,13 @@ impl PureFactContext {
                 },
             ) => {
                 left_width == right_width
-                    && self.operands_snapshot_equivalent(left.operand_view(), right.operand_view())
+                    && self.operands_state_equivalent(left.operand_view(), right.operand_view())
             }
             (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
-                self.pointer_offset_terms_snapshot_equivalent(left_a, right_a)
-                    && self.pointer_offset_terms_snapshot_equivalent(left_b, right_b)
-                    || self.pointer_offset_terms_snapshot_equivalent(left_a, right_b)
-                        && self.pointer_offset_terms_snapshot_equivalent(left_b, right_a)
+                self.pointer_offset_terms_state_equivalent(left_a, right_a)
+                    && self.pointer_offset_terms_state_equivalent(left_b, right_b)
+                    || self.pointer_offset_terms_state_equivalent(left_a, right_b)
+                        && self.pointer_offset_terms_state_equivalent(left_b, right_a)
             }
             _ => false,
         }
@@ -4622,28 +4622,28 @@ impl PureFactContext {
         !self.pointer_offset_equalities_by_shape.is_empty()
     }
 
-    pub(in crate::kernel) fn has_pointer_offset_snapshot_fact(
+    pub(in crate::kernel) fn has_pointer_offset_state_fact(
         &self,
         left: &PointerOffsetTerm,
         right: &PointerOffsetTerm,
     ) -> bool {
         // Keep this deliberately structural and one-hop. Callers use it only
         // to move an already-certified address equality between framed memory
-        // snapshots, never to synthesize a new alias relationship.
+        // states, never to synthesize a new alias relationship.
         let matches = |condition: &ConditionTerm| {
             let ConditionTerm::PointerOffsetEqual(fact_left, fact_right) = condition else {
                 return false;
             };
-            self.pointer_offset_terms_snapshot_equivalent(fact_left, left)
-                && self.pointer_offset_terms_snapshot_equivalent(fact_right, right)
-                || self.pointer_offset_terms_snapshot_equivalent(fact_left, right)
-                    && self.pointer_offset_terms_snapshot_equivalent(fact_right, left)
+            self.pointer_offset_terms_state_equivalent(fact_left, left)
+                && self.pointer_offset_terms_state_equivalent(fact_right, right)
+                || self.pointer_offset_terms_state_equivalent(fact_left, right)
+                    && self.pointer_offset_terms_state_equivalent(fact_right, left)
         };
-        // A matching fact has a side snapshot-equivalent to `left`, so it is
+        // A matching fact has a side state-equivalent to `left`, so it is
         // filed under `left`'s shape.
         let indexed = self
             .pointer_offset_equalities_by_shape
-            .get(&crate::kernel::assumptions::offset_snapshot_shape(left))
+            .get(&crate::kernel::assumptions::offset_state_shape(left))
             .into_iter()
             .flat_map(crate::persistent::PersistentSet::iter)
             .inspect(|_| crate::instrumentation::record_deterministic_work(1))
@@ -4664,36 +4664,32 @@ impl PureFactContext {
 
     /// Retain the selected index DAG. Syntax summaries do not carry frame
     /// authority: each selected read pair is checked in this context.
-    fn operands_snapshot_equivalent(
+    fn operands_state_equivalent(
         &self,
         left: MachineOperandView<'_>,
         right: MachineOperandView<'_>,
     ) -> bool {
         use MachineOperandView as V;
         if let (V::Legacy(left), V::Legacy(right)) = (left, right) {
-            return self.bitvector_terms_snapshot_equivalent(left, right);
+            return self.bitvector_terms_state_equivalent(left, right);
         }
         let root = |value| {
             crate::kernel::KernelTerm::retained_machine_operand(MachineIntegerType::Int32, value)
         };
         let (left, right) = (root(left), root(right));
-        crate::kernel::shared_snapshot_read_pairs(&left, &right).is_some_and(|pairs| {
+        crate::kernel::shared_state_read_pairs(&left, &right).is_some_and(|pairs| {
             pairs.values().all(|(left, right)| {
                 crate::instrumentation::record_deterministic_work(1);
                 memory_load_terms_equal_for_fact_transport(
-                    &V::Shared(left)
-                        .read_source()
-                        .expect("selected snapshot read"),
-                    &V::Shared(right)
-                        .read_source()
-                        .expect("selected snapshot read"),
+                    &V::Shared(left).read_source().expect("selected state read"),
+                    &V::Shared(right).read_source().expect("selected state read"),
                     self,
                 )
             })
         })
     }
 
-    pub(super) fn bitvector_terms_snapshot_equivalent(
+    pub(super) fn bitvector_terms_state_equivalent(
         &self,
         left: &MachineTerm,
         right: &MachineTerm,
@@ -4717,8 +4713,8 @@ impl PureFactContext {
                 binary_term!(Bits32 @ left_format, Multiply, left_a, left_b),
                 binary_term!(Bits32 @ right_format, Multiply, right_a, right_b),
             ) if left_format == right_format => {
-                self.bitvector_terms_snapshot_equivalent(left_a, right_a)
-                    && self.bitvector_terms_snapshot_equivalent(left_b, right_b)
+                self.bitvector_terms_state_equivalent(left_a, right_a)
+                    && self.bitvector_terms_state_equivalent(left_b, right_b)
             }
             _ => false,
         }
@@ -6175,5 +6171,5 @@ mod retained_individual_order_tests {
 }
 
 #[cfg(test)]
-#[path = "proposition_reasoning/retained_snapshot_indices.rs"]
-mod retained_snapshot_indices;
+#[path = "proposition_reasoning/retained_memory_indices.rs"]
+mod retained_memory_indices;

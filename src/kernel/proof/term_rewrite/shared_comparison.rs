@@ -231,7 +231,7 @@ impl TermRewrite<'_> {
                 }
                 KernelTermNode::MemoryLoad { .. } => {
                     let read = term.machine_read_leaf().expect("read leaf");
-                    // The selected read owns its snapshot; rewrite its address
+                    // The selected read owns its state; rewrite its address
                     // directly without manufacturing a reserved variable.
                     let rewritten = self.bits(read);
                     KernelTerm::retained_machine_operand(
@@ -1395,7 +1395,7 @@ mod tests {
     }
 
     #[test]
-    fn comparison_rewrite_preserves_values_and_snapshot_separation() {
+    fn comparison_rewrite_preserves_values_and_state_separation() {
         let _session = crate::kernel::VerificationSession::enter();
         let facts = PureFactContext::new();
         let (seven, canonical_seven) = comparison_read_fixture(7u32.into());

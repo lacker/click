@@ -1,7 +1,7 @@
 # Signed observations of a narrowed length have printable arithmetic certificates
 
 The low word is an opaque signed value. Its explicit bounds support arithmetic;
-none of these facts imply a bound on the original native-width length. Snapshot
+none of these facts imply a bound on the original native-width length. MemoryState
 operands retain their selectors after the source local changes.
 
 ```c filename=signed_narrowed_length_arithmetic.c

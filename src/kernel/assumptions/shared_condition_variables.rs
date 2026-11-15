@@ -42,7 +42,7 @@ pub(in crate::kernel) struct Index {
 }
 impl Index {
     /// This fragment's only dependencies are its written scalar variables.
-    /// Registered reads retain the existing snapshot/address-dependent index.
+    /// Registered reads retain the existing state/address-dependent index.
     fn source(condition: &ConditionTerm, truth: bool) -> Option<Source> {
         let crate::kernel::integer_comparison_condition!(left, right) = condition else {
             return None;
@@ -69,7 +69,7 @@ impl Index {
                         MachineOperandView::Legacy(value) if value.as_const().is_some() => continue,
                         _ => return None,
                     };
-                    // Read addresses and snapshots have their own dependency
+                    // Read addresses and states have their own dependency
                     // collector, just as registered read names did before.
                     if root.has_machine_reads() {
                         return None;

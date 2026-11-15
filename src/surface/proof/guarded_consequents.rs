@@ -56,7 +56,7 @@ impl<'a> Proof<'a> {
     /// Spell the guard and the consequent of one selected guarded equality
     /// so each lowers back to exactly its kernel form. Terms read from the
     /// model fields the goal names are spelled through those fields at the
-    /// current state, the function entry, or a recorded snapshot; other terms
+    /// current state, the function entry, or a recorded state; other terms
     /// take the ordinary bounded synthesis. A candidate that does not lower
     /// back to its kernel form is not offered.
     fn guarded_implication_surfaces(
@@ -126,10 +126,7 @@ impl<'a> Proof<'a> {
         spell(&GuardedTermSpeller {
             view: &view,
             accesses: &accesses,
-            snapshots: view
-                .fixed_state
-                .recorded_snapshots
-                .recent(MAX_SPELLING_SNAPSHOTS),
+            retained_states: view.fixed_state.recorded_states.recent(MAX_SPELLING_STATES),
             bound,
         })
     }
@@ -183,8 +180,8 @@ fn overflow_operands(
     Some((left, right, construct))
 }
 
-/// The recorded snapshots consulted for an earlier model-field value.
-const MAX_SPELLING_SNAPSHOTS: usize = 16;
+/// The recorded states consulted for an earlier model-field value.
+const MAX_SPELLING_STATES: usize = 16;
 
 /// The distinct model-field accesses written in a goal.
 fn collect_goal_field_accesses(
@@ -240,7 +237,7 @@ fn collect_goal_field_accesses(
 struct GuardedTermSpeller<'v, 'p> {
     view: &'v FixedStateOperationView<'p>,
     accesses: &'v [ResourceFieldAccess],
-    snapshots: Vec<(&'p SnapshotSelector, &'p ExecutionState)>,
+    retained_states: Vec<(&'p ProgramPointSelector, &'p ExecutionState)>,
     /// Binders an enclosing `intro` named, by their kernel variables.
     bound: BTreeMap<Variable, String>,
 }
@@ -248,7 +245,7 @@ struct GuardedTermSpeller<'v, 'p> {
 impl GuardedTermSpeller<'_, '_> {
     fn guard(&self, guard: &Proposition) -> Option<ClickProposition> {
         // Complete ordinary range guards name the same operation as the
-        // former private overflow query. Keep model-field snapshot names on
+        // former private overflow query. Keep model-field state names on
         // its operands; the caller checks the full domain's round trip.
         let query = crate::kernel::machine_integer::definedness::interval_query_form(guard);
         let guard = query.as_ref().unwrap_or(guard);
@@ -388,7 +385,7 @@ impl GuardedTermSpeller<'_, '_> {
     }
 
     /// A model field the goal names, read at the current state, at function
-    /// entry, or at the newest recorded snapshot that holds this value.
+    /// entry, or at the newest recorded state that holds this value.
     fn field_spelling(&self, term: &MachineTerm) -> Option<ContractExpression> {
         let named = |access: &ResourceFieldAccess| {
             Box::new(ContractExpression::ResourceField(access.clone()))
@@ -403,7 +400,7 @@ impl GuardedTermSpeller<'_, '_> {
                 return Some(ContractExpression::Old(named(access)));
             }
         }
-        for (selector, state) in self.preferred_snapshots() {
+        for (selector, state) in self.preferred_states() {
             for access in self.accesses {
                 if Self::field_value(state, access) == Some(term) {
                     return Some(ContractExpression::At {
@@ -469,7 +466,7 @@ impl GuardedTermSpeller<'_, '_> {
             .or_else(|| {
                 // A local that has left scope (a returned path's locals)
                 // still reads at the recorded point that held it.
-                self.preferred_snapshots().find_map(|(selector, state)| {
+                self.preferred_states().find_map(|(selector, state)| {
                     let expression = synthesize_surface_machine_expression(
                         term,
                         self.view.parameter_binding,
@@ -484,14 +481,14 @@ impl GuardedTermSpeller<'_, '_> {
     }
 
     /// Named marks first: they are the author's own stable spelling.
-    fn preferred_snapshots(&self) -> impl Iterator<Item = &(&SnapshotSelector, &ExecutionState)> {
-        self.snapshots
+    fn preferred_states(&self) -> impl Iterator<Item = &(&ProgramPointSelector, &ExecutionState)> {
+        self.retained_states
             .iter()
-            .filter(|(selector, _)| matches!(selector, SnapshotSelector::Mark(_)))
+            .filter(|(selector, _)| matches!(selector, ProgramPointSelector::Mark(_)))
             .chain(
-                self.snapshots
+                self.retained_states
                     .iter()
-                    .filter(|(selector, _)| !matches!(selector, SnapshotSelector::Mark(_))),
+                    .filter(|(selector, _)| !matches!(selector, ProgramPointSelector::Mark(_))),
             )
     }
 }

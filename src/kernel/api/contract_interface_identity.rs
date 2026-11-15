@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn lexical_identity_preserves_resource_projection_identity_and_snapshot() {
+    fn lexical_identity_preserves_resource_projection_identity_and_state() {
         let interface = |identity, at_entry| {
             program_function(
                 ProgramType::Void,
@@ -404,7 +404,7 @@ impl Names {
             | NarrowArithmetic(e, _)
             | Cast(e, _)
             | PointerCoercion(e, _)
-            | LoopEntrySnapshot(e)
+            | LoopEntryState(e)
             | MemoryLoad { pointer: e, .. } => self.expression(e),
             PointerOffset {
                 pointer, elements, ..
@@ -649,7 +649,7 @@ impl Names {
             resource.access(),
             quantity,
             resource.role(),
-            resource.snapshot(),
+            resource.state_source(),
         )
         .expect("interface identity normalization preserves resource validity");
     }

@@ -1,4 +1,4 @@
-// Goal-local computational refusal must not traverse the selected snapshots.
+// Goal-local computational refusal must not traverse the selected states.
 use super::*;
 
 #[test]

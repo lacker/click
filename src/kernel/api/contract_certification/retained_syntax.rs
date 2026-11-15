@@ -536,7 +536,7 @@ mod tests {
         assert!(!conditions_equal(&left, &right));
     }
     #[test]
-    fn retained_syntax_keeps_snapshots_and_pointer_qualifiers_exact() {
+    fn retained_syntax_keeps_states_and_pointer_qualifiers_exact() {
         let _session = VerificationSession::enter();
         let memory = crate::kernel::Memory::new();
         let changed = memory.clone().store(
@@ -626,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_syntax_preserves_captured_and_pointer_index_snapshots() {
+    fn retained_syntax_preserves_captured_and_pointer_index_states() {
         use crate::kernel::{
             LoadKind, Memory, Pointer, PointerOffsetTerm, PointerValue, ProgramType, Variable,
         };
@@ -636,7 +636,7 @@ mod tests {
             Pointer::null(),
             ProgramValue::Int32(MachineTerm::constant(5)),
         );
-        let pointer = |snapshot: &Memory| {
+        let pointer = |retained_state: &Memory| {
             PointerValue::new(
                 Pointer {
                     block: "indexed".into(),
@@ -644,7 +644,7 @@ mod tests {
                         value: SharedMachineIntegerTerm::index(
                             MachineIntegerType::Int32,
                             MachineTerm::MemoryLoad(
-                                crate::kernel::intern_memory_ref(snapshot),
+                                crate::kernel::intern_memory_ref(retained_state),
                                 Box::new(Pointer::symbolic(Variable(712))),
                                 LoadKind::Int32,
                             ),
@@ -655,8 +655,8 @@ mod tests {
                 ProgramType::Int32Pointer,
             )
         };
-        let captured = |snapshot: &Memory, address| A::ArrayRef {
-            memory: snapshot.clone(),
+        let captured = |retained_state: &Memory, address| A::ArrayRef {
+            memory: retained_state.clone(),
             pointer: ProgramValue::Pointer(address),
             element_type: ProgramType::Int32,
         };

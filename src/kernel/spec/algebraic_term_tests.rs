@@ -1200,7 +1200,7 @@ fn common_constructor_projection_preserves_fields_and_refusals() {
 }
 
 #[test]
-fn algebraic_read_result_preserves_native_snapshot_and_type() {
+fn algebraic_read_result_preserves_native_state_and_type() {
     let _session = crate::kernel::VerificationSession::enter();
     let ty = TypeParameterName::intern("SpecReadT").algebraic_type();
     let native = AlgebraicTerm {

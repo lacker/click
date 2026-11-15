@@ -269,7 +269,7 @@ pub(crate) fn normalize_using_conditions(
             }
             // Exact condition lookup above handles ordinary scalar terms.  Fold
             // binders can be freshly allocated while lowering the cited premise
-            // and the goal, so retain a checked snapshot-aware alpha index for
+            // and the goal, so retain a checked state-aware alpha index for
             // the same two orientations.  The fingerprint is charged before it
             // becomes a map key; collision candidates are checked with the
             // bounded key comparator below.
@@ -1001,10 +1001,10 @@ pub(crate) fn listed_equality_fact_is_available(
 }
 
 /// Structural proposition equality whose condition leaves are decided by the
-/// kernel's snapshot bridge: two forms of one compound fact whose load
-/// atoms carry different certified snapshots. Structure must match exactly,
+/// kernel's state bridge: two forms of one compound fact whose load
+/// atoms carry different certified states. Structure must match exactly,
 /// so this never accepts a weaker or stronger proposition.
-pub(crate) fn propositions_equal_modulo_proven_snapshots(
+pub(crate) fn propositions_equal_modulo_proven_states(
     left: &Proposition,
     right: &Proposition,
     assumptions: &PureFactContext,
@@ -1019,19 +1019,19 @@ pub(crate) fn propositions_equal_modulo_proven_snapshots(
         ) => {
             left_value == right_value
                 && assumptions
-                    .conditions_equal_modulo_proven_snapshots(left_condition, right_condition)
+                    .conditions_equal_modulo_proven_states(left_condition, right_condition)
         }
         (Proposition::Implies(left_a, left_b), Proposition::Implies(right_a, right_b)) => {
-            propositions_equal_modulo_proven_snapshots(left_a, right_a, assumptions)
-                && propositions_equal_modulo_proven_snapshots(left_b, right_b, assumptions)
+            propositions_equal_modulo_proven_states(left_a, right_a, assumptions)
+                && propositions_equal_modulo_proven_states(left_b, right_b, assumptions)
         }
         (Proposition::And(left_a, left_b), Proposition::And(right_a, right_b))
         | (Proposition::Or(left_a, left_b), Proposition::Or(right_a, right_b)) => {
-            propositions_equal_modulo_proven_snapshots(left_a, right_a, assumptions)
-                && propositions_equal_modulo_proven_snapshots(left_b, right_b, assumptions)
+            propositions_equal_modulo_proven_states(left_a, right_a, assumptions)
+                && propositions_equal_modulo_proven_states(left_b, right_b, assumptions)
         }
         (Proposition::Not(left_body), Proposition::Not(right_body)) => {
-            propositions_equal_modulo_proven_snapshots(left_body, right_body, assumptions)
+            propositions_equal_modulo_proven_states(left_body, right_body, assumptions)
         }
         // Separations compare part-wise; the work lives in a never-inlined
         // helper because this function participates in deep proposition
@@ -1039,17 +1039,17 @@ pub(crate) fn propositions_equal_modulo_proven_snapshots(
         (
             left @ Proposition::ResourceSeparate { .. },
             right @ Proposition::ResourceSeparate { .. },
-        ) => separations_equal_modulo_proven_snapshots(left, right, assumptions),
+        ) => separations_equal_modulo_proven_states(left, right, assumptions),
         _ => false,
     }
 }
 
 /// Proves that one already-selected structural candidate is the same fact as
-/// `required` across certified memory snapshots. Candidate selection remains
+/// `required` across certified memory states. Candidate selection remains
 /// the caller's responsibility; this operation never searches a context.
 /// Resolves load variables in comparison term positions only:
 /// condition terms and pointer offsets, never descending into embedded
-/// memory snapshots. The full resolver walks whole snapshots and is far too
+/// memory states. The full resolver walks whole states and is far too
 /// expensive for per-candidate comparison paths.
 fn expand_load_variables_shallow(bits: &MachineTerm) -> MachineTerm {
     match bits {
@@ -1119,7 +1119,7 @@ fn expand_offset_load_variables_shallow(value: &PointerOffsetTerm) -> PointerOff
 /// Candidates still come only from `available`, so widening the assumptions
 /// cannot make an unlisted fact available — the wider context only decides
 /// whether two forms denote one fact.
-/// A separation required at one snapshot is available when an available
+/// A separation required at one state is available when an available
 /// separation names the same regions modulo the certified frame. Condition
 /// facts use [`condition_bridged_fact_is_available`] for the same purpose.
 pub(crate) fn separation_bridged_fact_is_available(
@@ -1543,7 +1543,7 @@ pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
     let right = right_comparison.as_ref().unwrap_or(right);
     // A guarded quantifier matches when the guards are identical and the
     // quantified conclusions are binder-equivalent. A guard can itself
-    // quantify variables; its typed alpha identity preserves its snapshots,
+    // quantify variables; its typed alpha identity preserves its states,
     // free variables, and sorts while allowing those local binders to differ.
     let (mut left, mut right) = (left, right);
     let mut guarded = false;
@@ -1569,10 +1569,10 @@ pub(crate) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
     ) {
         return left_key == right_key;
     }
-    // A loadability premise carries an exact memory snapshot. Compare the
+    // A loadability premise carries an exact memory state. Compare the
     // selected typed alpha keys before falling back to int32 substitution;
-    // the latter would clone and rewrite the entire opaque memory snapshot.
-    if let Some(equivalent) = super::fact_keys::snapshot_quantified_alpha_equivalent(left, right) {
+    // the latter would clone and rewrite the entire opaque memory state.
+    if let Some(equivalent) = super::fact_keys::state_quantified_alpha_equivalent(left, right) {
         return equivalent;
     }
     // A supported structural mismatch is definitive; do not substitute or
@@ -1704,7 +1704,7 @@ pub(crate) fn directly_matching_separation_fact(
 /// `directly_matching_separation_fact` where the caller already holds the
 /// assumption context the match should reason in (for example the available
 /// facts plus recorded execution effect facts, which let the bounded resource
-/// matcher see that two load terms from different snapshots denote one
+/// matcher see that two load terms from different states denote one
 /// pointer). Candidates still come only from `available`, so widening the
 /// assumptions cannot make an unlisted fact available.
 pub(crate) fn directly_matching_separation_fact_under(
@@ -2101,7 +2101,7 @@ mod tests {
     }
 
     #[test]
-    fn quantified_registered_load_renames_binder_without_renaming_unrelated_snapshot() {
+    fn quantified_registered_load_renames_binder_without_renaming_unrelated_state() {
         let nested_cell = Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::Add(
@@ -2119,17 +2119,17 @@ mod tests {
             nested_cell.clone(),
             ProgramValue::Int32(MachineTerm::constant(7)),
         ));
-        let quantified = |snapshot: &crate::kernel::SharedMemory, binder: Variable| {
+        let quantified = |retained_state: &crate::kernel::SharedMemory, binder: Variable| {
             let pointer = Pointer {
                 block: PointerBlock::ExternalArgument,
                 offset: PointerOffsetTerm::scaled_int32_node(MachineTerm::Variable(binder), 4),
             };
             let load = load_variable_for_cell_with_origin(
-                snapshot,
+                retained_state,
                 &pointer,
                 crate::kernel::LoadKind::Int32,
                 4,
-                snapshot,
+                retained_state,
             );
             Proposition::ForAll {
                 name: Default::default(),
@@ -2161,7 +2161,7 @@ mod tests {
     }
 
     #[test]
-    fn quantified_binder_comparison_respects_occurrences_inside_snapshots() {
+    fn quantified_binder_comparison_respects_occurrences_inside_states() {
         let pointer = Pointer {
             block: "cell".into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -2188,8 +2188,8 @@ mod tests {
                 true,
             )),
         };
-        // Both formulas name the same snapshot, but 11 is bound inside its
-        // stored value only in the first formula. Snapshot identity plus an
+        // Both formulas name the same state, but 11 is bound inside its
+        // stored value only in the first formula. Memory state identity plus an
         // outer-binder key cannot establish their equivalence.
         assert!(!quantified_binder_equivalent(
             &proposition(11),
@@ -2218,7 +2218,7 @@ mod tests {
                 after: after.clone(),
                 writes: vec![(written, 4)],
             });
-        // The canonical memories are the cells' versions. Snapshots that
+        // The canonical memories are the cells' versions. Memory states that
         // differ only by a declared block or a write to another cell share
         // a version, so a synthetic marker block would not separate these
         // load variables; a write to the queried cell does (the second pair).
@@ -2246,9 +2246,9 @@ mod tests {
             "the effect fact should transport the preserved cell"
         );
 
-        // Also force snapshot comparison with a write to the queried cell.
+        // Also force state comparison with a write to the queried cell.
         // The explicit derivation check must reject this pair without entering
-        // the global snapshot-comparison planner.
+        // the global state-comparison planner.
         let loaded = preserved;
         let changed_before = Memory::new().store(
             loaded.clone(),
@@ -2290,9 +2290,9 @@ mod tests {
             !events.iter().any(|event| matches!(
                 event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "snapshot comparison: bounded alias"
+                    if name == "state comparison: bounded alias"
             )),
-            "explicit origin transport must not plan a snapshot comparison: {events:#?}"
+            "explicit origin transport must not plan a state comparison: {events:#?}"
         );
     }
 
@@ -2563,7 +2563,7 @@ mod tests {
     /// kernel search whose budget truncation used to be misreported as a
     /// missing fact.
     #[test]
-    fn fold_body_separation_fact_matches_across_store_snapshots() {
+    fn fold_body_separation_fact_matches_across_store_states() {
         let owner_base = Pointer {
             block: PointerBlock::ExternalArgument,
             offset: PointerOffsetTerm::scaled_int32_node(
@@ -2589,7 +2589,7 @@ mod tests {
         };
         let empty = Memory::new();
         // The form recorded when the resource body was unfolded: the cell
-        // pointer read through the call-havoc snapshot.
+        // pointer read through the call-havoc state.
         let havoc = Memory::new().with_block("havoc:1000000", 0);
         // The form carried by the recorded execution facts: the same
         // loads read through the branch-entry memory with its retained cells.
@@ -2843,7 +2843,7 @@ fn bridged_by_load_variable_edges<S: ScalarReadBridgeSide>(
 }
 
 /// Decides, and remembers, whether two read descriptors stand for one cell
-/// that framing shows unchanged between their origin snapshots.
+/// that framing shows unchanged between their origin states.
 struct OriginsUnchanged<'a> {
     assumptions: &'a PureFactContext,
     decided: std::collections::HashMap<(MachineTerm, MachineTerm), bool>,
@@ -2888,7 +2888,7 @@ impl<'a> OriginsUnchanged<'a> {
         else {
             return false;
         };
-        // Retain the selected, checked alias/snapshot path when different
+        // Retain the selected, checked alias/state path when different
         // pointer spellings identify this cell. The read kind is preserved.
         left_kind == right_kind
             && ((left_pointer.block != right_pointer.block
@@ -2993,7 +2993,7 @@ pub(crate) fn premise_bridged_by_load_variable_chain(
 
 /// The chain closure with origin-unchanged implicit edges. Two load variables
 /// additionally connect when the loads they represent are
-/// provably unchanged between their origin snapshots under the supplied
+/// provably unchanged between their origin states under the supplied
 /// assumptions (call effect summaries and frame evidence). Reserved for
 /// once-per-tactic consumers such as explicit transport and rewrite premise
 /// checks — the unchanged proof is assumption-based and must stay off hot
@@ -3024,13 +3024,13 @@ pub(crate) fn premise_bridged_by_load_variable_chain_with_origins(
 }
 
 /// The condition branch of bridged availability. A load named at one
-/// snapshot and the same cell named at a later snapshot are different load
+/// state and the same cell named at a later state are different load
 /// variables whenever the edge between them is crossed only in context:
 /// call-havoc and store edges carry no path assumptions (see
 /// `MemoryDerivation`). A required condition is therefore available when an
 /// already-selected candidate is the same condition with each pair of load
 /// atoms proven equal under these assumptions.
-/// Candidate selection remains the caller's snapshot-blind bucket; nothing is
+/// Candidate selection remains the caller's state-blind bucket; nothing is
 /// searched, and structurally different propositions never match.
 pub(crate) fn condition_bridged_fact_is_available(
     required: &Proposition,
@@ -3046,7 +3046,7 @@ pub(crate) fn condition_bridged_fact_is_available(
 }
 
 /// [`condition_bridged_fact_is_available`] over an unindexed fact slice:
-/// candidates are the facts sharing the required proposition's snapshot-blind
+/// candidates are the facts sharing the required proposition's state-blind
 /// key, selected by one pass over the slice, as the exact slice checks beside
 /// it already do.
 pub(crate) fn condition_bridged_fact_is_available_among(
@@ -3057,20 +3057,20 @@ pub(crate) fn condition_bridged_fact_is_available_among(
     if matches!(required, Proposition::ResourceSeparate { .. }) {
         return false;
     }
-    let key = super::fact_keys::snapshot_blind_proposition_key(required);
+    let key = super::fact_keys::memory_erased_proposition_key(required);
     let candidates: Vec<Proposition> = facts
         .iter()
         .filter(|fact| {
-            *fact != required && super::fact_keys::snapshot_blind_proposition_key(fact) == key
+            *fact != required && super::fact_keys::memory_erased_proposition_key(fact) == key
         })
         .cloned()
         .collect();
     condition_bridged_fact_is_available(required, &candidates, assumptions)
 }
 
-/// [`propositions_equal_modulo_proven_snapshots`] for the condition bridge:
+/// [`propositions_equal_modulo_proven_states`] for the condition bridge:
 /// load atoms additionally match when the memory DAG proves the two loads
-/// unchanged between their snapshots under `assumptions`. Separations keep
+/// unchanged between their states under `assumptions`. Separations keep
 /// their own branch.
 fn propositions_equal_modulo_origin_unchanged(
     left: &Proposition,
@@ -3119,19 +3119,19 @@ fn separation_bridged_available(
         });
     available.iter().any(|candidate| {
         matches!(candidate, Proposition::ResourceSeparate { .. })
-            && propositions_equal_modulo_proven_snapshots(candidate, required, &assumptions)
+            && propositions_equal_modulo_proven_states(candidate, required, &assumptions)
     })
 }
 
 /// Whether two separations denote the same fact after canonicalization and
-/// proven snapshot comparison: each range's base offset and extent terms
+/// proven state comparison: each range's base offset and extent terms
 /// compare with load variables resolved shallowly and load atoms bridged
-/// across proven snapshots — the relation the condition arm uses, applied
+/// across proven states — the relation the condition arm uses, applied
 /// to the terms a separation is made of. Separation is symmetric, so both pairings are
 /// tried. Keep its range temporaries local rather than charging every caller;
 /// the expansion small-stack regression pins that boundary.
 #[inline(never)]
-fn separations_equal_modulo_proven_snapshots(
+fn separations_equal_modulo_proven_states(
     left: &Proposition,
     right: &Proposition,
     assumptions: &PureFactContext,
@@ -3142,13 +3142,13 @@ fn separations_equal_modulo_proven_snapshots(
         return false;
     };
     let ranges_equal = |left: &MemoryRange, right: &MemoryRange| {
-        // The snapshot transport below proves signed 32-bit equalities only.
+        // The state transport below proves signed 32-bit equalities only.
         left == right
             || (left.int32_bounds().is_some()
                 && right.int32_bounds().is_some()
                 && left.element_width() == right.element_width()
                 && left.base().block == right.base().block
-                && assumptions.conditions_equal_modulo_proven_snapshots(
+                && assumptions.conditions_equal_modulo_proven_states(
                     &ConditionTerm::PointerOffsetEqual(
                         Box::new(expand_offset_load_variables_shallow(&left.base().offset)),
                         Box::new(PointerOffsetTerm::Constant(0)),
@@ -3158,7 +3158,7 @@ fn separations_equal_modulo_proven_snapshots(
                         Box::new(PointerOffsetTerm::Constant(0)),
                     ),
                 )
-                && assumptions.conditions_equal_modulo_proven_snapshots(
+                && assumptions.conditions_equal_modulo_proven_states(
                     &ConditionTerm::Compare {
                         format: MachineIntegerType::Int32,
                         relation: CompareRelation::Equal,
@@ -3172,7 +3172,7 @@ fn separations_equal_modulo_proven_snapshots(
                         right: Box::new(MachineTerm::constant(0)),
                     },
                 )
-                && assumptions.conditions_equal_modulo_proven_snapshots(
+                && assumptions.conditions_equal_modulo_proven_states(
                     &ConditionTerm::Compare {
                         format: MachineIntegerType::Int32,
                         relation: CompareRelation::Equal,
@@ -3444,7 +3444,7 @@ mod integer_reflexivity_tests {
     }
 
     #[test]
-    fn normalize_using_graph_keeps_load_snapshots_and_binders_distinct() {
+    fn normalize_using_graph_keeps_load_states_and_binders_distinct() {
         let _session = crate::kernel::VerificationSession::enter();
         let a = Pointer::symbolic(Variable(96_110));
         let b = Pointer::symbolic(Variable(96_111));
@@ -3528,13 +3528,14 @@ mod integer_reflexivity_tests {
     }
 
     #[test]
-    fn normalize_using_alpha_reverse_keeps_snapshot_identity_and_premise_scope() {
+    fn normalize_using_alpha_reverse_keeps_state_identity_and_premise_scope() {
         let pointer = Pointer {
-            block: "normalize-fold-snapshot".into(),
+            block: "normalize-fold-retained_state".into(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        let before =
-            crate::kernel::intern_memory(Memory::new().with_block("normalize-fold-snapshot", 8));
+        let before = crate::kernel::intern_memory(
+            Memory::new().with_block("normalize-fold-retained_state", 8),
+        );
         let after = crate::kernel::intern_memory(before.as_ref().clone().store(
             pointer.clone(),
             ProgramValue::Int32(MachineTerm::constant(1)),
@@ -3555,7 +3556,7 @@ mod integer_reflexivity_tests {
             )
         };
         let source = load_fold(&before, Variable(94_200), Variable(94_201));
-        let changed_snapshot = load_fold(&after, Variable(95_200), Variable(95_201));
+        let changed_memory_state = load_fold(&after, Variable(95_200), Variable(95_201));
         let premise = Proposition::ConditionIs(
             ConditionTerm::IntegerEqual(source.into(), IntegerTerm::constant_i64(0).into()),
             true,
@@ -3563,7 +3564,7 @@ mod integer_reflexivity_tests {
         let goal = Proposition::ConditionIs(
             ConditionTerm::IntegerEqual(
                 IntegerTerm::constant_i64(0).into(),
-                changed_snapshot.into(),
+                changed_memory_state.into(),
             ),
             true,
         );
@@ -3843,9 +3844,9 @@ mod uint64_loop_tests {
 #[cfg(test)]
 mod wide_range_reader_tests {
     use super::*;
-    // Snapshot equality cannot reinterpret unequal native bounds as signed bits.
+    // Memory state equality cannot reinterpret unequal native bounds as signed bits.
     #[test]
-    fn wide_separations_compare_structurally_without_signed_snapshot_transport() {
+    fn wide_separations_compare_structurally_without_signed_state_transport() {
         let base = Pointer::symbolic(Variable(984_800));
         let wide = MemoryRange::new_wide(
             base.clone(),
@@ -3864,12 +3865,12 @@ mod wide_range_reader_tests {
             right: Box::new(Resource::Memory(wide.clone())),
         };
         let facts = PureFactContext::new();
-        assert!(separations_equal_modulo_proven_snapshots(
+        assert!(separations_equal_modulo_proven_states(
             &separation(wide.clone()),
             &separation(wide.clone()),
             &facts
         ));
-        assert!(!separations_equal_modulo_proven_snapshots(
+        assert!(!separations_equal_modulo_proven_states(
             &separation(wide.clone()),
             &separation(other),
             &facts
@@ -3878,11 +3879,11 @@ mod wide_range_reader_tests {
 }
 
 #[cfg(test)]
-mod range_width_snapshot_tests {
+mod range_width_state_tests {
     use super::*;
     // One byte misses offset two, while one four-byte word overlaps it.
     #[test]
-    fn separation_snapshot_transport_keeps_element_widths() {
+    fn separation_state_transport_keeps_element_widths() {
         let base = Pointer::symbolic(Variable(985_800));
         let range = |width| {
             MemoryRange::new_with_element_width(base.clone(), 0u32.into(), 1u32.into(), width)
@@ -3897,7 +3898,7 @@ mod range_width_snapshot_tests {
             left: Box::new(Resource::Memory(range(width))),
             right: Box::new(Resource::Memory(right.clone())),
         };
-        assert!(!separations_equal_modulo_proven_snapshots(
+        assert!(!separations_equal_modulo_proven_states(
             &separation(1),
             &separation(4),
             &PureFactContext::new()
@@ -3982,8 +3983,8 @@ mod annotated_address_condition_tests {
                 let facts =
                     crate::kernel::proof::ProofFacts::from_ordered(std::slice::from_ref(&source));
                 assert_eq!(
-                    super::super::fact_keys::snapshot_blind_proposition_key(&source),
-                    super::super::fact_keys::snapshot_blind_proposition_key(&target),
+                    super::super::fact_keys::memory_erased_proposition_key(&source),
+                    super::super::fact_keys::memory_erased_proposition_key(&target),
                 );
                 assert!(condition_bridged_fact_is_available(
                     &target,
@@ -4052,10 +4053,10 @@ mod annotated_address_condition_tests {
         };
         let source = fact(before, false);
         let target = fact(after, true);
-        let key = super::super::fact_keys::snapshot_blind_proposition_key(&target);
+        let key = super::super::fact_keys::memory_erased_proposition_key(&target);
         assert_eq!(
             key,
-            super::super::fact_keys::snapshot_blind_proposition_key(&source)
+            super::super::fact_keys::memory_erased_proposition_key(&source)
         );
         assert!(key.requires_checked_match());
         let facts = crate::kernel::proof::ProofFacts::from_ordered(&[source]);

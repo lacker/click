@@ -6,8 +6,8 @@ Priority: P1.
 
 Keep these checking boundaries during subsequent removals:
 
-- `CPointerValue::from_read` uses the supplied address and snapshot's O(1)
-  `unchanged_bytes_source()` link instead of `resource_tracker::last_same_point`.
+- `CPointerValue::from_read` uses the supplied address and state's O(1)
+  `unchanged_bytes_source()` link instead of `resource_tracker::last_same_version_point`.
   The link crosses cache-only observations, not actual writes. Keep
   `LoadedPointer`, its registry, initialization, and lifetime checks separate
   from this work.
@@ -30,7 +30,7 @@ reaching their intended false claims; do not accept prerequisite failures.
 No full nightly run is needed.
 
 Statement footprints must include their automatic storage cleanup. Loop-exit
-snapshots still name the state before enclosing scope cleanup, so exit facts
+states still name the state before enclosing scope cleanup, so exit facts
 can refer to the loop's locals. Preserve both boundaries without searching
 back through execution history.
 
@@ -96,7 +96,7 @@ exact complete-pointer equations.
    including cold queries and misses.
 2. State the preservation argument with explicit separation, a recorded
    `.footprint`, and `preserve(...)` links. Use the producer's typed
-   reads and exact snapshots; do not reconstruct identities or search for
+   reads and exact states; do not reconstruct identities or search for
    intermediate states while applying a link.
 3. Discuss missing primitives before extending the kernel. Remove the walk
    and repair proofs without changing the C or weakening contracts.

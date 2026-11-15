@@ -222,7 +222,7 @@ fn wide_storage_frame_transport_uses_all_sixteen_bytes() {
         );
         assert!(
             assumptions
-                .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
+                .conditions_equal_modulo_proven_states(&condition(&before), &condition(&after)),
             "disjoint {offset}"
         );
     }
@@ -233,7 +233,7 @@ fn wide_storage_frame_transport_uses_all_sixteen_bytes() {
         );
         assert!(
             !assumptions
-                .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
+                .conditions_equal_modulo_proven_states(&condition(&before), &condition(&after)),
             "overlap {offset}"
         );
     }
@@ -260,7 +260,7 @@ fn wide_order_frame_transport_matches_across_a_disjoint_store() {
     };
     assert!(
         PureFactContext::new()
-            .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after))
+            .conditions_equal_modulo_proven_states(&condition(&before), &condition(&after))
     );
 }
 

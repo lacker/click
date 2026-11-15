@@ -866,7 +866,7 @@ mod exact_word_address_tests {
     use super::*;
 
     #[test]
-    fn direct_shared_read_tag_bound_cites_only_its_exact_snapshot() {
+    fn direct_shared_read_tag_bound_cites_only_its_exact_state() {
         use crate::kernel::{KernelTermExport, KernelTermImport};
         let _session = crate::kernel::VerificationSession::enter();
         let pointer = Pointer::symbolic(Variable(985_331));
@@ -879,7 +879,7 @@ mod exact_word_address_tests {
             )
         };
         let raw = read(memory.clone());
-        let other = read(memory.with_block("other-tag-snapshot", 0));
+        let other = read(memory.with_block("other-tag-retained_state", 0));
         let import = |term: &MachineTerm| {
             KernelTermImport::default()
                 .machine_arithmetic(MachineIntegerType::UInt64, term)
@@ -1601,7 +1601,7 @@ mod retained_tag_tests {
     }
 
     #[test]
-    fn shared_read_form_keeps_existing_snapshot_transport() {
+    fn shared_read_form_keeps_existing_state_transport() {
         let _session = crate::kernel::VerificationSession::enter();
         let cell = Pointer {
             block: "tag-cell".into(),

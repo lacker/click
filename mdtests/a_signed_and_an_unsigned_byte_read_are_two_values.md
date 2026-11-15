@@ -6,7 +6,7 @@
 `result == 1` is false.
 
 That claim was once **provable**: a load term named the address and the
-snapshot but not what was read there, so both reads became one term and
+state but not what was read there, so both reads became one term and
 `a == b` was `v == v`. Reads then carried their kind and were two unrelated
 terms. They are now related exactly: a byte has one name, its unsigned read,
 and a signed read is the two's-complement conversion of that name ("one

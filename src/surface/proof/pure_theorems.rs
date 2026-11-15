@@ -319,7 +319,7 @@ impl PureTheoremContext {
                                 operator: ComparisonOperator::Equal,
                                 right: ContractExpression::IntegerLiteral("0".into()),
                             }, BTreeMap::new(), BTreeMap::new(), &state, BTreeMap::new(), BTreeMap::new(),
-                            BTreeMap::new(), &integer_values, None, &RecordedSnapshots::new(), spec_definitions,
+                            BTreeMap::new(), &integer_values, None, &RecordedStates::new(), spec_definitions,
                             BTreeSet::new(), BTreeMap::new(),).map_err(ClickError::new)?;
                         let crate::kernel::SpecProposition::IntegerComparison { left, .. } = spec
                         else {
@@ -958,7 +958,7 @@ fn check_pure_structural_induction(
     let parameter_value = capture_fixed_state_algebraic_expression(
         &parameter_expression,
         ContractEnvironment::new(&context.values, &context.array_refs),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         spec_definitions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
@@ -1098,7 +1098,7 @@ fn check_pure_structural_induction(
                             &branch_context.values,
                             &branch_context.array_refs,
                         ),
-                        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+                        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
                         spec_definitions,
                     )
                     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
@@ -1954,7 +1954,7 @@ fn verify_theorem_ensure(
             surface_goal,
             &PureFactContext::new(),
             ContractEnvironment::new(&context.values, &context.array_refs),
-            FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+            FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
             spec_definitions,
             FixedStateLoweringOptions {
                 integer_values: Some(&context.integer_values),
@@ -2443,7 +2443,7 @@ fn verify_contract_refinement_theorem(
             "`{claim_label}`: cannot present contract-refinement obligations"
         ))
     })?;
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let mut surfaces = SurfacePropositionMap::default();
     let mut pending = vec![(&proof_goal, &presentation)];
     while let Some((kernel, surface)) = pending.pop() {
@@ -2471,7 +2471,7 @@ fn verify_contract_refinement_theorem(
         obligations.entry(),
         obligations.post(),
         result.as_deref(),
-        &snapshots,
+        &retained_states,
         &surfaces,
         spec_definitions,
         theorem_environment,
@@ -3081,7 +3081,7 @@ fn verify_kernel_standard_theorem_axiom(
         ))
     };
     // Native and retained mask/shift comparisons denote the same stated
-    // fact. Use the existing exact identity (including types and snapshots),
+    // fact. Use the existing exact identity (including types and states),
     // not equality of their temporary carrier representations.
     if !crate::kernel::proof::propositions_are_alpha_equal(
         &comparable(axiom.proposition()),
@@ -3511,7 +3511,7 @@ pub(super) fn lower_pure_theorem_proposition_recording_introductions(
         proposition,
         &PureFactContext::new(),
         contract_environment,
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         spec_definitions,
         FixedStateLoweringOptions {
             algebraic_values: Some(algebraic_values),
@@ -3558,7 +3558,7 @@ fn lower_pure_theorem_proposition_with_opaque_calls(
         proposition,
         &PureFactContext::new(),
         contract_environment,
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         spec_definitions,
         FixedStateLoweringOptions {
             opaque_click_functions: Some(opaque_click_functions),
@@ -3586,7 +3586,7 @@ fn lower_pure_theorem_proposition_opaque(
         proposition,
         assumptions,
         ContractEnvironment::new(&context.values, &context.array_refs),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         spec_definitions,
         FixedStateLoweringOptions {
             integer_values: Some(&context.integer_values),

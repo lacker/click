@@ -50,7 +50,7 @@ memory authority must follow the general memory-resource interface.
 An *invariant* is the assertion that must hold whenever the mutex is unlocked.
 A `state` instance owns resources satisfying that assertion. Locking returns
 ownership of such an instance; it does not return an assertion as a value.
-The invariant is not a C argument, a mutable field snapshot, or a new kind of
+The invariant is not a C argument, a mutable field state, or a new kind of
 ownership clause.
 
 ## The invariant association

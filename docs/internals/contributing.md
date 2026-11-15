@@ -219,7 +219,7 @@ maintainer's. Agents do not create or edit files there.
 - Probe pattern: env-gated eprintln/file dumps at the failing check,
   run under a filter, strip probes before committing.
 - Bound any new recursive prover arm by the inputs it walks: the term's
-  structure, a strictly decreasing snapshot id, or a cycle check on the
+  structure, a strictly decreasing state id, or a cycle check on the
   query. Never by a count or a depth cut, which turn a slow query into a
   wrong-shaped answer and defeat memoization. Structural recursion on deep
   terms has overflowed the stack before; the verifier threads carry the

@@ -4,9 +4,9 @@ The third store writes `a[i]` with exactly the value the first store wrote, so
 the cell map after it is the cell map after the first store. It is not the same
 state: in between, `a[j]` was written, and `a[j]` may be `a[m]`.
 
-A snapshot that re-interned onto the first store's node would take the write to
+A state that re-interned onto the first store's node would take the write to
 `a[j]` off the recorded history, and the read at the end would be framed back to
-function entry. The forget the second store performed is part of this snapshot's
+function entry. The forget the second store performed is part of this state's
 identity, so it cannot.
 
 ```c filename=a_restored_cell_does_not_rejoin_an_older_state.c

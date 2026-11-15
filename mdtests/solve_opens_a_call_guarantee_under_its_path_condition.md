@@ -6,7 +6,7 @@ Inside the branch whose path condition is exactly that antecedent, `solve`
 concludes the consequent by modus ponens: the checked `extract` rule's
 indexed consequent lookup finds the implication and sees its antecedent
 available, so no `extract` block is written and nothing is searched. The
-goal names the `before_probe` snapshot as written, so it is looked up as
+goal names the `before_probe` state as written, so it is looked up as
 written rather than re-read at the branch's own program point, where
 `cell[0]` has changed. `branching_graph_dfs.md` opens quantified
 consequents the same way. The negative companion,

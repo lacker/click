@@ -343,7 +343,7 @@ mod loop_rule_tests {
     use crate::kernel::{
         ComparisonOperator, CompositeResourceDefinition, PointerOffsetTerm, ProgramExpression,
         ProgramType, ProgramValue, ResourceAccessMode, ResourceFamily, ResourceFieldSchema,
-        ResourceFieldType, ResourceInstance, ResourceQuantity, ResourceSnapshot, ResourceSpec,
+        ResourceFieldType, ResourceInstance, ResourceQuantity, ResourceSpec, ResourceStateSource,
         ResourceTerm, ResourceTransferRole, SpecExpression, SpecProposition, Variable, int32,
     };
 
@@ -364,12 +364,12 @@ mod loop_rule_tests {
         let guard = ResourceSpec::new(
             ResourceTerm::MutexGuard {
                 mutex: Box::new(ProgramExpression::Value(ProgramValue::pointer(address()))),
-                snapshot: ResourceSnapshot::Current,
+                state_source: ResourceStateSource::Current,
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap();
         let mut definition = CompositeResourceDefinition::new(
@@ -412,11 +412,11 @@ mod loop_rule_tests {
                 vec![],
                 vec![],
                 ResourceTransferRole::Borrow,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
             )
             .unwrap(),
             ResourceTransferRole::Borrow,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap()
     }
@@ -559,21 +559,21 @@ mod loop_rule_tests {
             right: SpecExpression::Value(int32(1)),
         });
         invalid.push(candidate);
-        for (role, snapshot, term_snapshot) in [
+        for (role, retained_state, term_state) in [
             (
                 ResourceTransferRole::Borrow,
-                ResourceSnapshot::Current,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Current,
+                ResourceStateSource::Current,
             ),
             (
                 ResourceTransferRole::Consume,
-                ResourceSnapshot::Entry,
-                ResourceSnapshot::Current,
+                ResourceStateSource::Entry,
+                ResourceStateSource::Current,
             ),
             (
                 ResourceTransferRole::Consume,
-                ResourceSnapshot::Current,
-                ResourceSnapshot::Entry,
+                ResourceStateSource::Current,
+                ResourceStateSource::Entry,
             ),
         ] {
             let mut candidate = definition.clone();
@@ -581,12 +581,12 @@ mod loop_rule_tests {
                 ResourceSpec::new(
                     ResourceTerm::MutexGuard {
                         mutex: Box::new(ProgramExpression::Value(ProgramValue::pointer(address()))),
-                        snapshot: term_snapshot,
+                        state_source: term_state,
                     },
                     ResourceAccessMode::Own,
                     ResourceQuantity::One,
                     role,
-                    snapshot,
+                    retained_state,
                 )
                 .unwrap(),
             ];

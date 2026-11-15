@@ -59,7 +59,7 @@ fn boolean_reads_keep_shared_indices_through_rewrites_and_observations() {
 }
 
 #[test]
-fn boolean_reads_admit_snapshots_without_comparing_unrelated_contents() {
+fn boolean_reads_admit_states_without_comparing_unrelated_contents() {
     for size in [16, 64, 256] {
         let memory = (0..size).fold(Memory::new(), |memory, i| {
             memory.with_block(format!("bool-unrelated-{i}"), 4)

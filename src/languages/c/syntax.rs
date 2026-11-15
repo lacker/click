@@ -2080,7 +2080,7 @@ impl CFieldSource {
 
 /// A translation unit's declarations of one kind, by name. Every parsed
 /// function keeps the declarations visible at its definition; a persistent
-/// map shares them, so that snapshot is O(1) and a later declaration costs
+/// map shares them, so that state is O(1) and a later declaration costs
 /// O(log n), however declarations and definitions interleave.
 pub type DeclarationMap<V> = imbl::OrdMap<String, V>;
 
@@ -14925,7 +14925,7 @@ impl Parser {
     /// only from integer literals, casts, integer arithmetic and named
     /// non-volatile, non-floating scalar objects, so a second read has no
     /// effect and the same value means the same result. Locals the call
-    /// cannot reach need no snapshot. `None` keeps the existing refusal.
+    /// cannot reach need no state. `None` keeps the existing refusal.
     fn reread_storage_names(&self, expression: &CExpression) -> Option<Vec<String>> {
         match expression {
             CExpression::Int32Literal(_)

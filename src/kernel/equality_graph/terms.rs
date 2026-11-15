@@ -1,16 +1,16 @@
 //! Typed term classes inside the trusted graph: offset addition congruence and
-//! int32 addition and registered same-snapshot int32 loads, connected by int32
+//! int32 addition and registered same-state int32 loads, connected by int32
 //! scaling. Full-width scaling retains its signed interpretation. Unsigned
 //! division/remainder and bitwise XOR have congruence only;
 //! UInt64 arithmetic/bitwise applications, pointer addresses and complete
-//! same-snapshot 64-bit reads share those classes. Other integer operators
+//! same-state 64-bit reads share those classes. Other integer operators
 //! and conversions use typed curried applications; congruence supplies no
 //! arithmetic definedness. Floating-point expressions and binders stay opaque.
 //! Application signatures use operand classes; parent-use indexes propagate late
 //! merges. Equal addresses in one block also equate their byte offsets.
 //! No general scalar arithmetic solving or injectivity runs here. Residue
 //! projection retains word-constructor folding identities via indexed nodes.
-//! Shallow keys preserve widths, signedness, and machine-term snapshot identity.
+//! Shallow keys preserve widths, signedness, and machine-term state identity.
 
 use super::{
     AffineOffset, MachineAtom, OffsetAtom, Pointer, PointerBlock, PointerOffsetTerm, Variable,
@@ -42,12 +42,12 @@ pub(super) enum CellRead {
     Narrow(crate::kernel::CarrierWidth),
 }
 
-/// Shallow registration key: the read, its exact snapshot and observation
+/// Shallow registration key: the read, its exact state and observation
 /// source, and the graph's address application before class normalization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct WideReadSource {
     read: u64,
-    snapshot: (u32, u32),
+    retained_state: (u32, u32),
     origin: Option<(u32, u32)>,
     address: u64,
 }
@@ -58,18 +58,18 @@ struct WideReadSource {
 pub(super) struct PendingCellRead {
     pub(super) read: u64,
     pub(super) memory: crate::kernel::SharedMemory,
-    // The memory a load variable was read in, at its naming snapshot.
+    // The memory a load variable was read in, at its naming state.
     pub(super) origin: Option<crate::kernel::SharedMemory>,
     pub(super) pointer: Pointer,
     pub(super) kind: CellRead,
     pub(super) only: Option<Arc<[(PointerBlock, AffineOffset)]>>,
 }
 
-/// The memory a load variable was read in, when it is the naming snapshot
+/// The memory a load variable was read in, when it is the naming state
 /// under another value: an observed cell names a value without changing
-/// memory, so it keeps the snapshot identity and may hold cells the naming
-/// value lacks. An origin at another snapshot is not consulted; the graph
-/// does not equate distinct snapshots.
+/// memory, so it keeps the state identity and may hold cells the naming
+/// value lacks. An origin at another state is not consulted; the graph
+/// does not equate distinct states.
 fn load_origin(
     term: &crate::kernel::MachineTerm,
     named: &crate::kernel::SharedMemory,
@@ -378,7 +378,7 @@ enum Node {
     Footprint(u64, u64),
     Int32(MachineAtom),
     Int32Read((u32, u32), u64),
-    /// An 8- or 16-bit read of a snapshot at an address, of its load kind.
+    /// An 8- or 16-bit read of a state at an address, of its load kind.
     NarrowRead((u32, u32), u64, crate::kernel::LoadKind),
     Int32Add(u64, u64),
     Int32Binary(Int32Binary, u64, u64),
@@ -390,7 +390,7 @@ enum Node {
     Int64Scaled(u64, i64, bool),
     /// `Bool` values (`TermClasses::bool_node`): a literal, a binder, a
     /// `-> Bool` function's head, the conditional's head, and the read head
-    /// of one snapshot's `bool` cells.
+    /// of one state's `bool` cells.
     BoolConstant(bool),
     BoolVariable(Variable),
     BoolFunction(crate::kernel::SharedPureApplication, usize),
@@ -421,11 +421,11 @@ enum Application {
     Int32Unary(Int32Unary, u64),
     Int32Scaled(u64, i64),
     Int64Scaled(u64, i64, bool),
-    // Defining snapshot, exact storage block ID, offset node/class ID.
+    // Defining state, exact storage block ID, offset node/class ID.
     // Only registered four-byte loads in the int32 interpretation enter here.
     Int32Load((u32, u32), u64),
-    // A registered 8- or 16-bit read: its defining snapshot, its address
-    // class, and its kind. Two reads of one snapshot and kind at equal
+    // A registered 8- or 16-bit read: its defining state, its address
+    // class, and its kind. Two reads of one state and kind at equal
     // addresses are one value.
     NarrowLoad((u32, u32), u64, crate::kernel::LoadKind),
 }
@@ -476,16 +476,16 @@ impl Application {
                 Self::UInt64Binary(op, classes.root(left), classes.root(right))
             }
             Self::UInt64Address(address) => Self::UInt64Address(classes.root(address)),
-            Self::UInt64Read(snapshot, address) => {
-                Self::UInt64Read(snapshot, classes.root(address))
+            Self::UInt64Read(retained_state, address) => {
+                Self::UInt64Read(retained_state, classes.root(address))
             }
             Self::Address(block, offset) => Self::Address(block, classes.root(offset)),
             Self::AddressShift(address, bytes) => Self::AddressShift(classes.root(address), bytes),
             Self::AddressOffset(address, offset) => {
                 Self::AddressOffset(classes.root(address), classes.root(offset))
             }
-            Self::PointerRead(snapshot, address, kind) => {
-                Self::PointerRead(snapshot, classes.root(address), kind)
+            Self::PointerRead(retained_state, address, kind) => {
+                Self::PointerRead(retained_state, classes.root(address), kind)
             }
             Self::Footprint(start, end) => Self::Footprint(classes.root(start), classes.root(end)),
             Self::Add(left, right) => Self::Add(classes.root(left), classes.root(right)),
@@ -498,9 +498,11 @@ impl Application {
             Self::Int64Scaled(value, width, unsigned) => {
                 Self::Int64Scaled(classes.root(value), width, unsigned)
             }
-            Self::Int32Load(snapshot, address) => Self::Int32Load(snapshot, classes.root(address)),
-            Self::NarrowLoad(snapshot, address, kind) => {
-                Self::NarrowLoad(snapshot, classes.root(address), kind)
+            Self::Int32Load(retained_state, address) => {
+                Self::Int32Load(retained_state, classes.root(address))
+            }
+            Self::NarrowLoad(retained_state, address, kind) => {
+                Self::NarrowLoad(retained_state, classes.root(address), kind)
             }
         }
     }
@@ -738,7 +740,7 @@ pub(super) struct TermClasses {
     registered_int32_loads: PersistentSet<u64>,
     // An observed word may name its own read. Register each exact source
     // once, before interning its stored value, to close that cycle. Keep
-    // distinct snapshots, origins and address spellings as separate sources.
+    // distinct states, origins and address spellings as separate sources.
     registered_uint64_cell_reads: PersistentSet<WideReadSource>,
     // Registration dependencies are drained before any public answer. Keeping
     // this worklist iterative handles loads used as indices of further loads.
@@ -989,7 +991,7 @@ impl TermClasses {
     /// address merges without enumerating aliases or unrelated reads.
     pub(super) fn pointer_read(
         &mut self,
-        snapshot: (u32, u32),
+        retained_state: (u32, u32),
         address: u64,
         kind: crate::kernel::LoadKind,
         value: u64,
@@ -997,7 +999,7 @@ impl TermClasses {
         cell: Option<(crate::kernel::SharedMemory, Pointer)>,
     ) {
         let address = self.read_address(address);
-        let read = self.intern_node(Node::PointerRead(snapshot, address, kind));
+        let read = self.intern_node(Node::PointerRead(retained_state, address, kind));
         self.close_with_affine_definition(vec![(value, read)], true);
         self.retain_pointer_value_witness(self.root(value), block);
         if let Some((memory, pointer)) = cell {
@@ -1014,7 +1016,7 @@ impl TermClasses {
     }
 
     /// The operand of a read: the numeric address of `address`, not the
-    /// pointer. Memory is addressed, so two reads of one snapshot at equal
+    /// pointer. Memory is addressed, so two reads of one state at equal
     /// addresses read the same bytes even when the pointers are not equal
     /// (a C pointer comparison states only an address equality). Equal
     /// pointers have equal addresses, so pointer congruence still reaches
@@ -1807,8 +1809,8 @@ impl TermClasses {
                 Some(Application::UInt64Binary(*op, *left, *right))
             }
             Node::UInt64Address(address) => Some(Application::UInt64Address(*address)),
-            Node::UInt64Read(snapshot, address) => {
-                Some(Application::UInt64Read(*snapshot, *address))
+            Node::UInt64Read(retained_state, address) => {
+                Some(Application::UInt64Read(*retained_state, *address))
             }
             Node::Address(block, offset) => {
                 self.address_nodes = self.address_nodes.with_value(id);
@@ -1834,12 +1836,14 @@ impl TermClasses {
                 self.address_nodes = self.address_nodes.with_value(id);
                 Some(Application::AddressOffset(*address, *offset))
             }
-            Node::PointerRead(snapshot, address, kind) => {
-                Some(Application::PointerRead(*snapshot, *address, *kind))
+            Node::PointerRead(retained_state, address, kind) => {
+                Some(Application::PointerRead(*retained_state, *address, *kind))
             }
-            Node::Int32Read(snapshot, address) => Some(Application::Int32Load(*snapshot, *address)),
-            Node::NarrowRead(snapshot, address, kind) => {
-                Some(Application::NarrowLoad(*snapshot, *address, *kind))
+            Node::Int32Read(retained_state, address) => {
+                Some(Application::Int32Load(*retained_state, *address))
+            }
+            Node::NarrowRead(retained_state, address, kind) => {
+                Some(Application::NarrowLoad(*retained_state, *address, *kind))
             }
             Node::Footprint(start, end) => Some(Application::Footprint(*start, *end)),
             Node::Add(left, right) => Some(Application::Add(*left, *right)),
@@ -1971,7 +1975,7 @@ impl TermClasses {
                     // Decode only numeric coordinates. In particular, do not
                     // merge the address node with a word or a pointer value.
                     // The existing dependency worklist also handles nested
-                    // casts without recursively registering their snapshots.
+                    // casts without recursively registering their states.
                     let numeric = self.read_address(value);
                     let bits = self.intern_uint64(bits);
                     self.close_with_affine_definition(vec![(numeric, bits)], true);
@@ -2105,7 +2109,7 @@ impl TermClasses {
         self.registering_dependencies = false;
     }
 
-    /// A read of a snapshot at an address equals the value the snapshot
+    /// A read of a state at an address equals the value the state
     /// stores at an equal address under another spelling: a store through
     /// `p` read through `id` once `p == id`. The read keeps its own term,
     /// fact-free; the equality of the two addresses is this context's, so
@@ -2381,7 +2385,7 @@ impl TermClasses {
     fn intern_int32(&mut self, term: &crate::kernel::MachineTerm) -> u64 {
         // This interner runs under the graph mutex. Memory canonicalization
         // can re-enter this graph through a cell-version walk; callers perform
-        // it before locking, while raw reads here retain their own snapshot.
+        // it before locking, while raw reads here retain their own state.
         self.intern_machine(term, false)
     }
 
@@ -3746,7 +3750,7 @@ mod tests {
     }
 
     #[test]
-    fn offset_equality_preserves_width_signedness_and_snapshot_identity() {
+    fn offset_equality_preserves_width_signedness_and_state_identity() {
         let _session = crate::kernel::VerificationSession::enter();
         let scaled =
             |value, width, unsigned| PointerOffsetTerm::scaled_int64_node(value, width, unsigned);

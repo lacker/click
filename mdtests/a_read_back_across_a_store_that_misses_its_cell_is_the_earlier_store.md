@@ -10,7 +10,7 @@ cached `buf[0]`.
 In that case the load reads the cell from the recorded history under the
 path's facts: `u != 0` places the store off `buf[0]`, and the cell's value
 before it is the `3`. Before, only the file-scope twin verified, and only
-because its reduced memory happened to equal the snapshot before the store;
+because its reduced memory happened to equal the state before the store;
 the heap store also records the bytes it initialized, so the heap twin's
 `have r == 3` was refused. A `calloc` buffer reads the same `3`, not the zero
 it was allocated with: the store `buf[0] = 3` replaced that zero, and the

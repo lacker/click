@@ -1,7 +1,7 @@
 # a store does not preserve a cell whose index it cannot be told apart from
 
-A specification read denotes the value its own snapshot holds, so a read after
-this store is a load from the post-store snapshot and a read before it is a
+A specification read denotes the value its own state holds, so a read after
+this store is a load from the post-store state and a read before it is a
 load from the entry one. With nothing saying `m != i`, they are two different
 values, and no route may identify them. The same read with `m != i` stated is
 `a_distinct_symbolic_cell_survives_a_store.md`.
@@ -27,5 +27,5 @@ void mark_one(int32 a[], int32 n, int32 i, int32 m) {
 ```
 
 ```expect
-fail: unclosed goal: a[m] == old(a[m]); the two sides read the same address in different memory snapshots (`a[m]` reads the outcome state, `old(a[m])` reads function entry); `a[m]` may have changed since function entry: the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.
+fail: unclosed goal: a[m] == old(a[m]); the two sides read the same address in different memory states (`a[m]` reads the outcome state, `old(a[m])` reads function entry); `a[m]` may have changed since function entry: the store to `a[i]` may have written it. If `m` and `i` differ, state `m != i`.
 ```

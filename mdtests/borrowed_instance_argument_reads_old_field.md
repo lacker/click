@@ -12,7 +12,7 @@ contract instead names the instance by the entry value,
 Reading `old(region->arena)` at the callee's entry used to fail: an entry
 argument was read in the bare entry state, while the clause itself was read
 in the frame that adds the folded `reg` instance's cells as read authority.
-Both read the same snapshot, so the entry argument now reads through the
+Both read the same state, so the entry argument now reads through the
 same frame. Two calls in a row then bind the caller's `state(arena)` each
 time.
 

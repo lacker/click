@@ -564,7 +564,7 @@ fn canonical_term_resolves_equal_loads_to_one_form() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let base = Memory::new().with_block("cells", 4);
-    // The same unresolved load, read from two snapshots that differ only by
+    // The same unresolved load, read from two states that differ only by
     // a block this load cannot observe.
     let drifted = base.clone().with_block("unrelated", 4);
     let load_at_base = MachineTerm::MemoryLoad(
@@ -582,7 +582,7 @@ fn canonical_term_resolves_equal_loads_to_one_form() {
     assert_eq!(
         canonical,
         crate::kernel::eval::canonical_term(&load_at_drifted),
-        "representational snapshot drift must not change the canonical form"
+        "representational state drift must not change the canonical form"
     );
     assert!(matches!(canonical, MachineTerm::MemoryLoad(..)));
     // Idempotence: the canonical form is its own canonical form.
@@ -711,7 +711,7 @@ fn representational_load_equality_holds_beyond_the_former_depth_preflight() {
 }
 
 #[test]
-fn shared_offsets_retain_snapshot_identity_through_canonicalization() {
+fn shared_offsets_retain_state_identity_through_canonicalization() {
     let pointer = Pointer {
         block: "cells".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -729,7 +729,7 @@ fn shared_offsets_retain_snapshot_identity_through_canonicalization() {
         )
     };
 
-    // Equal contents at different snapshots do not make identical terms.
+    // Equal contents at different states do not make identical terms.
     assert!(!crate::kernel::offsets_have_same_canonical_form(
         &scaled(base.clone()),
         &scaled(drifted),
@@ -989,8 +989,8 @@ fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
 }
 
 #[test]
-fn load_variable_free_variables_include_its_snapshot_cells() {
-    // A load variable over a snapshot whose cells mention a loop counter
+fn load_variable_free_variables_include_its_state_cells() {
+    // A load variable over a state whose cells mention a loop counter
     // denotes a term mentioning that counter: goal-directed substitutions
     // and other variable-sensitive rules must see it through the load.
     let counter = Variable(11);
@@ -1048,23 +1048,20 @@ fn symbolic_memory_block_sizes_are_free_and_substitutable() {
     );
 }
 
-/// A snapshot DAG `depth` levels deep: each level's snapshot is reachable
+/// A state DAG `depth` levels deep: each level's state is reachable
 /// through two distinct cells of the level above, so a rewrite that follows
-/// structure instead of snapshot identity visits `2^depth` snapshots while the
+/// structure instead of state identity visits `2^depth` states while the
 /// DAG holds `depth` of them. This is the shape a proof builds when each
 /// `unfold` names the cells it exposes and the C then loads through them, one
 /// nesting level per unfolded child.
-fn nested_snapshot_load(depth: usize) -> MachineTerm {
-    nested_snapshot_load_named(depth, |load| load)
+fn nested_state_load(depth: usize) -> MachineTerm {
+    nested_state_load_named(depth, |load| load)
 }
 
-/// [`nested_snapshot_load`] with each cell holding `name(load)`: the load
+/// [`nested_state_load`] with each cell holding `name(load)`: the load
 /// itself, or the load variable that names it.
-fn nested_snapshot_load_named(
-    depth: usize,
-    name: impl Fn(MachineTerm) -> MachineTerm,
-) -> MachineTerm {
-    let block = PointerBlock::Concrete("snapshot-chain".to_string());
+fn nested_state_load_named(depth: usize, name: impl Fn(MachineTerm) -> MachineTerm) -> MachineTerm {
+    let block = PointerBlock::Concrete("retained_state-chain".to_string());
     let at = |offset: i64| Pointer {
         block: block.clone(),
         offset: PointerOffsetTerm::Constant(offset),
@@ -1149,13 +1146,13 @@ fn a_live_memorys_counted_variables_are_its_walked_variables() {
     }
 }
 
-/// How many snapshots the named `substitution: snapshot rewrite` operation
+/// How many states the named `substitution: state rewrite` operation
 /// rebuilt while `operation` ran, beside the run's total deterministic work.
 ///
 /// The count, not the summed span work, is the scaling signal: an operation's
 /// work is inclusive of the operations nested inside it, so summing a `depth`
-/// deep nest of spans is quadratic even when each snapshot is rebuilt once.
-fn snapshot_rewrite_count<R>(operation: impl FnOnce() -> R) -> (R, usize, usize) {
+/// deep nest of spans is quadratic even when each state is rebuilt once.
+fn state_rewrite_count<R>(operation: impl FnOnce() -> R) -> (R, usize, usize) {
     let ((result, total), events) = crate::instrumentation::collect(|| {
         crate::instrumentation::measure_deterministic_work(operation)
     });
@@ -1165,24 +1162,24 @@ fn snapshot_rewrite_count<R>(operation: impl FnOnce() -> R) -> (R, usize, usize)
             matches!(
                 event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "substitution: snapshot rewrite"
+                    if name == "substitution: state rewrite"
             )
         })
         .count();
     (result, rewrites, total)
 }
 
-/// Rewriting one variable must visit each distinct snapshot the term reaches
+/// Rewriting one variable must visit each distinct state the term reaches
 /// once, not once per path that reaches it.
 ///
-/// A `MemoryLoad` term carries a whole snapshot and a snapshot's cells hold
+/// A `MemoryLoad` term carries a whole state and a state's cells hold
 /// further `MemoryLoad` terms, so these terms are a DAG. Walking it as a tree
 /// is what made `mdtests/rb_replace_node_with_children.md` slow: its 96
-/// load-variable rewrites cost 965,776 snapshot rebuilds, because three nested
+/// load-variable rewrites cost 965,776 state rebuilds, because three nested
 /// `unfold`s each name a cell and the rewritten variable occurs in none of
 /// them.
 #[test]
-fn variable_substitution_visits_each_snapshot_once_per_rewrite() {
+fn variable_substitution_visits_each_state_once_per_rewrite() {
     let mut rewrites = Vec::new();
     let mut totals = Vec::new();
     for depth in [2, 4, 8, 16] {
@@ -1190,12 +1187,12 @@ fn variable_substitution_visits_each_snapshot_once_per_rewrite() {
             ConditionTerm::Compare {
                 format: MachineIntegerType::Int32,
                 relation: CompareRelation::Equal,
-                left: Box::new(nested_snapshot_load(depth)),
+                left: Box::new(nested_state_load(depth)),
                 right: Box::new(MachineTerm::constant(0)),
             },
             true,
         );
-        let (rewritten, rewrite_count, total) = snapshot_rewrite_count(|| {
+        let (rewritten, rewrite_count, total) = state_rewrite_count(|| {
             crate::kernel::reasoning::substitute_bitvector_variable_in_proposition(
                 &goal,
                 Variable(770_001),
@@ -1211,7 +1208,7 @@ fn variable_substitution_visits_each_snapshot_once_per_rewrite() {
 
     assert!(
         rewrites[0] > 0,
-        "the snapshot-rewrite operation must observe this cost: {rewrites:?}"
+        "the state-rewrite operation must observe this cost: {rewrites:?}"
     );
     // Four geometric depths, each twice the last. A rewrite performed per
     // reaching path doubles with every added level, so holding adjacent
@@ -1219,18 +1216,18 @@ fn variable_substitution_visits_each_snapshot_once_per_rewrite() {
     for pair in rewrites.windows(2) {
         assert!(
             pair[1] <= pair[0].saturating_mul(3),
-            "snapshot rewrites follow reaching paths instead of the snapshot DAG: {rewrites:?} (total work {totals:?})"
+            "state rewrites follow reaching paths instead of the state DAG: {rewrites:?} (total work {totals:?})"
         );
     }
     for pair in totals.windows(2) {
         assert!(
             pair[1] <= pair[0].saturating_mul(3),
-            "substitution work grows faster than the snapshot DAG: {totals:?} (snapshot rewrites {rewrites:?})"
+            "substitution work grows faster than the state DAG: {totals:?} (state rewrites {rewrites:?})"
         );
     }
 }
 
-/// A pointer cell a snapshot holds materialized is named by the pointer it
+/// A pointer cell a state holds materialized is named by the pointer it
 /// holds when that value is exactly what a typed load of the cell produces:
 /// the structural read of this cell. The version walk cannot cross a loop head's havoc, so a
 /// struct field the head copied back would otherwise take a second name.

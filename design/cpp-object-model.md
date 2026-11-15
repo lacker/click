@@ -28,7 +28,7 @@ must be audited before being presented as current upstream behavior. Where curre
 the gap is identified below. Historical delivery notes remain historical.
 
 The principal conclusion is that typed cells, allocation identities, persistent
-snapshots, indexed ranges, and the existing resource system remain useful.
+states, indexed ranges, and the existing resource system remain useful.
 We need one set of object and representation laws used by execution and proof,
 including modular calls. Replacing memory with a flat byte array would not
 resolve lifetime, provenance, or language validity and is not the proposed work.
@@ -41,7 +41,7 @@ resolve lifetime, provenance, or language validity and is not the proposed work.
 2. Distinguish storage, objects, initialized bytes, valid values, and access
    authority. None of these is a substitute for the others.
 3. Keep typed cells as the efficient representation. Typed and byte observations
-   of the same supported object at the same snapshot must describe one value.
+   of the same supported object at the same state must describe one value.
 4. Make output initialization an explicit, body-checked effect, separate from
    value postconditions and ownership. Mentioning a read in a proposition must
    not create initialized storage.
@@ -90,13 +90,13 @@ a sound, useful bounded model.
 The following are distinct facts the model must represent or derive from checked
 evidence. They need not become six new maps or one large mutable object record.
 Static importer evidence is sufficient for facts that cannot change within the
-admitted profile; dynamic facts belong in snapshots or checked execution state.
+admitted profile; dynamic facts belong in states or checked execution state.
 
 | Component | Meaning | Does not establish |
 | --- | --- | --- |
 | Storage | Allocation identity/generation, extent, alignment, and live storage | An object of an arbitrary requested type |
 | Object | Declared/admitted type, layout, containing object and subobject, lifecycle phase | Initialized contents or permission |
-| Representation | Typed values and byte fragments describing that storage at a snapshot | Legal access by every source-language type |
+| Representation | Typed values and byte fragments describing that storage at a state | Legal access by every source-language type |
 | Definite initialization | The selected bytes have been written or otherwise validly initialized | A particular value, or validity for every type |
 | Value availability and validity | A language-level value may be used in this phase with this type | Ownership of all reachable storage |
 | Authority | Permission to read/write or a checked loan/resource over a range | Freshness, initialization, or object lifetime |
@@ -141,7 +141,7 @@ obligation into mandatory implementation work for the existing profile.
 Preserve two semantic identities: the storage address used for aliasing and
 cell lookup, and the object/array designation used to justify access. A pointer
 value must carry or reference checked designation evidence that survives
-copying, storage/reload, casts, calls and snapshot transport. This cannot be
+copying, storage/reload, casts, calls and state transport. This cannot be
 recovered just from the numeric address, current read width, or whichever
 ownership range happens to contain the address.
 
@@ -165,13 +165,13 @@ different validity interfaces even when they share the same value observer.
 
 The shared `valid_place(p)` predicate states typed location validity separately
 from byte access and initialization. Its source-selected scalar type or complete
-record layout, full pointer carrier and memory snapshot remain in the kernel
+record layout, full pointer carrier and memory state remain in the kernel
 proposition. A direct entry requirement may authenticate that exact carrier;
 actual calls check it through the same record/scalar geometry judgments used by
 typed views. The C allocation/access policy and C++ native object policy remain
 distinct. Numeric equality rewriting cannot manufacture or substitute a carrier
 in a validity fact. Ending a lifetime invalidates the current location without
-changing a fact about an earlier snapshot. A disjunctive, conditional or
+changing a fact about an earlier state. A disjunctive, conditional or
 quantified requirement is not an unconditional entry promise.
 
 `valid_place(p[0..n])` extends the same judgment to a typed prefix. The
@@ -270,7 +270,7 @@ replacement behavior from matching addresses.
 Lvalue formation must retain the carrier until the operation is known. Rejecting
 all one-past lvalues immediately would break `&*p` cancellation; dropping the
 carrier immediately would permit an invalid store even if reads were checked.
-The shared load observer can remain address-based, because observing a snapshot
+The shared load observer can remain address-based, because observing a state
 is not executing a native dereference. Executable reads and writes must cross a
 separate checked-access boundary before using that observer.
 
@@ -343,7 +343,7 @@ avoidance and memory canonicalization. Do not use a registry lookup whose
 mutable contents silently change the meaning of an already certified value.
 
 A pointer load's symbolic value/domain pair is tied to its exact defining
-snapshot and cell. Checked store/load or memory-frame evidence can transport the
+state and cell. Checked store/load or memory-frame evidence can transport the
 whole pair. An unrelated equality about the loaded address cannot select a
 sibling domain. This retains the existing indexed read-identity machinery,
 but requires an explicit distinction between read-address evidence and evidence
@@ -399,7 +399,7 @@ can use this argument. The destination's padding stays unwritten throughout.
    transformations. This preserves today's qualifier behavior and creates a
    reviewable prerequisite; by itself it does not issue or check designation.
 2. Add domain terms and semantic equality/substitution support together. Cover
-   stored pointer values, loaded symbolic pairs, binder substitution, snapshot
+   stored pointer values, loaded symbolic pairs, binder substitution, state
    identity and retained keys before enabling producers. Raw address equality
    must remain available for aliasing.
 3. Retain domain information through lvalues and add checked declaration,
@@ -422,7 +422,7 @@ The carrier, lvalue and load-pair foundations are implemented, with bounded
 native input and member selection. The optional shared descriptor distinguishes
 legacy absence, an unresolved pointer binder, an immutable loaded-value origin,
 and an explicit root/path/base/element/stride/count term. Counts and array path
-selections are mathematical integers. Value identity, snapshot identity, alpha
+selections are mathematical integers. Value identity, state identity, alpha
 keys, dependency collection, full-value substitution and resource matching retain
 these terms; address-only substitution cannot replace them. Raw pointer comparison
 and storage keys remain address-based. Resource semantics version 77 invalidates
@@ -554,7 +554,7 @@ the wider extent; an unrecorded load keeps its conservative width. These width
 facts describe observations and do not establish object designation or access
 authority.
 Domain transport cannot scan sibling declarations, unrelated cells, the whole
-fact environment or snapshot history. Use shared immutable descriptors and
+fact environment or state history. Use shared immutable descriptors and
 persistent state facts; measure deterministic work at multiple domain, sibling
 and unrelated-state sizes. A large array domain is a compact extent, not one
 new object record per element.
@@ -592,7 +592,7 @@ The kernel then applies their shared effects consistently, including at calls.
 | Select construction destination | Exact pointer, layout, range and authority | Bind that destination before execution; no extra freshness assumption |
 | Begin object/subobject use | Admitted declaration or construction rule | Record/validate type and lifecycle phase; no arbitrary reinterpretation |
 | Initialize scalar/field | Valid destination, conversion, phase and write permission | Store the converted value and mark the written range initialized |
-| Read typed value | Valid object/access type, phase, alignment, initialized representation and read permission | Observe the value at that snapshot |
+| Read typed value | Valid object/access type, phase, alignment, initialized representation and read permission | Observe the value at that state |
 | Assign/store | Existing writable object and valid converted value | Update affected representation; preserve object identity |
 | Copy a value | Valid initialized source and destination operation | Copy modeled values, including pointer provenance; no pointer rebasing |
 | Copy representation | A checked representation-copy rule and covered source/destination | Transport supported representation and initialization under that rule |
@@ -621,15 +621,15 @@ lifetime of independently owned span backing storage.
 ### The delivered declared-uint32 law
 
 Execution loads and specification observations must agree whenever both refer
-to the same admitted object, byte range and memory snapshot. A modular call
+to the same admitted object, byte range and memory state. A modular call
 changes which facts are known; it must not change what a byte or typed read
 means. The bounded declared-uint32 profile now supplies this shared relation,
 including the unchanged modular C word-value fixture. Other representation
 profiles and the remaining object-model acceptance obligations are separate.
 
-For the initial declared uint32 profile, let `w` be its value at snapshot `M`
+For the initial declared uint32 profile, let `w` be its value at state `M`
 and `b0` through `b3` be its initialized representation bytes at that same
-snapshot, in increasing address order. The semantic equations are:
+state, in increasing address order. The semantic equations are:
 
 ```text
 bk = (w >> (8 * k)) & 255             for k = 0, 1, 2, 3
@@ -638,7 +638,7 @@ w  = zext(b0) | (zext(b1) << 8) | (zext(b2) << 16) | (zext(b3) << 24)
 
 These are semantic notation, not proposed proof syntax. Their applicability
 requires the selected target, a known declared uint32 object, valid byte access,
-the corresponding ranges/snapshot, and sufficient initialization for the
+the corresponding ranges/state, and sufficient initialization for the
 observation being used. Four bytes allocated as a byte array do not establish
 a uint32 object. A requested load width, cast, or allocation size cannot supply
 the missing type evidence.
@@ -647,7 +647,7 @@ A typed store followed by byte observations uses the first equation. Four
 initialized byte writes, in any order, followed by a typed load use the second.
 A partial byte update to an existing initialized word preserves the remaining
 bytes. After modular output initialization, postconditions fixing all four bytes
-must determine the same word as inline execution would. Old-snapshot bytes
+must determine the same word as inline execution would. Old-state bytes
 cannot reconstruct the current word after a write.
 
 The initial implementation exposes one guarded representation observation
@@ -663,7 +663,7 @@ start a lifetime, or make an otherwise invalid program read legal.
 Keep typed cells authoritative for supported complete values, with byte fragments
 and lazy projections where needed. This is an encoding of the common semantics,
 not a second independent memory. A store must update or invalidate overlapping
-views; a proof cache must include the memory snapshot and interpretation needed
+views; a proof cache must include the memory state and interpretation needed
 to prevent stale reuse. Joins keep only facts and definite initialization justified
 on both paths. Havoc removes value constraints without reviving earlier contents.
 
@@ -688,28 +688,28 @@ model or a mandatory workaround for ordinary typed/byte consistency.
 
 ### Implementation boundary for the uint32 bridge
 
-The shared observation interface must take the selected snapshot, address,
+The shared observation interface must take the selected state, address,
 observation kind and checked declared-object evidence. The observation kind
 includes width: a uint8 read and a uint32 read at the same address are not
 interchangeable terms. Execution additionally checks access designation,
 authority and definedness; logical term construction cannot discharge them.
 
 For a supported declared uint32 object, choose one canonical symbolic word for
-each relevant snapshot/object observation. Its four byte observations are
+each relevant state/object observation. Its four byte observations are
 projections of that word. A checked packing rule relates four known byte
-observations at that snapshot to the word, including after a modular call.
+observations at that state to the word, including after a modular call.
 Neither projection nor packing allocates storage or sets initialization bits.
 The explicit initialized-range effect supplies that independent evidence.
 
 The shared load/representation layer uses `canonical_form_of_load` with an
 explicit four-byte observation width. Immutable automatic declaration metadata
 pins the checked uint32 type and little-endian target profile. The selected live
-load retains its initialization snapshot even when its load variable names
+load retains its initialization state even when its load variable names
 an earlier memory projection. The checked `declared_uint32_from_bytes` application
 connects its four byte observations to a constant word; source expansion retains
-the exact byte premises at a recorded snapshot where the local remains in scope.
+the exact byte premises at a recorded state where the local remains in scope.
 Ordinary, expanded and retained checks, missing/mutated premises and result,
-wrong root/snapshot, incomplete initialization, unsupported profile, and
+wrong root/state, incomplete initialization, unsupported profile, and
 unrelated-fact/cell scaling have focused regressions. No mutable cell observation,
 cast, or arbitrary allocation issues the declaration profile.
 
@@ -760,7 +760,7 @@ placeholder into a completion certificate. Body checking must consider every
 aliasing arrangement admitted by the entry contract. Constructing a convenient
 fresh proof slot is not a substitute for proving separation.
 
-Copy materialization, initialization queries and snapshot transport must receive
+Copy materialization, initialization queries and state transport must receive
 the actual checked call context. Discarding its separation facts can make valid
 input cells appear to overlap unwritten output; assuming separation without the
 facts would be unsound. Both problems belong at the shared operation boundary.
@@ -883,9 +883,9 @@ uint32 prefix with exactly one element supplies that same selected live word;
 it does not identify the enclosing array's end or admit a multiword byte array.
 This includes checked byte pointer formation within that extent and its one-past endpoint. Dereferencing
 the endpoint remains invalid. Each byte at offset `i` denotes bits `8*i` through
-`8*i+7` of the same selected uint32 snapshot. Four initialized byte values
+`8*i+7` of the same selected uint32 state. Four initialized byte values
 therefore determine the word under the shared packing law. Partial writes do
-not complete initialization, and stale snapshots do not determine a current
+not complete initialization, and stale states do not determine a current
 value. Every operation still requires its independent permission,
 initialization and lifetime checks, and retains the original object and pointer
 domain. The assumption creates neither an array object nor a different scalar
@@ -935,7 +935,7 @@ and the unchanged decoder's complete acceptance obligations must still pass.
 
 | Area | Current evidence | Remaining obligation |
 | --- | --- | --- |
-| Allocation, ownership and snapshots | Shared block/offset storage, persistent memory, exact local byte ownership | Reuse; audit object/access-domain evidence at admitted operations |
+| Allocation, ownership and states | Shared block/offset storage, persistent memory, exact local byte ownership | Reuse; audit object/access-domain evidence at admitted operations |
 | Construction and copy | Destination allocation/binding/completion, field-copy returns, constructor summaries and temporary retirement | Check that every path obeys the combined lifecycle laws; preserve language restrictions |
 | Initialization | Raw output state, indexed initialized runs, joins, explicit normal output effects | Apply consistently at all entry/copy/summary boundaries; no naming stores |
 | Integer byte view | Execution projection/update and declared automatic uint32 assembly | Common guarded observation semantics for execution and specifications |
@@ -1011,7 +1011,7 @@ Complete automatic aggregate declarations now retain their layout in the shared
 block declaration metadata. Ordinary aggregate declarations, raw destination
 allocations, by-value parameter copies and actual copy-result allocations issue
 that evidence. Synthetic symbolic result blocks and constructor proof-entry raw
-markers do not. The metadata participates in snapshot identity and joins.
+markers do not. The metadata participates in state identity and joins.
 The layout checkpoint introduced resource semantics version 71; the current
 designation and checked interface semantics use version 75. This metadata grants no access.
 C++ declarations and explicit child boundaries now additionally
@@ -1097,7 +1097,7 @@ remaining paths still need their own admission and call checks:
 | C++ scalar/record reference parameters and receivers | Separate semantic input requirements; matching symbolic-entry, body, summary and certification checks; nominal record identity and explicit member paths | Extend only with checked evidence for additional source profiles and full pointer-result effects |
 | Rust reference parameters (`rust/lowering.rs::lower_function`) | Pointer carrier, qualifiers and source reference/array/slice information in lowering | Carry the applicable Rust referent guarantees to shared checking without treating raw pointers as references |
 | C and C++ raw pointer parameters | Pointer value and access type; admitted C++ raw inputs also carry an unresolved native identity even without a range clause | A signature alone does not establish a live pointee; checked native promises are required for traversal, and forwarding alone must preserve the unresolved identity |
-| Memory `owns`/`views` clauses (`surface/lowering/resource_lowering.rs`) | Permission, range guards and snapshot-relative loadability; selected declared scalar and record prefixes retain separate native input requirements | A prefix promises a minimum extent, not a complete array; C character-byte clauses do not declare uint8 objects, and byte ownership or successful loads alone do not establish designation |
+| Memory `owns`/`views` clauses (`surface/lowering/resource_lowering.rs`) | Permission, range guards and state-relative loadability; selected declared scalar and record prefixes retain separate native input requirements | A prefix promises a minimum extent, not a complete array; C character-byte clauses do not declare uint8 objects, and byte ownership or successful loads alone do not establish designation |
 | Native callback members | Declared record member selection retains the exact function-pointer signature as its access type | A field's storage type does not certify a callback contract, byte reinterpretation or call authority; incompatible signatures refuse |
 | By-value aggregate parameters (`kernel/functions.rs`) | A fresh copied destination with its declared layout | Check the source value against its actual object and preserve nested boundaries; do not use the requested layout to create source evidence |
 | Constructor body entry and binding | Separate nominal record and scalar input requirements; checked complete/embedded selection, raw footprint, alignment and field permissions | Keep validity, permission and initialization separate; validate the unchanged RAII acceptance cases |
@@ -1168,7 +1168,7 @@ conditions, not a promise of a fixed number of PRs.
 
 | Obligation | Positive witness | Required negative/boundary witness |
 | --- | --- | --- |
-| Representation coherence | Typed store to bytes; four byte stores to declared word; partial byte update | Wrong type, incomplete bytes, stale snapshot, unsupported representation |
+| Representation coherence | Typed store to bytes; four byte stores to declared word; partial byte update | Wrong type, incomplete bytes, stale state, unsupported representation |
 | Modular coherence | Inline and body-certified modular byte writer establish the same exact word | No-op/hole writer; value proposition or ownership without initialization |
 | Destination and copy | Nested destination forwarding; lvalue copy; separate RHS assignment | Rebound destination, missing field, copied self-pointer wrongly rebased |
 | Aliasing and frames | Contract-permitted aliases; checked separation; sibling/backing preservation | Freshness inferred from construction; lost or fabricated separation evidence |
@@ -1201,7 +1201,7 @@ reopen the relevant design boundary before implementation.
   provenance, object existence or legal access, and eager byte expansion harms
   scaling. Typed cells with coherent observations meet this milestone.
 - **A C++-specific second memory model.** It would duplicate call, resource,
-  snapshot and proof-checking semantics while leaving C and Rust inconsistencies.
+  state and proof-checking semantics while leaving C and Rust inconsistencies.
   Language-specific admission over shared operations is the intended boundary.
 - **Initialization inferred from mentioned reads.** This lets a proposition
   create the state needed to make itself meaningful. Explicit checked effects

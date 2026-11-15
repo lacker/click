@@ -42,11 +42,11 @@ fn bounded_pointer_value_skips_unrelated_facts_cells_and_history() {
         );
         memory =
             memory.without_possible_aliasing_cells(&possible_write, 4, &PureFactContext::new());
-        let snapshot = intern_memory(memory);
-        let read = Pointer::loaded_value(&snapshot, &field);
+        let retained_state = intern_memory(memory);
+        let read = Pointer::loaded_value(&retained_state, &field);
         context
             .equality_graph
-            .register_pointer_read_definition(&read, &snapshot, &field);
+            .register_pointer_read_definition(&read, &retained_state, &field);
         let (holds, work) = crate::instrumentation::measure_deterministic_work(|| {
             pointer_read_has_recorded_value(&read, &stored, &context)
         });
@@ -75,7 +75,7 @@ fn bounded_pointer_value_skips_unrelated_facts_cells_and_history() {
             crate::kernel::AddressObjectClass::NONE,
         );
         let source = intern_memory(
-            snapshot
+            retained_state
                 .memory()
                 .clone()
                 .store(write_alias, ProgramValue::UInt64(value.clone())),

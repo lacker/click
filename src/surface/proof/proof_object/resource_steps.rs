@@ -423,7 +423,7 @@ impl<'a> Proof<'a> {
             .execution
             .as_deref()
             .cloned()
-            .ok_or_else(|| self.step_error("instance rewrite has no execution snapshot"))?;
+            .ok_or_else(|| self.step_error("instance rewrite has no execution state"))?;
         let outcome = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => Some(goal),
             _ => {
@@ -494,7 +494,7 @@ impl<'a> Proof<'a> {
                     ContractEnvironment::new(&values, &array_refs),
                     pre_state,
                     before,
-                    &execution.presentation.recorded_snapshots,
+                    &execution.presentation.recorded_states,
                     context.spec_definitions,
                 )
                 .map_err(|message| {
@@ -1047,7 +1047,7 @@ impl<'a> Proof<'a> {
                 .record_lowering(&clause.source, &clause.checked.proposition)?;
             execution.presentation.resource_body_clauses.push(clause);
         }
-        // The unfold exposed this arm's cells; name them in the snapshot so
+        // The unfold exposed this arm's cells; name them in the state so
         // the body's facts and the C's own reads of those cells share one
         // load identity. See `materialize_unfolded_instance_arm_cells`.
         //
@@ -1283,7 +1283,7 @@ impl<'a> Proof<'a> {
                             .unwrap_or_default(),
                     ),
                     &integer_values,
-                    FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+                    FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
                     context.spec_definitions,
                     BTreeMap::new(),
                 )
@@ -1362,7 +1362,7 @@ impl<'a> Proof<'a> {
                         pre_state,
                         &execution.core.state,
                         None,
-                        &execution.presentation.recorded_snapshots,
+                        &execution.presentation.recorded_states,
                     ),
                     context.spec_definitions,
                     crate::surface::lowering::parameter_pointer_element_widths(
@@ -1932,7 +1932,7 @@ impl<'a> Proof<'a> {
         }
         if !append_missing.is_empty() {
             let (names, values) = self.diagnostic_naming_tables();
-            let mut labels = crate::surface::proof_diagnostics::render::SnapshotLabels::naming(
+            let mut labels = crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(
                 ParameterBinding::new(&names, &values),
             );
             return Err(self.step_error(format!(
@@ -2173,7 +2173,7 @@ impl<'a> Proof<'a> {
                 context.tactic_index,
             ),
             // A function-outcome goal unfolds its own path-local facts and
-            // delta only: the borrowed execution snapshot is shared by every
+            // delta only: the borrowed execution state is shared by every
             // sibling outcome and must not absorb one path's unfolding.
             ProofContext::Execution(context) if self.focused_outcome_data().is_some() => self
                 .apply_proposition_predicate_unfold(
@@ -2368,7 +2368,7 @@ impl<'a> Proof<'a> {
                                 pre_state,
                                 &execution.core.state,
                                 None,
-                                &execution.presentation.recorded_snapshots,
+                                &execution.presentation.recorded_states,
                             ),
                             context.spec_definitions,
                         )
@@ -2406,7 +2406,7 @@ impl<'a> Proof<'a> {
             locals: self.state().locals().clone(),
             // A nested proposition proof stated at this frontier unfolds its
             // own goal through the same checked operation. Other execution
-            // goals retain their kind while installing the updated snapshot
+            // goals retain their kind while installing the updated state
             // and unfold delta.
             branch: Some(goal),
             added_facts: checked.added_facts.clone(),
@@ -2460,7 +2460,7 @@ impl<'a> Proof<'a> {
                                     context.old_reference_state(&execution.core.frontier, state),
                                     state,
                                     None,
-                                    &execution.presentation.recorded_snapshots,
+                                    &execution.presentation.recorded_states,
                                 ),
                                 context.spec_definitions,
                                 &BTreeSet::new(),
@@ -3019,9 +3019,10 @@ impl<'a> Proof<'a> {
         )
         .map_err(|message| self.step_error(message))?;
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
-        let mut execution = branch_state.execution.as_deref().cloned().ok_or_else(|| {
-            self.step_error("outcome resource unfold lost its execution snapshot")
-        })?;
+        let mut execution =
+            branch_state.execution.as_deref().cloned().ok_or_else(|| {
+                self.step_error("outcome resource unfold lost its execution state")
+            })?;
         let mut data = (*goal.data).clone();
         let checked = unfold_composite_resource_for_proof(
             context.resource_environment,
@@ -3071,7 +3072,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Applies one source-ordered composite fold to the focused branch typed outcome.
-    /// The result/state snapshot and persistent fact root advance together in
+    /// The result/state state and persistent fact root advance together in
     /// the returned Proof successor; no caller-owned outcome is mutated.
     pub(super) fn apply_outcome_resource_fold(
         &self,
@@ -3136,9 +3137,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("outcome resource `fold` requires a focused outcome goal"));
         };
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
-        let mut execution = branch_state.execution.as_deref().cloned().ok_or_else(|| {
-            self.step_error("outcome resource `fold` lost its execution snapshot")
-        })?;
+        let mut execution =
+            branch_state.execution.as_deref().cloned().ok_or_else(|| {
+                self.step_error("outcome resource `fold` lost its execution state")
+            })?;
         let pre_state = execution
             .core
             .frontier
@@ -3281,7 +3283,7 @@ impl<'a> Proof<'a> {
         let execution = branch_state
             .execution
             .as_deref()
-            .ok_or_else(|| self.step_error("resource `construct` lost its execution snapshot"))?;
+            .ok_or_else(|| self.step_error("resource `construct` lost its execution state"))?;
         let value = (*goal.data.core.result).clone();
         let state = (*goal.data.core.state).clone();
         let fact = lower_resource_clause_at_state_with_result(
@@ -3422,7 +3424,7 @@ fn observes_machine_arithmetic(reading: &Proposition) -> bool {
 
 fn describe_missing_fold_guards(
     missing: &[Proposition],
-    labels: &mut crate::surface::proof_diagnostics::render::SnapshotLabels,
+    labels: &mut crate::surface::proof_diagnostics::render::MemoryStateLabels,
 ) -> String {
     let rendered = missing
         .iter()

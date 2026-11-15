@@ -456,9 +456,9 @@ large repeated-squaring DAG must not allocate an enormous numeral from a tiny
 proof. A shared replacement is validated once and its shallow root is charged
 at each occurrence.
 
-Memory loads and fold atoms retain exact snapshot identity. Alpha-equivalent
-loads from one retained snapshot may match; a different snapshot, body,
-carrier, or definedness context does not. Snapshot identity is opaque to
+Memory loads and fold atoms retain exact state identity. Alpha-equivalent
+loads from one retained state may match; a different state, body,
+carrier, or definedness context does not. Memory state identity is opaque to
 arithmetic and is never inferred from a raw term identifier or fingerprint.
 
 Endpoints are the one fold component compared up to equality rather than
@@ -472,7 +472,7 @@ terms, or the two endpoints' affine normal form. The last route is what makes
 the append law's `end + 1` back to its goal; wrapping machine arithmetic makes
 it exact, so it needs no ordering or definedness side condition. The body
 remains exact, so a fold over a written array is never equated with the same
-fold over the snapshot before the write.
+fold over the state before the write.
 
 ## Shared machine constants
 
@@ -794,7 +794,7 @@ node, or a typed machine cast for that destination.
 Legacy word constants and arithmetic nodes cannot acquire 128-bit semantics
 by retagging their wrapper. Validation examines the root and any strictly
 widening conversion chain (bounded by the five machine widths); substitutions,
-alpha keys, snapshot identities, and bounded walks keep the full payload.
+alpha keys, state identities, and bounded walks keep the full payload.
 
 Signed native 128-bit multiplication observes each integral operand exactly,
 computes its Integer product, and checks both signed 128-bit bounds. Unknown
@@ -808,7 +808,7 @@ behavior and proof obligations remain attached to the result.
 
 Exact typed 16-byte cells support signed and unsigned wide stores and loads
 through the existing typed-lvalue operations. Symbolic loads use the shared
-snapshot/address/kind identity and certified defining facts. Their kinds retain
+state/address/kind identity and certified defining facts. Their kinds retain
 signedness to match the checked constant format; cross-type reinterpretation
 and byte views remain unsupported. A wide read or write requires the full
 16-byte extent and resource authority, and retains initialization obligations.
@@ -851,7 +851,7 @@ after arithmetic is insufficient, and a weighted charge must not be simulated
 by a loop of unit checkpoints.
 
 Shared DAG traversals, substitution, alpha comparison, certificate checking,
-and snapshot matching must scale with the selected expression and certificate,
+and state matching must scale with the selected expression and certificate,
 not unrelated proof state. Premise references are explicit and checked before
 storage allocation. Large constants do not silently truncate, and enormous
 mathematical ranges do not trigger uncontrolled enumeration.
@@ -1481,7 +1481,7 @@ differences, pure-function arguments and explicit machine conversion payloads
 use the same sort-preserving walker.
 
 The walker memoizes shared Integer nodes, preserves machine widths and load
-snapshots, and never recursively rewrites its replacement. Work follows the
+states, and never recursively rewrites its replacement. Work follows the
 selected logical DAG rather than its expanded paths or ambient facts. Successful
 rewrites do not build diagnostic naming tables or scan unrelated locals; refusal
 constructs names for the selected proof state. Logical quantifiers are traversed only when neither side of the equality mentions their

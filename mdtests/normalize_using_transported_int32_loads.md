@@ -1,13 +1,13 @@
-# Checked transport composes with same-snapshot load congruence
+# Checked transport composes with same-state load congruence
 
 The store writes `p[k]`. The element-separation law uses `i != k` to establish that
 the store misses `p[i]`; `preserve` retains its entry value. The next `have` uses only the trusted equality
 graph: `i == j` identifies the current reads, and the transported equality
-connects that value to the entry snapshot. The final `solve` closes the
+connects that value to the entry state. The final `solve` closes the
 postcondition and returns ownership of the array.
 
 The graph does not infer that the store is disjoint, and equality of this one
-read does not make the snapshots interchangeable.
+read does not make the states interchangeable.
 
 ```c filename=transported_int32_loads.c
 void write_other(int32 p[], int32 n, int32 i, int32 j, int32 k) {

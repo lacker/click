@@ -7,7 +7,7 @@ introduce `k` and its antecedent, extract the two bounds, and let `solve()`
 narrow the held `views a[0..n]`.
 
 The local `steps` is declared before the loop, so the loop-entry memory is a
-later snapshot than function entry. The function body relates the two when it
+later state than function entry. The function body relates the two when it
 spells the contract's range for a narrowing step; the `initialize` phase is a
 fixed-state proof at the loop entry, and its planner used to see no fixed-state
 view there at all. `solve()` then had no spelling for the entry-state range and

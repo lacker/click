@@ -1,7 +1,7 @@
 # An Integer expression reads at function entry
 
 `at(function.entry, e)` is `old(e)` for an Integer `e`, as it is for a C
-value, and a snapshot of an unsuffixed literal is the literal, so it
+value, and a state of an unsuffixed literal is the literal, so it
 compares with an Integer as the literal does. Each `have` below is the
 same claim about `x` at entry.
 

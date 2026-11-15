@@ -869,7 +869,7 @@ impl<'a> Proof<'a> {
         // context. Its work is therefore independent of unrelated facts, and
         // it cannot silently search for an omitted theorem requirement.
         let state = ExecutionState::new().with_memory(context.theorem_context.memory.clone());
-        let recorded_snapshots = RecordedSnapshots::new();
+        let recorded_states = RecordedStates::new();
         let mut integer_values = context.theorem_context.integer_values.clone();
         for name in application
             .arguments
@@ -909,7 +909,7 @@ impl<'a> Proof<'a> {
             pre_state: &state,
             post_state: &state,
             result: None,
-            recorded_snapshots: &recorded_snapshots,
+            recorded_states: &recorded_states,
             integer_values: &integer_values,
             pointer_element_widths: BTreeMap::new(),
         };
@@ -1055,7 +1055,7 @@ impl<'a> Proof<'a> {
                 &pre_state,
                 &execution.core.state,
                 None,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             ),
             &self.local_integer_values(),
             &algebraic_values,
@@ -1187,13 +1187,13 @@ impl<'a> Proof<'a> {
                     )));
                 }
                 let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
-                    return Err(self.step_error("`choose` source has no function-entry snapshot"));
+                    return Err(self.step_error("`choose` source has no function-entry state"));
                 };
-                if selection.entry_snapshot
-                    != crate::kernel::MemorySnapshotIdentity::of(entry_state.memory())
+                if selection.entry_memory_state
+                    != crate::kernel::MemoryStateIdentity::of(entry_state.memory())
                 {
                     return Err(self.step_error(format!(
-                        "requirement {source_ordinal} does not match the function-entry snapshot"
+                        "requirement {source_ordinal} does not match the function-entry state"
                     )));
                 }
                 Some(selection)
@@ -1461,7 +1461,7 @@ impl<'a> Proof<'a> {
         chosen_variable: Variable,
         sort: &Sort,
     ) -> Result<Option<ExistentialProjection>, ClickError> {
-        let entry_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+        let entry_selector = ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         });
@@ -1522,7 +1522,7 @@ impl<'a> Proof<'a> {
                     ) else {
                         continue;
                     };
-                    let surface = surface_at_snapshot(&surface, &entry_selector)?;
+                    let surface = surface_at_program_point(&surface, &entry_selector)?;
                     let validation_surface = substitute_click_proposition(
                         &surface,
                         &BTreeMap::from([(
@@ -1541,7 +1541,7 @@ impl<'a> Proof<'a> {
                             view.fixed_state.pre_state,
                             view.fixed_state.pre_state,
                             None,
-                            view.fixed_state.recorded_snapshots,
+                            view.fixed_state.recorded_states,
                         ),
                         view.spec_definitions,
                     )
@@ -1564,7 +1564,7 @@ impl<'a> Proof<'a> {
             chosen_body: chosen_body.clone(),
             chosen_name: name.clone(),
             chosen_variable,
-            source_snapshot: crate::kernel::MemorySnapshotIdentity::of(entry_state.memory()),
+            source_memory_state: crate::kernel::MemoryStateIdentity::of(entry_state.memory()),
             leaves,
         }))
     }
@@ -1688,12 +1688,12 @@ impl<'a> Proof<'a> {
         let Some(entry_state) = context.constants.function_entry_state.as_ref() else {
             return Ok(None);
         };
-        let source_snapshot =
-            crate::kernel::MemorySnapshotIdentity::of(view.fixed_state.pre_state.memory());
-        if source_snapshot != crate::kernel::MemorySnapshotIdentity::of(entry_state.memory()) {
+        let source_memory_state =
+            crate::kernel::MemoryStateIdentity::of(view.fixed_state.pre_state.memory());
+        if source_memory_state != crate::kernel::MemoryStateIdentity::of(entry_state.memory()) {
             return Ok(None);
         }
-        let source_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+        let source_selector = ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         });
@@ -1749,7 +1749,7 @@ impl<'a> Proof<'a> {
                         // does not invalidate those independent identities.
                         continue;
                     };
-                    let surface = surface_at_snapshot(&surface, &source_selector)?;
+                    let surface = surface_at_program_point(&surface, &source_selector)?;
                     let validation_surface = substitute_click_proposition(
                         &surface,
                         &BTreeMap::from([(
@@ -1772,7 +1772,7 @@ impl<'a> Proof<'a> {
                             view.fixed_state.pre_state,
                             view.fixed_state.pre_state,
                             None,
-                            view.fixed_state.recorded_snapshots,
+                            view.fixed_state.recorded_states,
                         ),
                         view.spec_definitions,
                     )
@@ -1816,7 +1816,7 @@ impl<'a> Proof<'a> {
             checked_source,
             chosen_name: choice.name.clone(),
             chosen_variable,
-            source_snapshot,
+            source_memory_state,
             source_selector,
             leaves,
         }))
@@ -2074,7 +2074,7 @@ impl<'a> Proof<'a> {
                 algebraic_values,
                 view.fixed_state.pre_state,
                 view.fixed_state.state,
-                view.fixed_state.recorded_snapshots,
+                view.fixed_state.recorded_states,
                 view.spec_definitions,
             )
             .map_err(|message| {
@@ -2124,7 +2124,7 @@ impl<'a> Proof<'a> {
             view.fixed_state.result,
             self.facts().assumptions(),
             view.spec_definitions,
-            view.fixed_state.recorded_snapshots,
+            view.fixed_state.recorded_states,
         )?;
         let goal = apply_witness_tactic(
             &checked_witness,
@@ -2306,7 +2306,7 @@ impl<'a> Proof<'a> {
             self.facts().assumptions(),
             ContractEnvironment::new(&values, &arrays),
             algebraic_values,
-            FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+            FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
             context.spec_definitions,
             &BTreeSet::new(),
         )
@@ -2522,7 +2522,7 @@ impl<'a> Proof<'a> {
             algebraic_values,
             &state,
             &state,
-            &RecordedSnapshots::new(),
+            &RecordedStates::new(),
             context.spec_definitions,
         )
         .map_err(|message| {
@@ -2598,7 +2598,7 @@ impl<'a> Proof<'a> {
         let spec = crate::surface::lowering::elaborate_fixed_state_proposition_with_algebraic_and_integer_values(
             &ClickProposition::Comparison { left: promoted, operator: ComparisonOperator::Equal, right: ContractExpression::IntegerLiteral("0".into()) },
             states.element_types, BTreeMap::new(), &states.entry_state, states.entry_values, states.current_values,
-            algebraic, &integers, None, &RecordedSnapshots::new(),
+            algebraic, &integers, None, &RecordedStates::new(),
             context.spec_definitions, BTreeSet::new(),
             BTreeMap::new(),).map_err(|message| self.step_error(format!("could not lower Integer witness: {message}")))?;
         let crate::kernel::SpecProposition::IntegerComparison { left, .. } = spec else {
@@ -2684,7 +2684,7 @@ impl<'a> Proof<'a> {
                 self.facts().assumptions(),
                 ContractEnvironment::new(&values, &arrays),
                 algebraic_values,
-                FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+                FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
                 context.spec_definitions,
                 &BTreeSet::new(),
             )
@@ -3240,7 +3240,7 @@ impl<'a> Proof<'a> {
             rewrite_click_proposition_by_surface_equality(surface_goal, surface_equality)
                 .and_then(&mut checked_candidate)
                 .or_else(|| {
-                    crate::surface::lowering::rewrite_surface_equality_preserving_snapshots(
+                    crate::surface::lowering::rewrite_surface_equality_preserving_states(
                         surface_goal,
                         surface_equality,
                     )
@@ -3305,11 +3305,11 @@ impl<'a> Proof<'a> {
         let Some(view) = self.execution_proposition_fixed_state_view() else {
             return Ok(None);
         };
-        let entry_snapshot = self
+        let entry_memory_state = self
             .execution_context()
             .and_then(|context| context.constants.function_entry_state.as_ref())
-            .map(|state| crate::kernel::MemorySnapshotIdentity::of(state.memory()));
-        let expected_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+            .map(|state| crate::kernel::MemoryStateIdentity::of(state.memory()));
+        let expected_selector = ProgramPointSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         });
@@ -3337,8 +3337,8 @@ impl<'a> Proof<'a> {
                 .execution_start_facts
                 .get(projection.principal_fact_index)
                 != Some(&projection.source_requirement)
-            || entry_snapshot != Some(projection.source_snapshot)
-            || retained_source.entry_snapshot != projection.source_snapshot
+            || entry_memory_state != Some(projection.source_memory_state)
+            || retained_source.entry_memory_state != projection.source_memory_state
             || projection.source_selector != expected_selector
         {
             return Ok(None);
@@ -3412,8 +3412,8 @@ impl<'a> Proof<'a> {
         else {
             return Ok(None);
         };
-        if projection.source_snapshot
-            != crate::kernel::MemorySnapshotIdentity::of(entry_state.memory())
+        if projection.source_memory_state
+            != crate::kernel::MemoryStateIdentity::of(entry_state.memory())
             || !self.facts().contains_top_level(&projection.chosen_body)
         {
             return Ok(None);
@@ -3453,7 +3453,7 @@ impl<'a> Proof<'a> {
     /// either from a fixed-state proof's borrowed context or from a focused branch
     /// function-outcome goal on an execution proof. This is the goal-aware
     /// fixed-state view: outcome goals own their result, post-state, surface
-    /// lowerings, and effect facts, and borrow the frontier snapshot for the
+    /// lowerings, and effect facts, and borrow the frontier state for the
     /// remaining program-outcome proof data.
     pub(in crate::surface::proof) fn outcome_fixed_state_view(
         &self,
@@ -3463,7 +3463,7 @@ impl<'a> Proof<'a> {
 
     /// Fixed-state data for a proposition scope opened on an execution
     /// frontier before a function outcome exists. The nested goal borrows the
-    /// frontier snapshot solely for lowering and requirement selection;
+    /// frontier state solely for lowering and requirement selection;
     /// checked fixed-state steps can refine only that proposition and proof-local
     /// bindings.
     pub(in crate::surface::proof) fn execution_fixed_state_view(
@@ -3482,7 +3482,7 @@ impl<'a> Proof<'a> {
                 context.old_reference_state(&execution.core.frontier, &execution.core.state),
                 &execution.core.state,
                 None,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             ),
             surface_propositions: &execution.presentation.surface_propositions,
             spec_definitions: SpecDefinitions::new(
@@ -3771,7 +3771,7 @@ impl<'a> Proof<'a> {
                 context.old_reference_state(&execution.core.frontier, &execution.core.state),
                 &data.core.state,
                 Some(data.core.result.as_ref()),
-                &data.recorded_snapshots,
+                &data.recorded_states,
             ),
             surface_propositions: &data.surface_propositions,
             spec_definitions: SpecDefinitions::new(
@@ -4140,7 +4140,7 @@ impl<'a> Proof<'a> {
                 &pre_state,
                 &execution.core.state,
                 None,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             ),
             &execution.presentation.surface_propositions,
             context.spec_definitions,
@@ -4310,7 +4310,7 @@ mod outcome_case_tests {
                     case_obligations: PersistentMap::default(),
                     checked_haves: PersistentMap::default(),
                     surface_propositions: SurfacePropositionMap::default(),
-                    recorded_snapshots: RecordedSnapshots::default(),
+                    recorded_states: RecordedStates::default(),
                     generated_load_bindings: PersistentMap::default(),
                 },
                 &|condition, _, _| {

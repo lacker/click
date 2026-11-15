@@ -5341,7 +5341,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
                 proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
                 &execution.core.state,
                 None,
-                &execution.presentation.recorded_snapshots,
+                &execution.presentation.recorded_states,
             ),
             SpecDefinitions::new(predicate_environment, click_function_environment),
         ) {
@@ -5402,7 +5402,7 @@ pub(in crate::surface::proof) fn introduce_proof_case_assumption(
             proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
             &execution.core.state,
             None,
-            &execution.presentation.recorded_snapshots,
+            &execution.presentation.recorded_states,
         ),
         SpecDefinitions::new(predicate_environment, click_function_environment),
     )

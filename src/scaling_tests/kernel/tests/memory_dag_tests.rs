@@ -422,7 +422,7 @@ fn read_identity_production_is_linear_and_endpoint_queries_do_not_walk_history()
 }
 
 #[test]
-fn named_snapshot_alias_equality_does_not_depend_on_sibling_observation_origins() {
+fn named_state_alias_equality_does_not_depend_on_sibling_observation_origins() {
     let mut samples = Vec::new();
     for unrelated in [16, 64, 256] {
         let _session = crate::kernel::VerificationSession::enter();
@@ -465,7 +465,7 @@ fn named_snapshot_alias_equality_does_not_depend_on_sibling_observation_origins(
             ));
             let witnesses = capture.finish();
             let [witness] = witnesses.as_slice() else {
-                panic!("expected one named-snapshot alias witness");
+                panic!("expected one named-state alias witness");
             };
             assert!(witness.checks(&assumptions));
             witness.clone()
@@ -475,9 +475,10 @@ fn named_snapshot_alias_equality_does_not_depend_on_sibling_observation_origins(
             let partial = PureFactContext::new().assume_condition(remaining, true);
             assert!(!witness.checks(&partial));
         }
-        // The witness names the exact snapshot, address, and read kind.
-        let changed =
-            crate::kernel::intern_memory(Memory::new().with_block("local:different-snapshot", 4));
+        // The witness names the exact state, address, and read kind.
+        let changed = crate::kernel::intern_memory(
+            Memory::new().with_block("local:different-retained_state", 4),
+        );
         for retargeted in [
             MachineTerm::MemoryLoad(changed, Box::new(right.clone()), LoadKind::Int32),
             MachineTerm::MemoryLoad(
@@ -1321,16 +1322,16 @@ fn an_unrelated_view_does_not_walk_pointer_read_history() {
                 ProgramValue::Int32(index.into()),
             );
         }
-        let snapshot = crate::kernel::intern_memory_ref(&memory);
+        let retained_state = crate::kernel::intern_memory_ref(&memory);
         let variable = crate::kernel::load_variable_for_cell_with_origin(
-            &snapshot,
+            &retained_state,
             &field,
             LoadKind::Int32,
             C_POINTER_BYTE_WIDTH,
-            &snapshot,
+            &retained_state,
         );
         let pointer = Pointer::loaded(&MachineTerm::Variable(variable)).unwrap();
-        context.register_pointer_read(&pointer, &snapshot, &field);
+        context.register_pointer_read(&pointer, &retained_state, &field);
         let ranges = ResourceContext::new_with_equalities(&context)
             .unchecked_with_fact(ResourceFact::view_memory(memory_range(field, 0, 2)));
         let (found, work) = crate::instrumentation::measure_deterministic_work(|| {

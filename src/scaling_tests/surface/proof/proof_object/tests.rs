@@ -30,9 +30,9 @@ fn a_missing_premise_spelling_walks_recorded_history_only_once() {
     let facts = [missing.clone(), named.clone()];
     let surfaces = SurfacePropositionMap::default();
     for size in [4usize, 16, 64] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -50,7 +50,7 @@ fn a_missing_premise_spelling_walks_recorded_history_only_once() {
             &facts,
             Proposition::ConditionIs(ConditionTerm::Constant(true), true),
             ParameterBinding::default(),
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -73,7 +73,7 @@ fn a_missing_premise_spelling_walks_recorded_history_only_once() {
             .filter(|event| {
                 matches!(event,
                     crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                        if name == "solve premise surface at recorded snapshots"
+                        if name == "solve premise surface at recorded states"
                 )
             })
             .count();
@@ -99,7 +99,7 @@ fn a_missing_premise_spelling_walks_recorded_history_only_once() {
 
 fn same_block_offset_rewrite_work(
     pointer_history: usize,
-    snapshot_count: usize,
+    state_count: usize,
     from_cursor: bool,
 ) -> usize {
     let predicates = PredicateEnvironment::new(&[]);
@@ -200,7 +200,7 @@ fn same_block_offset_rewrite_work(
         &surface,
         &PureFactContext::new(),
         ParameterBinding::default(),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicates, &functions),
     )
     .unwrap();
@@ -234,7 +234,7 @@ fn same_block_offset_rewrite_work(
                 &relation_surface,
                 &assumptions_from_propositions(&facts),
                 ParameterBinding::default(),
-                FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+                FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
                 SpecDefinitions::new(&predicates, &functions),
             )
             .unwrap(),
@@ -245,9 +245,9 @@ fn same_block_offset_rewrite_work(
             .unwrap();
         facts.insert(0, relation);
     }
-    let mut snapshots = RecordedSnapshots::new();
-    for i in 0..snapshot_count {
-        snapshots.insert(
+    let mut retained_states = RecordedStates::new();
+    for i in 0..state_count {
+        retained_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Region(i),
                 kind: ProgramPointKind::Entry,
@@ -256,7 +256,7 @@ fn same_block_offset_rewrite_work(
         );
     }
     let anchor = ProgramPointRef {
-        region: CodeRegionRef::Region(snapshot_count - 1),
+        region: CodeRegionRef::Region(state_count - 1),
         kind: ProgramPointKind::Entry,
     };
     let root = Proof::for_fixed_state_goal_with_requirements(
@@ -268,7 +268,7 @@ fn same_block_offset_rewrite_work(
             true,
         ),
         ParameterBinding::default(),
-        FixedStateFrame::new(&entry, &state, None, &snapshots),
+        FixedStateFrame::new(&entry, &state, None, &retained_states),
         Some(&anchor),
         &surfaces,
         SpecDefinitions::new(&predicates, &functions),
@@ -307,7 +307,7 @@ fn same_block_pointer_offset_rewrite_ignores_other_pointers_at_the_base() {
 }
 
 #[test]
-fn same_block_pointer_offset_rewrite_does_not_search_recorded_snapshots() {
+fn same_block_pointer_offset_rewrite_does_not_search_recorded_states() {
     let costs = [4, 8, 16, 32].map(|size| same_block_offset_rewrite_work(4, size, true));
     assert!(
         costs[0] > 0 && costs.iter().all(|cost| *cost <= costs[0] + 64),
@@ -403,7 +403,7 @@ fn loop_entry_solve_keeps_checked_unspellable_assumptions_and_scales() {
     let state = ExecutionState::new();
     let result = int32(0);
     let arguments = vec![ProgramExpression::Value(result.clone())];
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -443,7 +443,7 @@ fn loop_entry_solve_keeps_checked_unspellable_assumptions_and_scales() {
             0,
             &facts,
             ParameterBinding::new(parsed.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, Some(&result), &snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &retained_states),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -477,7 +477,7 @@ fn loop_entry_solve_keeps_checked_unspellable_assumptions_and_scales() {
             0,
             &facts[..facts.len() - 1],
             ParameterBinding::new(parsed.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, Some(&result), &snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &retained_states),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -573,7 +573,7 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
             parsed_function.parameters(),
             std::slice::from_ref(&source),
             &entry_origins,
-            crate::kernel::MemorySnapshotIdentity::of(state.memory()),
+            crate::kernel::MemoryStateIdentity::of(state.memory()),
         );
         let before = fact_node_allocations();
         let root = Proof::for_execution_frontier(
@@ -582,7 +582,7 @@ fn choose_projection_walk_is_deterministic_across_selected_body_sizes() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -734,7 +734,7 @@ fn explicit_loop_have_retains_checked_body_and_complete_invariant_bundle() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -858,7 +858,7 @@ fn explicit_invariant_body_scales_and_supplies_kernel_validation() {
                     position: FrontierPosition::RegionBoundary,
                     ..Default::default()
                 },
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -990,7 +990,7 @@ fn cursor_execution_load_binding_work_is_deterministic_and_output_sized() {
                     next_statement_index: 0,
                     ..ExecutionFrontier::default()
                 },
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -1168,7 +1168,7 @@ fn integer_equality_rewrite_builds_names_only_on_refusal_and_scales() {
 }
 
 #[test]
-fn snapshot_premise_synthesis_seeks_near_anchor_without_scanning_history() {
+fn state_premise_synthesis_seeks_near_anchor_without_scanning_history() {
     let parameters = syntax::parse_function("int32 noop(int32 x) { return x; }").unwrap();
     let value = MachineTerm::Variable(Variable(8_178_901));
     let arguments = vec![ProgramExpression::Value(ProgramValue::Int32(value.clone()))];
@@ -1187,9 +1187,9 @@ fn snapshot_premise_synthesis_seeks_near_anchor_without_scanning_history() {
         kind: ProgramPointKind::Entry,
     };
     for size in [16usize, 64, 256, 1024, 4096] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -1198,31 +1198,31 @@ fn snapshot_premise_synthesis_seeks_near_anchor_without_scanning_history() {
             );
         }
         let (surface, work) = crate::instrumentation::measure_deterministic_work(|| {
-            super::super::super::smart_closures::synthesize_surface_at_recorded_snapshots(
+            super::super::super::smart_closures::synthesize_surface_at_recorded_states(
                 &kernel,
                 parameter_binding,
-                &snapshots,
+                &retained_states,
                 &anchor,
             )
             .next()
         });
-        let surface = surface.expect("the nearest snapshot should name the parameter");
+        let surface = surface.expect("the nearest state should name the parameter");
         assert!(proposition_contains_at_expression(&surface));
         let state = ExecutionState::new();
         let lowered = lower_fixed_state_proposition_with_assumptions(
             &surface,
             &PureFactContext::new(),
             parameter_binding,
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             SpecDefinitions::new(
                 &PredicateEnvironment::new(&[]),
                 &ClickFunctionEnvironment::new(&[]),
             ),
         )
-        .expect("the candidate must lower against the selected snapshot");
+        .expect("the candidate must lower against the selected state");
         assert_eq!(
             lowered, kernel,
-            "snapshot spelling must preserve the exact premise"
+            "state spelling must preserve the exact premise"
         );
         let height = usize::BITS - size.leading_zeros();
         assert!(
@@ -1231,10 +1231,10 @@ fn snapshot_premise_synthesis_seeks_near_anchor_without_scanning_history() {
         );
         crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
             assert!(
-                super::super::super::smart_closures::synthesize_surface_at_recorded_snapshots(
+                super::super::super::smart_closures::synthesize_surface_at_recorded_states(
                     &kernel,
                     parameter_binding,
-                    &snapshots,
+                    &retained_states,
                     &anchor
                 )
                 .next()
@@ -1245,7 +1245,7 @@ fn snapshot_premise_synthesis_seeks_near_anchor_without_scanning_history() {
 }
 
 #[test]
-fn missing_snapshot_premise_spelling_has_bounded_history_search() {
+fn missing_state_premise_spelling_has_bounded_history_search() {
     let parameters = syntax::parse_function("int32 noop() { return 0; }").unwrap();
     // No state or parameter names this symbolic value. Every synthesis probe
     // misses, exercising the exhaustive-history fallback rather than the
@@ -1260,9 +1260,9 @@ fn missing_snapshot_premise_spelling_has_bounded_history_search() {
         true,
     );
     for size in [16usize, 64, 256, 1024, 4096] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -1276,10 +1276,10 @@ fn missing_snapshot_premise_spelling_has_bounded_history_search() {
         };
         let (count, work) = crate::instrumentation::measure_deterministic_work(|| {
             let mut candidates =
-                super::super::super::smart_closures::synthesize_surface_at_recorded_snapshots(
+                super::super::super::smart_closures::synthesize_surface_at_recorded_states(
                     &kernel,
                     ParameterBinding::new(parameters.parameters(), &[]),
-                    &snapshots,
+                    &retained_states,
                     &anchor,
                 );
             let count = candidates.by_ref().count();
@@ -1296,7 +1296,7 @@ fn missing_snapshot_premise_spelling_has_bounded_history_search() {
 }
 
 #[test]
-fn snapshot_premise_candidates_stop_on_deterministic_work_exhaustion() {
+fn state_premise_candidates_stop_on_deterministic_work_exhaustion() {
     use crate::instrumentation::{TacticEvent, TacticWorkLimits, VerificationEvent};
     let parameters = syntax::parse_function("int32 noop(int32 x) { return x; }").unwrap();
     let value = MachineTerm::Variable(Variable(8_178_902));
@@ -1315,9 +1315,9 @@ fn snapshot_premise_candidates_stop_on_deterministic_work_exhaustion() {
         kind: ProgramPointKind::Entry,
     };
     for size in [16usize, 64, 256, 1024, 4096] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -1325,7 +1325,7 @@ fn snapshot_premise_candidates_stop_on_deterministic_work_exhaustion() {
                 ExecutionState::new(),
             );
         }
-        // Exhaust before the independent snapshot-candidate search cap. A
+        // Exhaust before the independent state-candidate search cap. A
         // normal bounded search miss need not consume the tactic budget.
         let limit = 8;
         let ((candidates, work), events) = crate::instrumentation::with_tactic_work_limits(
@@ -1338,7 +1338,7 @@ fn snapshot_premise_candidates_stop_on_deterministic_work_exhaustion() {
                 crate::instrumentation::collect(|| {
                     let tactic = TacticEvent {
                         source_tactic_path: None,
-                        claim: "snapshot budget".into(),
+                        claim: "state budget".into(),
                         tactic_index: 0,
                         tactic_name: "solve".into(),
                         class: "smart".into(),
@@ -1348,10 +1348,10 @@ fn snapshot_premise_candidates_stop_on_deterministic_work_exhaustion() {
                     crate::instrumentation::emit(VerificationEvent::TacticStarted(tactic.clone()));
                     let measured = crate::instrumentation::measure_deterministic_work(|| {
                         let mut candidates =
-                            super::super::super::smart_closures::synthesize_surface_at_recorded_snapshots(
+                            super::super::super::smart_closures::synthesize_surface_at_recorded_states(
                                 &kernel,
                                 ParameterBinding::new(parameters.parameters(), &arguments),
-                                &snapshots,
+                                &retained_states,
                                 &anchor,
                             );
                         let count = candidates.by_ref().count();
@@ -1546,7 +1546,7 @@ fn loop_entry_wide_extent_guard_retains_its_own_source_and_scales() {
             ProgramValue::typed_pointer(pointer.clone(), ProgramType::UInt8Pointer),
         )
         .with_local("len", ProgramValue::UInt64(original));
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -1565,7 +1565,7 @@ fn loop_entry_wide_extent_guard_retains_its_own_source_and_scales() {
             0,
             &facts,
             ParameterBinding::new(parsed.parameters(), &arguments),
-            FixedStateFrame::new(&entry, &state, None, &snapshots),
+            FixedStateFrame::new(&entry, &state, None, &retained_states),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -1614,7 +1614,7 @@ fn completed_goal_retention_validates_current_source_after_stale_recording() {
         )),
     };
     let entry = ExecutionState::new().with_local("len", ProgramValue::UInt64(entry_len));
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let mut surfaces = SurfacePropositionMap::default();
     surfaces.record_lowering(&surface, &old_goal).unwrap();
     let mut work = Vec::new();
@@ -1635,7 +1635,7 @@ fn completed_goal_retention_validates_current_source_after_stale_recording() {
             ParameterBinding::default(),
             &entry,
             &state,
-            &snapshots,
+            &retained_states,
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -1663,7 +1663,7 @@ fn completed_goal_retention_validates_current_source_after_stale_recording() {
             ParameterBinding::default(),
             &entry,
             &state,
-            &snapshots,
+            &retained_states,
             &empty_surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -1729,9 +1729,9 @@ fn indexed_rewrite_does_not_spell_registered_read_definitions() {
             .with_memory(memory.memory().clone())
             .with_local("first", ProgramValue::Int32(reads[0].clone()))
             .with_local("second", ProgramValue::Int32(reads[1].clone()));
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..8 {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -1765,7 +1765,7 @@ fn indexed_rewrite_does_not_spell_registered_read_definitions() {
             &facts,
             goal,
             ParameterBinding::default(),
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -1788,12 +1788,12 @@ fn indexed_rewrite_does_not_spell_registered_read_definitions() {
             .filter(|event| {
                 matches!(event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if *name == "solve premise surface at recorded snapshots")
+                if *name == "solve premise surface at recorded states")
             })
             .count();
         assert_eq!(
             history_queries, 0,
-            "registered definitions triggered snapshot spelling at size {size}"
+            "registered definitions triggered state spelling at size {size}"
         );
         assert!(facts.iter().all(|fact| root.facts().contains(fact)));
         let alias = Proposition::ConditionIs(
@@ -1818,7 +1818,7 @@ fn indexed_rewrite_does_not_spell_registered_read_definitions() {
                 premises,
                 alias.clone(),
                 ParameterBinding::default(),
-                FixedStateFrame::new(&state, &state, None, &snapshots),
+                FixedStateFrame::new(&state, &state, None, &retained_states),
                 Some(&anchor),
                 &alias_surfaces,
                 SpecDefinitions::new(&predicates, &functions),
@@ -1842,7 +1842,7 @@ fn indexed_rewrite_does_not_spell_registered_read_definitions() {
 }
 
 #[test]
-fn current_scalar_premise_spelling_ignores_unrelated_recorded_snapshots() {
+fn current_scalar_premise_spelling_ignores_unrelated_recorded_states() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
@@ -1867,9 +1867,9 @@ fn current_scalar_premise_spelling_ignores_unrelated_recorded_snapshots() {
     let surfaces = SurfacePropositionMap::default();
     let mut samples = Vec::new();
     for size in [16usize, 64, 256] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -1887,7 +1887,7 @@ fn current_scalar_premise_spelling_ignores_unrelated_recorded_snapshots() {
             &facts,
             Proposition::ConditionIs(ConditionTerm::Constant(true), true),
             ParameterBinding::default(),
-            FixedStateFrame::new(&entry, &state, None, &snapshots),
+            FixedStateFrame::new(&entry, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -1934,12 +1934,12 @@ fn current_scalar_premise_spelling_ignores_unrelated_recorded_snapshots() {
     }
     assert!(
         samples.iter().all(|work| *work <= samples[0] + 64),
-        "current premise spelling searched unrelated snapshots: {samples:?}"
+        "current premise spelling searched unrelated states: {samples:?}"
     );
 }
 
 #[test]
-fn mixed_entry_and_current_premise_spelling_ignores_unrelated_snapshots() {
+fn mixed_entry_and_current_premise_spelling_ignores_unrelated_states() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
@@ -1976,9 +1976,9 @@ fn mixed_entry_and_current_premise_spelling_ignores_unrelated_snapshots() {
     let surfaces = SurfacePropositionMap::default();
     let mut samples = Vec::new();
     for size in [16usize, 64, 256] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -1994,7 +1994,7 @@ fn mixed_entry_and_current_premise_spelling_ignores_unrelated_snapshots() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::default(),
-            FixedStateFrame::new(&entry, &state, None, &snapshots),
+            FixedStateFrame::new(&entry, &state, None, &retained_states),
             SpecDefinitions::new(&predicates, &functions),
         )
         .unwrap();
@@ -2005,7 +2005,7 @@ fn mixed_entry_and_current_premise_spelling_ignores_unrelated_snapshots() {
             &facts,
             Proposition::ConditionIs(ConditionTerm::Constant(true), true),
             ParameterBinding::default(),
-            FixedStateFrame::new(&entry, &state, None, &snapshots),
+            FixedStateFrame::new(&entry, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -2154,9 +2154,9 @@ fn indexed_rewrite_does_not_search_history_for_unrecorded_store_facts() {
             .with_memory(memory.clone())
             .with_local("first", ProgramValue::Int32(reads[0].clone()))
             .with_local("second", ProgramValue::Int32(reads[1].clone()));
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..8 {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -2190,7 +2190,7 @@ fn indexed_rewrite_does_not_search_history_for_unrecorded_store_facts() {
             &facts,
             goal,
             ParameterBinding::default(),
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -2213,12 +2213,12 @@ fn indexed_rewrite_does_not_search_history_for_unrecorded_store_facts() {
             .filter(|event| {
                 matches!(event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if *name == "solve premise surface at recorded snapshots")
+                if *name == "solve premise surface at recorded states")
             })
             .count();
         assert_eq!(
             history_queries, 0,
-            "unrecorded store facts triggered snapshot spelling at size {size}"
+            "unrecorded store facts triggered state spelling at size {size}"
         );
         assert!(facts.iter().all(|fact| root.facts().contains(fact)));
         let (spelled, direct_events) = crate::instrumentation::collect(|| {
@@ -2236,8 +2236,8 @@ fn indexed_rewrite_does_not_search_history_for_unrecorded_store_facts() {
         assert!(
             direct_events.iter().all(|event| !matches!(event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if *name == "solve premise surface at recorded snapshots"
-                        || *name == "solve premise surface across recorded snapshots"
+                    if *name == "solve premise surface at recorded states"
+                        || *name == "solve premise surface across recorded states"
             )),
             "direct premise resolution searched unrelated history"
         );
@@ -2267,7 +2267,7 @@ fn indexed_rewrite_does_not_search_history_for_unrecorded_store_facts() {
             &facts,
             facts[0].clone(),
             ParameterBinding::default(),
-            FixedStateFrame::new(&recorded_state, &recorded_state, None, &snapshots),
+            FixedStateFrame::new(&recorded_state, &recorded_state, None, &retained_states),
             Some(&anchor),
             &recorded_surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -2309,7 +2309,7 @@ fn indexed_rewrite_does_not_search_history_for_unrecorded_store_facts() {
                 premises,
                 alias.clone(),
                 ParameterBinding::default(),
-                FixedStateFrame::new(&state, &state, None, &snapshots),
+                FixedStateFrame::new(&state, &state, None, &retained_states),
                 Some(&anchor),
                 &alias_surfaces,
                 SpecDefinitions::new(&predicates, &functions),
@@ -2505,7 +2505,7 @@ fn deferred_terminal_tactics_share_ambient_bindings_without_map_work() {
         let mut execution = ExecutionProofState::at_entry(
             ExecutionState::new(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         );
@@ -2598,7 +2598,7 @@ fn smart_goal_spelling_does_not_scan_ambient_facts_or_same_value_names() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let term = MachineTerm::Variable(Variable(8_199_901));
     let goal = Proposition::ConditionIs(
@@ -2630,7 +2630,7 @@ fn smart_goal_spelling_does_not_scan_ambient_facts_or_same_value_names() {
             ParameterBinding::default(),
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -2677,7 +2677,7 @@ fn exact_goal_solve_stops_at_known_as_related_and_unrelated_facts_grow() {
     let theorems = TheoremEnvironment::new(&[]);
     let variable = MachineTerm::Variable(Variable(8_180_000));
     let state = ExecutionState::new().with_local("x", ProgramValue::Int32(variable.clone()));
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let bound = |variable: MachineTerm, limit| {
         Proposition::ConditionIs(
@@ -2718,7 +2718,7 @@ fn exact_goal_solve_stops_at_known_as_related_and_unrelated_facts_grow() {
                 0,
                 &facts,
                 ParameterBinding::default(),
-                FixedStateFrame::new(&state, &state, None, &snapshots),
+                FixedStateFrame::new(&state, &state, None, &retained_states),
                 &surfaces,
                 SpecDefinitions::new(&predicates, &functions),
                 &theorems,
@@ -2757,7 +2757,7 @@ fn fixed_state_application_proves_premises_and_replays_explicitly() {
     let state = ExecutionState::new().with_local("x", value.clone());
     let arguments = vec![ProgramExpression::Value(value)];
     let binding = ParameterBinding::new(parsed.parameters(), &arguments);
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let premise = ClickProposition::Comparison {
         left: ContractExpression::Binding("x".into()),
         operator: ComparisonOperator::GreaterThan,
@@ -2773,7 +2773,7 @@ fn fixed_state_application_proves_premises_and_replays_explicitly() {
             p,
             &PureFactContext::new(),
             binding,
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             definitions,
         )
         .unwrap()
@@ -2798,7 +2798,7 @@ fn fixed_state_application_proves_premises_and_replays_explicitly() {
             binding,
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &forms,
             definitions,
             &theorems,
@@ -2835,7 +2835,7 @@ fn fixed_state_application_proves_premises_and_replays_explicitly() {
             binding,
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &forms,
             definitions,
             &theorems,
@@ -2888,7 +2888,7 @@ fn cold_theorem_application_ignores_declaration_proof_length() {
         let state = ExecutionState::new().with_local("x", value.clone());
         let arguments = vec![ProgramExpression::Value(value)];
         let binding = ParameterBinding::new(parsed.parameters(), &arguments);
-        let snapshots = RecordedSnapshots::new();
+        let retained_states = RecordedStates::new();
         let premise = ClickProposition::Comparison {
             left: ContractExpression::Binding("x".into()),
             operator: ComparisonOperator::Equal,
@@ -2898,7 +2898,7 @@ fn cold_theorem_application_ignores_declaration_proof_length() {
             &premise,
             &PureFactContext::new(),
             binding,
-            FixedStateFrame::new(&state, &state, None, &snapshots),
+            FixedStateFrame::new(&state, &state, None, &retained_states),
             definitions,
         )
         .unwrap();
@@ -2913,7 +2913,7 @@ fn cold_theorem_application_ignores_declaration_proof_length() {
             binding,
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &forms,
             definitions,
             &theorems,
@@ -2941,7 +2941,7 @@ fn cold_theorem_application_ignores_declaration_proof_length() {
 }
 
 #[test]
-fn retained_conditional_premise_spelling_does_not_search_snapshot_history() {
+fn retained_conditional_premise_spelling_does_not_search_state_history() {
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
@@ -2969,9 +2969,9 @@ fn retained_conditional_premise_spelling_does_not_search_snapshot_history() {
     let facts = [fact.clone()];
     let mut base = None;
     for size in [4usize, 16, 64] {
-        let mut snapshots = RecordedSnapshots::new();
+        let mut retained_states = RecordedStates::new();
         for index in 0..size {
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Entry,
@@ -2989,7 +2989,7 @@ fn retained_conditional_premise_spelling_does_not_search_snapshot_history() {
             &facts,
             Proposition::ConditionIs(ConditionTerm::Constant(true), true),
             ParameterBinding::default(),
-            FixedStateFrame::new(&entry, &state, None, &snapshots),
+            FixedStateFrame::new(&entry, &state, None, &retained_states),
             Some(&anchor),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
@@ -3027,8 +3027,8 @@ fn retained_conditional_premise_spelling_does_not_search_snapshot_history() {
         assert!(
             events.iter().all(|event| !matches!(event,
                 crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if *name == "solve premise surface at recorded snapshots"
-                        || *name == "solve premise surface across recorded snapshots"
+                    if *name == "solve premise surface at recorded states"
+                        || *name == "solve premise surface across recorded states"
             )),
             "size={size}: selected conditional spelling searched history"
         );

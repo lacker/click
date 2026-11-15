@@ -111,7 +111,7 @@ pub(super) fn set_contract_result(
             state.set_memory(
                 // A returned-by-value temporary is fresh caller storage. Its
                 // declaration must remain in the memory history so copying
-                // its fields does not disconnect unrelated input snapshots.
+                // its fields does not disconnect unrelated input states.
                 // A symbolic pointer still supplies only a synthetic layout.
                 if matches!(pointer.block, PointerBlock::Symbolic(_)) {
                     state
@@ -910,7 +910,7 @@ fn bind_program_function_arguments_impl(
                 register_aggregate_argument_source(&slot.block, &source);
                 source
             };
-            // Preserve the caller's memory snapshot for symbolic source
+            // Preserve the caller's memory state for symbolic source
             // loads. Declaring the destination first would make an unknown
             // external field load depend on the callee's fresh block and
             // prevent entry facts from relating it to the caller's value.

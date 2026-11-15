@@ -1123,7 +1123,7 @@ fn write_program_lvalue_paths_without_local_reference(
                 .source = store_source.clone();
             facts.push(store_fact);
             // The checked store establishes the complete pointer value at
-            // this exact snapshot. Retain its read equation so congruence
+            // this exact state. Retain its read equation so congruence
             // can use a different, proven-equal address spelling without
             // re-running store resolution at the subsequent read.
             if let ProgramValue::Pointer(stored) = &written_value {

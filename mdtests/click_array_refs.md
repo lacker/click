@@ -1,4 +1,4 @@
-# Click array refs preserve memory snapshots
+# Click array refs preserve memory states
 
 This checks that pure Click functions and predicates can receive arrays from
 different memory states. In particular, `old(p)` as an array argument should

@@ -4846,7 +4846,7 @@ impl Pointer {
     }
 
     /// Name an eight-byte pointer read as a typed graph application. The
-    /// caller supplies the assumption-free defining snapshot and address.
+    /// caller supplies the assumption-free defining state and address.
     /// Access observations are retained separately from this identity.
     pub(crate) fn loaded_value(memory: &SharedMemory, address: &Pointer) -> Self {
         Self {
@@ -4954,7 +4954,7 @@ impl Pointer {
             }
             _ => None,
         };
-        // The selected snapshot can restore a checked loop-frame observation
+        // The selected state can restore a checked loop-frame observation
         // without changing its byte identity. Inspect its cache before stripping
         // observation edges; the byte source need not retain that knowledge.
         if let Some(read) = own_read(memory)

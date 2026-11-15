@@ -11,7 +11,7 @@ proves the four-lane helper bodies and the unchanged general computation.
 For every input length from any canonical initial state, `Adler32::compute`
 terminates, preserves input bytes, and stores both fields equal to the shared
 `uint64` checksum specification (`adler_spec_a_u64`/`adler_spec_b_u64` at
-`bytes.len()`) on the entry snapshot. The proof follows actual native remaining
+`bytes.len()`) on the entry state. The proof follows actual native remaining
 counts, `uint64` iterator cursors and shared input views through all original
 loops, reductions and final stores; no length bound is required. The unchanged
 `adler32_slice` entry point composes the checked constructor, general update
@@ -323,7 +323,7 @@ correctness induction over larger batches remains to be supplied.
 
 A false byte-order contract exposed expensive premise presentation: each
 attempt to name a scalar atom copied every memory-backed local value across
-historical snapshots. Scalar-name lookup now checks the recorded load address
+historical states. Scalar-name lookup now checks the recorded load address
 first. A smart proof producer may then search declared local slots for a
 checked alias, borrowing values and charging every inspected slot. Explicit
 certificate validation skips that search and uses the recorded load and memory
@@ -339,7 +339,7 @@ over arbitrary batches have the terminating checksum proof described below.
 
 Integer equality evidence now works in either orientation for explicit theorem
 applications and fact transport, including observations of native values and
-entry snapshots. This repairs the proof interface used to connect the derived
+entry states. This repairs the proof interface used to connect the derived
 index to iterator transitions; it adds no new loop invariant or checksum claim.
 
 
@@ -354,7 +354,7 @@ both constant getter bodies are verified in the same file.
 The proof checks the original scalar addition and modulo, lane recombination,
 ordered shared array iterations, final modulo results, and narrowing stores.
 For this input the recombined B lanes are `0`, `65521`, `131042`, `196563`;
-their sum is `393126 = 6 * MOD`, which reduces to zero. Snapshot equations and
+their sum is `393126 = 6 * MOD`, which reduces to zero. MemoryState equations and
 explicit rewrites retain the actual operand values. The proof names a few
 adapter capture locals to cite original call results directly; it introduces
 no source variables, processed counter, assumed loop invariant, or proof hole.
@@ -377,7 +377,7 @@ original modulo form: `a = (1 + byte) % MOD` and
 `b = (6 * MOD + 1 + byte) % MOD`. For a byte in `0..=255`, these are the
 single-byte checksum values `a = b = 1 + byte`.
 The contract also proves that both fields equal the
-[shared specification](../adler32-spec.click) on the entry byte snapshot.
+[shared specification](../adler32-spec.click) on the entry byte state.
 Checked unsigned remainder bridges and signed-witness congruence remove the
 `6 * MOD` offset. This focused connection covers one byte from the constructor state; the
 general contract below covers all supported lengths and canonical seeds.
@@ -401,7 +401,7 @@ The four-byte B-lane normalization selects the checked modular-call equation
 and divisor equality together. A rewrite of the current read can also replace
 a historical read of the same value, introducing a second remainder that the
 divisor equality alone cannot remove. The
-[reduced snapshot fixture](../../../../mdtests/remainder_normalization_with_aliased_snapshot_reads.md)
+[reduced state fixture](../../../../mdtests/remainder_normalization_with_aliased_state_reads.md)
 keeps this case small. The later subtraction bound uses explicit unsigned
 transitivity before converting the subtraction to Integer arithmetic. These
 proof repairs retain the Rust source, contracts, and work budgets; nightly
@@ -556,7 +556,7 @@ cargo nextest run --profile nightly --test rust_import --run-ignored only \
 [public-general.click](public-general.click) composes the unchanged
 `Adler32::write_slice` and `adler32_slice` bodies with the general computation
 contract, constructor and shared checksum getter. Every length returns the
-common packed checksum on the entry input snapshot from A = 1, B = 0, stated
+common packed checksum on the entry input state from A = 1, B = 0, stated
 over the `uint64` specification at the slice's own length:
 `adler_spec_checksum_u64(data, data.len(), 1, 0)`. `write_slice` also proves
 both field specifications (`adler_spec_a_u64`/`adler_spec_b_u64` at
@@ -585,7 +585,7 @@ cargo nextest run --profile nightly --test rust_import --run-ignored only \
 `Adler32::write_slice`, the original computation, and `Adler32::checksum` at
 `adler32_slice`. For every input length from zero through four, with arbitrary byte values, the returned
 word's Integer observation equals `adler_spec_checksum_u64` at the constant
-`uint64` length on the entry byte snapshot, with initial A = 1 and B = 0; each
+`uint64` length on the entry byte state, with initial A = 1 and B = 0; each
 `write_slice` applies the bridge at its constant to the computation's int32
 field results. Every input byte is preserved.
 The empty public call also verifies without an input-byte view; it dereferences
@@ -712,7 +712,7 @@ loop exit establishes both residues for the completed four-byte prefix.
 A is also transported through the original lane reductions and four scalar
 lane additions, establishing its prefix residue before the tail. The proof
 uses the helper's native remainder equations and checked uint32 observations
-to connect the entry lane snapshot to the reduced values. The original B seed
+to connect the entry lane state to the reduced values. The original B seed
 product and addition now prove the exact deferred `b + prefix_length*a` value,
 including preservation of the native length cast. B also passes through the
 scalar and lane reductions, all three ordered lane corrections and the four
@@ -727,10 +727,10 @@ its residue, and B includes the newly updated A value. Definedness bounds,
 byte casts and native assignment observations are explicit checked steps.
 The scalar-loop exit establishes the full-input residues. Explicit byte-equality
 invariants preserve the entry input through both loops, and checked sum
-extensionality connects the current specification to the entry snapshot before
+extensionality connects the current specification to the entry state before
 either receiver field is stored. Native remainder equations and bounded
 16-bit cast certificates establish both final field postconditions against
-that fixed snapshot. No checksum result is assumed. Nightly mutations reject
+that fixed state. No checksum result is assumed. Nightly mutations reject
 false final A and B checksum claims, a duplicated lane
 byte in the A transition, a changed completed-prefix A seed, an incorrect B
 byte weight, an omitted B seed contribution, a duplicated A lane during scalar
@@ -797,7 +797,7 @@ remaining count determines the local position, and its cursor invariant
 retains both the local signed and the full-width address observations. An
 explicit constructor-entry mark uses the helper's checked Integer
 postconditions; byte preservation transports those observations to the
-vector-addition snapshot. [remainder-prefix.click](remainder-prefix.click)'s
+vector-addition state. [remainder-prefix.click](remainder-prefix.click)'s
 endpoint lemmas check the Integer consumed-byte observation at initialization
 and actual exhaustion.
 Shared borrowing retains checked
@@ -823,7 +823,7 @@ advances the global prefix; each original reduction preserves its residue.
 The B seed remains the entry receiver value as Rust updates the working scalar
 B between batches. At outer-loop exhaustion the retained scalars and four-lane
 state represent the specified A and B for the complete full-batch prefix.
-Both loops retain equality of the input bytes with the entry snapshot. The
+Both loops retain equality of the input bytes with the entry state. The
 independent A transition lemmas in [vector-prefix.click](vector-prefix.click)
 are reused by the joint A/B lemmas.
 The B proof observes the batch-local position from the stored inner remainder
@@ -845,7 +845,7 @@ those residues. The original scalar tail carries both scalar residues against th
 `uint64` `length - remaining` prefix; the actual post-`Next` byte is read at the
 cursor `length - remaining - 1`. B uses the newly updated A value.
 Actual exhaustion establishes the complete-input residues; byte extensionality
-transports them to the entry snapshot, and checked final reductions and 16-bit
+transports them to the entry state, and checked final reductions and 16-bit
 stores establish both receiver-field postconditions. The native byte bridge
 verifies, expands and reverifies; false final A and B specifications are rejected.
 

@@ -7,7 +7,7 @@ fn output(index: u32) -> ResourceSpec {
         crate::kernel::program_expression::int32_literal(index + 1),
     ))
     .with_role(ResourceTransferRole::Produce)
-    .with_snapshot(ResourceSnapshot::Post)
+    .with_state_source(ResourceStateSource::Post)
 }
 
 fn state(count: u32) -> ExecutionState {
@@ -38,7 +38,7 @@ fn output_supply_keeps_entry_and_guarded_clauses_out_of_post_reads() {
             vec![],
             vec![
                 output(0),
-                output(1).with_snapshot(ResourceSnapshot::Entry),
+                output(1).with_state_source(ResourceStateSource::Entry),
                 output(2).with_guard(guard.clone()),
                 ResourceSpec::owned_memory(
                     MemorySegment::new(
@@ -49,7 +49,7 @@ fn output_supply_keeps_entry_and_guarded_clauses_out_of_post_reads() {
                     .with_guard(guard),
                 )
                 .with_role(ResourceTransferRole::Produce)
-                .with_snapshot(ResourceSnapshot::Post),
+                .with_state_source(ResourceStateSource::Post),
             ],
         );
     let entry = state(4);

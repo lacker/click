@@ -533,9 +533,9 @@ fn mdtests() {
     let failures = limits::run_parallel(&paths, workers, |path| run_mdtest_in_thread(path));
     let census = instrumentation::take_artifact_reuse_rejection_census();
     let hidden_prerequisites = instrumentation::take_hidden_prerequisite_census();
-    // Which producers still end a step on a snapshot older than itself, so
+    // Which producers still end a step on a state older than itself, so
     // that the step is recorded on no history. A knowledge-losing forget
-    // cannot: its mark makes the result a node no earlier snapshot can be
+    // cannot: its mark makes the result a node no earlier state can be
     // (`Memory::mark_forgotten_from`). Anything else here is a producer
     // whose steps are invisible to every history-based rule, and this line
     // is how a corpus run names it.

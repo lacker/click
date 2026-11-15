@@ -1056,9 +1056,9 @@ pub(super) fn copy_aggregate_fields(
                 memory = copied;
                 continue;
             }
-            // Forgotten initialized values stay an immutable typed snapshot,
+            // Forgotten initialized values stay an immutable typed state,
             // without generating one load for each element of the field.
-            if let Ok(copied) = memory.clone().write_scalar_array_snapshot(
+            if let Ok(copied) = memory.clone().write_scalar_array_state(
                 &target_field,
                 ProgramType::UInt32,
                 count,

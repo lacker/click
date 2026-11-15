@@ -8,6 +8,15 @@ description: Place a proposed verifier change in the fast part or the slow part 
 The rules are in `docs/internals/verifier-design.md`. Read it first. This
 skill is the procedure for applying them.
 
+Use **program point** for the location passed to `at`, **version point**
+for a read's identity selected by the assumption-free memory walk, and
+**recorded symbolic state** for an `ExecutionState` retained on a proof path.
+A `Memory` or `SharedMemory` value is a **memory state**, which can contain
+partial or abstract information. See the vocabulary in
+`docs/concepts/memory-model.md`.
+Externally defined API symbols and opaque import-profile identifiers retain
+their exact upstream spelling; do not rewrite frozen compiler artifacts.
+
 ## 1. Name the part
 
 Find the part the change touches in the table in "The parts". Use the
@@ -28,7 +37,7 @@ proof needs it on every step, and say why.
 For a fast-part change, name for each read:
 
 - the index it reads, and the key built from the operation's input;
-- why no collection that grows with the program, path, facts, snapshots, or
+- why no collection that grows with the program, path, facts, states, or
   resources is scanned, including facts related to the input;
 - the scaling test: work at several sizes as unrelated input grows, and as
   related input grows (a longer chain, a larger class, more stores between
@@ -98,17 +107,17 @@ the query; other spellings belong behind `SearchPermission`. Grow both affine
 classes and same-block alias stars in tests, including misses and displaced
 accesses beside unrelated views.
 Condition queries use indexed truth or singleton shape/variable buckets, never
-scalar-class enumeration. Read-validity sources retain their type and snapshot
+scalar-class enumeration. Read-validity sources retain their type and state
 checks; alternate-source search requires planner permission. Kept-frame raw
 fallbacks use singleton base buckets, not whole-block scans or alias walks.
-Grow source snapshot buckets and unrelated retained ranges as well as aliases;
+Grow source state buckets and unrelated retained ranges as well as aliases;
 keep exact hits, stale-memory refusals and expansion-without-search coverage.
 Order/overflow helpers use maintained direct extrema and strict-bound witnesses;
 do not restore condition-side scans or symbolic order-component walks in
 interval checking. Require explicit intermediate bounds for longer chains.
 Constant equality evidence selects extrema or singleton symbolic sources;
 anchored memory equality selects singleton endpoint sources, retaining the
-existing snapshot checks. Contiguous exclusion runs are maintained at admission,
+existing state checks. Contiguous exclusion runs are maintained at admission,
 not traversed at query time. Grow equality stars, symbolic order chains and
 branches, and excluded-value runs, including hits, misses and branch isolation. Prepared access returns one
 `SelectedMemoryAccess`, never a supplier iterator to resource checking. Failure
@@ -117,7 +126,7 @@ composition separate, and grow overlapping supplier buckets on refusal as well
 as success. Object-provenance lookup selects an indexed witness; it does not
 filter its object bucket. Designation/extent fallbacks use singleton direct
 aliases; framed pointer recovery requires a singleton full-pointer source.
-Grow same-address snapshot buckets and direct-alias stars, keeping exact class
+Grow same-address state buckets and direct-alias stars, keeping exact class
 hits and stale-read/extent refusals.
 Run the boundary regressions with `test(gate_tests::search_boundary::)` in the
 fast-gate binary. This enforcement does not replace deterministic scaling tests.

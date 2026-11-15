@@ -70,7 +70,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             return Ok(None);
         }
 
-        let surface_condition = surface_at_snapshot(
+        let surface_condition = surface_at_program_point(
             &c_surface,
             &ProgramPointRef {
                 region: CodeRegionRef::Region(statement_index),

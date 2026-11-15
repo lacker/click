@@ -1136,7 +1136,7 @@ fn thread_guarantees_are_withheld_until_join() {
                 })),
             &postcondition
         ),
-        "join must publish the worker's exact snapshot postcondition"
+        "join must publish the worker's exact state postcondition"
     );
 }
 

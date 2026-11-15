@@ -51,7 +51,7 @@ struct Node {
 }
 
 /// The greatest execution-range variable a fact's written syntax names, and
-/// whether that syntax names a snapshot.
+/// whether that syntax names a state.
 pub(in crate::kernel) type SyntaxCeiling = (Option<Variable>, bool);
 
 type Key = (u64, u32, usize, usize);
@@ -238,7 +238,7 @@ impl CanonicalFactSet {
     }
 
     /// The held facts' combined [`SyntaxCeiling`]: the greatest of their
-    /// variables, and whether any names a snapshot. Each node caches its
+    /// variables, and whether any names a state. Each node caches its
     /// subtree's answer, and interned nodes are shared by every context that
     /// holds them, so a context derived by one insertion computes only the
     /// nodes along that insertion's path rather than every held fact.
@@ -259,12 +259,12 @@ impl CanonicalFactSet {
             // Uncharged: a node fills its cache at most once, and every node
             // was made by an insertion that its context already paid for.
             *node.ceiling.get_or_init(|| {
-                let (variable, snapshot) = fact_ceiling(&node.fact);
-                let (left, left_snapshot) = subtree(&node.left, fact_ceiling);
-                let (right, right_snapshot) = subtree(&node.right, fact_ceiling);
+                let (variable, retained_state) = fact_ceiling(&node.fact);
+                let (left, left_state) = subtree(&node.left, fact_ceiling);
+                let (right, right_state) = subtree(&node.right, fact_ceiling);
                 (
                     variable.max(left).max(right),
-                    snapshot || left_snapshot || right_snapshot,
+                    retained_state || left_state || right_state,
                 )
             })
         }

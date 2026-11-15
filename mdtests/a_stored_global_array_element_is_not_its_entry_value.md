@@ -2,7 +2,7 @@
 
 A function's entry names every element of a global array it knows nothing
 about as one run of cells, whatever the array's length. The element a store
-writes is compared with its entry snapshot and differs from it: `old(buf[1])`
+writes is compared with its entry state and differs from it: `old(buf[1])`
 names the run's slot, and the final state holds the stored `7` there.
 
 ```c filename=a_stored_global_array_element_is_not_its_entry_value.c

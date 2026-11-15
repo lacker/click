@@ -1,7 +1,7 @@
 # Rewrite transports a 64-bit read inside a mask through a checked alias
 
 The cited mask equality is already known through the shared equality graph.
-Rewriting it into the goal must preserve its read kind and snapshot while
+Rewriting it into the goal must preserve its read kind and state while
 matching the pointer obtained from nested resources with the parameter alias.
 
 ```c filename=nested_model_read_alias.c

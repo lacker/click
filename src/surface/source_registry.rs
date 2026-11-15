@@ -68,7 +68,7 @@ pub(in crate::surface) struct CallerRequirementRecord {
     pub(in crate::surface) principal_fact_index: usize,
     pub(in crate::surface) principal_fact: Proposition,
     pub(in crate::surface) source_arguments: Vec<ContractExpression>,
-    pub(in crate::surface) entry_snapshot: crate::kernel::MemorySnapshotIdentity,
+    pub(in crate::surface) entry_memory_state: crate::kernel::MemoryStateIdentity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,16 +78,16 @@ pub(in crate::surface) struct CallerRequirementSelection {
     pub(in crate::surface) principal_fact: Proposition,
     pub(in crate::surface) source_proposition: ClickProposition,
     pub(in crate::surface) source_arguments: Vec<ContractExpression>,
-    pub(in crate::surface) entry_snapshot: crate::kernel::MemorySnapshotIdentity,
+    pub(in crate::surface) entry_memory_state: crate::kernel::MemoryStateIdentity,
 }
 
 /// The proof-local lookup table for direct caller predicate requirements.
 ///
 /// The table is deliberately separate from [`FunctionSourceRegistry`]: the
 /// latter owns file-scoped callee declarations, while this index owns the
-/// entry facts and snapshot of one proof.  Keys contain only the shallow
+/// entry facts and state of one proof.  Keys contain only the shallow
 /// shape needed to route a query.  The exact source arguments, fact, and
-/// snapshot stay in the bounded candidate records and are revalidated by the
+/// state stay in the bounded candidate records and are revalidated by the
 /// lookup.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub(in crate::surface) struct CallerRequirementIndex {
@@ -120,7 +120,7 @@ impl CallerRequirementIndex {
         parameters: &[crate::languages::interface::ImportedParameter],
         entry_facts: &[Proposition],
         entry_fact_origins: &[EntryFactOrigin],
-        entry_snapshot: crate::kernel::MemorySnapshotIdentity,
+        entry_memory_state: crate::kernel::MemoryStateIdentity,
     ) -> Self {
         Self::from_entry_facts_elaborated(
             owner,
@@ -128,7 +128,7 @@ impl CallerRequirementIndex {
             parameters,
             entry_facts,
             entry_fact_origins,
-            entry_snapshot,
+            entry_memory_state,
             None,
         )
     }
@@ -144,7 +144,7 @@ impl CallerRequirementIndex {
         parameters: &[crate::languages::interface::ImportedParameter],
         entry_facts: &[Proposition],
         entry_fact_origins: &[EntryFactOrigin],
-        entry_snapshot: crate::kernel::MemorySnapshotIdentity,
+        entry_memory_state: crate::kernel::MemoryStateIdentity,
         predicates: Option<&PredicateEnvironment>,
     ) -> Self {
         if entry_facts.len() != entry_fact_origins.len() {
@@ -218,7 +218,7 @@ impl CallerRequirementIndex {
                 principal_fact: principal_fact.clone(),
                 source_proposition: source_proposition.clone(),
                 source_arguments: source_arguments.clone(),
-                entry_snapshot,
+                entry_memory_state,
             };
             index
                 .by_source
@@ -252,7 +252,7 @@ impl CallerRequirementIndex {
                     principal_fact_index: *principal_fact_index,
                     principal_fact: principal_fact.clone(),
                     source_arguments: source_arguments.clone(),
-                    entry_snapshot,
+                    entry_memory_state,
                 };
                 index.insert(record);
             }
@@ -288,7 +288,7 @@ impl CallerRequirementIndex {
         predicate_argument_slot: usize,
         caller_parameter_slot: usize,
         source_arguments: &[ContractExpression],
-        expected_entry_snapshot: crate::kernel::MemorySnapshotIdentity,
+        expected_entry_state: crate::kernel::MemoryStateIdentity,
     ) -> Option<CallerRequirementSelection> {
         let key = CallerRequirementKey {
             predicate_name: predicate_name.to_string(),
@@ -302,7 +302,7 @@ impl CallerRequirementIndex {
         let mut matches = bucket.candidates.iter().filter(|candidate| {
             candidate.source_id.owner == *owner
                 && candidate.source_arguments == source_arguments
-                && candidate.entry_snapshot == expected_entry_snapshot
+                && candidate.entry_memory_state == expected_entry_state
         });
         let candidate = matches.next()?;
         // Two exact records are still ambiguous without an explicit source
@@ -316,7 +316,7 @@ impl CallerRequirementIndex {
             principal_fact: candidate.principal_fact.clone(),
             source_proposition: candidate.source_proposition.clone(),
             source_arguments: candidate.source_arguments.clone(),
-            entry_snapshot: candidate.entry_snapshot,
+            entry_memory_state: candidate.entry_memory_state,
         })
     }
 
@@ -642,8 +642,8 @@ mod tests {
         CallerSourceOwnerId::ordinary("test.c", "caller")
     }
 
-    fn snapshot() -> crate::kernel::MemorySnapshotIdentity {
-        crate::kernel::MemorySnapshotIdentity::of(&crate::kernel::Memory::new())
+    fn retained_state() -> crate::kernel::MemoryStateIdentity {
+        crate::kernel::MemoryStateIdentity::of(&crate::kernel::Memory::new())
     }
 
     fn direct_predicate(name: &str, parameter: &str) -> Requirement {
@@ -782,7 +782,7 @@ mod tests {
             &["p"],
         );
         let facts = principal_facts(5);
-        let snapshot_value = snapshot();
+        let recorded_value = retained_state();
         let origins = vec![
             EntryFactOrigin::Derived,
             EntryFactOrigin::Derived,
@@ -808,7 +808,7 @@ mod tests {
             )],
             &facts,
             &origins,
-            snapshot_value,
+            recorded_value,
         );
         let source_arguments = vec![ContractExpression::ProgramExpression(
             ProgramExpression::Variable("p".to_string()),
@@ -820,7 +820,7 @@ mod tests {
                 0,
                 0,
                 &source_arguments,
-                snapshot_value,
+                recorded_value,
             )
             .expect("the nonzero source ordinal must be indexed");
         assert_eq!(selected.source_id.outer_ordinal, 2);
@@ -846,7 +846,7 @@ mod tests {
     fn caller_index_scales_and_caps_candidate_validation() {
         let owner = owner();
         for count in [1, 8, 64, 512] {
-            let snapshot_value = snapshot();
+            let recorded_value = retained_state();
             let requires = (0..count)
                 .map(|index| direct_predicate(&format!("predicate_{index}"), "p"))
                 .collect::<Vec<_>>();
@@ -863,7 +863,7 @@ mod tests {
                 )],
                 &facts,
                 &origins,
-                snapshot_value,
+                recorded_value,
             );
             assert_eq!(index.bucket_count(), count);
             let source_arguments = vec![ContractExpression::ProgramExpression(
@@ -876,7 +876,7 @@ mod tests {
                     0,
                     0,
                     &source_arguments,
-                    snapshot_value,
+                    recorded_value,
                 )
                 .expect("unique direct requirement should be selectable");
             assert_eq!(selected.source_id.outer_ordinal, count - 1);
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn caller_index_rejects_duplicates_and_overfull_buckets() {
         let owner = owner();
-        let snapshot_value = snapshot();
+        let recorded_value = retained_state();
         let source_arguments = vec![ContractExpression::ProgramExpression(
             ProgramExpression::Variable("p".to_string()),
         )];
@@ -914,7 +914,7 @@ mod tests {
             )],
             &principal_facts(2),
             &entry_origins(&owner, 0..2),
-            snapshot_value,
+            recorded_value,
         );
         assert!(
             duplicate_index
@@ -924,7 +924,7 @@ mod tests {
                     0,
                     0,
                     &source_arguments,
-                    snapshot_value,
+                    recorded_value,
                 )
                 .is_none()
         );
@@ -958,7 +958,7 @@ mod tests {
                     },
                 },
             ],
-            snapshot_value,
+            recorded_value,
         );
         assert!(
             duplicate_source_index
@@ -983,7 +983,7 @@ mod tests {
             )],
             &principal_facts(9),
             &entry_origins(&owner, 0..9),
-            snapshot_value,
+            recorded_value,
         );
         let key = CallerRequirementKey {
             predicate_name: "readable".to_string(),
@@ -999,7 +999,7 @@ mod tests {
                     0,
                     0,
                     &source_arguments,
-                    snapshot_value,
+                    recorded_value,
                 )
                 .is_none()
         );
@@ -1008,7 +1008,7 @@ mod tests {
     #[test]
     fn caller_index_fails_closed_for_unsupported_or_stale_candidates() {
         let owner = owner();
-        let snapshot_value = snapshot();
+        let recorded_value = retained_state();
         let block = function_with_parameters(
             "caller",
             vec![
@@ -1045,7 +1045,7 @@ mod tests {
             )],
             &principal_facts(2),
             &entry_origins(&owner, 0..2),
-            snapshot_value,
+            recorded_value,
         );
         let source_arguments = vec![ContractExpression::ProgramExpression(
             ProgramExpression::Variable("p".to_string()),
@@ -1058,7 +1058,7 @@ mod tests {
                     0,
                     0,
                     &source_arguments,
-                    snapshot(),
+                    retained_state(),
                 )
                 .is_none()
         );
@@ -1075,7 +1075,7 @@ mod tests {
             )],
             &principal_facts(1),
             &entry_origins(&owner, [0]),
-            snapshot_value,
+            recorded_value,
         );
         assert!(
             valid_index
@@ -1085,7 +1085,7 @@ mod tests {
                     0,
                     0,
                     &source_arguments,
-                    crate::kernel::MemorySnapshotIdentity::of(
+                    crate::kernel::MemoryStateIdentity::of(
                         &crate::kernel::Memory::new().with_block("stale", 1),
                     ),
                 )

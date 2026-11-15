@@ -1,7 +1,7 @@
 # Resource-published pointer loads through a proved-equal model identity
 
 Unfolding owns one pointer cell and proves its parameter equal to the model
-identity. No C read, write, recursive resource, or snapshot transport is involved.
+identity. No C read, write, recursive resource, or state transport is involved.
 Address congruence must also give equality of the specification pointer loads.
 
 ```c filename=resource_pointer_load_alias.c

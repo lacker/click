@@ -264,9 +264,12 @@ pub(super) fn compares_observations(proposition: &ClickProposition) -> bool {
         if observed(left).is_some() && observed(right).is_some())
 }
 
-/// Read linear arithmetic in its named snapshot. Constants are independent
+/// Read linear arithmetic in its named state. Constants are independent
 /// of memory; each other operand retains the selector checked by lowering.
-fn at_operand(selector: &SnapshotSelector, expression: &ContractExpression) -> ContractExpression {
+fn at_operand(
+    selector: &ProgramPointSelector,
+    expression: &ContractExpression,
+) -> ContractExpression {
     match expression {
         ContractExpression::IntegerLiteral(_)
         | ContractExpression::ProgramExpression(ProgramExpression::Value(
@@ -323,8 +326,8 @@ fn order(lower: ContractExpression, upper: ContractExpression, strict: bool) -> 
 /// written as the Integer it is: the Integer certificate reads a premise as
 /// it is spelled, and `to_integer(2u64)` spelled out is an atom to it.
 pub(super) fn to_integer(expression: &ContractExpression) -> ContractExpression {
-    // A value read at a snapshot is observed there: `at(s, to_integer(i))`.
-    // A literal is the same at every snapshot.
+    // A value read at a state is observed there: `at(s, to_integer(i))`.
+    // A literal is the same at every state.
     if let ContractExpression::At {
         selector,
         expression,

@@ -36,7 +36,7 @@ removed, so it has to stay small.
 | Symbolic execution | Run statements, calls, and loops on a symbolic state | fast | `src/kernel/eval*`, `src/kernel/functions.rs`, `src/kernel/loops.rs`, `src/kernel/proof/execution.rs` |
 | Fact store | Hold the path's facts in persistent indexes, with the equality closure and the difference graph | fast | `PureFactContext` in `src/kernel/assumptions.rs`, `src/kernel/equality_graph*`, `src/kernel/difference_graph.rs` |
 | Condition decision | Decide one condition (order, overflow, equality, consistency) from the facts | fast | `PureFactContext::decide`, `src/kernel/assumptions/condition_reasoning/` |
-| Memory | Snapshots, the memory derivation DAG, and load and store resolution | fast | `src/kernel/primitives/cell_store.rs`, `src/kernel/reasoning/memory_resolution.rs`, `src/kernel/memory_provenance.rs` |
+| Memory | Memory states, the memory derivation DAG, and load and store resolution | fast | `src/kernel/primitives/cell_store.rs`, `src/kernel/reasoning/memory_resolution.rs`, `src/kernel/memory_provenance.rs` |
 | Resources | Ownership, views, loans, folds, and separation | fast | `src/kernel/primitives/resource_algebra.rs`, `src/kernel/resource_tracker/`, `src/kernel/loans.rs` |
 | Simple tactics | Apply one checked step to a persistent proof state | fast | `src/kernel/proof/object.rs`, `src/surface/proof/proof_object/`, `src/surface/proof/checked_drivers/` |
 | Certificates | Check explicit arithmetic certificates and contract claims | fast | `src/kernel/proof/{integer_arithmetic,signed_arithmetic,arithmetic_special}.rs`, `src/surface/proof_certificate.rs` |
@@ -63,7 +63,7 @@ explicit input and the state it produces. It doesn't scan.
 - **A lookup** reads an index by a key built from the input, such as the
   facts that mention a variable or the cells of one block.
 - **A scan** reads a collection that grows with the program, the path, the
-  facts, the snapshots, or the resources, and then keeps only the entries it
+  facts, the states, or the resources, and then keeps only the entries it
   needs. This rule has no exceptions: a fast-part operation doesn't scan even
   the facts "related" to its input unless an index hands them over by key.
   Visiting each indexed entry once is not sufficient: a bucket, equality
@@ -147,8 +147,8 @@ access-candidate API. Object-provenance queries use the object-identity index's
 nonempty witness or singleton symbolic supplier. Designation/opaque-extent
 fallback comparisons use a singleton direct alias after indexed equality fails.
 Framed pointer-value recovery requires one address alias and one full-pointer
-source in that address bucket; multiple snapshots do not authorize a hidden
-source search. Complete-read, snapshot, designation and extent checks still
+source in that address bucket; multiple states do not authorize a hidden
+source search. Complete-read, state, designation and extent checks still
 apply to the selected source. The direct order, supplier, and provenance-source
 lookup stages have their own `CheckingWorkScope`, charged to one explicit query
 key. These scopes do not excuse scans or cover general memory-history traversal.
@@ -199,7 +199,7 @@ require their canonical key or an explicit spelling. No query enumerates scalar
 classes to select a premise. Other condition-side bucket helpers remain audit
 targets.
 
-Read-validity evidence uses exact typed/snapshot membership and singleton
+Read-validity evidence uses exact typed/state membership and singleton
 address buckets under structural, affine and concrete storage keys. A selected
 source retains type, address, no-write and lifetime checks. Alternate-source
 enumeration requires planner permission. Kept-frame lookup uses the prepared
@@ -292,8 +292,8 @@ common mechanism names belong to.
 | order walk, order path | Removed: order inside a decision is read from the difference graph | Condition decision (fast) |
 | overflow intervals, bounds | Value ranges read to decide overflow | Condition decision (fast) |
 | memory resolution | Finds the value a load reads across stores | Memory (fast) |
-| memory derivation DAG, snapshot, cell store | How memory states and their cells are stored and related | Memory (fast) |
-| DAG bridging | Relating a load at one snapshot to cells of an earlier one | Memory (fast) |
+| memory derivation DAG, state, cell store | How memory states and their cells are stored and related | Memory (fast) |
+| DAG bridging | Relating a load at one state to cells of an earlier one | Memory (fast) |
 | carriers, compositions, separation | How owned resources and their disjointness are represented | Resources (fast) |
 | fold, unfold, views, loans | Building, opening, and borrowing resources | Resources (fast) |
 | proof object, proof step | The persistent proof state and one checked change to it | Simple tactics (fast) |
@@ -327,7 +327,7 @@ excluded-value runs, so trimming interval endpoints takes indexed lookups.
 Constant-equality evidence selects numeric extrema and at most one unambiguous
 symbolic source per direction. Anchored memory equality checks exact membership
 or one singleton source per written endpoint, with the same memory-resolution
-and snapshot checks. Ambiguity declines; it does not enumerate the endpoint
+and state checks. Ambiguity declines; it does not enumerate the endpoint
 bucket. For a transported read's constant value, prove the current read equals
 the saved read first, then normalize using that equality and the saved value.
 This explicitly supplies the connection that an ambiguous constant endpoint
@@ -544,7 +544,7 @@ attaches the bounded source selection before normalization; bound views retain
 their identities. The final binding overlay visits only the produced bindings,
 sharing the inherited persistent map. It never searches the completed body or
 entry context. With an explicit view interface, retained-frame construction
-selects the snapshot's declared scalar blocks and queries owned occurrences
+selects the state's declared scalar blocks and queries owned occurrences
 by block. `MemoryBlocks` maintains that persistent subset on declaration,
 replacement, removal, and branch joins; the index is excluded from semantic
 memory identity. No heap-owner or observation enumeration is involved. The

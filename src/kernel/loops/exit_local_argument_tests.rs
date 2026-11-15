@@ -1,6 +1,6 @@
 use super::*;
 
-fn fixture(snapshot: ResourceSnapshot) -> (LoopBinder, Vec<ResourceInstance>) {
+fn fixture(retained_state: ResourceStateSource) -> (LoopBinder, Vec<ResourceInstance>) {
     let schema = ResourceFieldSchema::new(vec![(
         "tag".into(),
         ResourceFieldType::Program(ProgramType::Int32),
@@ -14,14 +14,14 @@ fn fixture(snapshot: ResourceSnapshot) -> (LoopBinder, Vec<ResourceInstance>) {
             resource: Box::new(ResourceTerm::Composite {
                 name: "cursor".into(),
                 arguments: vec![crate::kernel::program_expression::variable("cur")],
-                argument_snapshots: vec![snapshot],
+                argument_state_sources: vec![retained_state],
                 parameter_types: vec![ProgramType::Int32],
             }),
         },
         ResourceAccessMode::Own,
         ResourceQuantity::One,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Current,
+        ResourceStateSource::Current,
     )
     .unwrap();
     let binder = LoopBinder {
@@ -46,15 +46,15 @@ fn fixture(snapshot: ResourceSnapshot) -> (LoopBinder, Vec<ResourceInstance>) {
 }
 
 #[test]
-fn exit_local_argument_requires_current_snapshot_and_every_exit() {
+fn exit_local_argument_requires_current_state_and_every_exit() {
     let _session = crate::kernel::VerificationSession::enter();
     let exits = [
         ExecutionState::new().with_local("cur", int32(1)),
         ExecutionState::new().with_local("cur", int32(2)),
     ];
     let successor = ExecutionState::new().with_local("cur", int32(3));
-    for snapshot in [ResourceSnapshot::Entry, ResourceSnapshot::Post] {
-        let (binder, instances) = fixture(snapshot);
+    for retained_state in [ResourceStateSource::Entry, ResourceStateSource::Post] {
+        let (binder, instances) = fixture(retained_state);
         assert_eq!(
             loop_exit_local_arguments(
                 &successor,
@@ -66,7 +66,7 @@ fn exit_local_argument_requires_current_snapshot_and_every_exit() {
             vec![None]
         );
     }
-    let (binder, instances) = fixture(ResourceSnapshot::Current);
+    let (binder, instances) = fixture(ResourceStateSource::Current);
     let mismatched = [
         exits[0].clone(),
         exits[1].clone().with_local("cur", int32(4)),
@@ -105,12 +105,12 @@ fn exit_address_argument_tracks_only_the_declared_current_local() {
         ExecutionState::new().with_local("cur", pointers[1].clone()),
     ];
     let successor = ExecutionState::new().with_local("cur", pointers[2].clone());
-    for snapshot in [
-        ResourceSnapshot::Current,
-        ResourceSnapshot::Entry,
-        ResourceSnapshot::Post,
+    for retained_state in [
+        ResourceStateSource::Current,
+        ResourceStateSource::Entry,
+        ResourceStateSource::Post,
     ] {
-        let (_, old_instances) = fixture(snapshot);
+        let (_, old_instances) = fixture(retained_state);
         let schema = old_instances[0].schema.clone();
         let instances = pointers[..2]
             .iter()
@@ -141,14 +141,14 @@ fn exit_address_argument_tracks_only_the_declared_current_local() {
                         pointee_constant: false,
                         explicit_qualification: false,
                     }],
-                    argument_snapshots: vec![snapshot],
+                    argument_state_sources: vec![retained_state],
                     parameter_types: vec![ProgramType::UInt64],
                 }),
             },
             ResourceAccessMode::Own,
             ResourceQuantity::One,
             ResourceTransferRole::Consume,
-            ResourceSnapshot::Current,
+            ResourceStateSource::Current,
         )
         .unwrap();
         let binder = LoopBinder {
@@ -157,7 +157,8 @@ fn exit_address_argument_tracks_only_the_declared_current_local() {
             spec: Some(spec),
         };
         let contexts = [PureFactContext::new(), PureFactContext::new()];
-        let expected = (snapshot == ResourceSnapshot::Current).then(|| address(&pointers[2]));
+        let expected =
+            (retained_state == ResourceStateSource::Current).then(|| address(&pointers[2]));
         assert_eq!(
             loop_exit_local_arguments(&successor, &exits, &binder, &instances, &contexts),
             vec![expected]

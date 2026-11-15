@@ -1230,7 +1230,7 @@ fn smart_have_splits_an_unfolded_predicate_conjunction_goal() {
 #[cfg_attr(feature = "fast-gate", ignore = "covered by control_batch_10")]
 fn fixed_state_have_certifies_a_post_call_fact_across_a_later_store() {
     // After the call to `reset`, the fact `pair->low == 0` is recorded
-    // against the call's post-state snapshot; the later store to
+    // against the call's post-state state; the later store to
     // `pair->high` moves the current memory past it. The mid-proof `have`
     // must still produce a checking certificate for the fact in its
     // current form. (The full stale-form rewrite rejection is

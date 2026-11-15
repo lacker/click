@@ -545,12 +545,12 @@ fn bounded_unsigned_native_indices_project_only_with_full_width_evidence() {
     }
 }
 
-/// Ordering two snapshots of one path, which share all but one of `size`
+/// Ordering two states of one path, which share all but one of `size`
 /// entries, reads their cached content hashes and never walks the shared
 /// entries, for memories and for resource contexts alike: sets of facts and
-/// of stated compositions compare such snapshots at every lookup.
+/// of stated compositions compare such states at every lookup.
 #[test]
-fn ordering_snapshots_of_one_path_does_not_walk_their_shared_entries() {
+fn ordering_states_of_one_path_does_not_walk_their_shared_entries() {
     let object = |index: u32| Pointer::symbolic(Variable(99_400 + u64::from(index)));
     for size in [16u32, 64, 256] {
         let mut memory = Memory::new();
@@ -576,13 +576,13 @@ fn ordering_snapshots_of_one_path_does_not_walk_their_shared_entries() {
         assert_ne!(orders.1, std::cmp::Ordering::Equal, "size={size}");
         assert_eq!(orders.2, std::cmp::Ordering::Equal, "size={size}");
         assert_eq!(orders.3, std::cmp::Ordering::Equal, "size={size}");
-        assert_eq!(walked, 0, "size={size}: ordering walked a snapshot");
+        assert_eq!(walked, 0, "size={size}: ordering walked a state");
     }
 }
 
 /// Without a store owner, separation by ownership reads only the stated
 /// compositions listed under the two objects' members
-/// (`CompositionMemberIndex`). A path states, per object, a snapshot of the
+/// (`CompositionMemberIndex`). A path states, per object, a state of the
 /// one context that holds them all and a separately built composition of
 /// that object alone, as a call and an unfolding do. Admitting the last
 /// composition, separating the newest object from the oldest, and failing to

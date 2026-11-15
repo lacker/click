@@ -113,7 +113,7 @@ atoms do not authorize a later acquisition, and direct worker transfer rejects
 guards as thread-confined.
 
 The surface lowers `owns mutex_guard(mu)` to `ResourceTerm::MutexGuard`, with
-explicit pointer snapshot selection. It resolves the current acquisition
+explicit pointer state selection. It resolves the current acquisition
 identity; folding must separately consume that atom from the available
 resources. Guards compose in ordinary exclusive resource bodies and conditional
 model arms. Guard-containing definitions and their transitive wrappers are

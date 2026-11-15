@@ -2,7 +2,7 @@
 
 The field is at byte offset 16. The entry resource already names its pointer
 value before any C load occurs. A model match gives another name for its base;
-both logical field reads must name the same value in the same snapshot.
+both logical field reads must name the same value in the same state.
 
 ```c filename=probe.c
 struct node { unsigned long tag; struct node *other; struct node *next; };

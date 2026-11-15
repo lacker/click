@@ -1,4 +1,4 @@
-# Checked pointer stores feed same-snapshot equality closure
+# Checked pointer stores feed same-state equality closure
 
 A named resource supplies the loaded sibling alias. A store through that alias
 establishes the same full pointer value at the original node name. No read

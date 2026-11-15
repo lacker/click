@@ -551,7 +551,7 @@ fn split_additive_constant(term: Operand<'_>) -> (SharedMachineIntegerTerm, u32)
 }
 
 /// Certifies a loadability goal from an assumed wider loadable fact over the
-/// same memory snapshot: the goal's base must sit at a provably in-bounds
+/// same memory state: the goal's base must sit at a provably in-bounds
 /// byte offset within the fact's span.
 /// Whether `state` justifies a load obligation a lowering left open: the
 /// assumptions state the loadability exactly, the memory holds the cells, or
@@ -720,7 +720,7 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
                     return false;
                 }
                 // Loadability of a covering span transports across differences in
-                // embedded memory snapshots and recorded write effects just like an exact-range
+                // embedded memory states and recorded write effects just like an exact-range
                 // fact does.
                 if fact_memory != memory
                     && !crate::kernel::reasoning::memory_range_still_available(
@@ -896,7 +896,7 @@ fn collect_shallow_term_variables(term: &MachineTerm, variables: &mut BTreeSet<V
             }
         }
         MachineTerm::ClickFunctionApplication { .. } | MachineTerm::AlgebraicMatch { .. } => {}
-        // The memory snapshot may contain a large symbolic state. Only
+        // The memory state may contain a large symbolic state. Only
         // variables outside nested loads can be the surrounding
         // quantified index. Variables in the loaded address belong to
         // the base expression (for example the owner parameter), not to
@@ -3161,9 +3161,9 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
             canonicalize_pointer_loads(left_base) == canonicalize_pointer_loads(right_base)
                 && canonicalize_atomic_loads(left_bytes)
                     == canonicalize_atomic_loads(right_bytes)
-                // Loadability depends on the snapshot's blocks, not its
+                // Loadability depends on the state's blocks, not its
                 // cached cell values. Retired automatic blocks are part of
-                // the snapshot marker too.
+                // the state marker too.
                 && left_memory.blocks == right_memory.blocks
                 && left_memory.forgotten.ended_local_blocks == right_memory.forgotten.ended_local_blocks
         }
@@ -3201,7 +3201,7 @@ fn pointer_offsets_equal_with_resolved_atoms(
     if left_constant != right_constant {
         return false;
     }
-    // Scaled values compare through snapshot-bridged load equality: two
+    // Scaled values compare through state-bridged load equality: two
     // forms of one loaded field.
     let scaled_values_bridged = |left: Operand<'_>, right: Operand<'_>| {
         crate::kernel::reasoning::int32_operand_values_equal_for_memory_resolution(
@@ -3249,7 +3249,7 @@ fn pointer_offsets_equal_with_resolved_atoms(
         }
         // A chain of stated offset equalities is not walked here: each
         // stated one is an equality-graph edge the bridged comparison reads,
-        // and chaining them through snapshot-bridged endpoints was a search
+        // and chaining them through state-bridged endpoints was a search
         // over every condition fact.
         scaled_values_bridged(left_value.operand_view(), right_value.operand_view())
     };
@@ -3314,7 +3314,7 @@ pub(crate) fn condition_holds_by_instantiated_fact(
 }
 
 /// Whether a bare condition holds by the memory-resolution rules: the
-/// facts state it about the same values read at other snapshots, or the
+/// facts state it about the same values read at other states, or the
 /// bounded order prover derives it. This is what `transport` checks.
 pub(crate) fn condition_holds_by_memory_resolution(
     assumptions: &PureFactContext,
@@ -3351,7 +3351,7 @@ pub(crate) fn condition_holds_by_memory_resolution(
         }
         // Two complete reads of one cell carry one value even where each spells
         // its coordinate from its own base (`n + 8` and `old(n) + 8`), as the
-        // snapshot-modulo condition matchers already accept.
+        // state-modulo condition matchers already accept.
         (ConditionTerm::PointerValueEqual(left, right), true) => {
             assumptions.contains_known(&Proposition::ConditionIs(condition.clone(), true))
                 || (assumptions.pointer_designations_match(left, right)
@@ -3382,7 +3382,7 @@ pub(crate) fn condition_holds_by_memory_resolution(
 }
 
 /// Two load variables for one address are equal when the cell is framed
-/// across the effects between the snapshots they were read from: the
+/// across the effects between the states they were read from: the
 /// bounded, memoized unchanged-load check over recorded derivations and
 /// effect facts, consulting no resolution fuel.
 fn names_of_one_cell_framed(
@@ -3584,7 +3584,7 @@ pub(super) fn resources_certify_loadability(
     else {
         return false;
     };
-    memory_snapshots_proven_equal_at_pointer(memory, state.memory(), base, assumptions)
+    memory_states_proven_equal_at_pointer(memory, state.memory(), base, assumptions)
         && (bytes
             .as_const()
             .is_some_and(|bytes| resource_context_has_read(resources, base, bytes, assumptions))
@@ -3661,7 +3661,7 @@ mod shared_contract_operand_tests {
     }
 
     #[test]
-    fn shared_contract_index_equality_keeps_read_snapshots_and_sources() {
+    fn shared_contract_index_equality_keeps_read_states_and_sources() {
         let _session = crate::kernel::VerificationSession::enter();
         let pointer = Pointer {
             block: "contract-index".into(),

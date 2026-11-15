@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn growing_shared_snapshot_comparisons_reuse_syntax_but_recheck_loads() {
+fn growing_shared_state_comparisons_reuse_syntax_but_recheck_loads() {
     for conditional in [false, true] {
         for structural in [false, true] {
             let mut samples = Vec::new();

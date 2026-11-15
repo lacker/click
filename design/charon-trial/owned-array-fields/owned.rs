@@ -36,7 +36,7 @@ pub fn extracted(value: u32, index: usize) -> u32 {
     let words = packet.words;
     words[index]
 }
-pub fn snapshot(value: u32) -> u32 {
+pub fn copied_value(value: u32) -> u32 {
     let mut packet = Packet { prefix: 11, words: [value; 4], marker: 17 };
     let words = packet.words;
     packet.words[0] = 99;

@@ -112,7 +112,7 @@ jobs:
       # Restore the latest compatible build. Cargo validates freshness; source
       # changes still get rebuilt. rust-cache deliberately removes workspace
       # and incremental artifacts, so use the raw cache action for this build
-      # stage. The snapshot is saved at the end of this job, on `master` only.
+      # stage. The build cache is saved at the end of this job, on `master` only.
       - uses: actions/cache/restore@v4
         id: build_cache
         with:
@@ -125,7 +125,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-click-build-v1-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock', '**/Cargo.toml', '.cargo/config.toml', 'scripts/charon-toolchain.sh', 'scripts/build-charon.sh', 'src/languages/rust/charon-profile.json') }}-
       # Keep these separately so adding frontend reuse does not invalidate
-      # existing Click build snapshots. Restore after the build-cache key is
+      # existing Click build caches. Restore after the build-cache key is
       # computed: Charon's checkout contains Cargo manifests and lockfiles.
       - uses: actions/cache/restore@v4
         id: frontend_cache
@@ -158,8 +158,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       # Every test shard waits for this whole job, and saving the build
-      # snapshot takes about a minute. A pull request or merge-queue run can
-      # only read `master`'s snapshots, so only a push to `master` saves one.
+      # cache archive takes about a minute. A pull request or merge-queue run can
+      # only read `master`'s build caches, so only a push to `master` saves one.
       # Save under the key the restore step computed: by now the build has
       # written Charon's own Cargo.toml and Cargo.lock files under `target/`,
       # so hashing `**/Cargo.toml` again would name a key no restore asks for.
@@ -303,7 +303,7 @@ jobs:
             echo "check scope failed"
             exit 1
           fi
-          # A push to `master` only builds, to save the build snapshot that
+          # A push to `master` only builds, to save the build cache that
           # pull requests and the merge queue restore; the queue ran the gate
           # on this exact tree before merging it.
           if [[ "$EVENT_NAME" == push ]]; then

@@ -1,4 +1,4 @@
-# Pointer-valued calls retain their pointee size through snapshots
+# Pointer-valued calls retain their pointee size through states
 
 ```c filename=marked_pointer.c
 void unchanged(uint8* p, uint32* q) {}

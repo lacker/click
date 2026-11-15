@@ -1603,8 +1603,8 @@ fn collect_spec_program_variables(
                     }
                     SpecExpression::RangeFold { .. } => return Visit::Stop("a range fold"),
                     SpecExpression::Let { .. } => return Visit::Stop("a `let` expression"),
-                    SpecExpression::LoopEntrySnapshot(_) => {
-                        return Visit::Stop("a loop-entry snapshot");
+                    SpecExpression::LoopEntryState(_) => {
+                        return Visit::Stop("a loop-entry state");
                     }
                     SpecExpression::AggregateFieldValue { .. } => {
                         return Visit::Stop("a by-value aggregate field");
@@ -1673,7 +1673,7 @@ pub fn program_function_callees(function: &ProgramFunction) -> BTreeSet<String> 
 }
 
 /// Identity memoization visits a shared summary body once even when distinct
-/// checked theorems apply it at different snapshots. The evidence keeps every
+/// checked theorems apply it at different states. The evidence keeps every
 /// node alive for the traversal; no deep structural key is constructed.
 pub(in crate::kernel) fn checked_statement_calls(
     statement: &ProgramStatement,

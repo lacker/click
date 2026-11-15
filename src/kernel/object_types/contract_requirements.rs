@@ -101,7 +101,7 @@ impl<'a> Analysis<'a> {
         crate::instrumentation::record_deterministic_work(1);
         let result = match value {
             SpecExpression::ProgramExpression(value) => self.program_origins(value),
-            SpecExpression::Cast(value, _) | SpecExpression::LoopEntrySnapshot(value) => {
+            SpecExpression::Cast(value, _) | SpecExpression::LoopEntryState(value) => {
                 self.origins(value)
             }
             SpecExpression::PointerOffset { pointer, .. } => self.origins(pointer),

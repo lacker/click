@@ -2,7 +2,7 @@
 
 The loop reads a symbolic `next[cur]` after writing the disjoint `visited`
 array. One quantified transport carries every guarded `next[k]` value from
-the iteration-entry snapshot through the store, inside a `have` in `preserve`.
+the iteration-entry state through the store, inside a `have` in `preserve`.
 The guard supplies the read index bounds, and the `using` list supplies the
 write index bounds and separation. An unrelated existential fact keeps the
 proof on the explicit transport path. A second transport carries the bounded-value

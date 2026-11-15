@@ -14,7 +14,7 @@ signed addition. The original bound and viewed byte range include empty
 inputs and arbitrary byte values; no input values or source body are changed.
 
 The proof uses source `byte`/`total` locals, named iteration/read/addition
-snapshots, and `loop(0)`, `read(0)`, `assignment(total, 1)`, and `back_edge()`
+states, and `loop(0)`, `read(0)`, `assignment(total, 1)`, and `back_edge()`
 frontiers. It contains no MIR IDs, generated processed count, or compiler
 statement indices. Invariant/ranking closure remains explicit.
 

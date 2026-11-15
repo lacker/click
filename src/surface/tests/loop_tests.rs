@@ -506,8 +506,8 @@ fn remaining_loop_migration_fixtures_expand_and_recheck() {
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by loop_batch_01")]
 fn loop_preservation_have_resolves_entry_label_and_expands() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mdtests/loop_entry_snapshot.md");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests/loop_entry_program_point.md");
     let source = std::fs::read_to_string(&path).unwrap();
     let fixture = crate::cli::parse_mdtest(&path, &source).unwrap();
     let sources = fixture
@@ -819,7 +819,7 @@ fn explicit_invariant_body_quantified_bubble_census() {
     verify_c_sources(&expanded, &sources).unwrap();
 }
 
-/// The old/current snapshot body verifies and expands on the ordinary stack.
+/// The old/current state body verifies and expands on the ordinary stack.
 #[test]
 #[ignore = "nightly: 1.6s in the parallel gate"]
 fn explicit_invariant_body_copy3_checks_and_expands() {
@@ -2636,47 +2636,47 @@ fn nested_loop_cursor_views_refuse_forged_ranges_and_expand() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by loop_batch_10")]
-fn a_loop_snapshot_is_one_entry_under_every_spelling() {
+fn a_loop_state_is_one_entry_under_every_spelling() {
     let exit = |region| ProgramPointRef {
         region,
         kind: ProgramPointKind::Exit,
     };
     let state = ExecutionState::new();
-    let mut snapshots = RecordedSnapshots::new();
+    let mut retained_states = RecordedStates::new();
     // Recorded before the proof labels the loop: the label adopts the entry.
-    snapshots.insert(exit(CodeRegionRef::Loop(0)), state.clone());
-    snapshots.label_loop(0, "outer");
-    snapshots.label_loop(0, "also_outer");
-    snapshots.insert(exit(CodeRegionRef::Loop(1)), state.clone());
+    retained_states.insert(exit(CodeRegionRef::Loop(0)), state.clone());
+    retained_states.label_loop(0, "outer");
+    retained_states.label_loop(0, "also_outer");
+    retained_states.insert(exit(CodeRegionRef::Loop(1)), state.clone());
     for spelling in [
         CodeRegionRef::Loop(0),
         CodeRegionRef::Label("outer".to_string()),
         CodeRegionRef::Label("also_outer".to_string()),
     ] {
-        assert!(snapshots.contains_key(&exit(spelling)));
+        assert!(retained_states.contains_key(&exit(spelling)));
     }
-    let keys = snapshots
+    let keys = retained_states
         .iter()
         .map(|(selector, _)| selector.clone())
         .collect::<Vec<_>>();
     assert_eq!(
         keys,
         [
-            SnapshotSelector::ProgramPoint(exit(CodeRegionRef::Loop(1))),
-            SnapshotSelector::ProgramPoint(exit(CodeRegionRef::Label("outer".to_string()))),
+            ProgramPointSelector::ProgramPoint(exit(CodeRegionRef::Loop(1))),
+            ProgramPointSelector::ProgramPoint(exit(CodeRegionRef::Label("outer".to_string()))),
         ],
         "each point is one entry, spelled by its loop's first label"
     );
-    assert!(!snapshots.contains_key(&exit(CodeRegionRef::Label("inner".to_string()))));
+    assert!(!retained_states.contains_key(&exit(CodeRegionRef::Label("inner".to_string()))));
 }
 
-/// Recorded snapshots find the point whose memory reads given bytes: each
+/// Recorded states find the point whose memory reads given bytes: each
 /// recorded memory answers with its own point, a newer point recording the
 /// same bytes takes over, and a removed point no longer answers.
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by loop_batch_10")]
-fn recorded_snapshots_find_the_point_reading_a_memory() {
-    let mark = |name: &str| SnapshotSelector::Mark(name.to_string());
+fn recorded_states_find_the_point_reading_a_memory() {
+    let mark = |name: &str| ProgramPointSelector::Mark(name.to_string());
     let memory = |index: u32| {
         let pointer = Pointer::symbolic(Variable(97_400 + u64::from(index)));
         crate::kernel::intern_memory(
@@ -2686,32 +2686,32 @@ fn recorded_snapshots_find_the_point_reading_a_memory() {
     let state = |memory: &crate::kernel::SharedMemory| {
         ExecutionState::new().with_memory(memory.memory().clone())
     };
-    let mut snapshots = RecordedSnapshots::new();
+    let mut retained_states = RecordedStates::new();
     let memories = (0..8).map(memory).collect::<Vec<_>>();
     for (index, memory) in memories.iter().enumerate() {
-        snapshots.insert(mark(&format!("m{index}")), state(memory));
+        retained_states.insert(mark(&format!("m{index}")), state(memory));
     }
     for (index, memory) in memories.iter().enumerate() {
-        let (selector, _) = snapshots
+        let (selector, _) = retained_states
             .point_reading_memory(memory)
             .expect("every recorded memory has a point");
         assert_eq!(*selector, mark(&format!("m{index}")));
     }
-    snapshots.insert(mark("again"), state(&memories[3]));
+    retained_states.insert(mark("again"), state(&memories[3]));
     assert_eq!(
-        snapshots
+        retained_states
             .point_reading_memory(&memories[3])
             .map(|(selector, _)| selector.clone()),
         Some(mark("again"))
     );
-    snapshots.remove(&mark("again"));
+    retained_states.remove(&mark("again"));
     assert_ne!(
-        snapshots
+        retained_states
             .point_reading_memory(&memories[3])
             .map(|(selector, _)| selector.clone()),
         Some(mark("again"))
     );
-    assert!(snapshots.point_reading_memory(&memory(100)).is_none());
+    assert!(retained_states.point_reading_memory(&memory(100)).is_none());
 }
 
 /// The indexed clause list binds, orders and answers label, scope and
@@ -2881,8 +2881,8 @@ test_batches! {
         theorem_application_expands_with_a_recorded_historical_byte_premise,
     ],
     loop_batch_10: [
-        a_loop_snapshot_is_one_entry_under_every_spelling,
-        recorded_snapshots_find_the_point_reading_a_memory,
+        a_loop_state_is_one_entry_under_every_spelling,
+        recorded_states_find_the_point_reading_a_memory,
         indexed_structural_clauses_agree_with_the_clause_list_walks,
     ],
 }

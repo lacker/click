@@ -2555,14 +2555,14 @@ pub struct CallKeptRanges {
 #[derive(Debug)]
 struct KeptRangeSet {
     id: u64,
-    ranges: SnapshotMap<MemoryRange, ()>,
+    ranges: HashedOrdMap<MemoryRange, ()>,
     /// The residual's owned composites, with multiplicity, when some of
     /// their ranges are answered per address rather than listed in `ranges`.
-    composites: SnapshotMap<ResourceFact, usize>,
-    original_memory: SnapshotMap<ResourceFact, ()>,
-    introduced_composites: SnapshotMap<ResourceFact, usize>,
+    composites: HashedOrdMap<ResourceFact, usize>,
+    original_memory: HashedOrdMap<ResourceFact, ()>,
+    introduced_composites: HashedOrdMap<ResourceFact, usize>,
     // Share the flat input index, including views, without enumerating it.
-    memory_inputs: SnapshotMap<ResourceFact, ()>,
+    memory_inputs: HashedOrdMap<ResourceFact, ()>,
 }
 
 impl PartialEq for CallKeptRanges {
@@ -2573,24 +2573,24 @@ impl PartialEq for CallKeptRanges {
 impl Eq for CallKeptRanges {}
 
 fn intern_kept_range_set(
-    ranges: SnapshotMap<MemoryRange, ()>,
-    composites: SnapshotMap<ResourceFact, usize>,
+    ranges: HashedOrdMap<MemoryRange, ()>,
+    composites: HashedOrdMap<ResourceFact, usize>,
 ) -> std::sync::Arc<KeptRangeSet> {
     intern_kept_range_set_with_exclusions(
         ranges,
         composites,
-        SnapshotMap::new(),
-        SnapshotMap::new(),
-        SnapshotMap::new(),
+        HashedOrdMap::new(),
+        HashedOrdMap::new(),
+        HashedOrdMap::new(),
     )
 }
 
 fn intern_kept_range_set_with_exclusions(
-    ranges: SnapshotMap<MemoryRange, ()>,
-    composites: SnapshotMap<ResourceFact, usize>,
-    original_memory: SnapshotMap<ResourceFact, ()>,
-    introduced_composites: SnapshotMap<ResourceFact, usize>,
-    memory_inputs: SnapshotMap<ResourceFact, ()>,
+    ranges: HashedOrdMap<MemoryRange, ()>,
+    composites: HashedOrdMap<ResourceFact, usize>,
+    original_memory: HashedOrdMap<ResourceFact, ()>,
+    introduced_composites: HashedOrdMap<ResourceFact, usize>,
+    memory_inputs: HashedOrdMap<ResourceFact, ()>,
 ) -> std::sync::Arc<KeptRangeSet> {
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(&original_memory, &mut hash);
@@ -2611,26 +2611,26 @@ fn intern_kept_range_set_with_exclusions(
 
 #[cfg(test)]
 fn intern_kept_range_set_with_hash(
-    ranges: SnapshotMap<MemoryRange, ()>,
-    composites: SnapshotMap<ResourceFact, usize>,
+    ranges: HashedOrdMap<MemoryRange, ()>,
+    composites: HashedOrdMap<ResourceFact, usize>,
     hash: u64,
 ) -> std::sync::Arc<KeptRangeSet> {
     intern_kept_range_set_with_exclusions_and_hash(
         ranges,
         composites,
-        SnapshotMap::new(),
-        SnapshotMap::new(),
-        SnapshotMap::new(),
+        HashedOrdMap::new(),
+        HashedOrdMap::new(),
+        HashedOrdMap::new(),
         hash,
     )
 }
 
 fn intern_kept_range_set_with_exclusions_and_hash(
-    ranges: SnapshotMap<MemoryRange, ()>,
-    composites: SnapshotMap<ResourceFact, usize>,
-    original_memory: SnapshotMap<ResourceFact, ()>,
-    introduced_composites: SnapshotMap<ResourceFact, usize>,
-    memory_inputs: SnapshotMap<ResourceFact, ()>,
+    ranges: HashedOrdMap<MemoryRange, ()>,
+    composites: HashedOrdMap<ResourceFact, usize>,
+    original_memory: HashedOrdMap<ResourceFact, ()>,
+    introduced_composites: HashedOrdMap<ResourceFact, usize>,
+    memory_inputs: HashedOrdMap<ResourceFact, ()>,
     hash: u64,
 ) -> std::sync::Arc<KeptRangeSet> {
     type Buckets = std::collections::HashMap<u64, Vec<std::sync::Weak<KeptRangeSet>>>;
@@ -2690,7 +2690,7 @@ impl CallKeptRanges {
     ) -> Self {
         let identity = intern_kept_range_set(
             ranges.flat_owned_memory_ranges().clone(),
-            SnapshotMap::new(),
+            HashedOrdMap::new(),
         );
         Self {
             ranges,
@@ -2714,7 +2714,7 @@ impl CallKeptRanges {
         let composites = if self.direct.is_some() {
             residual.owned_composite_facts().clone()
         } else {
-            SnapshotMap::new()
+            HashedOrdMap::new()
         };
         let introduced_composites = if let Some(original) = &self.caller_before_transfer {
             let before = original.owned_composite_facts();
@@ -2723,8 +2723,8 @@ impl CallKeptRanges {
             for change in before.diff(after) {
                 crate::instrumentation::record_deterministic_work(1);
                 let fact = match change {
-                    SnapshotMapChange::Added(fact) => fact,
-                    SnapshotMapChange::Changed(fact) if after.get(fact) > before.get(fact) => fact,
+                    HashedOrdMapChange::Added(fact) => fact,
+                    HashedOrdMapChange::Changed(fact) if after.get(fact) > before.get(fact) => fact,
                     _ => continue,
                 };
                 introduced = introduced.unchecked_with_fact(fact.clone());
@@ -2771,7 +2771,7 @@ impl CallKeptRanges {
         )
     }
 
-    /// Recorded caller ranges, for snapshot diagnostics: the listed
+    /// Recorded caller ranges, for state diagnostics: the listed
     /// ranges and those of every argument-direct composite.
     pub(crate) fn diagnostic_ranges(&self) -> ResourceContext {
         let mut ranges = self.identity.ranges.clone();
@@ -2791,7 +2791,7 @@ impl CallKeptRanges {
             )
     }
 
-    /// Recorded placement premises, for snapshot diagnostics.
+    /// Recorded placement premises, for state diagnostics.
     pub(crate) fn diagnostic_premises(&self) -> &[(ConditionTerm, bool)] {
         &self.premises
     }
@@ -3022,14 +3022,14 @@ impl CallKeptOwnership {
     /// The kept ownership a call havoc recorded on the edge that derived
     /// `after`, for a checker that re-derives that havoc without the caller's
     /// resources: the recorded ranges and premises stand in for the opened
-    /// bodies. The write-set marker spells both, so a content-equal snapshot
+    /// bodies. The write-set marker spells both, so a content-equal state
     /// whose edge was recorded first carries the same ones.
     pub(in crate::kernel) fn recorded_on(
         after: &Memory,
         assumptions: &PureFactContext,
     ) -> Option<Self> {
         let kept = CallKeptRanges::recorded_on(after)?;
-        // Use the exact residual snapshot recorded by the producer;
+        // Use the exact residual state recorded by the producer;
         // the opened-body ranges and premises remain in `kept`.
         let residual = kept.residual.clone().unwrap_or_default();
         Some(Self::new(residual, kept, assumptions))
@@ -3248,9 +3248,9 @@ fn loan_preserving_havoc_keeps_run(
 /// returned as the error. Only the entries on which an arm differs from the
 /// first are visited.
 fn union_of_arm_maps<'a, K, V>(
-    first: &SnapshotMap<K, V>,
-    others: impl Iterator<Item = &'a SnapshotMap<K, V>>,
-) -> Result<SnapshotMap<K, V>, K>
+    first: &HashedOrdMap<K, V>,
+    others: impl Iterator<Item = &'a HashedOrdMap<K, V>>,
+) -> Result<HashedOrdMap<K, V>, K>
 where
     K: Ord + Clone + std::hash::Hash + 'a,
     V: Clone + PartialEq + std::hash::Hash + 'a,
@@ -3259,9 +3259,9 @@ where
     for other in others {
         for change in first.diff(other) {
             match change {
-                SnapshotMapChange::Removed(_) => {}
-                SnapshotMapChange::Changed(key) => return Err(key.clone()),
-                SnapshotMapChange::Added(key) => {
+                HashedOrdMapChange::Removed(_) => {}
+                HashedOrdMapChange::Changed(key) => return Err(key.clone()),
+                HashedOrdMapChange::Added(key) => {
                     let value = other.get(key).expect("an added key is held").clone();
                     if let Some(existing) = union.insert(key.clone(), value.clone())
                         && existing != value
@@ -3278,9 +3278,9 @@ where
 /// The union of the arms' sets, visiting only what an arm holds that the
 /// first does not, or the reverse.
 fn union_of_arm_sets<'a, K>(
-    first: &SnapshotSet<K>,
-    others: impl Iterator<Item = &'a SnapshotSet<K>>,
-) -> SnapshotSet<K>
+    first: &HashedOrdSet<K>,
+    others: impl Iterator<Item = &'a HashedOrdSet<K>>,
+) -> HashedOrdSet<K>
 where
     K: Ord + Clone + std::hash::Hash + 'a,
 {
@@ -3362,14 +3362,14 @@ fn external_argument_offset_derives_from(base: &Pointer, pointer: &Pointer) -> b
     contains_base_offset(&pointer.offset, &base.offset)
 }
 
-/// The one snapshot a pure-function pointer argument is anchored to when the
+/// The one state a pure-function pointer argument is anchored to when the
 /// callee provably reads no memory.
 ///
 /// Such a function is a function of its argument values, so the ambient
-/// snapshot in the argument term is dead weight — and live weight would be
+/// state in the argument term is dead weight — and live weight would be
 /// worse than dead: it makes the same proposition a different term on either
 /// side of any C write, which is what stopped a `fold` from discharging a
-/// body fact applying a pure predicate to a pointer. The snapshot is empty, so
+/// body fact applying a pure predicate to a pointer. The state is empty, so
 /// nothing can be read through it by construction, and it is cached per thread
 /// so repeated uses share one storage root.
 pub fn value_independent_click_memory() -> Memory {
@@ -3384,7 +3384,7 @@ impl Memory {
         Self::default()
     }
 
-    pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
+    pub(crate) fn has_same_state_markers(&self, other: &Self) -> bool {
         self.blocks == other.blocks
             && self.forgotten.ended_local_blocks == other.forgotten.ended_local_blocks
             && self.heap == other.heap
@@ -3395,7 +3395,7 @@ impl Memory {
         // Havoc marker blocks mean "the state may have changed", never "a
         // fresh block appeared"; recording a benign block-declaration edge
         // for one would launder the havoc (conventions.md's soundness trap,
-        // pinned by `conditions_equal_modulo_proven_snapshots_needs_frame_
+        // pinned by `conditions_equal_modulo_proven_states_needs_frame_
         // evidence`). The havoc producers insert their markers directly,
         // but tests and any future caller may write them through this
         // constructor, so the refusal lives here.
@@ -3563,7 +3563,7 @@ impl Memory {
     }
 
     /// Describe initially unwritten complete-object storage. This builds a
-    /// proof-entry snapshot, not an allocation transition or lifetime reset:
+    /// proof-entry state, not an allocation transition or lifetime reset:
     /// existing writes remain recorded, a symbolic identity can still alias
     /// arguments, and no memory-DAG transport edge is granted.
     pub fn with_uninitialized_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
@@ -3687,7 +3687,7 @@ impl Memory {
     /// Adds a synthetic block without claiming that it was declared by a
     /// program transition. Symbolic aggregate return values use this to make
     /// their known layout available for bounds checks while keeping the
-    /// symbolic load identity independent of the caller's memory snapshot.
+    /// symbolic load identity independent of the caller's memory state.
     pub(in crate::kernel) fn with_block_without_derivation(
         mut self,
         block: impl Into<PointerBlock>,
@@ -3818,7 +3818,7 @@ impl Memory {
         }
         // The edge's base is the memory the free starts from, interned before
         // any of its own edits: a base taken after removing the allocation
-        // would be a snapshot no constructor recorded.
+        // would be a state no constructor recorded.
         let base = Some(intern_derivation_base(&mut self));
         let bytes = std::sync::Arc::make_mut(&mut self.heap)
             .live_allocations
@@ -4109,7 +4109,7 @@ impl Memory {
             })
     }
 
-    /// Whether no allocation has been freed in this snapshot.
+    /// Whether no allocation has been freed in this state.
     pub(in crate::kernel) fn heap_has_no_deallocations(&self) -> bool {
         self.heap.deallocated_allocations.is_empty()
     }
@@ -4242,7 +4242,7 @@ impl Memory {
             }
         }
         // Losing an allocation's cached knowledge can otherwise re-intern as
-        // an older empty snapshot and drop this safety-critical edge. A
+        // an older empty state and drop this safety-critical edge. A
         // retirement inside its own call's havoc keeps that havoc's mark
         // instead: see `retirement_keeps_its_call_havocs_forget_mark`.
         use crate::kernel::resource_tracker::cell_source::retirement_keeps_its_call_havocs_forget_mark;
@@ -4391,7 +4391,7 @@ impl Memory {
     }
 
     /// Whether heap identity `identity` had been handed out by this
-    /// snapshot: live, freed, or pending. Identities are never reused within
+    /// state: live, freed, or pending. Identities are never reused within
     /// a proof, so an identity this answers false for is allocated after it.
     /// Allocation bases sit at offset zero, so each record is one lookup.
     pub(in crate::kernel) fn heap_identity_allocated(&self, identity: u64) -> bool {
@@ -4411,7 +4411,7 @@ impl Memory {
     }
 
     /// Every heap identity [`Self::heap_identity_allocated`] answers true
-    /// for, ascending. Costs the heap records this snapshot holds.
+    /// for, ascending. Costs the heap records this state holds.
     pub(in crate::kernel) fn allocated_heap_identities(&self) -> Vec<u64> {
         let heap_base = |identity| Pointer {
             block: PointerBlock::Heap(identity),
@@ -4732,8 +4732,8 @@ impl Memory {
             return;
         }
         let heap = std::sync::Arc::make_mut(&mut self.heap);
-        heap.zeroed_allocations = SnapshotSet::new();
-        heap.zeroed_prefix_allocations = SnapshotMap::new();
+        heap.zeroed_allocations = HashedOrdSet::new();
+        heap.zeroed_prefix_allocations = HashedOrdMap::new();
     }
 
     /// Forgets branch-local cell values and constructs the conservative heap
@@ -4747,9 +4747,9 @@ impl Memory {
     /// This is deliberately separate from loop havoc. The joined heap is the
     /// union of potential live allocations, so making the transition look like
     /// a loop havoc would record a false memory-DAG derivation. The resulting
-    /// snapshot is a provenance barrier instead: no load from before the
+    /// state is a provenance barrier instead: no load from before the
     /// branch is transported across it. What survives is a value every arm
-    /// still caches for the same cell, kept as a cell of the joined snapshot,
+    /// still caches for the same cell, kept as a cell of the joined state,
     /// and whatever the interface states as a fact.
     #[cfg(test)]
     pub(in crate::kernel) fn with_interface_memory_havoc(
@@ -4907,7 +4907,7 @@ impl Memory {
                 zeroed_allocations.remove(base);
             }
         }
-        let mut zeroed_prefix_allocations = SnapshotMap::new();
+        let mut zeroed_prefix_allocations = HashedOrdMap::new();
         // An allocation gets a zeroed prefix only where some arm has less
         // than the whole of it zeroed. When every arm has the same whole
         // allocations zeroed and none has a prefix, there is none to find.
@@ -4971,7 +4971,7 @@ impl Memory {
         // by the arms' join, which is the one that decides initialization.
         // With no typed union view in play, the cells are settled from the
         // arms' differences alone. A union view is forgotten whatever the
-        // arms agree on, and a cell under one goes with it, so a snapshot
+        // arms agree on, and a cell under one goes with it, so a state
         // that holds any takes the whole-map pass.
         let by_difference = self.union_cells.is_empty()
             && sibling_memories
@@ -5053,12 +5053,12 @@ impl Memory {
         self.blocks = std::sync::Arc::new(blocks);
         let forgotten = std::sync::Arc::make_mut(&mut self.forgotten);
         forgotten.ended_local_blocks = ended_local_blocks;
-        // A forget mark says this snapshot is some earlier one with cached
+        // A forget mark says this state is some earlier one with cached
         // values dropped and the memory itself unchanged. The joined memory
         // is no arm's memory: it is their abstraction, named by its own
         // fresh havoc block above. Keeping an arm's mark would also make the
         // abstraction depend on which arm it was computed from, so arms that
-        // forgot from different snapshots on the way could never rejoin.
+        // forgot from different states on the way could never rejoin.
         forgotten.forgotten_from = None;
         forgotten.join_inputs = incoming
             .iter()
@@ -5170,7 +5170,7 @@ impl Memory {
         // Keep the legacy marker's semantic shape and add a collision-free
         // structural key for the checked write set, and for the memory the
         // caller kept owning. This key is intentionally not named as a havoc
-        // marker: canonical load snapshots must continue to treat the
+        // marker: canonical load states must continue to treat the
         // call-havoc edge as the only global memory barrier.
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             call_write_set_marker(variable.0, mutable_ranges, kept_ranges.as_ref()),
@@ -5210,7 +5210,7 @@ impl Memory {
         // two inserted paths.
         let mut added_blocks = Vec::new();
         for change in before.blocks.diff(&self.blocks) {
-            let SnapshotMapChange::Added(block) = change else {
+            let HashedOrdMapChange::Added(block) = change else {
                 return false;
             };
             let Some(contents) = self.blocks.get(block) else {
@@ -5234,7 +5234,7 @@ impl Memory {
         // The producer's rule, over the same candidates: every cell outside
         // them is kept by `call_havoc_keeps_cell`, so the expected result is
         // `before` without the candidates the rule drops, and the comparison
-        // walks only the paths the two snapshots do not share.
+        // walks only the paths the two states do not share.
         let candidates = call_havoc_candidates(mutable_ranges);
         let mut visited = 0usize;
         let mut dropped_cells = Vec::new();
@@ -5326,7 +5326,7 @@ impl Memory {
     /// and the stores one `CellsSeeded` edge.
     ///
     /// Two things a store does that a run does not represent are refused
-    /// rather than approximated: displacing typed union views (the snapshot
+    /// rather than approximated: displacing typed union views (the state
     /// holds some) and marking a live heap cell initialized (an allocation
     /// may hold the range). Those fall back to the stores themselves.
     pub(crate) fn with_seeded_cells(
@@ -5381,7 +5381,7 @@ impl Memory {
     /// `Err` hands the memory back unchanged for the caller's own cells: an
     /// automatic object's block (a named load does not initialize one), a
     /// heap block (fresh storage stays uninitialized), and, as for
-    /// [`Self::with_seeded_cells`], a snapshot with typed union views or a
+    /// [`Self::with_seeded_cells`], a state with typed union views or a
     /// base that may lie in a live allocation.
     pub(crate) fn with_named_cell_run(
         self,
@@ -5423,7 +5423,7 @@ impl Memory {
     /// back unchanged for the caller's own stores: a block already holding a
     /// cell (a store overwrites it, where a run would keep it as a hole), an
     /// automatic or heap block (a store there marks initialization a run
-    /// does not), and, as for [`Self::with_seeded_cells`], a snapshot with
+    /// does not), and, as for [`Self::with_seeded_cells`], a state with
     /// typed union views or a base that may lie in a live allocation.
     pub(crate) fn with_constant_run(
         self,
@@ -5555,13 +5555,13 @@ impl Memory {
             .checked_mul(element_type.byte_width())
             .filter(|bytes| *bytes <= i32::MAX as u32)
             .ok_or(RuntimeError::TypeMismatch)?;
-        let snapshot_copy = copy
+        let state_copy = copy
             && matches!(&value, ProgramValue::Pointer(source) if
             !source.pointer().block.is_local_block()
             || self.cells.runs_in_block(&source.pointer().block)
                 .any(|run| !matches!(run.value_mode(), RunValueMode::Constant(_))));
-        if !base.block.is_local_block() || snapshot_copy {
-            return self.write_scalar_array_snapshot(
+        if !base.block.is_local_block() || state_copy {
+            return self.write_scalar_array_state(
                 base,
                 element_type,
                 count,
@@ -5723,10 +5723,10 @@ impl Memory {
             }
             if covered != IndexIntervals::full(count) {
                 // A checked call may forget cached values of initialized
-                // automatic storage. Copy the current snapshot's unknown
+                // automatic storage. Copy the current state's unknown
                 // lanes just as for external initialized storage, retaining
                 // the represented lanes and the checks above.
-                return self.write_scalar_array_snapshot(
+                return self.write_scalar_array_state(
                     base,
                     element_type,
                     count,
@@ -5785,7 +5785,7 @@ impl Memory {
     // Authority is checked by the statement executor. External argument
     // storage follows ordinary typed-load semantics: unknown initialized
     // bytes remain symbolic. Known automatic storage must be initialized.
-    pub(in crate::kernel) fn write_scalar_array_snapshot(
+    pub(in crate::kernel) fn write_scalar_array_state(
         mut self,
         base: &Pointer,
         element: ProgramType,
@@ -5848,9 +5848,9 @@ impl Memory {
                         .next()
                         .is_some()))
         {
-            return Err(RuntimeError::FunctionContract("scalar-array snapshot requires valid aligned storage; fresh storage must be complete and empty".into()));
+            return Err(RuntimeError::FunctionContract("scalar-array retained_state requires valid aligned storage; fresh storage must be complete and empty".into()));
         }
-        let snapshot = crate::kernel::intern_memory(self.clone());
+        let retained_state = crate::kernel::intern_memory(self.clone());
         let mut captured_runs = Vec::new();
         let mut captured_cells = Vec::new();
         if copy {
@@ -5863,7 +5863,7 @@ impl Memory {
                     && !self.has_initialized_bytes_under(pointer, bytes, assumptions))
             {
                 return Err(RuntimeError::FunctionContract(
-                    "scalar-array snapshot requires a valid initialized source region".into(),
+                    "scalar-array state requires a valid initialized source region".into(),
                 ));
             }
             let (stem, start) = offset_stem_and_constant(&pointer.offset);
@@ -5954,7 +5954,7 @@ impl Memory {
                     element.byte_width(),
                     element,
                     count,
-                    snapshot,
+                    retained_state,
                     RunValueMode::Copy {
                         source_base: pointer.clone(),
                     },
@@ -6093,7 +6093,7 @@ impl Memory {
         }
     }
 
-    /// Name one contract field at its selected source snapshot without
+    /// Name one contract field at its selected source state without
     /// recording a program write. The producer's source is shared by all
     /// fields of the same entry object; deriving the value here preserves
     /// that identity without accepting an arbitrary cached value.
@@ -6281,9 +6281,9 @@ impl Memory {
         }
     }
 
-    /// The pointers at which the two snapshots' cells or typed union views
+    /// The pointers at which the two states' cells or typed union views
     /// differ, ascending. A pointer differs exactly when some entry keyed by
-    /// it is in one map's diff, so this walks only the paths the snapshots
+    /// it is in one map's diff, so this walks only the paths the states
     /// do not share.
     pub fn differing_cell_pointers(&self, other: &Self) -> Vec<Pointer> {
         let mut pointers = self
@@ -6794,7 +6794,7 @@ impl Memory {
 
     /// The one way a memory transition drops cached contents.
     ///
-    /// A snapshot records what an address holds in more than one place: a
+    /// A state records what an address holds in more than one place: a
     /// cell (or one slot of a run), a typed union view keyed by the member
     /// type it records, and, for `calloc` storage, the zero reading that
     /// answers for every byte no cached value covers. Each of them is an
@@ -6823,7 +6823,7 @@ impl Memory {
     /// refuse one).
     ///
     /// The work is the candidates `scope` admits, which every caller already
-    /// pays for its cells; the union views are asked only when the snapshot
+    /// pays for its cells; the union views are asked only when the state
     /// holds some, and the zero readings only when it holds some. Returns
     /// whether any value was [`CachedValueFate::Forgotten`].
     pub(super) fn forget_cached_values(
@@ -7054,7 +7054,7 @@ impl Memory {
     /// and says nothing about an eight-byte store there, which covers
     /// `a[j]` and `a[j + 1]` both. So the ladder is conjoined with the shared
     /// [`crate::kernel::reasoning::access_byte_overlap`], exactly as
-    /// `step_effect::cell_effect` and the snapshot comparisons conjoin it: the
+    /// `step_effect::cell_effect` and the state comparisons conjoin it: the
     /// ladder decides whether the addresses differ, and the byte answer
     /// decides whether the gap it establishes clears both accesses. An
     /// unknown gap blocks it too — a ladder proving two addresses differ says
@@ -7086,12 +7086,12 @@ impl Memory {
         record_memory_derivation(&mut memory, MemoryDerivation::CellsForgotten { base });
         debug_assert!(
             !lost_knowledge || intern_memory_ref(&memory).arena_id() > base_id,
-            "a forget that lost knowledge landed on an older snapshot"
+            "a forget that lost knowledge landed on an older state"
         );
         memory
     }
 
-    /// Prepare cached observations for a store without publishing a snapshot.
+    /// Prepare cached observations for a store without publishing a state.
     /// The boolean identifies lost knowledge requiring an origin marker in the
     /// completed result. Initialization records outlive discarded values.
     fn prepare_store_cache(
@@ -7340,7 +7340,7 @@ impl Memory {
         );
         let forgot_live_knowledge = forgot_values || run_forgot;
         // Forgetting nothing is not a transition: the memory is the same
-        // snapshot, so a later load keeps resolving through it unchanged
+        // state, so a later load keeps resolving through it unchanged
         // instead of stopping at an edge that records no write.
         if memory.cells.len() == self.cells.len()
             && memory.union_cells.len() == self.union_cells.len()
@@ -7508,7 +7508,7 @@ impl Memory {
         self.blocks.get(block).map(MemoryBlock::extent)
     }
 
-    /// Whether some allocation this snapshot has already freed may contain
+    /// Whether some allocation this state has already freed may contain
     /// `pointer`. Freed allocations are few, so this scans them directly.
     pub(in crate::kernel) fn freed_heap_allocation_may_contain(
         &self,
@@ -7810,13 +7810,16 @@ impl Memory {
         pointer: &Pointer,
         value_type: ProgramType,
     ) -> ProgramValue {
-        let snapshot = crate::kernel::intern_memory(self.clone());
+        let retained_state = crate::kernel::intern_memory(self.clone());
         // A version read is a named read, or a value the memory holds for the
         // cell, either of which already carries its definition.
-        match Pointer::version_read_value(&snapshot, pointer) {
+        match Pointer::version_read_value(&retained_state, pointer) {
             Ok(held) => ProgramValue::Pointer(held.with_type(value_type)),
             Err(value) => ProgramValue::Pointer(PointerValue::from_read(
-                value, value_type, &snapshot, pointer,
+                value,
+                value_type,
+                &retained_state,
+                pointer,
             )),
         }
     }
@@ -7826,20 +7829,26 @@ impl Memory {
         pointer: &Pointer,
         value_type: ProgramType,
     ) -> ProgramValue {
-        let snapshot = crate::kernel::intern_memory(self.clone());
+        let retained_state = crate::kernel::intern_memory(self.clone());
         let value = Pointer::loaded(&MachineTerm::MemoryLoad(
-            snapshot.clone(),
+            retained_state.clone(),
             Box::new(pointer.clone()),
             LoadKind::Int32,
         ))
         .expect("a memory load names its read");
         // This factory constructs an exact typed read, just like the seeded
-        // cell producer. Keep its defining snapshot and address even when a
+        // cell producer. Keep its defining state and address even when a
         // resource argument evaluator does not retain a C load's fact stream.
-        crate::kernel::equality_graph::EqualityGraph::default()
-            .register_pointer_read_definition(&value, &snapshot, pointer);
+        crate::kernel::equality_graph::EqualityGraph::default().register_pointer_read_definition(
+            &value,
+            &retained_state,
+            pointer,
+        );
         ProgramValue::Pointer(PointerValue::from_read(
-            value, value_type, &snapshot, pointer,
+            value,
+            value_type,
+            &retained_state,
+            pointer,
         ))
     }
 }
@@ -8988,7 +8997,7 @@ impl ExecutionState {
             .predicate_count_permissions
             .is_some()
         {
-            return Err("predicate count snapshots cannot change authority".into());
+            return Err("predicate count states cannot change authority".into());
         }
         let ResourceFact::Own(Resource::PopulationAuthority(description), quantity) = selected
         else {
@@ -9074,7 +9083,7 @@ impl ExecutionState {
             .predicate_count_permissions
             .is_some()
         {
-            return Err("predicate count snapshots cannot change membership".into());
+            return Err("predicate count states cannot change membership".into());
         }
         let ResourceFact::Own(Resource::Composite { name, arguments }, quantity) = selected else {
             return Err("Requires owns R(p)".into());
@@ -9332,7 +9341,7 @@ impl ExecutionState {
             .predicate_count_permissions
             .is_some()
         {
-            return Err("predicate count snapshots cannot change named membership".into());
+            return Err("predicate count states cannot change named membership".into());
         }
         let Some(events) = &before.population_effects.creation else {
             return Ok(());
@@ -9525,7 +9534,7 @@ impl ExecutionState {
         self
     }
 
-    /// Replace the memory snapshot after proof-only cell naming.
+    /// Replace the memory state after proof-only cell naming.
     ///
     /// Materializing a canonical load does not write program memory or
     /// invalidate an existing view. The ordinary [`Self::with_memory`] path
@@ -9900,11 +9909,11 @@ impl ExecutionState {
 
     /// The logical resource-state component used to index predicate facts.
     ///
-    /// Predicate memory arguments retain their existing, explicit snapshot
+    /// Predicate memory arguments retain their existing, explicit state
     /// representation. Keeping memory and locals out of this value prevents
     /// an unrelated C step from changing the identity of a predicate merely
     /// because the predicate language can also observe resource counts.
-    pub fn resource_state_snapshot(&self) -> Self {
+    pub fn resource_state_source(&self) -> Self {
         Self {
             population_effects: Arc::new(PopulationEffects {
                 // Nested predicates recapture the same logical model.
@@ -10508,7 +10517,7 @@ fn push_dropped_initialized(dropped: &mut Vec<(Pointer, u32)>, cell: (Pointer, u
 /// are one contiguous key range: `local:` blocks are `Concrete` names sharing
 /// that prefix.
 fn local_block_entries<'a, K: BlockKeyed, V>(
-    map: &'a SnapshotMap<K, V>,
+    map: &'a HashedOrdMap<K, V>,
 ) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
     map.range(K::first_key_of(&PointerBlock::from("local:"))..)
         .take_while(|(key, _)| key.key_block().is_local_block())
@@ -10906,7 +10915,7 @@ mod local_variable_spelling_tests {
 mod kept_range_identity_tests {
     use super::*;
 
-    fn ranges(id: u64) -> SnapshotMap<MemoryRange, ()> {
+    fn ranges(id: u64) -> HashedOrdMap<MemoryRange, ()> {
         ResourceContext::new()
             .unchecked_with_fact(ResourceFact::own_memory(MemoryRange::new(
                 Pointer::symbolic(Variable(id)),
@@ -10919,13 +10928,13 @@ mod kept_range_identity_tests {
 
     #[test]
     fn kept_range_hash_collisions_use_exact_sets_across_threads() {
-        let first = intern_kept_range_set_with_hash(ranges(7), SnapshotMap::new(), 0);
-        let same = intern_kept_range_set_with_hash(ranges(7), SnapshotMap::new(), 0);
-        let different = intern_kept_range_set_with_hash(ranges(8), SnapshotMap::new(), 0);
+        let first = intern_kept_range_set_with_hash(ranges(7), HashedOrdMap::new(), 0);
+        let same = intern_kept_range_set_with_hash(ranges(7), HashedOrdMap::new(), 0);
+        let different = intern_kept_range_set_with_hash(ranges(8), HashedOrdMap::new(), 0);
         assert_eq!(first.id, same.id);
         assert_ne!(first.id, different.id);
         let across = std::thread::spawn(|| {
-            intern_kept_range_set_with_hash(ranges(7), SnapshotMap::new(), 0)
+            intern_kept_range_set_with_hash(ranges(7), HashedOrdMap::new(), 0)
         })
         .join()
         .unwrap();
@@ -10941,18 +10950,18 @@ mod kept_range_identity_tests {
         let intern = |original, introduced| {
             intern_kept_range_set_with_exclusions_and_hash(
                 ranges(7),
-                SnapshotMap::new(),
+                HashedOrdMap::new(),
                 original,
                 introduced,
-                SnapshotMap::new(),
+                HashedOrdMap::new(),
                 0,
             )
         };
         let original = ResourceContext::new()
             .unchecked_with_facts(ranges(8).keys().cloned().map(ResourceFact::own_memory));
         let original = original.memory_input_facts();
-        let plain = intern(SnapshotMap::new(), SnapshotMap::new());
-        let excluded = intern(original.clone(), SnapshotMap::new());
+        let plain = intern(HashedOrdMap::new(), HashedOrdMap::new());
+        let excluded = intern(original.clone(), HashedOrdMap::new());
         let introduced = intern(original.clone(), composite.owned_composite_facts().clone());
         assert_ne!(plain.id, excluded.id);
         assert_ne!(excluded.id, introduced.id);
@@ -10968,15 +10977,15 @@ mod kept_range_identity_tests {
         let viewed = ResourceContext::new().unchecked_with_fact(ResourceFact::view_memory(range));
         let intern = |inputs| {
             intern_kept_range_set_with_exclusions_and_hash(
-                SnapshotMap::new(),
-                SnapshotMap::new(),
-                SnapshotMap::new(),
-                SnapshotMap::new(),
+                HashedOrdMap::new(),
+                HashedOrdMap::new(),
+                HashedOrdMap::new(),
+                HashedOrdMap::new(),
                 inputs,
                 0,
             )
         };
-        let empty = intern(SnapshotMap::new());
+        let empty = intern(HashedOrdMap::new());
         let kept = intern(viewed.memory_input_facts().clone());
         assert_ne!(empty.id, kept.id);
         assert_eq!(kept.id, intern(viewed.memory_input_facts().clone()).id);

@@ -219,7 +219,7 @@ pub(in crate::kernel) fn evaluate_retained_memory_load_paths(
 /// The paths of one *specification* load: a read written in a contract, an
 /// invariant, or a proof step, rather than a read the C program performs.
 ///
-/// A specification load denotes the value one named snapshot holds at one
+/// A specification load denotes the value one named state holds at one
 /// pointer. It is not a step of the program, so it has no branch to take: an
 /// alias it cannot resolve leaves the load term unresolved rather than
 /// splitting into the cases a C execution would have to choose between. The
@@ -253,7 +253,7 @@ pub(in crate::kernel) fn evaluate_spec_memory_load_paths(
         LoadPurpose::Validity,
         &mut alias_cache,
         None,
-        // A specification load denotes a snapshot's cell, not a C access;
+        // A specification load denotes a state's cell, not a C access;
         // it has no byte view of a wider cell.
         None,
     )
@@ -306,7 +306,7 @@ fn evaluate_logical_memory_load_paths_unbridged(
         || assumptions.should_force_symbolic_external_loads()
     {
         let _assumptions_id_scope = assumptions.enter_id_scope();
-        // Logical reads denote snapshot cells. Forward a forced-symbolic
+        // Logical reads denote state cells. Forward a forced-symbolic
         // request to the typed producer without performing a C read.
         let mut paths = evaluate_memory_load_paths_with_alias_cache(
             memory,
@@ -515,7 +515,7 @@ fn retain_indexed_scalar_cell_value(
 }
 
 /// Use a published footprint only to select coordinates for this logical
-/// address. Equality of the address grants no access or snapshot transport.
+/// address. Equality of the address grants no access or state transport.
 fn logical_memory_load_address(
     memory: &Memory,
     pointer: Pointer,
@@ -582,8 +582,8 @@ fn has_pending_reallocation_for_pointer(memory: &Memory, pointer: &Pointer) -> b
 ///
 /// A C read is a step of the program. It observes one of those cases, and the
 /// execution carries that case's condition with it, so it must branch. A
-/// specification read is not a step: it denotes the value the named snapshot
-/// holds, and the load term over that snapshot already *is* that value.
+/// specification read is not a step: it denotes the value the named state
+/// holds, and the load term over that state already *is* that value.
 /// Leaving the term unresolved is therefore sound wherever splitting was —
 /// each case's value equals the load term under that case's condition, so the
 /// term is what the cases agree on, and it asserts strictly less than either of
@@ -831,7 +831,7 @@ fn evaluate_retained_memory_load_case(
     }
 
     // Provenance-sensitive lowering asks for the load identity even when this
-    // snapshot has already materialized the cell's concrete value. Checking
+    // state has already materialized the cell's concrete value. Checking
     // `known_value` first would collapse `at(mark, field == 11)` to `true` and
     // erase the address needed for later frame transport.
     // An abstract value has no frame history to transport: a stored one is
@@ -874,7 +874,7 @@ fn evaluate_retained_memory_load_case(
     // load term (for example a call-havoc variable standing for the framed
     // field) cannot be reinterpreted as a stable pointer form. When the
     // caller permits symbolic external loads, fall through to the symbolic
-    // load below — its load-term form relates across snapshots — instead
+    // load below — its load-term form relates across states — instead
     // of failing the load.
     let pointer_cell_defers_to_symbolic = |value: &ProgramValue| {
         (matches!(value, ProgramValue::Int32(_))
@@ -1105,10 +1105,10 @@ fn evaluate_retained_memory_load_case(
     }
 
     let mut memory = memory.clone();
-    // The access width belongs to the snapshot the load is read at, not only
+    // The access width belongs to the state the load is read at, not only
     // to the projection of it that the term ends up carrying. Recording it
     // here as well as inside `symbolic_load_value` is what lets a later
-    // caller holding the unreduced snapshot ask how many bytes this load
+    // caller holding the unreduced state ask how many bytes this load
     // reads instead of assuming the widest scalar.
     record_load_access_width(&memory, &pointer, value_type.byte_width());
     let reduction_base = Some(crate::kernel::primitives::intern_derivation_base(
@@ -1131,9 +1131,9 @@ fn evaluate_retained_memory_load_case(
             let visited = reduced.retain_only_candidates_by(
                 &candidates,
                 |stored_pointer, stored_value| {
-                    // Dropping a cell names this load at a snapshot that no longer
+                    // Dropping a cell names this load at a state that no longer
                     // records it, so the question is the same byte question
-                    // `1a3b2701` put in front of the three snapshot comparisons:
+                    // `1a3b2701` put in front of the three state comparisons:
                     // `p + 1` is a different address from `p` under every test the
                     // kernel has while holding the second byte a four-byte read
                     // there returns. The address ladder decides it only where the
@@ -1163,14 +1163,14 @@ fn evaluate_retained_memory_load_case(
             }
         },
     );
-    // The returned symbolic load carries the reduced memory snapshot, so
+    // The returned symbolic load carries the reduced memory state, so
     // other queries must relate it back to its source. Dropping cells
     // provably distinct from the loaded pointer is a no-op for this load,
     // which is exactly the `CellsForgotten` edge; without it the derivation
     // walk dead-ends at this variant.
     //
     // The reduction choice may depend on `assumptions`, and the reduced map
-    // may therefore re-intern as a snapshot older than `reduction_base`.
+    // may therefore re-intern as a state older than `reduction_base`.
     // That spelling is sound but deliberately gains no fact-free derivation
     // edge: `record_memory_derivation` refuses the backwards edge below.
     // The load judgment remains scoped to this exact assumption context.
@@ -1245,7 +1245,7 @@ fn evaluate_retained_memory_load_case(
     // A run the load indexes symbolically is never split slot by slot. Its
     // slots are one family of cells the facts did not place the index on; a
     // case per slot would only enumerate the array, and the load term over
-    // this snapshot is already the value every such case agrees on.
+    // this state is already the value every such case agrees on.
     let symbolically_indexed_runs = memory
         .cells
         .candidate_runs(&AliasCandidates::of_block(&pointer.block))
@@ -1396,7 +1396,7 @@ fn evaluate_retained_memory_load_case(
                 });
             } else {
                 // The cell may still hold some of the loaded bytes, so the
-                // load's value is its load over this snapshot, which keeps
+                // load's value is its load over this state, which keeps
                 // the cell, and no further case is split from it.
                 let outcome = match canonicalized_retained_symbolic_load_value_with_identity(
                     if purpose == LoadPurpose::Program && value_type.pointee_type().is_none() {
@@ -1576,7 +1576,7 @@ fn evaluate_retained_memory_load_case(
         }];
     }
 
-    // Query the actual program snapshot. The reduced cache above is a
+    // Query the actual program state. The reduced cache above is a
     // hypothetical view for this read, not another execution transition.
     if let Some(value) = cell_value_recorded_on_path(
         if purpose == LoadPurpose::Program && value_type.pointee_type().is_none() {
@@ -1629,11 +1629,11 @@ fn evaluate_retained_memory_load_case(
     }]
 }
 
-/// The snapshot whose value of an abstract type at `pointer` this
-/// snapshot holds unchanged: each of the value's int32 words here is that
-/// snapshot's load at the same address, as a frame seeds an owned run's
+/// The state whose value of an abstract type at `pointer` this
+/// state holds unchanged: each of the value's int32 words here is that
+/// state's load at the same address, as a frame seeds an owned run's
 /// words from the run's earlier contents. The value is then that
-/// snapshot's load, the term an earlier read or a resource fact names.
+/// state's load, the term an earlier read or a resource fact names.
 pub(in crate::kernel) fn abstract_value_source(
     memory: &Memory,
     pointer: &Pointer,
@@ -1660,14 +1660,14 @@ pub(in crate::kernel) fn abstract_value_source(
 /// The value a C read finds for its cell in the recorded history on this
 /// path, when no cached cell of `memory` answers it.
 ///
-/// This is the cached-cell read above, asked one snapshot further back: a
+/// This is the cached-cell read above, asked one state further back: a
 /// store at an address the facts could not place when it ran drops the cells
 /// it may write, and a path that later learns the store missed this cell
 /// (`u != 0` for `buf[u] = 7` and a read of `buf[0]`) reads the value the
 /// cell held before it. The answer depends on the path's facts exactly as the
 /// distinct-cell reduction above does, and like it is spent only on this
 /// path's value; nothing is named by it. Only a program read asks: a
-/// specification read denotes the named snapshot's value, and a volatile one
+/// specification read denotes the named state's value, and a volatile one
 /// may observe a write no recorded step made.
 fn cell_value_recorded_on_path(
     memory: &Memory,
@@ -1777,7 +1777,7 @@ fn canonicalized_pointer_value_from_int_cell(
                     ))
     );
     // A volatile read may observe a value memory does not record, so it is
-    // never named as the snapshot's read of the cell.
+    // never named as the state's read of the cell.
     let loaded = if let Some(fresh) = fresh {
         Pointer::symbolic(fresh)
     } else if copied_prefix {
@@ -2165,7 +2165,7 @@ fn canonicalized_retained_symbolic_load_value_with_identity(
                 pointer_value.pointer().clone(),
             ));
         }
-        // The raw read of this snapshot is the read the version names: one
+        // The raw read of this state is the read the version names: one
         // place, so a read through an alias of the address reaches it.
         let raw = Pointer::loaded_value(&crate::kernel::intern_memory_ref(memory), &address);
         if raw != *pointer_value.pointer() {
@@ -2179,7 +2179,7 @@ fn canonicalized_retained_symbolic_load_value_with_identity(
     // Losing a scalar cache does not lose a complete pointer stored in the
     // selected memory history. Return that whole value before minting another
     // numeric read coordinate, preserving its bounds and object class.
-    // Forced symbolic reads retain the selected snapshot's read instead;
+    // Forced symbolic reads retain the selected state's read instead;
     // recovering a representation is neither requested nor needed there.
     let complete_read = PointerValue::from_read(
         pointer_value.pointer().clone(),
@@ -2212,7 +2212,7 @@ fn canonicalized_retained_symbolic_load_value_with_identity(
         ));
     }
     // A volatile read may observe a value memory does not record, so it is
-    // never named as the snapshot's read of the cell. It keeps an opaque
+    // never named as the state's read of the cell. It keeps an opaque
     // load-variable name, as a volatile read of a cached cell does.
     if purpose == LoadPurpose::VolatileProgram
         && matches!(
@@ -2220,9 +2220,12 @@ fn canonicalized_retained_symbolic_load_value_with_identity(
             PointerBlock::LoadedPointer(_)
         )
     {
-        let snapshot = crate::kernel::intern_memory_ref(memory);
-        let bits =
-            MachineTerm::MemoryLoad(snapshot.clone(), Box::new(address.clone()), LoadKind::Int32);
+        let retained_state = crate::kernel::intern_memory_ref(memory);
+        let bits = MachineTerm::MemoryLoad(
+            retained_state.clone(),
+            Box::new(address.clone()),
+            LoadKind::Int32,
+        );
         let (fresh, load) = load_variable_for_term(&bits)?;
         record_load_variable_defining_fact_with_source_and_pointer(
             fresh, load, facts, source, None,
@@ -2231,7 +2234,7 @@ fn canonicalized_retained_symbolic_load_value_with_identity(
             (ProgramValue::Pointer(PointerValue::from_read(
                 Pointer::symbolic(fresh),
                 value_type,
-                &snapshot,
+                &retained_state,
                 &address,
             )))
             .into(),
@@ -2374,7 +2377,7 @@ struct RegisteredLoad {
     /// keeps them with the entry they describe; origins and widths do not
     /// change the value. None records an unmigrated native address payload.
     terms: std::collections::HashMap<MachineIntegerType, Option<crate::kernel::KernelTerm>>,
-    /// The canonical snapshot, address and kind: the load itself.
+    /// The canonical state, address and kind: the load itself.
     memory: SharedMemory,
     pointer: Pointer,
     kind: LoadKind,
@@ -2393,7 +2396,7 @@ thread_local! {
         imbl::HashMap<(u64, Variable), (SharedMemory, Pointer)>,
     > = std::cell::RefCell::new(imbl::HashMap::new());
     /// Separate pointer-valued load names. The defining key is one canonical
-    /// snapshot and address at the fixed eight-byte pointer interpretation;
+    /// state and address at the fixed eight-byte pointer interpretation;
     /// neither a scalar load variable nor its mutable maximum access width
     /// decides membership in this registry.
     static POINTER_LOAD_REGISTRY: std::cell::RefCell<
@@ -2401,7 +2404,7 @@ thread_local! {
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     /// The read observation a pointer-load name was first produced from, whose
     /// epoch-scoped live origin answers what existed when the value was read
-    /// (`loaded_pointer_read_predates_block`). The defining snapshot cannot:
+    /// (`loaded_pointer_read_predates_block`). The defining state cannot:
     /// it may be a canonical projection that keeps only the load's own block.
     static POINTER_LOAD_SOURCES: std::cell::RefCell<
         std::collections::HashMap<PointerLoadId, read_observations::Id>,
@@ -2410,7 +2413,7 @@ thread_local! {
     /// its first-seen live origin and the origin epoch that origin was
     /// recorded in, and an access width in bytes.
     ///
-    /// The kind is part of the name: two reads of one address in one snapshot
+    /// The kind is part of the name: two reads of one address in one state
     /// that differ in kind are two entries. The width is the framing width a
     /// later caller holding only the name walks with, which covers every
     /// access recorded at the address and so may exceed the kind's own. Mints
@@ -2422,11 +2425,11 @@ thread_local! {
         std::collections::HashMap<Variable, RegisteredLoad>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     /// The current origin epoch. A load variable's id names one load for the
-    /// whole session, but the live snapshot transport resolves through is
+    /// whole session, but the live state transport resolves through is
     /// first-seen within one verified function: the surface begins a new
     /// epoch per function, and the next mint in a new epoch replaces an
     /// origin recorded under an older one, which belongs to a DAG the
-    /// current function's effect snapshots never connect to.
+    /// current function's effect states never connect to.
     static LOAD_ORIGIN_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static LOAD_VARIABLE_CACHE: std::cell::RefCell<
         std::collections::HashMap<MachineTerm, (Variable, MachineTerm)>,
@@ -2504,7 +2507,7 @@ pub(crate) fn capture_load_variable_registry() -> LoadRegistryState {
 }
 
 pub(crate) fn restore_load_variable_registry(state: &LoadRegistryState) {
-    crate::kernel::proof::fact_keys::clear_snapshot_operand_keys();
+    crate::kernel::proof::fact_keys::clear_state_operand_keys();
     STORED_POINTER_BLOCKS.with(|cache| cache.borrow_mut().clear());
     POINTER_READ_OBSERVATIONS
         .with(|registry| *registry.borrow_mut() = state.pointer_observations.clone());
@@ -2522,7 +2525,7 @@ pub(crate) fn restore_load_variable_registry(state: &LoadRegistryState) {
 }
 
 pub(crate) fn clear_load_variable_registry() {
-    crate::kernel::proof::fact_keys::clear_snapshot_operand_keys();
+    crate::kernel::proof::fact_keys::clear_state_operand_keys();
     crate::kernel::proof::term_rewrite::clear_arithmetic_comparison_cache();
     COMPARISON_FORMS.with(|cache| cache.borrow_mut().clear());
     STORED_POINTER_BLOCKS.with(|cache| cache.borrow_mut().clear());
@@ -2558,7 +2561,7 @@ pub(crate) fn begin_load_origin_epoch() {
 }
 
 /// The read-over-write authority: the value a structural or named read
-/// returns when its snapshot records the cell's value at exactly
+/// returns when its state records the cell's value at exactly
 /// its address. The read retains its version, so this holds
 /// at every point; it depends on the memory, never on facts.
 pub(crate) fn read_over_write_value(term: &MachineTerm) -> Option<MachineTerm> {
@@ -2574,7 +2577,7 @@ pub(crate) fn read_over_write_value(term: &MachineTerm) -> Option<MachineTerm> {
 }
 
 /// `address` with its base read through the pointer read-over-write
-/// authority: an address offset from a pointer read whose snapshot stores a
+/// authority: an address offset from a pointer read whose state stores a
 /// pointer at the read's address is that pointer, offset alike. Both steps
 /// read memory, never facts.
 fn stored_pointer_address(address: &Pointer) -> Option<Pointer> {
@@ -2633,8 +2636,8 @@ pub(crate) fn comparison_form(proposition: &Proposition) -> Option<Proposition> 
 }
 
 fn comparison_form_uncached(proposition: &Proposition) -> Option<Proposition> {
-    // Memory snapshots stay opaque: only the proposition's own terms are
-    // visited, never the cells of a snapshot a read names.
+    // Memory states stay opaque: only the proposition's own terms are
+    // visited, never the cells of a state a read names.
     let mut collector =
         crate::kernel::proof::term_rewrite::IntegerSubstitutionVariableCollector::uncharged();
     collector.collect_read_terms();
@@ -2642,7 +2645,7 @@ fn comparison_form_uncached(proposition: &Proposition) -> Option<Proposition> {
     let mut variables = std::collections::BTreeSet::new();
     collector.extend_into(&mut variables);
     let reads = collector.take_read_terms().collect::<Vec<_>>();
-    // A read of a library or enum value is the value its snapshot stores
+    // A read of a library or enum value is the value its state stores
     // at that address, as a scalar read is: one cell lookup, no walk.
     let algebraic_reads = reads
         .iter()
@@ -2730,7 +2733,7 @@ pub(crate) fn arithmetic_comparison_form(proposition: &Proposition) -> Option<Pr
 }
 
 /// One read-over-write reduction, using only the read's defining store.
-/// A cached value at a later snapshot is not this evidence. Never follow a
+/// A cached value at a later state is not this evidence. Never follow a
 /// predecessor, alias, or another pointer read here. A read projection has
 /// one retained source endpoint; looking up that endpoint is not a history walk.
 pub(crate) fn pointer_read_over_immediate_store(pointer: &Pointer) -> Option<Pointer> {
@@ -2762,14 +2765,14 @@ pub(crate) fn pointer_read_over_immediate_store(pointer: &Pointer) -> Option<Poi
 }
 
 /// The read-over-write authority for a pointer read: the pointer stored at
-/// the read's address in the snapshot it reads, as a cell or as the pointer
-/// view of a union cell, when that snapshot records one. A cell holding the
+/// the read's address in the state it reads, as a cell or as the pointer
+/// view of a union cell, when that state records one. A cell holding the
 /// read itself resolves to nothing.
 pub(crate) fn pointer_read_over_write_value(pointer: &Pointer) -> Option<Pointer> {
     pointer_read_over_write_program_value(pointer).map(|stored| stored.pointer().clone())
 }
 
-/// The complete pointer stored at this read's address, when the snapshot's
+/// The complete pointer stored at this read's address, when the state's
 /// fact-free version walk establishes it. Retained caches alone are not evidence.
 pub(crate) fn pointer_read_over_write_program_value(pointer: &Pointer) -> Option<PointerValue> {
     let read = pointer.as_loaded_value()?;
@@ -2793,7 +2796,7 @@ pub(crate) fn pointer_read_over_write_program_value(pointer: &Pointer) -> Option
 }
 
 thread_local! {
-    // [`memory_shown_cell_value`] is a function of the interned snapshot, the
+    // [`memory_shown_cell_value`] is a function of the interned state, the
     // address and the width, so it is memoized per session; a query met again
     // while its own walk runs (the walk asks block distinctness, which asks
     // this) answers nothing rather than recursing.
@@ -2853,7 +2856,7 @@ fn memory_shown_cell_value_uncached(
     address: &Pointer,
     bytes: u32,
 ) -> Option<ProgramValue> {
-    // The read's own snapshot must hold the cell: a projection interned from
+    // The read's own state must hold the cell: a projection interned from
     // several sources names its oldest, which need not be this read's.
     let held = memory
         .known_value(address)
@@ -2863,14 +2866,14 @@ fn memory_shown_cell_value_uncached(
     let last = crate::kernel::resource_tracker::last_same_named_cell(
         address,
         bytes,
-        &crate::kernel::resource_tracker::ProgramPoint::at(&source),
+        &crate::kernel::resource_tracker::VersionPoint::at(&source),
     )?;
     // The step the walk stopped at must have left the cached cell standing
     // for the cell's bytes by memory alone. A store elsewhere that overlaps
     // the cell changed some of them, whatever a cached cell still says; a
     // havoc keeps a cell only where a frame fact showed it separate, and that
     // fact, not the cache, is the authority for it.
-    match last.point.snapshot().derivation().as_deref() {
+    match last.point.shared_memory().derivation().as_deref() {
         Some(MemoryDerivation::Store { pointer, value, .. })
             if last.stopped_by.reason == crate::kernel::resource_tracker::StopReason::Affected
                 && (pointer != address || value.byte_width() < bytes) =>
@@ -2919,7 +2922,7 @@ pub(crate) fn read_over_write_program_value(value: &ProgramValue) -> ProgramValu
 }
 
 /// The load represented by a load variable minted on this thread.
-/// Reasoning uses this to consult the snapshot lazily: a load variable in
+/// Reasoning uses this to consult the state lazily: a load variable in
 /// an equality query is viewed as its load exactly where a load term would
 /// have triggered provenance evidence.
 pub(crate) fn registered_load_for_variable(variable: &Variable) -> Option<(SharedMemory, Pointer)> {
@@ -2994,7 +2997,7 @@ pub(crate) fn scalar_read_observation(
     read_observations::for_operand(operand)
 }
 
-/// Build a typed read at an already selected snapshot, without version
+/// Build a typed read at an already selected state, without version
 /// selection or a reserved name. Derived checking reads retain their width.
 pub(crate) fn scalar_read_for_exact_cell(
     memory: &SharedMemory,
@@ -3031,7 +3034,7 @@ pub(crate) fn registered_load_kind_for_variable(variable: &Variable) -> Option<L
 }
 
 /// Intern an eight-byte pointer load by its assumption-free defining
-/// snapshot and address. Hashing only chooses a candidate slot: a collision
+/// state and address. Hashing only chooses a candidate slot: a collision
 /// probes until the full key matches or an unused slot is found.
 #[allow(
     dead_code,
@@ -3135,7 +3138,7 @@ pub(crate) fn registered_pointer_load(identity: PointerLoadId) -> Option<(Shared
 }
 
 thread_local! {
-    /// `(snapshot, address)` -> how many bytes the C load there reads.
+    /// `(retained_state, address)` -> how many bytes the C load there reads.
     ///
     /// A `MemoryLoad` term carries its own read's kind, but one address may
     /// be read at several widths, and a framing walk about the address has to
@@ -3148,14 +3151,14 @@ thread_local! {
         std::collections::HashMap<(SharedMemory, Pointer), u32>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 
-    /// `address` -> the widest C load seen at it, in any snapshot.
+    /// `address` -> the widest C load seen at it, in any state.
     ///
     /// How wide the access at an address is comes from the C type being
-    /// loaded, which does not vary with the snapshot. The exact key above is
+    /// loaded, which does not vary with the state. The exact key above is
     /// still preferred, because it answers for one particular load; this one
-    /// answers for a walk that reached the address through a snapshot no
+    /// answers for a walk that reached the address through a state no
     /// typed load was ever performed at, which is every framing walk that
-    /// starts at a later snapshot than the load it is carrying.
+    /// starts at a later state than the load it is carrying.
     ///
     /// Widening on conflict, so a `char` view and a `long` view of one
     /// address answer with the `long`: over-stating a width can only shrink
@@ -3166,7 +3169,7 @@ thread_local! {
 }
 
 /// Remembers that a load of `bytes` bytes happens at this address in this
-/// snapshot. Widening on conflict: the entry has to cover every access that
+/// state. Widening on conflict: the entry has to cover every access that
 /// resolves through it. A declared array element counts as already recorded
 /// at its declared width.
 pub(in crate::kernel) fn record_load_access_width(memory: &Memory, pointer: &Pointer, bytes: u32) {
@@ -3177,7 +3180,7 @@ pub(in crate::kernel) fn record_load_access_width(memory: &Memory, pointer: &Poi
     // A recorded width can only ever widen, and a name computed under the
     // narrower one is stale: the version walk a narrow access takes crosses
     // stores the wider one stops at, so it names the load at an older
-    // snapshot. `LOAD_VARIABLE_CACHE` is keyed by the term alone — a term
+    // state. `LOAD_VARIABLE_CACHE` is keyed by the term alone — a term
     // carries its own kind, not the widest access recorded at its address —
     // so widening has to drop the names that were derived before it.
     // Widening is rare; a name being the answer to a question this
@@ -3237,7 +3240,7 @@ pub(in crate::kernel) fn declare_load_access_width(pointer: &Pointer, bytes: u32
     });
 }
 
-/// The width of the C load recorded at this address in this snapshot, when
+/// The width of the C load recorded at this address in this state, when
 /// one was. `None` means no typed load was seen here, and the caller stands
 /// in [`crate::kernel::resource_tracker::widest_scalar_access_bytes`].
 pub(crate) fn recorded_load_access_width(memory: &SharedMemory, pointer: &Pointer) -> Option<u32> {
@@ -3249,14 +3252,14 @@ pub(crate) fn recorded_load_access_width(memory: &SharedMemory, pointer: &Pointe
                 .copied()
         })
         .or_else(|| {
-            // This snapshot saw no typed load here, but the address still has
-            // a width if any snapshot did: the C type at an address does not
-            // change with the snapshot a framing walk happens to start from.
+            // This state saw no typed load here, but the address still has
+            // a width if any state did: the C type at an address does not
+            // change with the state a framing walk happens to start from.
             recorded_load_access_width_at_address(pointer)
         })
 }
 
-/// The widest C load recorded at this address in any snapshot.
+/// The widest C load recorded at this address in any state.
 fn recorded_load_access_width_at_address(pointer: &Pointer) -> Option<u32> {
     LOAD_ACCESS_WIDTH_AT_ADDRESS.with(|widths| widths.borrow().get(pointer).copied())
 }
@@ -3280,14 +3283,14 @@ pub(crate) fn load_term_access_width(
         .max(kind.byte_width())
 }
 
-/// The widest C load recorded at this address in any snapshot, or the widest
+/// The widest C load recorded at this address in any state, or the widest
 /// scalar when none was seen.
 ///
-/// The snapshot-keyed form above is the precise one and is what a caller
-/// holding an interned snapshot asks. This one is for a caller holding a bare
+/// The state-keyed form above is the precise one and is what a caller
+/// holding an interned state asks. This one is for a caller holding a bare
 /// `Memory` it would have to intern only to ask the question, where the C
 /// type at the address is the whole answer anyway: every framing comparison
-/// runs at a snapshot later than the load it is carrying, so the exact key
+/// runs at a state later than the load it is carrying, so the exact key
 /// would miss and fall through to this table regardless.
 pub(crate) fn load_access_width_at_address_or_widest(pointer: &Pointer) -> u32 {
     recorded_load_access_width_at_address(pointer)
@@ -3310,13 +3313,13 @@ pub(crate) fn registered_load_bytes_for_variable(variable: &Variable) -> Option<
     })
 }
 
-/// The first-seen live snapshot a load variable was minted from in the
+/// The first-seen live state a load variable was minted from in the
 /// current origin epoch. The canonical form is a jumped placeholder unsuited
 /// to frame checks; transport resolves through this origin, which is
-/// DAG-connected and cell-comparable to later effect snapshots of the
+/// DAG-connected and cell-comparable to later effect states of the
 /// function that minted it. First-seen is deterministic because mint order
 /// is execution order; per-epoch because two functions in one session can
-/// mint the same variable from unconnected snapshots.
+/// mint the same variable from unconnected states.
 pub(crate) fn registered_load_origin_for_variable(
     variable: &Variable,
 ) -> Option<(SharedMemory, Pointer)> {
@@ -3335,15 +3338,15 @@ pub(crate) fn registered_load_origin_term_for_variable(variable: &Variable) -> O
 }
 
 /// Whether the pointer a load variable names was obtained before `block`
-/// existed, so cannot point into it: a pointer value read at a snapshot
-/// cannot hold the address of an object that snapshot does not have.
+/// existed, so cannot point into it: a pointer value read at a state
+/// cannot hold the address of an object that state does not have.
 ///
 /// The reference is the load's live origin, the state it was first read in,
 /// never its canonical memory, which may be a projection that leaves
 /// unrelated blocks out. Local and heap blocks are judged. A local exists
-/// from the step that declares it into the snapshot, so a local the origin
+/// from the step that declares it into the state, so a local the origin
 /// does not hold, and has not ended, was declared after the read. A heap
-/// identity is handed out by a `malloc` in the snapshot that records it as
+/// identity is handed out by a `malloc` in the state that records it as
 /// pending, then live, then freed, and is never reused within a proof, so a
 /// heap identity the origin has none of those records for was allocated
 /// after the read.
@@ -3410,7 +3413,7 @@ pub(crate) fn viewed_as_memory_load(term: &MachineTerm) -> Option<MachineTerm> {
 }
 
 /// Conservative read presence for transport planning: structural reads and
-/// reserved names count even when a name has not yet been registered. Snapshot
+/// reserved names count even when a name has not yet been registered. MemoryState
 /// variable summaries retain the existing single-load presence shortcut.
 pub(crate) fn proposition_mentions_load_variable(proposition: &Proposition) -> bool {
     if proposition_mentions_structural_read(proposition) {
@@ -3436,7 +3439,7 @@ fn proposition_mentions_structural_read(proposition: &Proposition) -> bool {
 pub(crate) const LOAD_VARIABLE_RANGE: std::ops::Range<u64> =
     LOAD_VARIABLE_BASE..LOAD_VARIABLE_BASE + LOAD_VARIABLE_RANGE_SIZE;
 
-/// Whether the selected proposition contains a snapshot-bearing scalar read,
+/// Whether the selected proposition contains a state-bearing scalar read,
 /// in structural form or through the transitional registered name.
 pub(crate) fn proposition_mentions_scalar_read(proposition: &Proposition) -> bool {
     if proposition_mentions_structural_read(proposition) {
@@ -4295,7 +4298,7 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 }
 
 /// The load variable representing one load identity: the pair of a memory
-/// snapshot (by content) and a loaded pointer. Hashing that identity into a
+/// state (by content) and a loaded pointer. Hashing that identity into a
 /// reserved id space picks where the search for its id starts, and the
 /// thread-local registry assigns the first slot that holds this identity or
 /// nothing, so distinct identities get distinct ids by construction. Every
@@ -4305,7 +4308,7 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 /// this session. The registry is never cleared within a session, and
 /// exhausting its capacity is a loud failure rather than a silent reset.
 /// The variable naming a `kind` load of `pointer` in `memory`. The version
-/// walk that picks the snapshot it is named at is as wide as the widest
+/// walk that picks the state it is named at is as wide as the widest
 /// access recorded at the address, and never narrower than the read.
 pub(crate) fn load_variable_for_cell(
     memory: &SharedMemory,
@@ -4321,13 +4324,13 @@ pub(crate) fn load_variable_for_cell(
     )
 }
 
-/// Mint the load identity for exactly this snapshot and pointer.
+/// Mint the load identity for exactly this state and pointer.
 ///
 /// Fold substitution uses this after rewriting a registered load's address.
-/// The ordinary cell helper first projects a snapshot through memory
+/// The ordinary cell helper first projects a state through memory
 /// provenance, which is correct for a newly observed load but would change
-/// the snapshot identity carried by an existing defining fact.  Keeping this
-/// narrow helper separate makes the selected snapshot explicit and avoids
+/// the state identity carried by an existing defining fact.  Keeping this
+/// narrow helper separate makes the selected state explicit and avoids
 /// traversing or rewriting any of its contents.
 pub(crate) fn load_variable_for_exact_cell(
     memory: &SharedMemory,
@@ -4352,14 +4355,14 @@ pub(crate) fn load_variable_for_cell_with_origin(
 ) -> Variable {
     let bytes = bytes.max(kind.byte_width());
     // Derive the variable from the cell's version when one is recorded:
-    // snapshots that differ only by effects provably disjoint from this
+    // states that differ only by effects provably disjoint from this
     // cell then share the variable, so bookkeeping drift and unrelated
     // stores do not mint new identities for one load.
-    let version = crate::kernel::resource_tracker::last_same_point(
+    let version = crate::kernel::resource_tracker::last_same_version_point(
         crate::kernel::resource_tracker::TrackedResource::Cell { pointer, bytes },
-        &crate::kernel::resource_tracker::ProgramPoint::at(memory),
+        &crate::kernel::resource_tracker::VersionPoint::at(memory),
     )
-    .map(|point| point.snapshot().clone());
+    .map(|point| point.shared_memory().clone());
     let memory = version.as_ref().unwrap_or(memory);
     #[cfg(test)]
     duplicate_read_names::observe(memory, pointer, kind);
@@ -4443,7 +4446,7 @@ pub(crate) mod duplicate_read_names {
 }
 
 /// The kind is part of the identity: two reads of one address in one
-/// snapshot that differ in kind are two values. The hash leaves it out, so a
+/// state that differ in kind are two values. The hash leaves it out, so a
 /// load keeps the slot it had when every load of its address agreed on one
 /// kind, and a second kind probes past it like any other collision.
 ///
@@ -4525,7 +4528,7 @@ fn mint_load_variable_identity(
     })
 }
 
-// Keep the actual producer expression, including its live snapshot and
+// Keep the actual producer expression, including its live state and
 // pointer. Load identities can recur in disconnected model arms; their first
 // registered origin is not necessarily in the current arm's memory history.
 fn record_wide_load_observation(term: &MachineTerm, variable: Variable) {
@@ -4650,14 +4653,14 @@ pub(in crate::kernel) fn canonical_scalar_read(bits: &MachineTerm) -> MachineTer
                 .max(existing_read_access_width(&memory, &pointer, kind))
         });
     let bytes = recorded_bytes.unwrap_or_else(|| kind.unrecorded_access_byte_width());
-    let version = crate::kernel::resource_tracker::last_same_point(
+    let version = crate::kernel::resource_tracker::last_same_version_point(
         crate::kernel::resource_tracker::TrackedResource::Cell {
             pointer: &pointer,
             bytes,
         },
-        &crate::kernel::resource_tracker::ProgramPoint::at(&memory),
+        &crate::kernel::resource_tracker::VersionPoint::at(&memory),
     )
-    .map(|point| point.snapshot().clone())
+    .map(|point| point.shared_memory().clone())
     .unwrap_or(memory);
     let id = if recorded_bytes.is_some() {
         read_observations::record(&version, &pointer, kind, origin, bytes)
@@ -4683,7 +4686,7 @@ pub(crate) fn latest_scalar_read_observation(read: &MachineTerm) -> Option<Machi
 
 /// Returns the load variable for a load term's provenance-stable form.
 /// The term is first canonicalized without assumptions, resolving cached
-/// cells and snapshot representation differences. The same cell loaded at
+/// cells and state representation differences. The same cell loaded at
 /// different symbolic states therefore shares one load variable whenever
 /// the difference is representational. The second return value is the form
 /// retained in the producer binding, exactly as registered under the name.
@@ -4694,14 +4697,14 @@ pub(crate) fn load_variable_for_term(bits: &MachineTerm) -> Option<(Variable, Ma
     // Naming is deterministic per term, and callers ask per fact atom per
     // comparison; the version walk and canonicalization behind a cold call
     // are not free, so cache by term. Term hashing is cheap: embedded
-    // snapshots hash by interned identity.
+    // states hash by interned identity.
     if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
         record_wide_load_observation(bits, hit.0);
         return Some(hit);
     }
     crate::instrumentation::record_deterministic_work(1);
     let (variable, _) = load_variable_for_term_uncached(bits)?;
-    // Naming may cross a cache-only snapshot or project away unrelated cells.
+    // Naming may cross a cache-only state or project away unrelated cells.
     // Its defining equation must retain the exact structural read registered
     // under this name, rather than a second representation of that read.
     // This does not resolve the read to a stored value or consult facts.
@@ -4725,11 +4728,11 @@ fn load_variable_for_term_uncached(bits: &MachineTerm) -> Option<(Variable, Mach
         let MachineTerm::MemoryLoad(origin, _, _) = bits else {
             unreachable!("the pattern above matched a memory load");
         };
-        // A cell of the canonical snapshot holding this cell's own read (a
+        // A cell of the canonical state holding this cell's own read (a
         // materialization) names that read: the load is that read. The raw
-        // snapshot can lack the cell while its unchanged-bytes source, which
-        // the canonical snapshot is projected from, holds it, so the cell is
-        // asked of the canonical snapshot. Only a read of the same address
+        // state can lack the cell while its unchanged-bytes source, which
+        // the canonical state is projected from, holds it, so the cell is
+        // asked of the canonical state. Only a read of the same address
         // and kind qualifies, so no stored value replaces a read.
         if let Some(MachineTerm::Variable(held)) = memory
             .memory()
@@ -4746,7 +4749,7 @@ fn load_variable_for_term_uncached(bits: &MachineTerm) -> Option<(Variable, Mach
                 memory,
                 pointer,
                 *kind,
-                // Either snapshot's recorded entry is this same load's own
+                // Either state's recorded entry is this same load's own
                 // width, so the first one found is the answer. Taking the
                 // larger would let a miss on one side widen a width the
                 // other side knows exactly.
@@ -4762,11 +4765,11 @@ fn load_variable_for_term_uncached(bits: &MachineTerm) -> Option<(Variable, Mach
             canonical.clone(),
         ));
     }
-    // The canonical form resolved this load through the snapshot's own
+    // The canonical form resolved this load through the state's own
     // materialized cell, and the cell holds a load variable: that variable
     // already names this value, so it is this load's name too. Falling
     // through would mint a second identity for one value whenever the cell's
-    // snapshot cannot be reached by the assumption-free version walk — a cell
+    // state cannot be reached by the assumption-free version walk — a cell
     // retained across a call havoc by a `separate` premise, for instance,
     // whose reload would otherwise lose every fact stated about it. The
     // resolution is structural and assumption-free, and the havoc's retention
@@ -4866,7 +4869,7 @@ fn record_load_variable_defining_fact_with_source_and_pointer(
     );
     let binding = GeneratedLoadBinding::Exact {
         variable,
-        snapshot: MemorySnapshotIdentity::of(memory.memory()),
+        retained_state: MemoryStateIdentity::of(memory.memory()),
         pointer: pointer.as_ref().clone(),
         load: defining_load,
         typed_pointer_value: typed_pointer_value.cloned(),
@@ -5003,13 +5006,13 @@ pub(in crate::kernel) fn symbolic_load_value_unrecorded(
 /// holds at function entry, where `memory` holds only the storage's block: a
 /// fresh symbolic pointer named by the cell's load for an object pointer (a
 /// stored pointer may point into any block), and otherwise the cell's typed
-/// load, with its memory snapshot and address retained directly.
+/// load, with its memory state and address retained directly.
 ///
 /// `record_width` says the access width here, as [`symbolic_load_value`]
 /// does; a caller that declared it for a whole array
 /// ([`declare_symbolic_array_access_widths`]) passes `false`. An object
 /// pointer's load retains the same typed definition as a logical read.
-/// Reuse only a load already named at this exact snapshot and address.
+/// Reuse only a load already named at this exact state and address.
 /// An optional cell-cache reconciliation must not canonicalize a cold load
 /// by walking its unrelated memory history. Missing names give no evidence.
 pub(in crate::kernel) fn cached_symbolic_storage_cell_value(
@@ -5209,7 +5212,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn forced_logical_pointer_reads_keep_the_snapshot_identity_of_cached_values() {
+    fn forced_logical_pointer_reads_keep_the_state_identity_of_cached_values() {
         for (ty, stored) in [
             (ProgramType::Int32Pointer, Pointer::null()),
             (
@@ -5279,7 +5282,7 @@ mod tests {
             assert_ne!(
                 read.pointer(),
                 &stored,
-                "forced reads must retain a snapshot term"
+                "forced reads must retain a state term"
             );
             assert!(
                 path.facts
@@ -5449,7 +5452,7 @@ mod tests {
         );
         restore_load_variable_registry(&registry_before);
         // A restore returns the registry to its capture, as it does the
-        // memory arena whose ids name the read's snapshot: a name minted
+        // memory arena whose ids name the read's state: a name minted
         // after the capture names nothing afterwards, exactly as a load
         // variable minted then does.
         assert!(pointer.pointer().as_loaded_value().is_none());
@@ -5522,7 +5525,7 @@ mod tests {
     }
 
     // Typed observations must preserve the complete pointer, selected alias
-    // premises, snapshot changes, and session boundaries without corpus scans.
+    // premises, state changes, and session boundaries without corpus scans.
     // A cached pointer can still denote an older defining load after a frame
     // materializes its named scalar cell. A checked index must retain where
     // that value was read now, without publishing evidence to another context.
@@ -5753,7 +5756,7 @@ mod tests {
         assert!(loaded.proven_distinct(&later));
         assert!(later.proven_distinct(loaded));
         assert!(!loaded.proven_distinct(&early));
-        // The same holds for a heap identity the read's snapshot never
+        // The same holds for a heap identity the read's state never
         // handed out, and not for one it already holds.
         assert!(loaded.proven_distinct(&PointerBlock::Heap(8711)));
         assert!(PointerBlock::Heap(8711).proven_distinct(loaded));
@@ -6192,12 +6195,12 @@ mod tests {
             fact.generated_load_binding(),
             Some(GeneratedLoadBinding::Exact {
                 variable: recorded,
-                snapshot,
+                retained_state,
                 pointer: recorded_pointer,
                 load: recorded_load,
                 ..
             }) if *recorded == variable
-                && *snapshot == MemorySnapshotIdentity::of(memory.memory())
+                && *retained_state == MemoryStateIdentity::of(memory.memory())
                 && recorded_pointer == &pointer
                 && recorded_load == &canonical
         ));
@@ -6369,7 +6372,7 @@ mod tests {
         let produced = &facts[0];
         assert!(produced.generated_load_binding().is_some());
         assert_eq!(produced.generated_load_source_events().len(), 1);
-        // Exercise the raw descriptor form too: structural snapshot equality
+        // Exercise the raw descriptor form too: structural state equality
         // can hold across epochs, but it must not carry producer authority.
         let fact = ExecutionPureFact::certified(Proposition::ConditionIs(
             ConditionTerm::equal(MachineTerm::Variable(variable), first_load),
@@ -6379,7 +6382,7 @@ mod tests {
         .with_generated_load_source_event(produced.generated_load_source_events()[0].clone());
 
         // A fresh arena represents a new epoch. Its empty Memory is
-        // structurally equal to the first one, but its embedded snapshot
+        // structurally equal to the first one, but its embedded state
         // identity is intentionally different.
         crate::kernel::primitives::start_fresh_memory_arena();
         let second_memory = crate::kernel::intern_memory(Memory::new());
@@ -6399,8 +6402,8 @@ mod tests {
         );
         assert_eq!(fact.proposition(), &replacement);
         assert_ne!(
-            MemorySnapshotIdentity::of(first_memory.memory()),
-            MemorySnapshotIdentity::of(second_memory.memory())
+            MemoryStateIdentity::of(first_memory.memory()),
+            MemoryStateIdentity::of(second_memory.memory())
         );
         let transported = fact.clone().with_proposition(replacement);
         assert!(transported.generated_load_binding().is_none());
@@ -6876,7 +6879,7 @@ mod tests {
             Some(class)
         );
         // One equation relates the read to the stored value, and one the
-        // snapshot's raw read to the read.
+        // state's raw read to the read.
         assert_eq!(facts.len(), 2);
         for fact in facts.iter() {
             assert!(fact.is_logical_read_equation());
@@ -7808,9 +7811,9 @@ mod tests {
     fn cached_typed_read_retains_exact_definition_without_admitting_facts() {
         let context = PureFactContext::new();
         let address = Pointer::symbolic(Variable(92_310));
-        let snapshot = intern_memory(Memory::new());
+        let retained_state = intern_memory(Memory::new());
         let load = MachineTerm::MemoryLoad(
-            snapshot.clone(),
+            retained_state.clone(),
             Box::new(address.clone()),
             crate::kernel::LoadKind::Int32,
         );
@@ -7818,7 +7821,7 @@ mod tests {
         let mut facts = crate::kernel::ExecutionFacts::new();
         let source = test_load_source(0);
         let ProgramValue::Pointer(value) = canonicalized_pointer_value_from_int_cell(
-            &snapshot,
+            &retained_state,
             &address,
             &ProgramValue::Int32(MachineTerm::Variable(variable)),
             ProgramType::Int64Pointer,
@@ -7832,7 +7835,7 @@ mod tests {
         };
         // The cached read is named by its exact definition, without any
         // producer fact being admitted first.
-        let application = Pointer::loaded_value(&snapshot, &address);
+        let application = Pointer::loaded_value(&retained_state, &address);
         assert_eq!(value.pointer(), &application);
         assert!(
             facts.is_empty(),
@@ -7959,16 +7962,16 @@ mod tests {
     fn cached_volatile_pointer_read_has_no_retainable_definition() {
         let context = PureFactContext::new();
         let address = Pointer::symbolic(Variable(92_311));
-        let snapshot = intern_memory(Memory::new());
+        let retained_state = intern_memory(Memory::new());
         let load = MachineTerm::MemoryLoad(
-            snapshot.clone(),
+            retained_state.clone(),
             Box::new(address.clone()),
             crate::kernel::LoadKind::Int32,
         );
         let (variable, _) = load_variable_for_term(&load).expect("load identity");
         let mut facts = crate::kernel::ExecutionFacts::new();
         let ProgramValue::Pointer(value) = canonicalized_pointer_value_from_int_cell(
-            &snapshot,
+            &retained_state,
             &address,
             &ProgramValue::Int32(MachineTerm::Variable(variable)),
             ProgramType::Int64Pointer,
@@ -7983,16 +7986,16 @@ mod tests {
         for fact in &facts {
             fact.retain_pointer_read_definition(&context);
         }
-        assert!(
-            !context
-                .pointers_known_equal(value.pointer(), &Pointer::loaded_value(&snapshot, &address))
-        );
+        assert!(!context.pointers_known_equal(
+            value.pointer(),
+            &Pointer::loaded_value(&retained_state, &address)
+        ));
     }
 
     #[test]
     fn completed_pointer_reads_join_through_later_graph_address_equality() {
         let memory = Memory::new();
-        let snapshot = intern_memory(memory.clone());
+        let retained_state = intern_memory(memory.clone());
         let a = Pointer::symbolic(Variable(92_100));
         let b = Pointer::symbolic(Variable(92_101));
         let read = |address: &Pointer, volatile| {
@@ -8018,15 +8021,15 @@ mod tests {
         let (y, y_facts) = read(&b, false);
         let empty = PureFactContext::new();
         // A completed program read is named by its own read.
-        assert_eq!(x, Pointer::loaded_value(&snapshot, &a));
-        assert_eq!(y, Pointer::loaded_value(&snapshot, &b));
+        assert_eq!(x, Pointer::loaded_value(&retained_state, &a));
+        assert_eq!(y, Pointer::loaded_value(&retained_state, &b));
         let available = x_facts
             .iter()
             .chain(&y_facts)
             .fold(empty.clone(), |context, fact| {
                 context.assume_execution_pure_fact(fact)
             });
-        assert!(available.pointers_known_equal(&x, &Pointer::loaded_value(&snapshot, &a)));
+        assert!(available.pointers_known_equal(&x, &Pointer::loaded_value(&retained_state, &a)));
         assert!(!empty.pointers_known_equal(&x, &y));
         let branch = available
             .clone()
@@ -8035,7 +8038,7 @@ mod tests {
         assert!(
             branch
                 .equality_graph
-                .are_pointer_loads_equal(&snapshot, &a, &b)
+                .are_pointer_loads_equal(&retained_state, &a, &b)
         );
         assert!(branch.pointers_known_equal(&x, &y));
         let owner = ResourceContext::new_with_equalities(&available).unchecked_with_fact(
@@ -8091,7 +8094,7 @@ mod tests {
         });
         assert!(!volatile_context.pointers_known_equal(
             &volatile_value,
-            &Pointer::loaded_value(&snapshot, &volatile_address),
+            &Pointer::loaded_value(&retained_state, &volatile_address),
         ));
         let (volatile_same, volatile_same_facts) = read(&a, true);
         let volatile_only = volatile_same_facts
@@ -8114,7 +8117,7 @@ mod tests {
         assert_ne!(normal_only, volatile_only);
         assert!(
             !volatile_only
-                .pointers_known_equal(&volatile_same, &Pointer::loaded_value(&snapshot, &a),)
+                .pointers_known_equal(&volatile_same, &Pointer::loaded_value(&retained_state, &a),)
         );
         let scalar_paths = evaluate_memory_load_paths(
             &memory,
@@ -8300,7 +8303,7 @@ mod tests {
         let changed = Pointer::loaded_value(&intern_memory(partial), &address);
         assert!(normalize_using_conditions(&equality(&changed, &stored), &[], &facts).is_err());
     }
-    /// Canonical read snapshots retain an exact projection edge back to the
+    /// Canonical read states retain an exact projection edge back to the
     /// execution source. The selected alias is still required to find its store.
     #[test]
     fn normalize_recorded_pointer_value_follows_exact_projection_source() {
@@ -8582,7 +8585,7 @@ mod pointer_read_value_definition_tests {
     }
 
     #[test]
-    fn named_pointer_reads_retain_the_original_snapshot_definition() {
+    fn named_pointer_reads_retain_the_original_state_definition() {
         let _session = crate::kernel::VerificationSession::enter();
         let cell = Pointer {
             block: PointerBlock::ExternalArgument,
@@ -8705,9 +8708,9 @@ fn arithmetic_comparison_normalizes_selected_read_addresses_without_changing_ter
         pointer(index.clone()),
         ProgramValue::Int32(MachineTerm::constant(17)),
     );
-    let different_snapshot = equality(original, read(crate::kernel::intern_memory(changed), index));
+    let different_state = equality(original, read(crate::kernel::intern_memory(changed), index));
     assert!(!crate::kernel::proposition_holds_without_facts(
-        &comparison_form(&different_snapshot).unwrap_or(different_snapshot)
+        &comparison_form(&different_state).unwrap_or(different_state)
     ));
 }
 

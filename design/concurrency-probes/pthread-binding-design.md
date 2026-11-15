@@ -327,7 +327,7 @@ Evaluator and retained proof checker call the same checked transition. A
 create event retains its predecessor authority identity, exact declaration and
 profile, worker and termination evidence, C arguments, status/handle bindings,
 and checked output delta. A join event names that create and cites its current
-right and success evidence. Never restore a saved parent snapshot.
+right and success evidence. Never restore a saved parent state.
 
 Expansion must retain enough evidence to check the same worker selection and
 status refinement without rediscovering them. Surface rendering uses ordinary

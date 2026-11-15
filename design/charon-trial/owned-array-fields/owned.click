@@ -17,7 +17,7 @@ fn extracted(value: u32, index: usize) -> u32 {
     requires index < 4u64;
     ensures result == value;
 }
-fn snapshot(value: u32) -> u32 {
+fn copied_value(value: u32) -> u32 {
     ensures result == value;
 }
 fn tuple_move(value: u32) -> u32 {

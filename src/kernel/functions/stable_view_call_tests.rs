@@ -135,7 +135,7 @@ fn composite_reader(name: &str) -> ProgramFunction {
         vec![crate::kernel::program_expression::variable("p")],
         vec![ProgramType::Int32Pointer],
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let definition = CompositeResourceDefinition::new(
@@ -407,7 +407,7 @@ fn composite_reader_with_definition(
         vec![crate::kernel::program_expression::variable("p")],
         vec![ProgramType::Int32Pointer],
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     program_function(
@@ -556,7 +556,7 @@ fn adapter_reader(
         vec![crate::kernel::program_expression::variable("p")],
         vec![ProgramType::Int32Pointer],
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     program_function(
@@ -835,7 +835,7 @@ fn view_and_produce_reader(name: &str) -> ProgramFunction {
         vec![crate::kernel::program_expression::variable("p")],
         vec![ProgramType::Int32Pointer],
         ResourceTransferRole::Produce,
-        ResourceSnapshot::Post,
+        ResourceStateSource::Post,
     )
     .unwrap();
     let definition = CompositeResourceDefinition::new(
@@ -2429,7 +2429,7 @@ fn composite_reader_with_mutable_range(
         vec![crate::kernel::program_expression::variable("p")],
         vec![ProgramType::Int32Pointer],
         ResourceTransferRole::Borrow,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .unwrap();
     let definition = CompositeResourceDefinition::new(
@@ -2690,14 +2690,14 @@ fn token_population_reader(name: &str, population: &str) -> ProgramFunction {
         vec![crate::kernel::program_expression::variable("p")],
         vec![ProgramType::Int32Pointer],
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .expect("a unit population term");
     let counted = ResourceSpec::quantified(
         crate::kernel::program_expression::variable("n"),
         unit,
         ResourceTransferRole::Consume,
-        ResourceSnapshot::Entry,
+        ResourceStateSource::Entry,
     )
     .expect("a counted population requirement");
     program_function(

@@ -7,7 +7,7 @@ integer-to-pointer cast. The cast result is named by the read of
 at the state where `n` was unfolded, to `parent`. Here `gp == xid`, so the
 parent is `up_at`'s frame node, whose cells the function holds.
 
-The store through `o` happens before the cast. A read is named by its snapshot
+The store through `o` happens before the cast. A read is named by its state
 and address without facts, so the cast's read after the store is a different
 read from the one the unfolded fact names. Relating them would be frame
 reasoning over the store, which term comparison does not do

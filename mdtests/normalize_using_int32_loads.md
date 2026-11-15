@@ -1,4 +1,4 @@
-# Equal offsets give equal int32 reads in one snapshot
+# Equal offsets give equal int32 reads in one state
 
 ```c filename=int32_loads.c
 void keep(int32 p[], int32 n, int32 i, int32 j) { }

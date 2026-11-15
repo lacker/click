@@ -118,7 +118,7 @@ fn preserve_footprint(separation: &Proposition, kind: ReadType) -> Option<Propos
 }
 
 /// The footprint and separated cell determine both endpoints. The goal selects
-/// only the read type; it cannot supply a different address or snapshot.
+/// only the read type; it cannot supply a different address or state.
 fn preserve_definedness(
     separation: &Proposition,
     value_type: ProgramType,

@@ -127,7 +127,7 @@ impl PureFactContext {
         crate::instrumentation::record_deterministic_work(1);
         // A shape bucket is not an explicit premise list. Only its unique
         // source can be checked implicitly; an ambiguous bucket needs a
-        // selected premise. Keep the memory matcher's snapshot checks.
+        // selected premise. Keep the memory matcher's state checks.
         Some(
             self.condition_facts_by_sides
                 .get(&key)
@@ -206,7 +206,7 @@ impl PureFactContext {
     }
 
     /// The unique constant this term resolves to through established equality
-    /// facts, if any. Does not search other snapshots for a constant.
+    /// facts, if any. Does not search other states for a constant.
     pub(in crate::kernel) fn known_signed_constant_after_normalization(
         &self,
         term: &MachineTerm,
@@ -321,7 +321,7 @@ mod memory_condition_match_tests {
     }
 
     #[test]
-    fn compound_memory_condition_candidates_preserve_snapshots() {
+    fn compound_memory_condition_candidates_preserve_states() {
         let _session = crate::kernel::VerificationSession::enter();
         let memory = Memory::new();
         let pointer = Pointer::symbolic(Variable(999_000));

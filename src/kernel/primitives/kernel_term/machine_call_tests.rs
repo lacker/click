@@ -125,7 +125,7 @@ fn machine_call_roots_preserve_opaque_producer_payloads() {
 }
 
 #[test]
-fn machine_call_argument_order_and_read_snapshots_remain_distinct() {
+fn machine_call_argument_order_and_read_states_remain_distinct() {
     let _session = crate::kernel::VerificationSession::enter();
     let pointer = Pointer::symbolic(Variable(995802));
     let before = crate::kernel::intern_memory(Memory::new());

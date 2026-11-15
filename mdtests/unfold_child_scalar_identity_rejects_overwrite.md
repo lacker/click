@@ -2,7 +2,7 @@
 
 The frame initially states an odd tag word. A C write clears it through the
 parameter proven equal to the model pointer; the old scalar fact must not
-justify a claim about the new snapshot.
+justify a claim about the new state.
 
 ```c filename=probe.c
 struct node { unsigned long tag; struct node *other; struct node *next; };

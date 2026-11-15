@@ -41,7 +41,7 @@ fn assumed_guard_lookup_does_not_scan_unrelated_resources() {
 #[test]
 #[ignore = "nightly: 2s in the parallel gate"]
 fn symbolic_guard_lookup_and_exchange_use_indexed_paths() {
-    use super::super::super::ResourceSnapshot;
+    use super::super::super::ResourceStateSource;
     let assumptions = PureFactContext::new();
     let mut samples = Vec::new();
     for size in [16usize, 64, 256, 1024] {
@@ -51,13 +51,18 @@ fn symbolic_guard_lookup_and_exchange_use_indexed_paths() {
         // Assemble and validate that frame once; the measured exchange below
         // still consumes and reinstalls its selected guard through checked APIs.
         let guards = (0..size)
-            .map(|index| evaluate_guard(&state, &state, mutex(index), ResourceSnapshot::Current))
+            .map(|index| evaluate_guard(&state, &state, mutex(index), ResourceStateSource::Current))
             .collect::<Vec<_>>();
         state.resources = ResourceContext::new()
             .try_compose_with_facts(guards, &assumptions)
             .unwrap();
         let (_, work) = crate::instrumentation::measure_deterministic_work(|| {
-            let fact = evaluate_guard(&state, &state, mutex(size / 2), ResourceSnapshot::Current);
+            let fact = evaluate_guard(
+                &state,
+                &state,
+                mutex(size / 2),
+                ResourceStateSource::Current,
+            );
             assert!(state.resources.satisfies_fact(&fact, &assumptions));
             let removed = state
                 .resources

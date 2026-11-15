@@ -267,7 +267,7 @@ preparing the project at another path writes the same lock
 (`compiler_import_project_locks_are_portable` in `tests/compiler_import.rs`).
 The selected compiler and its backend are named by path and pinned by digest.
 
-## The prepared snapshot
+## The prepared state
 
 Verification loads a unit's recorded artifacts without executing or locating
 its compiler or front end. The artifacts and lock move with the project: loading
@@ -277,10 +277,10 @@ headers used during preparation are identified in the lock but need not be
 installed on the verification host. A C unit's sources and project-local
 headers are rechecked in the unit root, so a changed one is refused by name.
 
-This verifies the **prepared snapshot**. A change to the C source or an opened
+This verifies the **prepared state**. A change to the C source or an opened
 project-local header is rejected during loading. A change to external headers,
 or the appearance of a previously absent header selected by `__has_include`,
-does not silently change that snapshot; run `click import lock` in the selected
+does not silently change that state; run `click import lock` in the selected
 toolchain environment to prepare a new one. The lock is a consistency record,
 so publication and provenance of a native platform artifact still need a
 trusted preparation process.
@@ -328,7 +328,7 @@ declaration spans outside the logical source must name one of the relative
 dependencies. The broader preprocessor inventory also covers headers whose
 declarations are not lowered. For each opened file the lock records its
 accessed path, resolved target, and content hash. Refresh repeats the export
-across a bounded inventory snapshot; offline loading rejects changed contents
+across a bounded inventory state; offline loading rejects changed contents
 or symlink targets without running Clang.
 The unit root is also the dependency root: it may contain the project source
 tree and a Linux sysroot. Dependencies retain paths relative to that root. The
@@ -1998,7 +1998,7 @@ Explicit refresh runs preprocessing with controlled arguments and environment,
 records the selected toolchain, dependencies, source and artifact, and refuses
 inputs that change during preparation. Ordinary loading does not invoke the
 compiler. It checks the lock's internal identities and the available project
-inputs against the recorded snapshot. Changed C sources, opened project-local
+inputs against the recorded state. Changed C sources, opened project-local
 headers, configuration, or artifact bytes cannot reuse that lock. External
 toolchain and header changes require a new explicit refresh to produce a proof
 about that new environment. A supplied digest alone does not authenticate who
@@ -2122,7 +2122,7 @@ validated artifact. Dependencies come from the compiler's complete dependency
 output, including configured system headers; source-map filenames are not a
 substitute for that inventory.
 
-The initial implementation snapshots the working directory, source directories,
+The initial implementation states the working directory, source directories,
 and configured include roots before and after preprocessing. Keep them quiescent
 during lock refresh. Root/configuration/output paths with symlink components are
 rejected during preparation; dependencies resolving outside the declared roots

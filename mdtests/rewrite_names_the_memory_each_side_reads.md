@@ -2,7 +2,7 @@
 
 `old(a[m])` and `a[m]` read the same address in different states. The
 requested equality and current goal use one printer and label map, so their
-read widths and address match while their snapshot labels differ. The store
+read widths and address match while their state labels differ. The store
 may overwrite `a[m]`; the old equality alone cannot justify the current read.
 The diagnostic shows this directly, without an additional display mode.
 

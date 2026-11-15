@@ -9,7 +9,7 @@ its 2,000,000-unit budget (about 10 s in a debug build) on the member
 it or failing promptly. `CLICK_TIMINGS=1` attributes the work to premise
 spelling: about 3.5M units in `solve closure: premise spelling` over 62
 calls, and about 400 calls of `solve premise surface at recorded
-snapshots` / `across recorded snapshots`. The refusal names the member by a
+states` / `across recorded states`. The refusal names the member by a
 compiler temporary, `__rust_mir_10 == 256`.
 
 ## Reproduction

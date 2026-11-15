@@ -19,7 +19,7 @@ pub(in crate::kernel) enum ResolutionQuery {
         crate::kernel::SharedMachineIntegerTerm,
         crate::kernel::SharedMachineIntegerTerm,
     ),
-    SnapshotsMatch(SharedMemory, SharedMemory, Pointer),
+    StatesMatch(SharedMemory, SharedMemory, Pointer),
     CanonicalMemory(SharedMemory, Pointer),
     RangeDisjoint(Pointer, Pointer),
     RangesSeparate(MemoryRange, MemoryRange),
@@ -155,12 +155,12 @@ thread_local! {
     static CANONICAL_MEMORY_CACHE: std::cell::RefCell<
         std::collections::HashMap<(super::SharedMemory, Pointer), Memory>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
-    /// [`source_holds_cells_observable_by`], by interned snapshot and block.
+    /// [`source_holds_cells_observable_by`], by interned state and block.
     static SOURCE_OBSERVABLE_BY_BLOCK: std::cell::RefCell<
         std::collections::HashMap<(super::SharedMemory, crate::kernel::primitives::PointerBlock), bool>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     /// The producer-known source of one canonical load projection. The
-    /// projected snapshot is intentionally not given an ordinary memory-DAG
+    /// projected state is intentionally not given an ordinary memory-DAG
     /// derivation: one interned projection can be shared by several sources.
     /// This pointer-specific preferred edge preserves the oldest known sound
     /// source for checked load equality without pretending the projection has
@@ -215,7 +215,7 @@ pub(in crate::kernel) fn load_definition_generation() -> u64 {
 /// Records the exact source used when load canonicalization constructs a
 /// pointer-observable projection. This is provenance, not a cache: checked
 /// evidence later names this exact edge and validates it by identity, without
-/// rescanning either snapshot. A canonical projection can be interned from
+/// rescanning either state. A canonical projection can be interned from
 /// multiple equivalent sources, so all exact triples remain valid while the
 /// oldest arena node is kept as the constant-time lookup preference.
 pub(in crate::kernel) fn record_canonical_load_projection(
@@ -486,10 +486,10 @@ thread_local! {
 /// one, a question whose exact inputs already failed in this closure fails
 /// again without being recomputed.
 ///
-/// The snapshot transport closure lowers one goal at every recorded snapshot;
-/// every snapshot that holds the goal's cells unchanged lowers it to the same
+/// The state transport closure lowers one goal at every recorded state;
+/// every state that holds the goal's cells unchanged lowers it to the same
 /// source, so the same failing questions -- the goal's frame across the step
-/// the proof could not see past -- ran once per such snapshot, and again for
+/// the proof could not see past -- ran once per such state, and again for
 /// each of solve's strategies that reaches the closure. The key is the
 /// question's whole input: its propositions (source, target, and any listed
 /// facts, in order), the memory it lands in, the content id of its fact set,
@@ -564,8 +564,8 @@ impl Drop for ClosureFailureMemoScope {
 /// pointer-distinctness queries and fact-transport checks remembered for the
 /// enclosing attempt's duration.
 ///
-/// A closure that tries one goal against many candidates -- the snapshot
-/// transport closure lowers the goal at every recorded snapshot -- asks the
+/// A closure that tries one goal against many candidates -- the state
+/// transport closure lowers the goal at every recorded state -- asks the
 /// same failing distinctness question about the goal's own loads once per
 /// candidate, in contexts of equal content, where the ambient resolution memo
 /// is not active: the transport check builds its own contexts. Each query may
@@ -1204,7 +1204,7 @@ fn pointers_proven_equal_for_memory_resolution_unmemoized(
 
 /// `pointer` spelled as an address in `block`, when the two name one
 /// coordinate: the same block, an affine equality class the graph maintains,
-/// or two reads of one cell whose snapshots agree on its bytes. This answers
+/// or two reads of one cell whose states agree on its bytes. This answers
 /// where an address is; it grants no access, which the caller's designation
 /// check still decides.
 pub(in crate::kernel) fn pointer_in_block_for_memory_resolution(
@@ -1230,7 +1230,7 @@ pub(in crate::kernel) fn pointer_in_block_for_memory_resolution(
     // As for a retained read's stored value (`pointer_read_stored_value`),
     // the comparison may cross cache-forgetting edges: they discard
     // knowledge but write no program bytes. A projected read is compared
-    // from its source snapshot, as its designation is.
+    // from its source state, as its designation is.
     (pointers_proven_equal_for_memory_resolution(
         &read.defining_address,
         &target.defining_address,
@@ -1948,7 +1948,7 @@ fn memory_resolution_uses_pointer_classes_across_blocks() {
 
 #[cfg(test)]
 #[test]
-fn memory_resolution_graph_offsets_keep_load_snapshots_distinct() {
+fn memory_resolution_graph_offsets_keep_load_states_distinct() {
     let _session = crate::kernel::VerificationSession::enter();
     let before = crate::kernel::intern_memory(Memory::new().with_block("offset-load", 16));
     let scalar = |id: u64| MachineTerm::Variable(Variable(95_000 + id));
@@ -2239,7 +2239,7 @@ fn bitvector_terms_equal_for_memory_resolution_unmemoized(
         return false;
     };
     // A load variable is its load for equality reasoning: view it
-    // through the registry so snapshot provenance fires exactly as it would
+    // through the registry so state provenance fires exactly as it would
     // for the load term, then fall through to the variable-form
     // paths if the load view does not decide.
     let canonical_view = |term: &MachineTerm| {
@@ -2264,7 +2264,7 @@ fn bitvector_terms_equal_for_memory_resolution_unmemoized(
         return true;
     }
     // Two loads of one cell whose derivations resolve to the same source
-    // are equal after a bounded walk over named edges, with no snapshot
+    // are equal after a bounded walk over named edges, with no state
     // comparison at all (see `atomic_loads_equal_along_memory_derivations`). The
     // walk applies only to two load terms of one pointer.
     if crate::kernel::api::atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
@@ -2354,7 +2354,7 @@ fn bitvector_terms_equal_for_memory_resolution_unmemoized(
                     *left_kind,
                     assumptions,
                 )
-                && memory_snapshots_match_for_resolution(
+                && memory_states_match_for_resolution(
                     left_memory,
                     right_memory,
                     left_pointer,
@@ -2379,7 +2379,7 @@ pub(in crate::kernel) fn bitvector_terms_proven_equal_for_memory_resolution(
 }
 
 /// The memory-resolution value rules over retained operands. Only selected
-/// read leaves enter the native snapshot machinery; arithmetic stays shared.
+/// read leaves enter the native state machinery; arithmetic stays shared.
 pub(in crate::kernel) fn int32_operand_values_equal_for_memory_resolution(
     left: crate::kernel::MachineOperandView<'_>,
     right: crate::kernel::MachineOperandView<'_>,
@@ -2567,11 +2567,11 @@ pub(in crate::kernel) fn program_values_proven_equal_for_memory_resolution(
     }
 }
 
-/// The only `local:` block a snapshot comparison with **no load pointer** may
+/// The only `local:` block a state comparison with **no load pointer** may
 /// drop before comparing.
 ///
 /// [`memories_proven_equal_for_memory_resolution`] and its certification twin
-/// `memories_definitionally_equal` are whole-snapshot equalities. They are
+/// `memories_definitionally_equal` are whole-state equalities. They are
 /// handed no pointer, so they cannot ask
 /// [`PointerBlock::observable_by_load`] which cells a particular read could
 /// see, and both used to drop every cell and block spelled `local:` instead.
@@ -2579,7 +2579,7 @@ pub(in crate::kernel) fn program_values_proven_equal_for_memory_resolution(
 /// sides swapped: instead of claiming an unresolved load reads only its own
 /// block, it claims no automatic object is memory such a load reads.
 /// `int32* echo(int32* p) { return p; } … q = echo(&x); x = 1;` refutes it —
-/// `q` *is* `&x`, so two snapshots differing only in `local:x` are two
+/// `q` *is* `&x`, so two states differing only in `local:x` are two
 /// different states for a read through `q`
 /// (`mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md` is the false
 /// theorem the pointer-aware spelling of the same shortcut admitted).
@@ -2587,7 +2587,7 @@ pub(in crate::kernel) fn program_values_proven_equal_for_memory_resolution(
 /// What survives is the half of the claim that needs no pointer. An automatic
 /// object whose address no function in this session's sources ever forms is
 /// not memory any pointer value in the program designates, so *no* load
-/// anywhere can tell two snapshots apart by it. That is
+/// anywhere can tell two states apart by it. That is
 /// [`crate::kernel::primitives::block_is_never_address_taken_local`], whose
 /// soundness argument lives on that function; it is a property of the whole
 /// program's source rather than of one proof path, which is exactly why a
@@ -2631,7 +2631,7 @@ pub(in crate::kernel) fn memories_proven_equal_for_memory_resolution(
     }
     // The cell comparison below reads an entry neither side holds as
     // agreement, which holds only between maps over one underlying state
-    // (see `snapshot_objects_agree`).
+    // (see `state_objects_agree`).
     if left.forgotten.forgotten_from != right.forgotten.forgotten_from
         || left.forgotten.join_inputs != right.forgotten.join_inputs
     {
@@ -2702,16 +2702,11 @@ pub(in crate::kernel) fn memory_load_terms_equal_for_fact_transport(
         && (pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
             || left_pointer.block == right_pointer.block
                 && assumptions
-                    .has_pointer_offset_snapshot_fact(&left_pointer.offset, &right_pointer.offset))
-        && memory_snapshots_match_for_resolution(
-            left_memory,
-            right_memory,
-            left_pointer,
-            assumptions,
-        )
+                    .has_pointer_offset_state_fact(&left_pointer.offset, &right_pointer.offset))
+        && memory_states_match_for_resolution(left_memory, right_memory, left_pointer, assumptions)
 }
 
-/// Structural snapshot equality needs positive evidence that the selected
+/// Structural state equality needs positive evidence that the selected
 /// reads agree. An undecided bounded history query is not preservation: its
 /// unvisited suffix can contain a write or a released allocation.
 /// Naming projections use their registered source, without discovering any
@@ -2777,7 +2772,7 @@ pub(in crate::kernel) fn load_equality_lacks_recorded_evidence(
         )
 }
 
-fn memory_snapshots_match_for_resolution(
+fn memory_states_match_for_resolution(
     left: &Memory,
     right: &Memory,
     pointer: &Pointer,
@@ -2791,15 +2786,13 @@ fn memory_snapshots_match_for_resolution(
     {
         return true;
     }
-    if assumptions
-        .memory_snapshots_directly_proven_equal_for_memory_resolution(left, right, pointer)
-    {
+    if assumptions.memory_states_directly_proven_equal_for_memory_resolution(left, right, pointer) {
         return true;
     }
     if pointer.block.is_local_block() {
         return false;
     }
-    let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::SnapshotsMatch(
+    let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::StatesMatch(
         super::intern_memory_ref(left),
         super::intern_memory_ref(right),
         pointer.clone(),
@@ -2811,7 +2804,7 @@ fn memory_snapshots_match_for_resolution(
     {
         return true;
     }
-    if !snapshot_objects_agree(left, right, pointer) {
+    if !state_objects_agree(left, right, pointer) {
         return false;
     }
 
@@ -2823,7 +2816,7 @@ fn memory_snapshots_match_for_resolution(
     let differing = crate::instrumentation::measure_operation(
         "kernel",
         "resource context equality",
-        "snapshot comparison: differing cells",
+        "state comparison: differing cells",
         || left.differing_cell_pointers_meeting_load(right, pointer, load_bytes),
     );
     differing
@@ -2853,11 +2846,11 @@ pub(in crate::kernel) fn cell_access_byte_width(value: &ProgramValue) -> u32 {
     }
 }
 
-/// How wide the cell the two snapshots differ on is, in bytes.
+/// How wide the cell the two states differ on is, in bytes.
 ///
 /// The width comes from the value the cell holds, on whichever side holds
 /// one, and from the wider of the two where both do and disagree: the entry
-/// has to cover every byte either snapshot keeps there. A cell that is only a
+/// has to cover every byte either state keeps there. A cell that is only a
 /// union view, or one holding `Void`, has no value width to read here and
 /// stands in the widest scalar — over-stating a width can only shrink the
 /// separated set.
@@ -2884,11 +2877,11 @@ pub(in crate::kernel) fn differing_cell_byte_width(
 ///
 /// The ladder below it decides whether the cell's *address* is a different
 /// address from the load's. That is not the question these comparisons are
-/// asking: they are deciding whether the two snapshots hold the same value
+/// asking: they are deciding whether the two states hold the same value
 /// for this load, and a cell at `p + 1` holding one byte is a different
 /// address from `p` while being the second byte a four-byte read there
 /// returns. Only where the bytes are shown separate may the ladder stand in
-/// for them; provable overlap and an unknown gap both mean the snapshots are
+/// for them; provable overlap and an unknown gap both mean the states are
 /// not shown to agree.
 pub(in crate::kernel) fn differing_cell_bytes_miss_the_load(
     left: &Memory,
@@ -2907,11 +2900,11 @@ pub(in crate::kernel) fn differing_cell_bytes_miss_the_load(
     ) == AccessByteOverlap::Separate
 }
 
-/// The filter the three "do these snapshots agree about this load" comparisons
-/// — [`memory_snapshots_match_for_resolution`],
+/// The filter the three "do these states agree about this load" comparisons
+/// — [`memory_states_match_for_resolution`],
 /// [`memories_match_for_pointer_load_bounded_alias`] and
 /// [`memories_match_for_pointer_load_under_assumptions`] — apply to the cells
-/// the two snapshots differ on, before asking whether each one is separate
+/// the two states differ on, before asking whether each one is separate
 /// from the load.
 ///
 /// It is [`PointerBlock::observable_by_load`] — the same filter the rest of
@@ -2925,7 +2918,7 @@ pub(in crate::kernel) fn differing_cell_bytes_miss_the_load(
 /// used to make, and it is false in the same way: `&x` may be passed to a
 /// callee and come back as the callee's result, so a `Symbolic` pointer can
 /// designate exactly the local a later statement stores to. With the shortcut
-/// in place, two snapshots that differed only in `local:x` were declared to
+/// in place, two states that differed only in `local:x` were declared to
 /// agree about a load through such a pointer, and `q[0] == 5` survived
 /// `x = 1` with `q == &x`
 /// (`mdtests/an_unresolved_pointer_sees_the_store_to_a_local.md`, and
@@ -2947,7 +2940,7 @@ fn cell_is_observable_by_load(cell_pointer: &Pointer, load: &Pointer) -> bool {
 }
 
 /// Whether the three assumption-carrying comparisons agree about the
-/// *objects* the two snapshots hold, as against the values in their cells:
+/// *objects* the two states hold, as against the values in their cells:
 /// each block's extent, and which automatic blocks have had their lifetimes
 /// ended.
 ///
@@ -2955,7 +2948,7 @@ fn cell_is_observable_by_load(cell_pointer: &Pointer, load: &Pointer) -> bool {
 /// [`cell_is_observable_by_load`]; this one was left as the same block-name
 /// shortcut, `!block.is_local_block()`, and it makes the same claim about
 /// a different map. A block's extent is what says the object is there and how
-/// big it is, so two snapshots that disagree about a local's extent or
+/// big it is, so two states that disagree about a local's extent or
 /// liveness disagree about the object a load through a pointer that may
 /// designate it reads — and `&a` may be handed to a callee and come back as
 /// its result, so "the load's pointer is not spelled `local:`" does not mean
@@ -2964,11 +2957,11 @@ fn cell_is_observable_by_load(cell_pointer: &Pointer, load: &Pointer) -> bool {
 /// The filter is now [`local_block_no_pointer_can_reach`], the one
 /// [`memories_proven_equal_for_memory_resolution`] spends in the same place: a
 /// local whose address is never taken anywhere in the program is not memory
-/// any pointer value designates, so no load can tell two snapshots apart by
+/// any pointer value designates, so no load can tell two states apart by
 /// it. That is a property of the whole program's source, which is why it may
 /// be spent with neither a pointer nor a fact context. Every other local stays
 /// in the comparison.
-fn snapshot_objects_agree(left: &Memory, right: &Memory, pointer: &Pointer) -> bool {
+fn state_objects_agree(left: &Memory, right: &Memory, pointer: &Pointer) -> bool {
     let reachable = |block: &PointerBlock| !local_block_no_pointer_can_reach(block);
     // Every caller goes on to compare the two cell maps and treats an entry
     // neither side holds as agreement. That reading is only valid between
@@ -2976,7 +2969,7 @@ fn snapshot_objects_agree(left: &Memory, right: &Memory, pointer: &Pointer) -> b
     // the state its forget mark names, and a store whose cell was later
     // forgotten leaves no entry on either side for a difference to show.
     // `memories_match_for_pointer_load` asks the same question first for the
-    // same reason; two snapshots with different marks are related by the
+    // same reason; two states with different marks are related by the
     // recorded history or not at all.
     left.forgotten.forgotten_from == right.forgotten.forgotten_from
         && left.forgotten.join_inputs == right.forgotten.join_inputs
@@ -2988,10 +2981,10 @@ fn snapshot_objects_agree(left: &Memory, right: &Memory, pointer: &Pointer) -> b
         && retirements_agree_for_load(left, right, pointer)
 }
 
-/// Whether the two snapshots agree about which automatic objects the load may
+/// Whether the two states agree about which automatic objects the load may
 /// reach have had their lifetimes ended.
 ///
-/// None of the four "do these snapshots agree about this load" comparisons
+/// None of the four "do these states agree about this load" comparisons
 /// looked at this map. Once a retired block's cells are gone the tombstone is
 /// the only record that its lifetime ended, and a load through a stale alias
 /// is exactly the load these comparisons are asked about;
@@ -3011,13 +3004,13 @@ fn retirements_agree_for_load(left: &Memory, right: &Memory, pointer: &Pointer) 
         })
 }
 
-pub(in crate::kernel) fn memory_snapshots_proven_equal_at_pointer(
+pub(in crate::kernel) fn memory_states_proven_equal_at_pointer(
     left: &Memory,
     right: &Memory,
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    memory_snapshots_match_for_resolution(left, right, pointer, assumptions)
+    memory_states_match_for_resolution(left, right, pointer, assumptions)
 }
 
 fn memory_has_materialized_load_from(
@@ -3026,8 +3019,11 @@ fn memory_has_materialized_load_from(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    let Some(ProgramValue::Int32(MachineTerm::MemoryLoad(snapshot, load_pointer, LoadKind::Int32))) =
-        materialized.known_value(pointer)
+    let Some(ProgramValue::Int32(MachineTerm::MemoryLoad(
+        retained_state,
+        load_pointer,
+        LoadKind::Int32,
+    ))) = materialized.known_value(pointer)
     else {
         return false;
     };
@@ -3035,7 +3031,7 @@ fn memory_has_materialized_load_from(
     // this address only when the read is no wider.
     crate::kernel::load_access_width_at_address_or_widest(pointer) <= 4
         && pointers_proven_equal_for_memory_resolution(&load_pointer, pointer, assumptions)
-        && memory_snapshots_match_for_resolution(source, &snapshot, pointer, assumptions)
+        && memory_states_match_for_resolution(source, &retained_state, pointer, assumptions)
 }
 
 pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
@@ -3317,7 +3313,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load(
     // A cell map is knowledge layered over the state named by its forget
     // mark. Equal maps over different marks are not equal states: each may
     // have forgotten a different value at this very pointer. There is no
-    // recorded history between the snapshots handled by this matcher that
+    // recorded history between the states handled by this matcher that
     // could recover that distinction later.
     //
     // Every comparison below is of the entries observable by the load, and
@@ -3409,8 +3405,8 @@ fn observable_cells_match(
 /// maps. Charges one work unit per candidate entry visited.
 fn observable_entries_match<K: BlockKeyed, V: PartialEq>(
     candidates: &AliasCandidates,
-    left: &SnapshotMap<K, V>,
-    right: &SnapshotMap<K, V>,
+    left: &HashedOrdMap<K, V>,
+    right: &HashedOrdMap<K, V>,
     observable: impl Fn(&K) -> bool,
 ) -> bool {
     if left.ptr_eq(right) {
@@ -3432,8 +3428,8 @@ fn observable_entries_match<K: BlockKeyed, V: PartialEq>(
 /// [`observable_entries_match`] for a set.
 fn observable_elements_match<K: BlockKeyed>(
     candidates: &AliasCandidates,
-    left: &SnapshotSet<K>,
-    right: &SnapshotSet<K>,
+    left: &HashedOrdSet<K>,
+    right: &HashedOrdSet<K>,
     observable: impl Fn(&K) -> bool,
 ) -> bool {
     let visited = std::cell::Cell::new(0usize);
@@ -3449,9 +3445,9 @@ fn observable_elements_match<K: BlockKeyed>(
     equal
 }
 
-/// Whether the two snapshots agree about every object this load may name.
+/// Whether the two states agree about every object this load may name.
 ///
-/// Havoc markers are global snapshot identities and therefore remain even
+/// Havoc markers are global state identities and therefore remain even
 /// though their synthetic concrete block names are distinct from ordinary
 /// pointers. Every other block is selected with the same may-alias predicate
 /// as cells. A never-address-taken local is the one safe omission: no pointer
@@ -3472,7 +3468,7 @@ fn observable_blocks_match_for_load(
 }
 
 /// Whether heap facts that can change this load agree in two unrelated
-/// snapshots.
+/// states.
 ///
 /// Heap metadata is part of load evaluation even when no concrete cell is
 /// cached: the load reads deallocation, uninitialized-cell, retained
@@ -3524,7 +3520,7 @@ fn observable_heap_metadata_matches_for_load(
 
 #[cfg(test)]
 #[test]
-fn unrelated_forgotten_snapshots_do_not_prove_their_loads_equal() {
+fn unrelated_forgotten_states_do_not_prove_their_loads_equal() {
     let pointer = Pointer {
         block: "unrelated-forgotten".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -3565,13 +3561,13 @@ fn unrelated_forgotten_snapshots_do_not_prove_their_loads_equal() {
     };
     assert!(
         !PureFactContext::new().memory_loads_proven_equal(&load(&left), &load(&right)),
-        "unconnected snapshots over different forgotten sources are not one load"
+        "unconnected states over different forgotten sources are not one load"
     );
 }
 
 #[cfg(test)]
 #[test]
-fn unrelated_snapshots_do_not_erase_object_or_heap_state_visible_to_the_load() {
+fn unrelated_states_do_not_erase_object_or_heap_state_visible_to_the_load() {
     let loads_proven_equal = |left: &Memory, right: &Memory, pointer: &Pointer| {
         let load = |memory: &Memory| {
             MachineTerm::MemoryLoad(
@@ -3589,14 +3585,14 @@ fn unrelated_snapshots_do_not_erase_object_or_heap_state_visible_to_the_load() {
     let bare = Memory::new();
     let with_global = bare
         .clone()
-        .with_block_without_derivation("global:unrelated-snapshot", 4);
+        .with_block_without_derivation("global:unrelated-retained_state", 4);
     assert!(
         !memories_match_for_pointer_load(&bare, &with_global, &symbolic),
         "a symbolic load can designate the object present on only one side"
     );
     assert!(
         !loads_proven_equal(&bare, &with_global, &symbolic),
-        "object disagreement in unrelated snapshots cannot prove load equality"
+        "object disagreement in unrelated states cannot prove load equality"
     );
 
     let heap_pointer = Pointer {
@@ -3650,7 +3646,7 @@ fn unrelated_snapshots_do_not_erase_object_or_heap_state_visible_to_the_load() {
     );
     assert!(
         !loads_proven_equal(&concrete_memory, &with_unrelated_heap, &concrete),
-        "unrelated snapshots need explicit preservation evidence"
+        "unrelated states need explicit preservation evidence"
     );
     let (_, _, equality) = crate::kernel::tests::explicit_frame(
         &concrete_memory,
@@ -3688,14 +3684,14 @@ fn unrelated_snapshots_do_not_erase_object_or_heap_state_visible_to_the_load() {
 /// block beside an `ExternalArgument` pointer, stays. A block made only
 /// of cached loads from one common source is observationally that source, so
 /// collapse it before discarding unrelated blocks. Loop and call havoc markers
-/// are global snapshot identities, so they remain observable at every
+/// are global state identities, so they remain observable at every
 /// non-local pointer until an explicit effect fact frames that pointer.
 pub(in crate::kernel) fn canonical_memory_for_pointer_load(
     memory: &Memory,
     pointer: &Pointer,
 ) -> Memory {
     // Canonicalization is assumption-free and deterministic, so memoize by
-    // interned snapshot identity; the intern also dedups the key storage.
+    // interned state identity; the intern also dedups the key storage.
     let key = (super::intern_memory_ref(memory), pointer.clone());
     if let Some(hit) = CANONICAL_MEMORY_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
@@ -3878,9 +3874,9 @@ fn run_stem_slot(run: &crate::kernel::primitives::CellRun) -> Option<u32> {
 }
 
 /// Whether `source` holds a cell, a typed view or a live run slot that a
-/// load in `block` could observe. A function of the snapshot and the block
+/// load in `block` could observe. A function of the state and the block
 /// alone, asked of a run's source by every walk that visits the run, so it
-/// is memoized by interned snapshot identity; a miss visits the source's
+/// is memoized by interned state identity; a miss visits the source's
 /// candidate entries up to the first observable one.
 fn source_holds_cells_observable_by(
     source: &crate::kernel::primitives::SharedMemory,
@@ -3992,7 +3988,7 @@ fn run_materialization_sources(run: &crate::kernel::primitives::CellRun) -> Vec<
 }
 
 fn canonical_memory_for_pointer_load_uncached(memory: &Memory, pointer: &Pointer) -> Memory {
-    // A snapshot met again while its own canonical form is being computed
+    // A state met again while its own canonical form is being computed
     // is a cycle through the materialized cells and stands for itself.
     let Some(_query) = ResolutionQueryGuard::enter(ResolutionQuery::CanonicalMemory(
         super::intern_memory_ref(memory),
@@ -4104,7 +4100,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &Memory, pointer: &Pointer
     // A jump keeps only the source cells this memory still holds: the
     // surviving cells are materializations of the source, but a source cell
     // this memory lacks was erased since (a havoc wrote it), and carrying it
-    // over would make the snapshot the load names record a value the cell no
+    // over would make the state the load names record a value the cell no
     // longer holds (pinned by
     // `a_load_projection_jump_does_not_restore_a_havocked_cell`).
     let mut cells = (*canonical.cells).clone();
@@ -4144,7 +4140,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &Memory, pointer: &Pointer
                 )
         })
         .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<SnapshotMap<_, _>>();
+        .collect::<HashedOrdMap<_, _>>();
     crate::instrumentation::record_deterministic_work(visited);
     canonical.blocks = std::sync::Arc::new(blocks);
     canonical.cells = std::sync::Arc::new(cells);
@@ -4161,7 +4157,7 @@ fn canonical_memory_for_pointer_load_uncached(memory: &Memory, pointer: &Pointer
 /// key ranges their name prefixes occupy (concrete block names order as
 /// strings, so the names sharing a prefix are contiguous).
 pub(in crate::kernel) fn havoc_marker_blocks(
-    blocks: &SnapshotMap<PointerBlock, MemoryBlock>,
+    blocks: &HashedOrdMap<PointerBlock, MemoryBlock>,
 ) -> impl Iterator<Item = (&PointerBlock, &MemoryBlock)> {
     ["call-havoc:", "havoc:"]
         .into_iter()
@@ -4361,12 +4357,12 @@ pub(in crate::kernel) fn run_slots_kept_by_load_reduction(
 }
 
 /// The slots of [`run_slots_kept_by_load_reduction`]. Dropping a cell only
-/// renames the load at a snapshot that does not record it, so the answer
+/// renames the load at a state that does not record it, so the answer
 /// has two obligations, not one: it may drop a slot only when the slot's
 /// bytes provably miss the load's, which the constant byte arithmetic of a
 /// `Shift` decides for every slot at once, and it may keep any slot, which is
 /// what it does for a symbolic index (the ladder may still drop an element a
-/// fact bounds away; keeping it names the load at a snapshot that records
+/// fact bounds away; keeping it names the load at a state that records
 /// one more cell, which the load does not read).
 fn run_slots_kept_by_load_reduction_set(
     run: &CellRun,
@@ -4672,7 +4668,7 @@ fn run_slots_kept_by_load_projection_set(run: &CellRun, pointer: &Pointer) -> Sl
 ///
 /// The load is named here by its address alone, so it contributes
 /// [`MAX_SCALAR_ACCESS_BYTES`]. That is the only sound reading of an unknown
-/// width here: dropping a cell makes two snapshots compare equal at this
+/// width here: dropping a cell makes two states compare equal at this
 /// load, so every byte the load might read has to be considered. An
 /// eight-byte load at the loaded pointer covers the four bytes above it, and
 /// a fixed four here reported a cell exactly four bytes above the load as
@@ -5099,12 +5095,12 @@ impl StoreByteInterval {
     ///
     /// This is the difference between a cell that is stale and a cell that is
     /// forgotten. A store that covers the cell completely replaces exactly
-    /// what dropping the cell lost, so the snapshot it produces still says
+    /// what dropping the cell lost, so the state it produces still says
     /// everything about the state it describes. A store that covers only some
     /// of the cell's bytes leaves the rest at values nothing records any more:
     /// the byte written into the middle of an `int64` is in the result, and
     /// the other seven bytes are knowledge the result no longer has. Calling
-    /// that partial case stale let the produced snapshot claim to be the state
+    /// that partial case stale let the produced state claim to be the state
     /// before the store.
     pub(in crate::kernel) fn overwrites_completely(
         &self,
@@ -5148,7 +5144,7 @@ impl StoreByteInterval {
     }
 }
 
-/// The source snapshot a materialization cell stands for: a cell at `p`
+/// The source state a materialization cell stands for: a cell at `p`
 /// whose value is `load(source, p)`, or — with terms canonical at creation —
 /// the load variable registered for a load of `p`, whose source the registry
 /// records. Materialization changes which cells are concrete, not what the
@@ -5218,7 +5214,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_bounded_alias(
     if pointer.block.is_local_block() {
         return false;
     }
-    if !snapshot_objects_agree(left, right, pointer) {
+    if !state_objects_agree(left, right, pointer) {
         return false;
     }
     let load_bytes = crate::kernel::load_access_width_at_address_or_widest(pointer);
@@ -5274,7 +5270,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
     if pointer.block.is_local_block() {
         return false;
     }
-    if !snapshot_objects_agree(left, right, pointer) {
+    if !state_objects_agree(left, right, pointer) {
         return false;
     }
 
@@ -5286,7 +5282,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
             crate::instrumentation::measure_operation(
                 "kernel",
                 "resource context equality",
-                "snapshot comparison: bounded alias",
+                "state comparison: bounded alias",
                 || {
                     differing_cell_bytes_miss_the_load(
                         left,

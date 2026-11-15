@@ -230,7 +230,7 @@ impl MutexUseCallTransfer {
         self.suspended_parent.is_some()
     }
 
-    /// Resume only this worker against current ownership, never its entry snapshot.
+    /// Resume only this worker against current ownership, never its entry state.
     pub(super) fn finish_suspended_checked_ledger(
         &self,
         mut ledger: LoanLedger,
@@ -777,7 +777,7 @@ mod tests {
         let checked = CheckedResourceFact {
             fact: required,
             role: ResourceTransferRole::Borrow,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: Some(0),
             selected_mutex_source: None,
@@ -1125,7 +1125,7 @@ mod tests {
         let mut required = CheckedResourceFact {
             fact: ResourceFact::own(Resource::MutexUse(evaluated_requirement)),
             role: ResourceTransferRole::Borrow,
-            snapshot: ResourceSnapshot::Entry,
+            state_source: ResourceStateSource::Entry,
             clause_position: None,
             section_index: Some(0),
             selected_mutex_source: Some(Arc::new((Variable(500), second_fact.clone()))),

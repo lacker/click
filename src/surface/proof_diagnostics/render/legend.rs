@@ -22,7 +22,7 @@ fn short(text: &str) -> String {
     }
 }
 
-impl SnapshotLabels {
+impl MemoryStateLabels {
     pub(crate) fn immutable_pointer_name(&mut self, pointer: &Pointer, name: &str) {
         if self.pointer_sources.len() < 128 {
             self.pointer_sources
@@ -52,7 +52,7 @@ impl SnapshotLabels {
                 {
                     return format!(
                         "read({}, address {})",
-                        self.snapshot_name(memory.memory()),
+                        self.memory_state_name(memory.memory()),
                         self.pointer_value_name(&address)
                     );
                 }
@@ -64,7 +64,7 @@ impl SnapshotLabels {
             MachineTerm::MemoryLoad(memory, address, kind) => format!(
                 "{}-byte read({}, address {})",
                 kind.byte_width(),
-                self.snapshot_name(memory.memory()),
+                self.memory_state_name(memory.memory()),
                 self.pointer_value_name(address)
             ),
             _ => {
@@ -128,22 +128,24 @@ impl SnapshotLabels {
             return "null pointer (0)".into();
         }
         if let Some(read) = pointer.as_loaded_value() {
-            let snapshot = self.snapshot_name(read.defining_memory.memory());
+            let retained_state = self.memory_state_name(read.defining_memory.memory());
             let address = self.pointer_value_name(&read.defining_address);
             let displacement = self.legend_offset(&read.displacement, 4);
-            return format!("pointer read at {snapshot}, address {address}, plus {displacement}");
+            return format!(
+                "pointer read at {retained_state}, address {address}, plus {displacement}"
+            );
         }
         if let Some(MachineTerm::MemoryLoad(memory, address, _)) =
             crate::surface::proof_trace::pointer_definition(pointer)
         {
             return format!(
                 "pointer read at {}, address {}",
-                self.snapshot_name(memory.memory()),
+                self.memory_state_name(memory.memory()),
                 self.pointer_value_name(&address)
             );
         }
         // A source alias may name this immutable value, but its recorded
-        // pure application explains which model and snapshots produced it.
+        // pure application explains which model and states produced it.
         if let PointerBlock::PureFunctionApplication(application) = &pointer.block {
             let mut renderer = Renderer {
                 output: String::new(),
@@ -323,7 +325,7 @@ impl SnapshotLabels {
         description
     }
 
-    fn legend_snapshot(&mut self, memory: &Memory) -> String {
+    fn legend_state(&mut self, memory: &Memory) -> String {
         let point = self
             .source_memories
             .iter()
@@ -338,7 +340,7 @@ impl SnapshotLabels {
             .unwrap_or_default();
         // Labels denote memory contents, so a reconstruction equal to its
         // input gets the input's explanation. Otherwise structural label
-        // reuse could produce "snapshot#1 derived from snapshot#1".
+        // reuse could produce "state#1 derived from state#1".
         // This bounded walk happens only while printing, never during checking.
         let mut described = memory;
         for _ in 0..MAX_ROUNDS {
@@ -368,7 +370,7 @@ impl SnapshotLabels {
             }) => {
                 let bases = sources
                     .iter()
-                    .map(|source| self.snapshot_name(source))
+                    .map(|source| self.memory_state_name(source))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let args = arguments
@@ -385,13 +387,13 @@ impl SnapshotLabels {
                 let shared = crate::kernel::intern_memory_ref(memory);
                 let Some(edge) = shared.derivation() else {
                     return format!(
-                        "{point}INTERNAL ERROR: snapshot constructor did not record its origin"
+                        "{point}INTERNAL ERROR: state constructor did not record its origin"
                     );
                 };
                 edge
             }
         };
-        let base = self.snapshot_name(edge.base().memory());
+        let base = self.memory_state_name(edge.base().memory());
         let operation = match edge.as_ref() {
             MemoryDerivation::Store { pointer, value, .. } => {
                 let address = self.pointer_value_name(pointer);
@@ -401,7 +403,7 @@ impl SnapshotLabels {
             MemoryDerivation::BranchJoin { incoming, .. } => {
                 let inputs = incoming
                     .iter()
-                    .map(|memory| self.snapshot_name(memory.memory()))
+                    .map(|memory| self.memory_state_name(memory.memory()))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("join branch memories ({inputs})")
@@ -486,7 +488,7 @@ impl SnapshotLabels {
                 let source = if run.source() == edge.base() {
                     "base".to_owned()
                 } else {
-                    self.snapshot_name(run.source())
+                    self.memory_state_name(run.source())
                 };
                 let mode = match run.value_mode() {
                     crate::kernel::RunValueMode::Load => format!("reads from {source}"),
@@ -534,8 +536,8 @@ impl SnapshotLabels {
         }
         let mut output =
             String::from("\n\n  label definitions (recorded constructions, not additional facts):");
-        if self.memories.len() > MAX_SNAPSHOT_LABELS {
-            output.push_str("\n    Beyond the first 32 snapshots, labels reuse retained identities only; separately constructed equal memories may have different labels.");
+        if self.memories.len() > MAX_MEMORY_STATE_LABELS {
+            output.push_str("\n    Beyond the first 32 retained_states, labels reuse retained identities only; separately constructed equal memories may have different labels.");
         }
         let (mut pointer_index, mut memory_index) = (1, 0);
         for _ in 0..MAX_ROUNDS {
@@ -554,9 +556,9 @@ impl SnapshotLabels {
                 added = true;
             }
             if let Some(memory) = self.memories.get(memory_index).cloned() {
-                let definition = self.legend_snapshot(&memory);
+                let definition = self.legend_state(&memory);
                 output.push_str(&format!(
-                    "\n    snapshot#{} = {}",
+                    "\n    state#{} = {}",
                     memory_index + 1,
                     definition
                 ));
@@ -590,7 +592,7 @@ mod tests {
 
     #[test]
     fn pure_pointer_legend_distinguishes_typed_model_arguments_and_offsets() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         for (id, name) in [(986_410, "left"), (986_411, "right")] {
             labels.source_name(Variable(id), name.into());
             let model = AlgebraicTerm {
@@ -616,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn pure_pointer_legend_preserves_argument_snapshots_and_nested_pointer_labels() {
+    fn pure_pointer_legend_preserves_argument_states_and_nested_pointer_labels() {
         let base = Pointer {
             block: "local:p".into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -625,7 +627,7 @@ mod tests {
         let after = before
             .clone()
             .store(base.clone(), ProgramValue::Int32(7u32.into()));
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         for memory in [before, after] {
             labels.pointer_value_name(&pure_pointer(
                 "select",
@@ -642,11 +644,11 @@ mod tests {
         }
         let text = labels.trace_legend();
         assert!(
-            text.contains("select(array-ref<int32>(snapshot#1, ptr<int32*>(value#3)))"),
+            text.contains("select(array-ref<int32>(state#1, ptr<int32*>(value#3)))"),
             "{text}"
         );
         assert!(
-            text.contains("select(array-ref<int32>(snapshot#2, ptr<int32*>(value#3)))"),
+            text.contains("select(array-ref<int32>(state#2, ptr<int32*>(value#3)))"),
             "{text}"
         );
         assert!(
@@ -666,16 +668,16 @@ mod tests {
         let memory = Memory::new()
             .with_uninitialized_object(pointer.clone(), 4)
             .with_uninitialized_object(pointer, 4);
-        let mut labels = SnapshotLabels::default();
-        labels.snapshot_name(&memory);
+        let mut labels = MemoryStateLabels::default();
+        labels.memory_state_name(&memory);
         let text = labels.trace_legend();
-        assert!(text.contains("based on snapshot#2"), "{text}");
-        assert!(!text.contains("based on snapshot#1"), "{text}");
+        assert!(text.contains("based on state#2"), "{text}");
+        assert!(!text.contains("based on state#1"), "{text}");
         assert!(text.contains("initial empty memory"), "{text}");
     }
 
     #[test]
-    fn snapshot_origin_survives_thread_and_arena_changes() {
+    fn state_origin_survives_thread_and_arena_changes() {
         let memory = std::thread::spawn(|| {
             Memory::new().with_block("local:origin-test", 4).store(
                 Pointer {
@@ -687,8 +689,8 @@ mod tests {
         })
         .join()
         .unwrap();
-        let mut labels = SnapshotLabels::default();
-        labels.snapshot_name(&memory);
+        let mut labels = MemoryStateLabels::default();
+        labels.memory_state_name(&memory);
         let text = labels.trace_legend();
         assert!(text.contains("store 9 at address"), "{text}");
         assert!(text.contains("declare block at"), "{text}");
@@ -699,8 +701,8 @@ mod tests {
     #[test]
     fn proof_entry_construction_is_not_an_unknown_root() {
         let memory = Memory::new().with_uninitialized_block("local:object", 8);
-        let mut labels = SnapshotLabels::default();
-        labels.snapshot_name(&memory);
+        let mut labels = MemoryStateLabels::default();
+        labels.memory_state_name(&memory);
         let text = labels.trace_legend();
         assert!(text.contains("mark uninitialized object"), "{text}");
         assert!(text.contains("declare uninitialized block"), "{text}");
@@ -714,16 +716,16 @@ mod tests {
         let base = Pointer::symbolic(Variable(986_401));
         let mut loaded = Pointer::loaded_value(&memory, &base);
         loaded.offset = PointerOffsetTerm::Constant(16);
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.immutable_pointer_name(&base, "zid");
         assert_eq!(labels.pointer_value_name(&loaded), "value#1");
         let text = labels.trace_legend();
         assert!(
-            text.contains("value#1 = pointer read at snapshot#1, address value#2, plus 16 bytes"),
+            text.contains("value#1 = pointer read at state#1, address value#2, plus 16 bytes"),
             "{text}"
         );
         assert!(text.contains("value#2 = zid"), "{text}");
-        assert!(text.contains("snapshot#1 = initial empty memory"), "{text}");
+        assert!(text.contains("state#1 = initial empty memory"), "{text}");
         assert_eq!(text, labels.trace_legend());
     }
 
@@ -734,12 +736,12 @@ mod tests {
             address.clone(),
             ProgramValue::Int32(MachineTerm::constant(7)),
         );
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.immutable_pointer_name(&address, "p");
-        labels.snapshot_name(&memory);
+        labels.memory_state_name(&memory);
         let text = labels.trace_legend();
         assert!(
-            text.contains("store 7 at address value#1, based on snapshot#2"),
+            text.contains("store 7 at address value#1, based on state#2"),
             "{text}"
         );
         assert!(text.contains("value#1 = p"), "{text}");
@@ -766,7 +768,7 @@ mod tests {
             right: Box::new(MachineTerm::constant(7)),
         };
         let premises = vec![(condition.clone(), true)];
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.immutable_pointer_name(&pointer, "node");
         let expected =
             render_proposition_labeled(&Proposition::ConditionIs(condition, true), &mut labels);
@@ -789,7 +791,7 @@ mod tests {
     #[test]
     fn legend_names_only_matching_recorded_memories() {
         let memory = Memory::new().with_block("legend_recorded", 8);
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         let naming = std::sync::Arc::new((Vec::new(), Vec::new()));
         labels
             .source_memories
@@ -797,21 +799,21 @@ mod tests {
         labels
             .source_memories
             .push((memory.clone(), "before_rotation".into(), naming));
-        labels.snapshot_name(&memory);
+        labels.memory_state_name(&memory);
         let text = labels.trace_legend();
         assert!(
-            text.contains("snapshot#1 = recorded at before_rotation;"),
+            text.contains("state#1 = recorded at before_rotation;"),
             "{text}"
         );
         assert!(
-            !text.contains("snapshot#1 = recorded at unrelated_point;"),
+            !text.contains("state#1 = recorded at unrelated_point;"),
             "{text}"
         );
     }
 
     #[test]
     fn legend_does_not_collapse_unknown_bases_or_use_mutable_names() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         for id in [986_403, 986_404] {
             labels.source_name(Variable(id), "sibling".into());
             labels.pointer_value_name(&Pointer::symbolic(Variable(id)));
@@ -824,7 +826,7 @@ mod tests {
 
     #[test]
     fn legend_bounds_recursive_output_and_preserves_complete_trace() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         for id in 0..128 {
             let pointer = Pointer::symbolic(Variable(987_000 + id));
             labels.immutable_pointer_name(&pointer, &"é".repeat(200));

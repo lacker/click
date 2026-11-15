@@ -2,7 +2,7 @@
 use super::*;
 
 // The existing rewrite history tracks goals, not producer allocations. Use
-// the same snapshot-aware identity as fact lookup so a fresh shared call
+// the same state-aware identity as fact lookup so a fresh shared call
 // argument does not restart a branch already visited through a native reading.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) enum RewriteGoalKey {
@@ -1879,7 +1879,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // already ran on the goal. Plain 32-bit equality, with no sum or
         // difference to observe, already has the indexed native-reading
         // arithmetic route; re-entering it by bounds repeats equality-by-bounds
-        // and snapshot search for the same comparison.
+        // and state search for the same comparison.
         if !stated && !wide_equality {
             return Ok(None);
         }

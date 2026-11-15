@@ -84,7 +84,7 @@ fn authoritative_memory_projection_scales_with_used_members_not_unrelated_frames
             MachineTerm::constant(1),
         )),
         role: ResourceTransferRole::Consume,
-        snapshot: ResourceSnapshot::Entry,
+        state_source: ResourceStateSource::Entry,
         clause_position: None,
         section_index: None,
         selected_mutex_source: None,

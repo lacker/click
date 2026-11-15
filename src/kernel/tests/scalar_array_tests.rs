@@ -438,7 +438,7 @@ fn compact_array_regions_check_source_type_extent_alignment_and_initialization()
             )
             .is_err()
     );
-    // Reading the old uniform value first makes overlapping/self copies snapshots.
+    // Reading the old uniform value first makes overlapping/self copies states.
     let copied = memory
         .write_scalar_array_region(
             &pointer("local:source", 8),
@@ -540,7 +540,7 @@ fn compact_array_region_write_refreshes_an_addressed_scalar_local() {
 }
 
 #[test]
-fn scalar_array_snapshots_check_explicit_coverage_types_and_overlap() {
+fn scalar_array_states_check_explicit_coverage_types_and_overlap() {
     let source = pointer("local:array-source", 0);
     let target = pointer("local:array-target", 0);
     let mut memory = fresh(4);

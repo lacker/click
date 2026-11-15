@@ -52,7 +52,7 @@ fn plan_integer_affine_certificate_for(
 
     // Normalize each selected proposition once.  The kernel recomputes the
     // same checked fold atom key when it validates the certificate; matching
-    // these claims is therefore alpha/snapshot aware rather than a raw source
+    // these claims is therefore alpha/state aware rather than a raw source
     // proposition comparison.
     // Unrelated machine/logical premises are allowed in the selected slice;
     // skip them while retaining the caller's original premise index.  A

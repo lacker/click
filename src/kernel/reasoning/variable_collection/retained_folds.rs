@@ -1,5 +1,5 @@
 //! Scoped readers for common fold operands. Native leaves retain their
-//! existing registry, snapshot, call-connection and capture rules.
+//! existing registry, state, call-connection and capture rules.
 use super::*;
 use crate::kernel::{KernelFold, KernelTerm, KernelTermNode, KernelType};
 

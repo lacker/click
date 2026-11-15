@@ -219,7 +219,7 @@ pub(super) fn state_independent_node(node: SpecNode<'_>) -> Visit<()> {
             }
             crate::kernel::binary_spec_expression!(_, _)
             | SpecExpression::BitwiseNot(_)
-            | SpecExpression::LoopEntrySnapshot(_)
+            | SpecExpression::LoopEntryState(_)
             | SpecExpression::Cast(..)
             | SpecExpression::PointerCoercion(..)
             | SpecExpression::If { .. }
@@ -267,7 +267,7 @@ pub(super) fn state_independent_node(node: SpecNode<'_>) -> Visit<()> {
 /// The stateful refinement rule admits ordinary scalar propositions whose only
 /// stateful operation is a C memory access (possibly below `old`), including
 /// finite sequence comparisons and membership, plus resource-field reads and
-/// the algebraic values those fields carry. Explicit memory snapshots,
+/// the algebraic values those fields carry. Explicit memory states,
 /// `at(...)`, counted-resource populations, and range folds stay outside it:
 /// their stateful refinement laws are not written down, so they need an
 /// explicit refinement theorem. A mathematical `Integer` comparison is
@@ -354,7 +354,7 @@ pub(super) fn stateful_memory_refinement_node(node: SpecNode<'_>) -> Visit<()> {
             | SpecExpression::AlgebraicMatch { .. } => Visit::Descend,
             SpecExpression::CountedResourceCount { .. }
             | SpecExpression::RangeFold { .. }
-            | SpecExpression::LoopEntrySnapshot(_)
+            | SpecExpression::LoopEntryState(_)
             | SpecExpression::MemoryLoad { .. }
             | SpecExpression::AggregateFieldValue { .. } => Visit::Stop(()),
         },
@@ -383,7 +383,7 @@ pub(super) fn stateful_memory_refinement_node(node: SpecNode<'_>) -> Visit<()> {
             SpecPureFunctionArgument::Value(_)
             | SpecPureFunctionArgument::Algebraic(_)
             | SpecPureFunctionArgument::Integer(_) => Visit::Descend,
-            // An array snapshot is an explicit memory image; its stateful
+            // An array state is an explicit memory image; its stateful
             // refinement law is not written down.
             SpecPureFunctionArgument::ArrayRef { .. } => Visit::Stop(()),
         },
@@ -818,7 +818,7 @@ pub(super) fn spec_expression_parameter_offset(
         }
         SpecExpression::Cast(expression, _)
         | SpecExpression::PointerCoercion(expression, _)
-        | SpecExpression::LoopEntrySnapshot(expression)
+        | SpecExpression::LoopEntryState(expression)
         | SpecExpression::Subobject {
             pointer: expression,
             ..

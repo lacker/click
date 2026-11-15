@@ -7,7 +7,7 @@ initialized storage. Those missing caches must not prevent a copy.
 
 `copy.rs` replaces the first lane with 5, copies the array, and subsequently
 changes the original lane to 9. The checked result is 5: the copy captures the
-post-call memory snapshot and remains independent of later source writes.
+post-call memory state and remains independent of later source writes.
 Both Rust function bodies are checked, including the helper's postcondition.
 The crate root, source file, edition, extraction artifact, and hashes are locked.
 

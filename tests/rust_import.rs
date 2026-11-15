@@ -281,7 +281,7 @@ fn charon_owned_array_project() -> Project {
 }
 #[test]
 #[ignore = "nightly: 1.7s in the parallel gate"]
-fn charon_owned_array_fields_check_moves_snapshots_boundaries_and_frames() {
+fn charon_owned_array_fields_check_moves_states_boundaries_and_frames() {
     let p = charon_owned_array_project();
     let prepared = p.prepared().unwrap();
     ProgramVerificationSession::new_program_prepared(CHARON_OWNED_ARRAY_SIDECAR, &prepared)
@@ -323,7 +323,7 @@ fn charon_owned_array_fields_cli_tools_recheck_expanded_certificates() {
     for claim in [
         "moved.ensures_0",
         "reassigned.ensures_0",
-        "snapshot.ensures_0",
+        "copied_value.ensures_0",
         "empty_move.ensures_0",
     ] {
         assert_cli(&p, &["expand", "--claim", claim, "--in-place"]);
@@ -354,19 +354,18 @@ fn charon_owned_array_fields_live_refresh_and_compiler_rejections() {
     assert!(!p.artifact("owned.rs").exists());
 }
 
-const CHARON_SNAPSHOT_SIDECAR: &str =
-    include_str!("../design/charon-trial/array-snapshots/snapshots.click");
-fn charon_snapshot_project() -> Project {
-    let p = Project::from_fixture("design/charon-trial/array-snapshots");
-    fs::write(p.root.join("borrow.click"), CHARON_SNAPSHOT_SIDECAR).unwrap();
+const CHARON_STATE_SIDECAR: &str = include_str!("../design/charon-trial/array-states/states.click");
+fn charon_state_project() -> Project {
+    let p = Project::from_fixture("design/charon-trial/array-states");
+    fs::write(p.root.join("borrow.click"), CHARON_STATE_SIDECAR).unwrap();
     p
 }
 #[test]
 #[ignore = "nightly: 3s in the parallel gate"]
-fn charon_array_snapshots_check_computed_lanes_and_copy_independence() {
-    let p = charon_snapshot_project();
+fn charon_array_states_check_computed_lanes_and_copy_independence() {
+    let p = charon_state_project();
     let prepared = p.prepared().unwrap();
-    ProgramVerificationSession::new_program_prepared(CHARON_SNAPSHOT_SIDECAR, &prepared).unwrap();
+    ProgramVerificationSession::new_program_prepared(CHARON_STATE_SIDECAR, &prepared).unwrap();
     for (head, before, after) in [
         (
             "fn source_write(",
@@ -389,16 +388,16 @@ fn charon_array_snapshots_check_computed_lanes_and_copy_independence() {
             "ensures result == b;",
         ),
     ] {
-        let invalid = CHARON_SNAPSHOT_SIDECAR.replace(before, after);
-        assert_ne!(invalid, CHARON_SNAPSHOT_SIDECAR);
+        let invalid = CHARON_STATE_SIDECAR.replace(before, after);
+        assert_ne!(invalid, CHARON_STATE_SIDECAR);
         assert!(verify_rust_proof_after(&invalid, &prepared, head).is_err());
     }
 }
 #[cfg(not(feature = "fast-gate"))]
 #[test]
 #[ignore = "nightly: whole-example proof-tool rechecks"]
-fn charon_array_snapshots_cli_tools_recheck_expanded_certificates() {
-    let p = charon_snapshot_project();
+fn charon_array_states_cli_tools_recheck_expanded_certificates() {
+    let p = charon_state_project();
     for command in ["profile", "audit"] {
         assert_cli(&p, &[command]);
     }
@@ -414,14 +413,11 @@ fn charon_array_snapshots_cli_tools_recheck_expanded_certificates() {
 }
 #[test]
 #[ignore = "requires the separately built pinned Charon/compiler"]
-fn charon_array_snapshots_live_refresh() {
-    let p = charon_snapshot_project();
+fn charon_array_states_live_refresh() {
+    let p = charon_state_project();
     p.refresh().unwrap();
-    ProgramVerificationSession::new_program_prepared(
-        CHARON_SNAPSHOT_SIDECAR,
-        p.prepared().unwrap(),
-    )
-    .unwrap();
+    ProgramVerificationSession::new_program_prepared(CHARON_STATE_SIDECAR, p.prepared().unwrap())
+        .unwrap();
 }
 
 const CHARON_OPERATOR_SIDECAR: &str =

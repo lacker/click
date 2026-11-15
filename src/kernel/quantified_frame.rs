@@ -1,5 +1,5 @@
 //! The checked quantified frame: one explicit transport of a proposition,
-//! possibly quantified, whose memory reads name one snapshot to the same
+//! possibly quantified, whose memory reads name one state to the same
 //! proposition reading another, decided leaf by leaf in the querying context
 //! with each universal binder renamed fresh.
 //!
@@ -29,7 +29,7 @@
 //!   `a => c` or `b => c` (conjunction elimination: a guarded postcondition
 //!   `defined(p[k]) and p[k] == v` carries its value conjunct alone);
 //! - a condition leaf when its two spellings differ only in load atoms each
-//!   shown unchanged between its two snapshots (the kernel's checked load
+//!   shown unchanged between its two states (the kernel's checked load
 //!   equality, `explicit_atomic_equality_from_memory_derivations` and the
 //!   condition bridge's `memory_loads_proven_equal`), or when the caller's
 //!   `leaf` check, the ordinary single-fact transport, carries it.
@@ -102,7 +102,7 @@ impl std::fmt::Display for QuantifiedFrameRefusal {
                 formatter.write_str("no fresh identity was left for a universal binder")
             }
             Self::LeafNotCarried { .. } => formatter.write_str(
-                "a leaf was not carried: a read in it was not shown unchanged between its two snapshots by the steps between them and this context's facts",
+                "a leaf was not carried: a read in it was not shown unchanged between its two states by the steps between them and this context's facts",
             ),
         }
     }
@@ -332,7 +332,7 @@ impl Framer<'_> {
 }
 
 /// One pair of load atoms: one address (its own loads compared in turn) read
-/// at two snapshots, shown to hold one version by the kernel's checked load
+/// at two states, shown to hold one version by the kernel's checked load
 /// equality, exactly as the condition bridge
 /// (`conditions_equal_modulo_origin_unchanged`) asks it.
 fn loads_unchanged(left: &MachineTerm, right: &MachineTerm, assumptions: &PureFactContext) -> bool {

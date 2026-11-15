@@ -1,12 +1,16 @@
 //! The resource tracker: the one place in the kernel that knows **which
 //! resources are known to be the same at which program points**.
 //!
-//! A *resource* is a piece of mutable state, or part of one: a memory cell, a
-//! memory block as a pure function reads it through an array argument, one
-//! model field of a resource instance. A *program
-//! point* is a point on the current proof path, identified by the memory
-//! snapshot the kernel had reached there. The tracker answers two questions
-//! about them:
+//! A *resource* is a piece of mutable state: a memory cell, an observed
+//! memory block, or a model field. A surface *program point* is a code
+//! location or proof mark used by `at(point, expression)`. It selects a
+//! recorded symbolic execution state on the current proof path.
+//!
+//! Memory reasoning uses a *version point*, [`VersionPoint`], identified by
+//! an interned memory state. The assumption-free naming walk selects the
+//! earliest version point it can prove unchanged for the chosen resource.
+//! Distinct program points may select the same version point for one cell.
+//! The tracker answers two questions about version points:
 //!
 //! * [`last_same`] — walking back from a point, where was this resource last
 //!   known to be the same, and what stopped the walk there;
@@ -20,13 +24,14 @@
 //!
 //! Everything else is built on those. Naming a term that reads memory embeds
 //! the oldest point its resource is the same as, so equal names mean equal
-//! terms; that is [`last_same_point`], and it is the only form on the hot
+//! terms; that is [`last_same_version_point`], and it is the only form on the hot
 //! path. [`explain`] adds nothing to the answer — it names the step that
 //! broke the chain so a refusal can say what went wrong.
 //!
 //! **Two kinds of point, because there are two kinds of version.** A memory
-//! resource's version *is* a point: the snapshot it was last written at, which
-//! is why a load variable's name can embed one. A model field's version is the
+//! resource's version is named by its version point, where an operation
+//! changed it or prevented the assumption-free walk from crossing. A read
+//! term can embed that version point. A model field's version is the
 //! **value stored in the instance**, so its points are whole saved states — [`StatePoint`], a
 //! handle to the state the kernel already keeps at `entry`, at a `mark` or at
 //! an iteration, never a copy. That kind has no naming walk and no recorded
@@ -44,10 +49,10 @@
 //! **The soundness corridor.** The tracker reads `MemoryDerivation` edges,
 //! which are interned first-wins: one edge can be shared by proof paths with
 //! different assumptions, so an edge may carry only what is true on *every*
-//! path that could produce that snapshot. A write set qualifies; a
+//! path that could produce that state. A write set qualifies; a
 //! path-dependent separation does not. That is why the naming walks below are
 //! assumption-free — an answer that is embedded in a name and memoized per
-//! snapshot must not depend on one path's facts — and why the crossing
+//! state must not depend on one path's facts — and why the crossing
 //! evidence is re-derived in the querying context instead of being recorded
 //! (`docs/internals/memory-dag.md`, `docs/internals/resource-tracker.md`).
 //!
@@ -65,27 +70,28 @@ use crate::kernel::primitives::*;
 use crate::kernel::unary_term;
 use crate::kernel::{MachineCastSpelling, cast_term};
 
-/// A point on the current proof path, named by the memory snapshot the
-/// kernel had reached there: `entry`, a `mark`ed label, or "here".
+/// A position in memory history, identified by an interned memory state.
+/// The naming walk selects a resource's version point from these positions.
 ///
-/// Program points are compared by interned snapshot identity, so two points
-/// that the execution reached by different routes to the same state are one
-/// point.
+/// This is not the surface program point passed to `at`: two distinct
+/// program points can select the same version point for a cell. Equality
+/// here compares interned memory states, not source locations or all values
+/// at a location.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProgramPoint(SharedMemory);
+pub(crate) struct VersionPoint(SharedMemory);
 
-impl ProgramPoint {
-    pub(crate) fn at(snapshot: &SharedMemory) -> Self {
-        Self(snapshot.clone())
+impl VersionPoint {
+    pub(crate) fn at(memory: &SharedMemory) -> Self {
+        Self(memory.clone())
     }
 
     /// The point a `Memory` value stands at, interning it first. Callers
-    /// that already hold an interned snapshot use [`ProgramPoint::at`].
+    /// that already hold an interned state use [`VersionPoint::at`].
     pub(crate) fn of_memory(memory: &Memory) -> Self {
         Self(crate::kernel::intern_memory(memory.clone()))
     }
 
-    pub(crate) fn snapshot(&self) -> &SharedMemory {
+    pub(crate) fn shared_memory(&self) -> &SharedMemory {
         &self.0
     }
 
@@ -94,7 +100,7 @@ impl ProgramPoint {
     }
 
     /// True when this point is later in the recorded history than `other`.
-    /// Snapshot ids strictly increase along derivation edges, so comparing
+    /// Memory state ids strictly increase along derivation edges, so comparing
     /// them orders two points of one arena without walking.
     pub(crate) fn is_later_than(&self, other: &Self) -> bool {
         let (arena, id) = self.0.arena_id();
@@ -103,9 +109,9 @@ impl ProgramPoint {
     }
 }
 
-/// A program point for a resource that does not live in memory: a borrowed
+/// A state point for a resource that does not live in memory: a borrowed
 /// handle to the whole execution state the kernel already holds there — the
-/// contract's entry state, a `mark`ed state out of `RecordedSnapshots`, a
+/// contract's entry state, a `mark`ed state out of `RecordedStates`, a
 /// loop's iteration state, or the live one.
 ///
 /// It is a handle, never a copy. The tracker reads one keyed entry out of the
@@ -113,8 +119,8 @@ impl ProgramPoint {
 /// state: nothing compares two states' contents, because a resource context's
 /// `PartialEq` walks its facts and no tracker answer may cost that.
 ///
-/// Memory keeps [`ProgramPoint`] instead, whose identity is one interned
-/// snapshot id. That is what the naming path needs and what a load variable's
+/// Memory keeps [`VersionPoint`] instead, whose identity is one interned
+/// state id. That is what the naming path needs and what a load variable's
 /// name embeds; a whole state is neither interned nor ordered, so it could not
 /// serve there.
 #[derive(Clone, Copy)]
@@ -142,7 +148,7 @@ impl<'a> StatePoint<'a> {
 impl std::fmt::Debug for StatePoint<'_> {
     /// A state's own `Debug` is the whole symbolic state. A point is a
     /// handle, and a diagnostic that printed one would be the repeated raw
-    /// memory snapshot the tooling rules forbid.
+    /// memory state the tooling rules forbid.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("StatePoint(<saved state>)")
     }
@@ -281,7 +287,7 @@ impl OwnedResource {
 /// point, and what stopped the walk there.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LastSame {
-    pub(crate) point: ProgramPoint,
+    pub(crate) point: VersionPoint,
     pub(crate) stopped_by: Stop,
 }
 
@@ -301,8 +307,8 @@ impl Stop {
     /// the walk itself asked, run with the same evidence the naming walk has —
     /// none — so a refusal explains the answer the term actually got rather
     /// than a second opinion about it.
-    fn at_point(point: &ProgramPoint, resource: TrackedResource<'_>) -> Self {
-        let Some(derivation) = point.snapshot().derivation() else {
+    fn at_point(point: &VersionPoint, resource: TrackedResource<'_>) -> Self {
+        let Some(derivation) = point.shared_memory().derivation() else {
             return Self {
                 change: Change::BeginningOfHistory,
                 reason: StopReason::HistoryEnds,
@@ -312,7 +318,7 @@ impl Stop {
         let reason =
             match step_effect::affects(
                 derivation.as_ref(),
-                point.snapshot(),
+                point.shared_memory(),
                 resource,
                 &step_effect::Evidence {
                     assumptions: &naming_context(),
@@ -487,7 +493,7 @@ pub(crate) enum SeparationCheck {
     /// leaves the block's cells, overlays, extent, liveness and heap status
     /// all untouched, which the step the walk stopped at was not shown to do.
     /// Stated separations are not consulted, because this answer is embedded
-    /// in a name and memoized per snapshot.
+    /// in a name and memoized per state.
     WholeBlockAgreement,
 }
 
@@ -501,20 +507,20 @@ pub(crate) enum Sameness {
     Same,
     /// A step between the two points wrote the resource.
     Changed {
-        at: Option<ProgramPoint>,
+        at: Option<VersionPoint>,
         by: Stop,
     },
     /// A step between the two points could not be shown to leave the
     /// resource alone. The resource may well be unchanged; nothing states it.
     Unknown {
-        at: Option<ProgramPoint>,
+        at: Option<VersionPoint>,
         why: Stop,
     },
 }
 
 impl Sameness {
     /// The step that broke the chain, for the two answers that have one.
-    pub(crate) fn blocking_step(&self) -> Option<(Option<&ProgramPoint>, &Stop)> {
+    pub(crate) fn blocking_step(&self) -> Option<(Option<&VersionPoint>, &Stop)> {
         match self {
             Self::Same => None,
             Self::Changed { at, by } => Some((at.as_ref(), by)),
@@ -535,9 +541,9 @@ pub(crate) struct Explanation {
     /// The point the question was asked at, for a resource that has one.
     /// Absent for the kinds whose points are saved states: a state is neither
     /// interned nor ordered, so it cannot be one of these.
-    pub(crate) here: Option<ProgramPoint>,
+    pub(crate) here: Option<VersionPoint>,
     /// The other point, when the question had one.
-    pub(crate) there: Option<ProgramPoint>,
+    pub(crate) there: Option<VersionPoint>,
     pub(crate) outcome: Sameness,
     /// Recorded steps between the blocking step and `here`, capped at
     /// [`MAX_REPORTED_STEPS`]. The tracker crossed all of them, so a
@@ -560,17 +566,18 @@ impl Explanation {
 /// The point a resource read at `at` is named by: the oldest point it is
 /// known to be the same at. This is the naming path — memoized, and the only
 /// tracker call on the hot path.
-pub(crate) fn last_same_point(
+pub(crate) fn last_same_version_point(
     resource: TrackedResource<'_>,
-    at: &ProgramPoint,
-) -> Option<ProgramPoint> {
+    at: &VersionPoint,
+) -> Option<VersionPoint> {
     match resource {
         TrackedResource::Cell { pointer, bytes } => {
-            cell_last_same_point(at.snapshot(), pointer, bytes).map(ProgramPoint)
+            cell_last_same_version_point(at.shared_memory(), pointer, bytes).map(VersionPoint)
         }
-        TrackedResource::Block(block) => {
-            Some(ProgramPoint(block_last_same_point(at.snapshot(), block)))
-        }
+        TrackedResource::Block(block) => Some(VersionPoint(block_last_same_version_point(
+            at.shared_memory(),
+            block,
+        ))),
         // No term names a memory footprint, so a footprint has no naming path
         // to be the oldest point of. Its one caller knows both ends of the
         // interval it cares about and asks [`step_effect::affects`] at every
@@ -586,14 +593,14 @@ pub(crate) fn last_same_point(
     }
 }
 
-/// [`last_same_point`] with the reason the resource walk stopped.
+/// [`last_same_version_point`] with the reason the resource walk stopped.
 /// Cell naming retains that decision alongside its endpoint; querying it
 /// must not re-run the effect check that produced it.
-pub(crate) fn last_same(resource: TrackedResource<'_>, at: &ProgramPoint) -> Option<LastSame> {
+pub(crate) fn last_same(resource: TrackedResource<'_>, at: &VersionPoint) -> Option<LastSame> {
     match resource {
         TrackedResource::Cell { pointer, bytes } => last_same_named_cell(pointer, bytes, at),
         TrackedResource::Block(block) => {
-            let point = ProgramPoint(block_last_same_point(at.snapshot(), block));
+            let point = VersionPoint(block_last_same_version_point(at.shared_memory(), block));
             let stopped_by = Stop::at_point(&point, resource);
             Some(LastSame { point, stopped_by })
         }
@@ -604,15 +611,15 @@ pub(crate) fn last_same(resource: TrackedResource<'_>, at: &ProgramPoint) -> Opt
 }
 
 /// [`last_same`] for a cell, from the memoized naming walk
-/// ([`last_same_point`]): the point a read there is named at, and why the
+/// ([`last_same_version_point`]): the point a read there is named at, and why the
 /// walk stopped there. A caller asking about a cell a read was just named
 /// for pays no second walk.
 pub(crate) fn last_same_named_cell(
     pointer: &Pointer,
     bytes: u32,
-    at: &ProgramPoint,
+    at: &VersionPoint,
 ) -> Option<LastSame> {
-    let version = cell_last_same_version(at.snapshot(), pointer, bytes)?;
+    let version = cell_last_same_version(at.shared_memory(), pointer, bytes)?;
     let change = version
         .memory
         .derivation()
@@ -620,7 +627,7 @@ pub(crate) fn last_same_named_cell(
             Change::of_derivation(&edge)
         });
     Some(LastSame {
-        point: ProgramPoint(version.memory),
+        point: VersionPoint(version.memory),
         stopped_by: Stop {
             change,
             reason: version.reason,
@@ -636,8 +643,8 @@ pub(crate) fn last_same_named_cell(
 /// chain.
 pub(crate) fn same(
     resource: TrackedResource<'_>,
-    left: &ProgramPoint,
-    right: &ProgramPoint,
+    left: &VersionPoint,
+    right: &VersionPoint,
 ) -> Sameness {
     if left == right {
         return Sameness::Same;
@@ -682,7 +689,7 @@ pub(crate) fn same(
 /// This is the whole interface for [`TrackedResource::ModelField`], and it is a
 /// two-point value comparison rather
 /// than a walk. There is no recorded history to walk: the memory DAG records
-/// one write set per snapshot, and nothing records "field *k* of this instance
+/// one write set per state, and nothing records "field *k* of this instance
 /// was replaced". A field that survived a call kept
 /// its identity and got fresh field variables, so the two stored values are
 /// already the two versions — which is why this needs no generation counter
@@ -821,8 +828,8 @@ fn version_at_state(resource: TrackedResource<'_>, point: StatePoint<'_>) -> Opt
 /// [`same`], with the bounded context a refusal prints.
 pub(crate) fn explain(
     resource: TrackedResource<'_>,
-    here: &ProgramPoint,
-    there: &ProgramPoint,
+    here: &VersionPoint,
+    there: &VersionPoint,
 ) -> Explanation {
     let outcome = same(resource, here, there);
     explanation_for(resource, here, Some(there.clone()), outcome)
@@ -832,7 +839,7 @@ pub(crate) fn explain(
 /// to compare against: the step that ended the last stretch of agreement.
 /// A resource nothing has touched since the beginning of the history
 /// answers [`Sameness::Same`].
-pub(crate) fn explain_last_same(resource: TrackedResource<'_>, here: &ProgramPoint) -> Explanation {
+pub(crate) fn explain_last_same(resource: TrackedResource<'_>, here: &VersionPoint) -> Explanation {
     let outcome = match last_same(resource, here) {
         Some(last) => match last.stopped_by.reason {
             StopReason::HistoryEnds => Sameness::Same,
@@ -854,8 +861,8 @@ pub(crate) fn explain_last_same(resource: TrackedResource<'_>, here: &ProgramPoi
 
 fn explanation_for(
     resource: TrackedResource<'_>,
-    here: &ProgramPoint,
-    there: Option<ProgramPoint>,
+    here: &VersionPoint,
+    there: Option<VersionPoint>,
     outcome: Sameness,
 ) -> Explanation {
     let crossed_after = outcome
@@ -875,10 +882,10 @@ fn explanation_for(
 /// Recorded steps from `from` back to `to`, bounded. Zero when `to` is not
 /// an ancestor of `from`, which is what the two answers that report no step
 /// already say.
-fn recorded_steps_between(from: &ProgramPoint, to: &ProgramPoint) -> usize {
-    let mut current = from.snapshot().clone();
+fn recorded_steps_between(from: &VersionPoint, to: &VersionPoint) -> usize {
+    let mut current = from.shared_memory().clone();
     for crossed in 0..MAX_REPORTED_STEPS {
-        if &current == to.snapshot() {
+        if &current == to.shared_memory() {
             return crossed;
         }
         let Some(derivation) = current.derivation() else {
@@ -930,25 +937,25 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// The snapshot a pure function's array argument names: the latest one that
+/// The state a pure function's array argument names: the latest one that
 /// still agrees with `memory` about everything such a function can observe
 /// through a pointer into `block`.
 ///
-/// An `Integer` function over an array carries its snapshot in the argument
+/// An `Integer` function over an array carries its state in the argument
 /// itself, and that argument is compared structurally, so a fact about
 /// `icount(array-ref(S, p), ..)` matches a goal about
 /// `icount(array-ref(S', p), ..)` only when `S` and `S'` are the same
-/// snapshot. Every step of the program makes a new snapshot, so without a
+/// state. Every step of the program makes a new state, so without a
 /// canonical form such a fact dies at the next statement even when that
 /// statement cannot touch the array. This is the array-argument counterpart
-/// of [`cell_last_same_point`], which is why a plain `a[k] == 5` survives the
+/// of [`cell_last_same_version_point`], which is why a plain `a[k] == 5` survives the
 /// same step today.
 ///
 /// **What the version must guarantee.** The function is opaque, so it may read
 /// any cell reachable through `p`, and an `unfold` states its defining
 /// equation with the fold lowered at the *live* state while the application
 /// keeps this argument. The version is therefore only sound when `memory` and
-/// the returned snapshot agree on everything the body can see through `p`:
+/// the returned state agree on everything the body can see through `p`:
 /// the contents of every cell of `block`, the union overlays in `block`, the
 /// block's own extent and liveness, and the heap status that decides whether
 /// a read of `block` is defined at all.
@@ -957,7 +964,7 @@ thread_local! {
 /// `TrackedResource::Block` at every recorded edge and stopping at the first one it
 /// does not answer `Separate`. That rule's `TrackedResource::Block` arm is where the
 /// per-step argument lives, kind by kind; it is handed no fact context at all,
-/// which is what lets this answer be memoized per interned snapshot and block.
+/// which is what lets this answer be memoized per interned state and block.
 ///
 /// **Why the separation has to be proven, not spelled.** This walk is
 /// assumption-free: it has no `PureFactContext` to read a `separate(..)`
@@ -983,10 +990,10 @@ thread_local! {
 /// on either side, which also makes an entry gate on the subject unnecessary:
 /// a subject this walk cannot separate from anything simply never crosses.
 ///
-/// The walk is assumption-free and terminates: snapshot ids strictly decrease
+/// The walk is assumption-free and terminates: state ids strictly decrease
 /// along `base`. It always reports a version, because a subject it can separate
 /// from nothing crosses nothing and so answers `memory` itself.
-fn block_last_same_point(memory: &SharedMemory, block: &PointerBlock) -> SharedMemory {
+fn block_last_same_version_point(memory: &SharedMemory, block: &PointerBlock) -> SharedMemory {
     let recorded = |key: &(crate::kernel::SharedMemory, PointerBlock)| {
         BLOCK_VERSION_MEMO.with(|memo| memo.borrow().get(key).cloned())
     };
@@ -994,11 +1001,11 @@ fn block_last_same_point(memory: &SharedMemory, block: &PointerBlock) -> SharedM
     if let Some(hit) = recorded(&key) {
         return hit;
     }
-    // Every snapshot on the way to the version has the same version, so each one
+    // Every state on the way to the version has the same version, so each one
     // is recorded when the walk ends. Without that, a proof that uses one
     // array fact after each of N steps walks the whole chain N times and
-    // costs N^2 hops; with it, a walk from a new snapshot meets a recorded
-    // answer after one hop, so the whole proof costs one hop per snapshot.
+    // costs N^2 hops; with it, a walk from a new state meets a recorded
+    // answer after one hop, so the whole proof costs one hop per state.
     // `an_array_fact_carried_across_local_stores_scales_linearly` is the
     // regression that tells those apart.
     let mut path = Vec::new();
@@ -1075,7 +1082,7 @@ struct NamedCellVersion {
     reason: StopReason,
 }
 
-pub(super) fn cell_last_same_point(
+pub(super) fn cell_last_same_version_point(
     memory: &SharedMemory,
     pointer: &Pointer,
     bytes: u32,
@@ -1088,7 +1095,7 @@ fn cell_last_same_version(
     pointer: &Pointer,
     bytes: u32,
 ) -> Option<NamedCellVersion> {
-    // Assumption-free and a function of the interned snapshot, the pointer,
+    // Assumption-free and a function of the interned state, the pointer,
     // the access width and the recorded edges, so the answer is memoized per
     // query. The width is part of the key because it is part of the
     // question: a wider access stops at stores a narrower one crosses.
@@ -1120,7 +1127,7 @@ fn cell_last_same_version(
                 // fresh offset does not retrace all unrelated stores. The block
                 // rule is assumption-free and stronger than cell separation.
                 let mut current =
-                    block_last_same_point(&memory, &pointer.block).unchanged_bytes_source();
+                    block_last_same_version_point(&memory, &pointer.block).unchanged_bytes_source();
                 let mut visited = if current != memory {
                     vec![key.clone()]
                 } else {
@@ -1214,7 +1221,7 @@ fn cell_last_same_version(
 /// nothing: it answers for this path only, through the fact-aware cell walk
 /// ([`cell_source::memory_dag_cell_source`]), which resumes the memoized
 /// naming walk and applies `assumptions` only at the steps it stopped at.
-/// The value is the store the walk reached, or the cell the snapshot it
+/// The value is the store the walk reached, or the cell the state it
 /// stopped at caches at exactly `pointer`; every step in between is proven
 /// separate from the cell, so that is the cell's value at `at` wherever
 /// `assumptions` hold.
@@ -1230,15 +1237,15 @@ pub(crate) fn cell_value_on_path(
     }
 }
 
-/// The snapshot a static-storage cell is read at on the querying path, when
+/// The state a static-storage cell is read at on the querying path, when
 /// that path's facts carry the cell unwritten from `at` back to the root
 /// (`function.entry`) and nothing on the way caches its value. A store the
 /// naming walk could not place, such as `g[u] = 7` on a path that knows
 /// `u != 0`, leaves an untouched `g[0]` its entry value: the read is the load
 /// at the root, as it is with no store at all. The path's facts cross the
 /// steps the naming walk cannot (as in [`cell_value_on_path`]); from the
-/// snapshot they reach, the memoized naming walk must run to the root. The
-/// snapshot is returned, and a load there is named at the root.
+/// state they reach, the memoized naming walk must run to the root. The
+/// state is returned, and a load there is named at the root.
 pub(crate) fn static_cell_unwritten_since_entry_on_path(
     at: &SharedMemory,
     pointer: &Pointer,
@@ -1275,7 +1282,7 @@ thread_local! {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ResourceRead {
     pub(crate) resource: OwnedResource,
-    pub(crate) point: ProgramPoint,
+    pub(crate) point: VersionPoint,
 }
 
 /// The resources a proposition reads, in traversal order.
@@ -1333,7 +1340,7 @@ fn collect_term_reads(term: &Term, reads: &mut Vec<ResourceRead>) {
 pub(crate) fn version_mismatch(
     left: &Proposition,
     right: &Proposition,
-) -> Option<(OwnedResource, ProgramPoint, ProgramPoint)> {
+) -> Option<(OwnedResource, VersionPoint, VersionPoint)> {
     let left_reads = reads_of_proposition(left);
     let right_reads = reads_of_proposition(right);
     if left_reads.is_empty() || left_reads.len() != right_reads.len() {
@@ -1364,7 +1371,7 @@ pub(crate) fn reads_any_resource(fact: &Proposition) -> bool {
 /// shape an equation between a term and its own earlier value takes.
 pub(crate) fn internal_version_mismatch(
     fact: &Proposition,
-) -> Option<(OwnedResource, ProgramPoint, ProgramPoint)> {
+) -> Option<(OwnedResource, VersionPoint, VersionPoint)> {
     let reads = reads_of_proposition(fact);
     reads.iter().enumerate().find_map(|(index, read)| {
         reads[index + 1..]
@@ -1380,7 +1387,7 @@ pub(crate) fn internal_version_mismatch(
     })
 }
 
-fn push_read(reads: &mut Vec<ResourceRead>, resource: OwnedResource, point: ProgramPoint) {
+fn push_read(reads: &mut Vec<ResourceRead>, resource: OwnedResource, point: VersionPoint) {
     let read = ResourceRead { resource, point };
     if !reads.contains(&read) {
         reads.push(read);
@@ -1493,7 +1500,7 @@ fn collect_condition_reads(condition: &ConditionTerm, reads: &mut Vec<ResourceRe
                 pointer: pointer.as_ref().clone(),
                 bytes: 1,
             },
-            ProgramPoint::at(memory),
+            VersionPoint::at(memory),
         ),
     }
 }
@@ -1515,7 +1522,7 @@ fn collect_pointer_block_reads(block: &PointerBlock, reads: &mut Vec<ResourceRea
                 pointer: address,
                 bytes: crate::kernel::C_POINTER_BYTE_WIDTH,
             },
-            ProgramPoint::at(&memory),
+            VersionPoint::at(&memory),
         );
     }
 }
@@ -1659,7 +1666,7 @@ fn collect_argument_reads(argument: &PureFunctionArgument, reads: &mut Vec<Resou
                 push_read(
                     reads,
                     OwnedResource::Block(pointer.pointer().block.clone()),
-                    ProgramPoint::of_memory(memory),
+                    VersionPoint::of_memory(memory),
                 );
             }
         }
@@ -1686,7 +1693,7 @@ fn collect_bitvector_reads(term: &MachineTerm, reads: &mut Vec<ResourceRead>) {
                         pointer: read.pointer,
                         bytes: read.bytes,
                     },
-                    ProgramPoint::at(&read.origin.unwrap_or(read.memory)),
+                    VersionPoint::at(&read.origin.unwrap_or(read.memory)),
                 );
             }
         }

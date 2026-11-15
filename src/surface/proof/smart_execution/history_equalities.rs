@@ -33,18 +33,18 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         let Some(view) = search_input.premise_fixed_state_view() else {
             return Ok(None);
         };
-        let records = view.fixed_state.recorded_snapshots;
+        let records = view.fixed_state.recorded_states;
         let mut proof = search_input.clone();
         for (selector, _) in records.iter() {
             check_verification_deadline()?;
-            let SnapshotSelector::ProgramPoint(ProgramPointRef {
+            let ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: region @ CodeRegionRef::Region(_),
                 kind: ProgramPointKind::Entry,
             }) = selector
             else {
                 continue;
             };
-            let exit = SnapshotSelector::ProgramPoint(ProgramPointRef {
+            let exit = ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: region.clone(),
                 kind: ProgramPointKind::Exit,
             });

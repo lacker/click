@@ -162,7 +162,7 @@ fn old_collect_speprogram_expression_program_variables(
         SpecExpression::Requires { .. } => Err("a subslice's bounds requirement"),
         SpecExpression::RangeFold { .. } => Err("a range fold"),
         SpecExpression::Let { .. } => Err("a `let` expression"),
-        SpecExpression::LoopEntrySnapshot(_) => Err("a loop-entry snapshot"),
+        SpecExpression::LoopEntryState(_) => Err("a loop-entry state"),
         SpecExpression::AggregateFieldValue { .. } => Err("a by-value aggregate field"),
     }
 }

@@ -12,7 +12,7 @@
 //! context's facts, because its answer is re-derived per query and retained as
 //! a checkable hop; the block arm is handed nothing but the edge, because its
 //! answer is embedded in an array argument's name and memoized per
-//! `(snapshot, block)`, where one path's assumptions must never reach
+//! `(retained_state, block)`, where one path's assumptions must never reach
 //! (`docs/internals/memory-dag.md`).
 
 use super::cell_source::{MemoryDagAssumptionKind, MemoryDagHopJustification};
@@ -987,7 +987,7 @@ fn seeded_cell_effect_store_by_store(
 ///   parameter, and every array parameter of one function shares that block.
 /// * `CallHavoc` and `LoopHavoc` with a checked write set are the two steps
 ///   that stand for code this rule cannot see, so what they *do* to the
-///   snapshot has to be enumerated rather than assumed. A call havoc forgets
+///   state has to be enumerated rather than assumed. A call havoc forgets
 ///   every cell that is neither in a `local:` block nor proven disjoint from
 ///   the declared ranges, drops the zeroed reading of every allocation those
 ///   ranges may reach, and inserts its two marker blocks. A loop havoc forgets
@@ -1004,10 +1004,10 @@ fn seeded_cell_effect_store_by_store(
 ///     * the marker blocks are fresh keys, so this block's extent entry is
 ///       untouched;
 ///     * and a loop havoc does drop this block's cached values, which is a
-///       change of *form* only. The argument names the older snapshot, and its
+///       change of *form* only. The argument names the older state, and its
 ///       known values stay true of the real object precisely because the
 ///       declared write set excludes that object; forgetting what the newer
-///       snapshot knew removes knowledge from the newer state rather than
+///       state knew removes knowledge from the newer state rather than
 ///       changing the object.
 ///
 ///   The declared write set is the same thing a cell fact already trusts to be
@@ -1027,7 +1027,7 @@ fn seeded_cell_effect_store_by_store(
 ///   anything it can reach has no footprint to be separate from.
 ///
 /// No arm consults a fact, a stated `separate(..)` or ownership, because this
-/// answer is memoized per `(snapshot, block)` and an interned edge is shared
+/// answer is memoized per `(retained_state, block)` and an interned edge is shared
 /// by paths with different assumptions.
 fn block_effect(step: &MemoryDerivation, block: &PointerBlock) -> StepEffect {
     let unknown =

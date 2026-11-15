@@ -5,10 +5,10 @@
 `unmarked(visited, 0, i) == 0`, that everything below the cursor is marked.
 
 Two steps of the body need memory reasoning the proof does not spell out.
-Appending the written cell reads it out of the snapshot the store produced, so
+Appending the written cell reads it out of the state the store produced, so
 the append law's last cell is the value that store wrote. Carrying the
 invariant past the cursor's own `i++` needs the array argument `unmarked`
-folds over to name the same snapshot on both sides of a step that writes only
+folds over to name the same state on both sides of a step that writes only
 a local, which is what a block epoch gives it.
 
 One explicit `transport` carries the entry invariant across `visited[i] = 1`.

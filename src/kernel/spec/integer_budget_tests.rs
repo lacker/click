@@ -498,7 +498,7 @@ fn fold_body_drops_only_exact_registered_load_definition_conjuncts() {
     assert!(matches!(retained_pointer, Proposition::And(_, _)));
 
     let tampered_memory = crate::kernel::intern_memory(Memory::new().with_block("other", 16));
-    let tampered_snapshot = Proposition::ConditionIs(
+    let tampered_state = Proposition::ConditionIs(
         ConditionTerm::Compare {
             format: MachineIntegerType::Int32,
             relation: CompareRelation::Equal,
@@ -511,8 +511,8 @@ fn fold_body_drops_only_exact_registered_load_definition_conjuncts() {
         },
         true,
     );
-    let retained_snapshot = drop_verified_load_definition_conjuncts(Proposition::And(
-        Box::new(tampered_snapshot),
+    let retained_state = drop_verified_load_definition_conjuncts(Proposition::And(
+        Box::new(tampered_state),
         Box::new(Proposition::MemoryLoadable {
             memory: registered_memory.as_ref().clone(),
             base: registered_pointer.clone(),
@@ -520,8 +520,8 @@ fn fold_body_drops_only_exact_registered_load_definition_conjuncts() {
             wide: false,
         }),
     ))
-    .expect("a tampered snapshot must remain an obligation");
-    assert!(matches!(retained_snapshot, Proposition::And(_, _)));
+    .expect("a tampered state must remain an obligation");
+    assert!(matches!(retained_state, Proposition::And(_, _)));
 
     let unknown = Variable((1u64 << 40) + 123_456_789);
     let unknown_definition = Proposition::ConditionIs(
@@ -720,24 +720,21 @@ fn integer_existential_branch_filters_exact_load_definitions_only() {
     assert!(contains(&tampered_pointer_branch, &loadable));
 
     let other_memory = crate::kernel::intern_memory(Memory::new().with_block("other", 16));
-    let tampered_snapshot_definition = defining(other_memory, registered_pointer.clone(), load);
-    let tampered_snapshot_path = SpecPropositionPath {
+    let tampered_state_definition = defining(other_memory, registered_pointer.clone(), load);
+    let tampered_state_path = SpecPropositionPath {
         proposition: marker.clone(),
         facts: vec![ExecutionPureFact::certified(
-            tampered_snapshot_definition.clone(),
+            tampered_state_definition.clone(),
         )]
         .into(),
         obligations: vec![ProofObligation::verification_condition(Proposition::And(
-            Box::new(tampered_snapshot_definition.clone()),
+            Box::new(tampered_state_definition.clone()),
             Box::new(loadable.clone()),
         ))],
         introductions: LoweringIntroductions::new(),
     };
-    let tampered_snapshot_branch = existential_body_branch(&tampered_snapshot_path);
-    assert!(contains(
-        &tampered_snapshot_branch,
-        &tampered_snapshot_definition
-    ));
+    let tampered_state_branch = existential_body_branch(&tampered_state_path);
+    assert!(contains(&tampered_state_branch, &tampered_state_definition));
 
     let unknown = Variable((1u64 << 40) + 123_456_789);
     let unknown_definition = defining(registered_memory, registered_pointer, unknown);

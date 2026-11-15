@@ -7,7 +7,7 @@ In a proof state holding several hundred recorded facts, a bare `have` whose
 goal follows from one or two facts already in the context exhausts the smart
 budget (2,000,000 units). The same goal closes at once when those facts are
 listed with `solve() using { ... }`. The cost is in `solve` spelling premises
-across recorded snapshots, not in the arithmetic.
+across recorded states, not in the arithmetic.
 
 Invariant: smart search is bounded by the selected goal and the relevant
 state, not by the size of the surrounding context
@@ -67,7 +67,7 @@ making one `have` bare to reproduce; use `CLICK_TIMINGS=1` for attribution.
 
 - A deterministic scaling regression in `src/scaling_tests/`: a one-step
   linear goal whose two premises are in the context, with N unrelated
-  recorded facts and snapshots for several N; `solve` work does not grow
+  recorded facts and states for several N; `solve` work does not grow
   with N beyond indexing factors.
 - The three bare `have`s above close within budget, or miss promptly with a
   bounded message that names `solve() using`.

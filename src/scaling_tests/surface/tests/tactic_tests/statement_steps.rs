@@ -697,8 +697,8 @@ fn prepared_guarded_statement_does_not_retry_execution() {
 }
 
 #[test]
-#[ignore = "focused audit: snapshot-valued fold prerequisites expand and cold-replay"]
-fn prepared_fold_snapshot_pointer_reads_current_memory() {
+#[ignore = "focused audit: state-valued fold prerequisites expand and cold-replay"]
+fn prepared_fold_state_pointer_reads_current_memory() {
     for element in ["int32", "uint8"] {
         let c = format!(
             "struct holder {{ {element}* data; }}; void make(struct holder* h) {{ h->data[0] = 1; }}"

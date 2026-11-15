@@ -387,7 +387,7 @@ pub(in crate::kernel) fn evaluate_resource_population_fact_propositions(
                     else {
                         return false;
                     };
-                    memory_snapshots_proven_equal_at_pointer(
+                    memory_states_proven_equal_at_pointer(
                         obligation_memory,
                         population_state.memory(),
                         base,
@@ -774,7 +774,7 @@ pub(super) fn instantiate_composite_resource_facts_with_state(
                 else {
                     return false;
                 };
-                memory_snapshots_proven_equal_at_pointer(
+                memory_states_proven_equal_at_pointer(
                     obligation_memory,
                     memory,
                     base,

@@ -1,7 +1,7 @@
 # A borrowed composite's quantified fact opens after an unrelated write
 
 The first statement changes the separately owned `q[0]`. Opening the borrowed
-`nonzero(p, n)` at the resulting snapshot must still publish its quantified
+`nonzero(p, n)` at the resulting state must still publish its quantified
 fact, which proves that the returned `p[0]` is nonzero.
 
 ```c filename=probe.c

@@ -3,12 +3,12 @@
 use super::*;
 
 #[derive(Clone, Debug)]
-pub struct KernelSnapshotRead {
+pub struct KernelMemoryRead {
     memory: SharedMemory,
     address: SharedPointerAddress,
     observation: Option<SharedPointerAddress>,
 }
-impl PartialEq for KernelSnapshotRead {
+impl PartialEq for KernelMemoryRead {
     fn eq(&self, other: &Self) -> bool {
         match (&self.observation, &other.observation) {
             (None, None) => {
@@ -19,8 +19,8 @@ impl PartialEq for KernelSnapshotRead {
         }
     }
 }
-impl Eq for KernelSnapshotRead {}
-impl Hash for KernelSnapshotRead {
+impl Eq for KernelMemoryRead {}
+impl Hash for KernelMemoryRead {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.observation.is_some().hash(state);
         if let Some(address) = &self.observation {
@@ -32,7 +32,7 @@ impl Hash for KernelSnapshotRead {
         }
     }
 }
-impl KernelSnapshotRead {
+impl KernelMemoryRead {
     pub(crate) fn new(memory: SharedMemory, address: SharedPointerAddress) -> Self {
         Self {
             memory,
@@ -175,7 +175,7 @@ impl KernelTerm {
 /// Native pointer equality can omit auxiliary metadata in opaque machine
 /// payloads. Do not use it to intern such a payload: those addresses retain
 /// the producer-local legacy boundary until their own shared forms migrate.
-/// Shared index identities include their nested read snapshots, so admitting
+/// Shared index identities include their nested read states, so admitting
 /// an address never re-walks the retained index expression.
 fn exact_address(address: &Pointer) -> bool {
     let mut pending = vec![&address.offset];
@@ -186,7 +186,7 @@ fn exact_address(address: &Pointer) -> bool {
             PointerOffsetTerm::Add(a, b) => pending.extend([b.as_ref(), a.as_ref()]),
             PointerOffsetTerm::Int32Scaled { value, .. }
             | PointerOffsetTerm::Int64Scaled { value, .. } => {
-                // The child identity already includes every read snapshot.
+                // The child identity already includes every read state.
                 // Never export or walk its retained expression prefix here.
                 if value.shared_operand().is_none() {
                     return false;
@@ -223,7 +223,7 @@ mod tests {
             let root = result.shared().expect("retained pointer read");
             let KernelTermNode::PointerRead {
                 value,
-                memory: snapshot,
+                memory: retained_state,
                 address: cell,
             } = root.node()
             else {
@@ -231,7 +231,7 @@ mod tests {
             };
             assert_eq!(root.ty(), &KernelType::Program(ty));
             assert_eq!(
-                snapshot.arena_id(),
+                retained_state.arena_id(),
                 intern_memory(memory.clone()).arena_id()
             );
             assert_eq!(cell, &SharedPointerAddress::import(&address));
@@ -261,14 +261,14 @@ mod tests {
         crate::kernel::eval::clear_load_variable_registry();
         crate::kernel::equality_graph::clear_logical_pointer_reads();
         let KernelTermNode::PointerRead {
-            memory: snapshot,
+            memory: retained_state,
             address: cell,
             ..
         } = root.node()
         else {
             panic!("read root");
         };
-        assert_eq!(snapshot.arena_id(), intern_memory(memory).arena_id());
+        assert_eq!(retained_state.arena_id(), intern_memory(memory).arena_id());
         assert_eq!(cell, &SharedPointerAddress::import(&address));
         assert!(matches!(
             root.pointer_native(),
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn scalar_read_identity_distinguishes_snapshot_address_and_kind() {
+    fn scalar_read_identity_distinguishes_state_address_and_kind() {
         let _session = VerificationSession::enter();
         let address = Pointer::symbolic(Variable(993110));
         let memory = intern_memory(Memory::new());
@@ -460,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_scalar_reads_retain_both_snapshots_without_registered_names() {
+    fn nested_scalar_reads_retain_both_states_without_registered_names() {
         let _session = VerificationSession::enter();
         let p = Pointer::symbolic(Variable(993140));
         let before = intern_memory(Memory::new());
@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_read_identity_does_not_compare_snapshot_contents_across_arenas() {
+    fn nested_read_identity_does_not_compare_state_contents_across_arenas() {
         let first = {
             let _session = VerificationSession::enter();
             intern_memory(Memory::new())
@@ -510,7 +510,7 @@ mod tests {
         let _session = VerificationSession::enter();
         let second = intern_memory(Memory::new());
         assert_ne!(first.arena_id(), second.arena_id());
-        assert_eq!(first, second); // Same contents, distinct snapshot identities.
+        assert_eq!(first, second); // Same contents, distinct retained_state identities.
         let read = |memory| {
             MachineTerm::MemoryLoad(
                 memory,

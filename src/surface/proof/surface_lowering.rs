@@ -314,7 +314,7 @@ impl<'a> Proof<'a> {
                 // and reusing it for a proof `if` condition would make the
                 // condition and its negation lower against different states.
                 // Resolve current-state expressions against the outcome's own
-                // snapshot. Fully anchored spellings are different: their
+                // state. Fully anchored spellings are different: their
                 // recorded identity deliberately names that historical fact.
                 let explicitly_anchored = match &surface {
                     ClickProposition::At { .. } => true,
@@ -366,7 +366,7 @@ impl<'a> Proof<'a> {
                         pre_state,
                         &execution.core.state,
                         None,
-                        &execution.presentation.recorded_snapshots,
+                        &execution.presentation.recorded_states,
                     ),
                     &algebraic_values,
                     &self.local_integer_values(),
@@ -509,7 +509,7 @@ impl<'a> Proof<'a> {
                         pre_state,
                         &execution.core.state,
                         None,
-                        &execution.presentation.recorded_snapshots,
+                        &execution.presentation.recorded_states,
                     ),
                     &algebraic_values,
                     &self.local_integer_values(),
@@ -542,7 +542,7 @@ impl<'a> Proof<'a> {
     ///
     /// Fact references may deliberately resolve through a recorded surface
     /// form, but a new goal may not: the same form can name facts
-    /// retained from an older snapshot. Selecting such a fact here would let
+    /// retained from an older state. Selecting such a fact here would let
     /// `have P by known()` check one kernel proposition and serialize a
     /// surface `P` that independently lowers to another.
     pub(super) fn lower_surface_goal(
@@ -646,7 +646,7 @@ impl<'a> Proof<'a> {
             // A judgment stated at a function outcome lowers strictly at
             // that outcome: like the fixed-state arm above, this deliberately
             // skips the recorded-lowering shortcut so a newly stated goal
-            // cannot borrow a same-written fact's older snapshot anchoring.
+            // cannot borrow a same-written fact's older state anchoring.
             ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
                     .outcome_fixed_state_view()

@@ -1438,11 +1438,11 @@ fn pinned_writable_byte_span_reference_preserves_view_offline() {
     check_pinned_byte_proof(&root, &import, source);
 }
 
-// Keep the fixed by-value source and true claim for the documented snapshot
+// Keep the fixed by-value source and true claim for the documented state
 // proof gap. Restore the positive E/R check when that gap is repaired.
 #[test]
 #[ignore = "nightly: pinned C++ by-value span certificate round trip"]
-fn pinned_writable_byte_span_by_value_preserves_pointer_snapshot() {
+fn pinned_writable_byte_span_by_value_preserves_pointer_state() {
     let (root, import) = pinned_span_fixture_with_exact_dependencies(
         "writable-byte-span",
         "#include <span.h>\nstd::span<std::byte> probe(std::span<int> span) noexcept { return std::as_writable_bytes(span); }\n",

@@ -37,7 +37,7 @@ fn unfinished_callback_error_does_not_execute_the_next_statement() {
         ExecutionProofState::at_entry(
             ExecutionState::new(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -90,7 +90,7 @@ fn implicit_tail_budget_errors_check_boundaries_without_exploring_paths() {
         ExecutionProofState::at_entry(
             ExecutionState::new(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -331,7 +331,7 @@ fn fixed_state_failure_names_kernel_values_held_in_live_locals() {
             ProgramValue::UInt64(MachineTerm::uint64_constant(0)),
         )),
     };
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -345,7 +345,7 @@ fn fixed_state_failure_names_kernel_values_held_in_live_locals() {
         ParameterBinding::default(),
         &state,
         &state,
-        &snapshots,
+        &retained_states,
         &surfaces,
         SpecDefinitions::new(&predicates, &functions),
         &theorems,
@@ -390,14 +390,17 @@ fn missing_known_side_uses_recorded_names_in_fixed_state_errors() {
         )),
     };
     let surface = ClickProposition::And(Box::new(written.clone()), Box::new(written));
-    let mut snapshots = RecordedSnapshots::new();
-    snapshots.insert(SnapshotSelector::Mark("iteration".into()), entry.clone());
+    let mut retained_states = RecordedStates::new();
+    retained_states.insert(
+        ProgramPointSelector::Mark("iteration".into()),
+        entry.clone(),
+    );
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
     let root = Proof::for_fixed_state_surface_goal(
-        "snapshot_error",
+        "state_error",
         0,
         &[],
         goal,
@@ -405,7 +408,7 @@ fn missing_known_side_uses_recorded_names_in_fixed_state_errors() {
         ParameterBinding::default(),
         &entry,
         &state,
-        &snapshots,
+        &retained_states,
         &surfaces,
         SpecDefinitions::new(&predicates, &functions),
         &theorems,
@@ -421,7 +424,7 @@ fn missing_known_side_uses_recorded_names_in_fixed_state_errors() {
                 .to_string()
         };
         let error = if traced {
-            crate::surface::with_proof_trace("snapshot_error", render)
+            crate::surface::with_proof_trace("state_error", render)
         } else {
             render()
         };
@@ -688,13 +691,13 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                 operator: ComparisonOperator::LessEqual,
                 right: ContractExpression::ProgramExpression(ProgramExpression::Value(int32(9))),
             };
-            let snapshots = RecordedSnapshots::new();
+            let retained_states = RecordedStates::new();
             let lower_at = |state: &ExecutionState| {
                 lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     &PureFactContext::new(),
                     ParameterBinding::new(parsed_function.parameters(), &arguments),
-                    FixedStateFrame::new(&old_state, state, None, &snapshots),
+                    FixedStateFrame::new(&old_state, state, None, &retained_states),
                     SpecDefinitions::new(&predicates, &functions),
                 )
                 .expect("the selected load bound should lower")
@@ -721,7 +724,7 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                 ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &old_state,
                 &current_state,
-                &snapshots,
+                &retained_states,
                 &stale_surfaces,
                 SpecDefinitions::new(&predicates, &functions),
                 &theorems,
@@ -755,7 +758,7 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
             // and anchoring the written form at function entry lowers to it
             // exactly. That is the one checked extraction the closure may make:
             // a single step, never a recursive retry of the stale spelling.
-            let anchored_surface = surface_at_snapshot(
+            let anchored_surface = surface_at_program_point(
                 &surface,
                 &ProgramPointRef {
                     region: CodeRegionRef::Function,
@@ -792,7 +795,7 @@ fn atomic_conjunct_extraction_requires_exact_selected_premise_on_small_stack() {
                 ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &old_state,
                 &old_state,
-                &snapshots,
+                &retained_states,
                 &exact_surfaces,
                 SpecDefinitions::new(&predicates, &functions),
                 &theorems,
@@ -1055,7 +1058,7 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
 }
 
 #[test]
-fn both_and_preserves_exact_binders_and_saved_snapshots() {
+fn both_and_preserves_exact_binders_and_saved_states() {
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
     let theorem_environment = TheoremEnvironment::new(&[]);
@@ -1091,7 +1094,7 @@ fn both_and_preserves_exact_binders_and_saved_snapshots() {
     let left = conjunct(11);
     let right = conjunct(22);
     let root = Proof::for_pure_goal(
-        "both snapshots",
+        "both states",
         &[],
         Proposition::And(Box::new(left.clone()), Box::new(right.clone())),
         &context,
@@ -1174,7 +1177,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
     let parsed_function =
         syntax::parse_function("void noop() {}").expect("test function should parse");
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -1189,7 +1192,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
         &body_surface,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &[]),
-        FixedStateFrame::new(&state, &state, None, &snapshots),
+        FixedStateFrame::new(&state, &state, None, &retained_states),
         SpecDefinitions::new(&predicates, &functions),
     )
     .expect("body should lower");
@@ -1203,7 +1206,7 @@ fn both_preserves_written_body_across_an_inserted_guard_and_reverifies_cold() {
         ParameterBinding::new(parsed_function.parameters(), &[]),
         &state,
         &state,
-        &snapshots,
+        &retained_states,
         &surfaces,
         SpecDefinitions::new(&predicates, &functions),
         &theorems,
@@ -2289,7 +2292,7 @@ fn execution_have_indexes_only_its_delta_and_scales_with_history() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -2831,7 +2834,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
     let state = ExecutionState::new();
     let arguments = vec![ProgramExpression::Value(int32(7))];
     let parameter_binding = ParameterBinding::new(parsed_function.parameters(), &arguments);
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let predicate_surface = ClickProposition::PredicateCall {
         name: "selected".to_string(),
         arguments: vec![ContractExpression::ProgramExpression(
@@ -2848,7 +2851,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
             surface,
             &PureFactContext::new(),
             parameter_binding,
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("fixed-state proposition should lower")
@@ -2864,7 +2867,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
         parameter_binding,
         &state,
         &state,
-        &recorded_snapshots,
+        &recorded_states,
         &surface_propositions,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
@@ -2894,7 +2897,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
             0,
             &facts,
             parameter_binding,
-            FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -2934,7 +2937,7 @@ fn fixed_state_proof_root_borrows_inherited_unfold_history_without_reindexing_it
         .map(|index| format!("predicate_{index}"))
         .collect::<Vec<_>>();
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -2949,7 +2952,7 @@ fn fixed_state_proof_root_borrows_inherited_unfold_history_without_reindexing_it
         ParameterBinding::default(),
         &state,
         &state,
-        &recorded_snapshots,
+        &recorded_states,
         &surface_propositions,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
@@ -2973,7 +2976,7 @@ fn fixed_state_proof_root_borrows_inherited_unfold_history_without_reindexing_it
 fn result_aware_fixed_state_goal_focus_shares_facts_and_checks_known() {
     let state = ExecutionState::new();
     let result = int32(0);
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -2990,7 +2993,7 @@ fn result_aware_fixed_state_goal_focus_shares_facts_and_checks_known() {
             0,
             &facts,
             ParameterBinding::default(),
-            FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -3040,7 +3043,7 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
     let state = ExecutionState::new();
     let result = int32(0);
     let arguments = vec![ProgramExpression::Value(result.clone())];
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -3058,7 +3061,7 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
             0,
             &facts,
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -3191,7 +3194,7 @@ fn fixed_state_context_have_goal_does_not_reuse_an_older_surface_lowering() {
     let state = ExecutionState::new();
     let result = int32(1);
     let arguments = vec![ProgramExpression::Value(result.clone())];
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
     let theorem_environment = TheoremEnvironment::new(&[]);
@@ -3210,7 +3213,7 @@ fn fixed_state_context_have_goal_does_not_reuse_an_older_surface_lowering() {
         0,
         std::slice::from_ref(&older),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
         &surface_propositions,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
@@ -3311,7 +3314,7 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
 #[test]
 fn execution_frontier_rejects_proposition_closers_transactionally() {
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -3321,7 +3324,7 @@ fn execution_frontier_rejects_proposition_closers_transactionally() {
         0,
         &[],
         ParameterBinding::default(),
-        FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, None, &recorded_states),
         &surface_propositions,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
@@ -3349,7 +3352,7 @@ fn execution_frontier_rejects_proposition_closers_transactionally() {
 #[ignore = "nightly: 1.5s in the parallel gate"]
 fn fixed_state_witness_refines_existential_transactionally_with_constant_local_work() {
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -3404,7 +3407,7 @@ fn fixed_state_witness_refines_existential_transactionally_with_constant_local_w
             ParameterBinding::default(),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -3464,7 +3467,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
     let parsed_function =
         syntax::parse_function("void noop() {}").expect("test function should parse");
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -3501,7 +3504,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &[]),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
@@ -3518,7 +3521,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
         ParameterBinding::new(parsed_function.parameters(), &[]),
         &state,
         &state,
-        &recorded_snapshots,
+        &recorded_states,
         &surface_propositions,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
@@ -3562,7 +3565,7 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
         .expect("test function should parse");
     let state = ExecutionState::new().with_local("x", int32(7));
     let arguments = vec![ProgramExpression::Value(int32(7))];
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -3607,7 +3610,7 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
             &facts,
             goal.clone(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             None,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
@@ -3751,7 +3754,7 @@ fn initial_entry_provenance_keeps_nonzero_requirement_identity_after_derived_ins
         parsed_function.parameters(),
         &context.pure_facts,
         &context.entry_fact_origins,
-        crate::kernel::MemorySnapshotIdentity::of(context.state.memory()),
+        crate::kernel::MemoryStateIdentity::of(context.state.memory()),
     );
     let source_arguments = vec![ContractExpression::ProgramExpression(
         ProgramExpression::Variable("x".to_string()),
@@ -3763,7 +3766,7 @@ fn initial_entry_provenance_keeps_nonzero_requirement_identity_after_derived_ins
             0,
             0,
             &source_arguments,
-            crate::kernel::MemorySnapshotIdentity::of(context.state.memory()),
+            crate::kernel::MemoryStateIdentity::of(context.state.memory()),
         )
         .expect("the real entry pipeline should preserve the selected caller requirement");
     assert_eq!(indexed.source_id.outer_ordinal, 1);
@@ -4059,7 +4062,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
 #[ignore = "nightly: 1.5s in the parallel gate"]
 fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -4073,7 +4076,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
         &surface,
         &PureFactContext::new(),
         ParameterBinding::default(),
-        FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, None, &recorded_states),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower");
@@ -4086,7 +4089,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
         ParameterBinding::default(),
         &state,
         &state,
-        &recorded_snapshots,
+        &recorded_states,
         &surface_propositions,
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
         &theorem_environment,
@@ -4118,7 +4121,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
             ParameterBinding::default(),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -4219,7 +4222,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             &theorem_environment,
         );
         let retained_root = root.clone();
-        let target_key = snapshot_blind_proposition_key(&target);
+        let target_key = memory_erased_proposition_key(&target);
         assert_eq!(
             root.facts()
                 .implication_bucket_len(&target_key)
@@ -4280,7 +4283,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
     let parsed_function = syntax::parse_function("int32 selected(int32 x) { return x; }")
         .expect("test function should parse");
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let predicate_environment = PredicateEnvironment::new(&[]);
     let click_function_environment = ClickFunctionEnvironment::new(&[]);
@@ -4324,7 +4327,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
@@ -4357,7 +4360,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -4497,7 +4500,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         &premise,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact premise should lower");
@@ -4505,7 +4508,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         &conclusion,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the theorem conclusion should lower");
@@ -4534,7 +4537,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 surface_propositions,
                 PersistentSequence::default(),
             ),
@@ -4670,7 +4673,7 @@ fn smart_retry_retains_checked_have_and_exact_step_after_injected_refusal() {
         ExecutionProofState::at_entry(
             state.clone(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -4880,7 +4883,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         &synthesized_surface,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the existential requirement should lower");
@@ -4901,7 +4904,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         &actual_surface,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the named contract requirement should lower");
@@ -4919,7 +4922,7 @@ fn smart_retry_falls_back_from_mismatching_registry_to_exact_synthesized_existen
         ExecutionProofState::at_entry(
             state,
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -5074,7 +5077,7 @@ fn supported_source_refusal_on_branch_does_not_enter_planning() {
         ExecutionProofState::at_entry(
             ExecutionState::new(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -5195,7 +5198,7 @@ fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &
             &source_surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+            FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("qualified static source cell should lower");
@@ -5225,7 +5228,7 @@ fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &
                     &surface,
                     &PureFactContext::new(),
                     ParameterBinding::new(parsed_function.parameters(), &arguments),
-                    FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+                    FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
                     SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 )
                 .expect("qualified static bound should lower"),
@@ -5242,7 +5245,7 @@ fn assert_static_array_retry_uses_recorded_qualified_source(block: &str, name: &
         ExecutionProofState::at_entry(
             state,
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             surface_propositions,
             PersistentSequence::default(),
         ),
@@ -5339,7 +5342,7 @@ fn nested_have_accepts_trailing_known_after_closure() {
         &premise,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact premise should lower");
@@ -5365,7 +5368,7 @@ fn nested_have_accepts_trailing_known_after_closure() {
         ExecutionProofState::at_entry(
             state.clone(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             surface_propositions,
             PersistentSequence::default(),
         ),
@@ -5484,7 +5487,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         &premise,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact theorem premise should lower");
@@ -5517,7 +5520,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 surface_propositions,
                 PersistentSequence::default(),
             ),
@@ -5684,7 +5687,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         // The terminal function exit derives its typed outcome goal set:
         // one sibling goal per returning path in one proof, each owning
         // its path-local result and facts while borrowing the frontier
-        // snapshot by identity. The ancestor keeps its single frontier.
+        // state by identity. The ancestor keeps its single frontier.
         let before_outcomes = fact_node_allocations();
         let (outcomes, outcome_ids, _) = terminal
             .split_function_outcomes()
@@ -5717,10 +5720,10 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             assert!(Arc::ptr_eq(
                 outcome
                     .branch_execution()
-                    .expect("each outcome borrows the frontier snapshot"),
+                    .expect("each outcome borrows the frontier state"),
                 terminal
                     .branch_execution()
-                    .expect("the terminal frontier owns its snapshot"),
+                    .expect("the terminal frontier owns its state"),
             ));
         }
         assert!(
@@ -5797,12 +5800,12 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         operator: ComparisonOperator::LessEqual,
         right: ContractExpression::ProgramExpression(ProgramExpression::Value(right.clone())),
     };
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let kernel_premise = lower_fixed_state_proposition_with_assumptions(
         &premise,
         &PureFactContext::new(),
         parameter_binding,
-        FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, None, &recorded_states),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact premise should lower");
@@ -5810,7 +5813,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
         &conclusion,
         &PureFactContext::new(),
         parameter_binding,
-        FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, None, &recorded_states),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the theorem conclusion should lower");
@@ -5849,7 +5852,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
             parameter_binding,
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -5974,13 +5977,13 @@ fn result_aware_fixed_state_apply_scales_with_unrelated_facts() {
     ))];
     let result = ProgramValue::Int32(MachineTerm::Variable(Variable(8_150_001)));
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let surface_propositions = SurfacePropositionMap::default();
     let kernel_goal = lower_fixed_state_proposition_with_assumptions(
         &have.proposition,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the result-aware goal should lower");
@@ -5993,7 +5996,7 @@ fn result_aware_fixed_state_apply_scales_with_unrelated_facts() {
             &facts,
             kernel_goal.clone(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
             None,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
@@ -6072,12 +6075,12 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
     ))];
     let result = ProgramValue::Int32(MachineTerm::Variable(Variable(8_155_000)));
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let kernel_premise = lower_fixed_state_proposition_with_assumptions(
         surface_premise,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+        FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the result-aware theorem premise should lower");
@@ -6095,7 +6098,7 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
             0,
             &facts,
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -6192,13 +6195,13 @@ fn fixed_state_transport_can_follow_another_checked_step() {
             ProgramValue::Int32(MachineTerm::Variable(Variable(8_160_007))),
         )),
     };
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let lower = |surface: &ClickProposition| {
         lower_fixed_state_proposition_with_assumptions(
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &[]),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("test proposition should lower")
@@ -6219,7 +6222,7 @@ fn fixed_state_transport_can_follow_another_checked_step() {
             0,
             &facts,
             ParameterBinding::new(parsed_function.parameters(), &[]),
-            FixedStateFrame::new(&state, &state, Some(&result), &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, Some(&result), &recorded_states),
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -6396,7 +6399,7 @@ fn pure_signed_order_solve_builds_its_certificate_with_logarithmic_local_updates
 
         // A nested smart `have` must not serialize the goal's ambient
         // copy as `known()`: the surface proposition may lower in a
-        // different snapshot when expansion is verified from source.
+        // different state when expansion is verified from source.
         // Search through a context weakened by only that exact fact and
         // retain the same checked signed-order theorem path on Proof.
         let mut exact_requires = requires.clone();
@@ -6797,7 +6800,7 @@ fn check_fixed_state_predecessor_solve(sizes: &[u32]) {
         proof_theorem_definitions(&click_file).expect("standard theorem prelude should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let value = MachineTerm::Variable(Variable(8_174_100));
     let upper = MachineTerm::Variable(Variable(8_174_101));
     let named = [value.clone(), upper.clone()];
@@ -6835,7 +6838,7 @@ fn check_fixed_state_predecessor_solve(sizes: &[u32]) {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed fixed-state proposition should lower")
@@ -6863,7 +6866,7 @@ fn check_fixed_state_predecessor_solve(sizes: &[u32]) {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -6917,7 +6920,7 @@ fn fixed_state_equality_solve_builds_its_recorded_path_with_logarithmic_local_up
         syntax::parse_function("void noop() {}").expect("test C function should parse");
     let state = ExecutionState::new();
     let arguments = Vec::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let terms = [
         MachineTerm::Variable(Variable(8_175_000)),
         MachineTerm::Variable(Variable(8_175_001)),
@@ -6941,7 +6944,7 @@ fn fixed_state_equality_solve_builds_its_recorded_path_with_logarithmic_local_up
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality should lower")
@@ -6952,7 +6955,7 @@ fn fixed_state_equality_solve_builds_its_recorded_path_with_logarithmic_local_up
     for (kernel, surface) in premises.iter().zip(&surfaces) {
         surface_propositions
             .record_lowering(surface, kernel)
-            .expect("the exact snapshot-qualified form should be indexed");
+            .expect("the exact state-qualified form should be indexed");
     }
 
     for size in [16_u32, 64, 256, 1024, 4096] {
@@ -6966,7 +6969,7 @@ fn fixed_state_equality_solve_builds_its_recorded_path_with_logarithmic_local_up
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -7010,7 +7013,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
         syntax::parse_function("void noop() {}").expect("test C function should parse");
     let state = ExecutionState::new();
     let arguments = Vec::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let left = MachineTerm::Variable(Variable(8_176_000));
     let right = MachineTerm::Variable(Variable(8_176_001));
     let one = MachineTerm::constant(1);
@@ -7030,7 +7033,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality should lower")
@@ -7049,7 +7052,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
     for (kernel, surface) in premises.iter().zip(&surfaces) {
         surface_propositions
             .record_lowering(surface, kernel)
-            .expect("the exact snapshot-qualified form should be indexed");
+            .expect("the exact state-qualified form should be indexed");
     }
 
     for size in [16_u32, 64, 256, 1024, 4096] {
@@ -7063,7 +7066,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -7104,7 +7107,7 @@ fn fixed_state_order_solve_builds_its_theorem_path_with_logarithmic_local_update
         proof_theorem_definitions(&click_file).expect("standard order theorems should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let terms = [
         MachineTerm::Variable(Variable(8_176_000)),
         MachineTerm::Variable(Variable(8_176_001)),
@@ -7130,7 +7133,7 @@ fn fixed_state_order_solve_builds_its_theorem_path_with_logarithmic_local_update
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed signed comparison should lower")
@@ -7141,7 +7144,7 @@ fn fixed_state_order_solve_builds_its_theorem_path_with_logarithmic_local_update
     for (kernel, surface) in premises.iter().zip(&surfaces) {
         surface_propositions
             .record_lowering(surface, kernel)
-            .expect("the exact snapshot-qualified form should be indexed");
+            .expect("the exact state-qualified form should be indexed");
     }
 
     for size in [16_u32, 64, 256, 1024, 4096] {
@@ -7155,7 +7158,7 @@ fn fixed_state_order_solve_builds_its_theorem_path_with_logarithmic_local_update
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -7224,7 +7227,7 @@ fn check_fixed_state_single_premise_arithmetic_solves(sizes: &[u32], labels: Opt
         proof_theorem_definitions(&click_file).expect("the standard increment theorem should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let value = MachineTerm::Variable(Variable(8_177_000));
     let upper = MachineTerm::Variable(Variable(8_177_001));
     let named = [value.clone(), upper.clone()];
@@ -7342,7 +7345,7 @@ fn check_fixed_state_single_premise_arithmetic_solves(sizes: &[u32], labels: Opt
             surface,
             &PureFactContext::new(),
             ContractEnvironment::new(&named_values, &BTreeMap::new()),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             FixedStateLoweringOptions::default(),
         )
@@ -7474,7 +7477,7 @@ fn check_fixed_state_single_premise_arithmetic_solves(sizes: &[u32], labels: Opt
                 ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &state,
                 &state,
-                &recorded_snapshots,
+                &recorded_states,
                 &surface_propositions,
                 SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
@@ -7581,8 +7584,8 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
         region: CodeRegionRef::Region(0),
         kind: ProgramPointKind::Entry,
     };
-    let mut recorded_snapshots = RecordedSnapshots::new();
-    recorded_snapshots.insert(point.clone(), state.clone());
+    let mut recorded_states = RecordedStates::new();
+    recorded_states.insert(point.clone(), state.clone());
     let variable =
         || ContractExpression::ProgramExpression(ProgramExpression::Variable("x".to_string()));
     let constant =
@@ -7602,16 +7605,16 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
         operator: ComparisonOperator::GreaterThan,
         right: constant(0),
     };
-    let anchored_lower = surface_at_snapshot(&lower_premise, &point)
-        .expect("the branch-exported lower bound should admit a snapshot-qualified form");
-    let anchored_upper = surface_at_snapshot(&upper_premise, &point)
-        .expect("the continuation upper bound should admit a snapshot-qualified form");
+    let anchored_lower = surface_at_program_point(&lower_premise, &point)
+        .expect("the branch-exported lower bound should admit a state-qualified form");
+    let anchored_upper = surface_at_program_point(&upper_premise, &point)
+        .expect("the continuation upper bound should admit a state-qualified form");
     let lower = |surface: &ClickProposition| {
         lower_fixed_state_proposition_with_assumptions(
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the selected fixed-state proposition should lower")
@@ -7622,7 +7625,7 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
     let mut surface_propositions = SurfacePropositionMap::default();
     surface_propositions
         .record_lowering(&anchored_upper, &kernel_upper)
-        .expect("only the continuation premise should carry the common snapshot anchor");
+        .expect("only the continuation premise should carry the common state anchor");
     let expected_premises = [anchored_lower, anchored_upper];
 
     for size in [16_u32, 64, 256, 1024, 4096] {
@@ -7636,7 +7639,7 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -7677,7 +7680,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
         proof_theorem_definitions(&click_file).expect("the standard increment theorem should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let lower = MachineTerm::Variable(Variable(8_178_000));
     let value = MachineTerm::Variable(Variable(8_178_001));
     let upper = MachineTerm::Variable(Variable(8_178_002));
@@ -7743,7 +7746,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             surface,
             &PureFactContext::new(),
             parameter_binding,
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed increment-lower-bound proposition should lower")
@@ -7775,7 +7778,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                 parameter_binding,
                 &state,
                 &state,
-                &recorded_snapshots,
+                &recorded_states,
                 &surface_propositions,
                 SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
@@ -7904,7 +7907,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             parameter_binding,
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &strict_surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -8003,7 +8006,7 @@ fn le_and_not_lt_equality_solve_retains_one_indexed_arithmetic_certificate() {
         proof_theorem_definitions(&click_file).expect("the standard equality theorem should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let left = MachineTerm::Variable(Variable(8_178_100));
     let right = MachineTerm::Variable(Variable(8_178_101));
     let named = [left.clone(), right.clone()];
@@ -8030,7 +8033,7 @@ fn le_and_not_lt_equality_solve_retains_one_indexed_arithmetic_certificate() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality proposition should lower")
@@ -8058,7 +8061,7 @@ fn le_and_not_lt_equality_solve_retains_one_indexed_arithmetic_certificate() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -8195,7 +8198,7 @@ fn ge_and_not_gt_equality_solve_retains_one_indexed_theorem_application() {
         proof_theorem_definitions(&click_file).expect("the standard equality theorem should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let left = MachineTerm::Variable(Variable(8_178_102));
     let right = MachineTerm::Variable(Variable(8_178_103));
     let named = [left.clone(), right.clone()];
@@ -8221,7 +8224,7 @@ fn ge_and_not_gt_equality_solve_retains_one_indexed_theorem_application() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed equality proposition should lower")
@@ -8252,7 +8255,7 @@ fn ge_and_not_gt_equality_solve_retains_one_indexed_theorem_application() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -8293,7 +8296,7 @@ fn le_and_neq_strict_solve_retains_one_indexed_arithmetic_certificate() {
         .expect("the standard strict-order theorem should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let left = MachineTerm::Variable(Variable(8_178_104));
     let right = MachineTerm::Variable(Variable(8_178_105));
     let named = [left.clone(), right.clone()];
@@ -8320,7 +8323,7 @@ fn le_and_neq_strict_solve_retains_one_indexed_arithmetic_certificate() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed strict-order proposition should lower")
@@ -8348,7 +8351,7 @@ fn le_and_neq_strict_solve_retains_one_indexed_arithmetic_certificate() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -8388,7 +8391,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
         .expect("the standard symbolic-add theorem should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let value = MachineTerm::Variable(Variable(8_178_100));
     let amount = MachineTerm::Variable(Variable(8_178_101));
     let named = [value.clone(), amount.clone()];
@@ -8431,7 +8434,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the symbolic arithmetic proposition should lower")
@@ -8478,7 +8481,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
                 ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &state,
                 &state,
-                &recorded_snapshots,
+                &recorded_states,
                 &surface_propositions,
                 SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
@@ -8575,7 +8578,7 @@ fn selected_disjunction_solve_retains_checked_cases_and_scales() {
         proof_theorem_definitions(&click_file).expect("the standard theorem prelude should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let value = MachineTerm::Variable(Variable(8_178_900));
     let named = [value.clone()];
     let (parsed_function, arguments) = named_int32_function(&named);
@@ -8602,7 +8605,7 @@ fn selected_disjunction_solve_retains_checked_cases_and_scales() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed proposition should lower")
@@ -8625,7 +8628,7 @@ fn selected_disjunction_solve_retains_checked_cases_and_scales() {
             ParameterBinding::new(parsed_function.parameters(), &arguments),
             &state,
             &state,
-            &recorded_snapshots,
+            &recorded_states,
             &surface_propositions,
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
             &theorem_environment,
@@ -8684,7 +8687,7 @@ fn surface_structural_solve_retains_recursive_child_proofs_and_scales() {
         proof_theorem_definitions(&click_file).expect("the standard theorem prelude should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let left_value = MachineTerm::Variable(Variable(8_178_910));
     let right_value = MachineTerm::Variable(Variable(8_178_911));
     let named = [left_value.clone(), right_value.clone()];
@@ -8737,7 +8740,7 @@ fn surface_structural_solve_retains_recursive_child_proofs_and_scales() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed structural proposition should lower")
@@ -8784,7 +8787,7 @@ fn surface_structural_solve_retains_recursive_child_proofs_and_scales() {
                 ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &state,
                 &state,
-                &recorded_snapshots,
+                &recorded_states,
                 &surface_propositions,
                 SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
@@ -8876,7 +8879,7 @@ fn predecessor_solves_retain_indexed_named_rule_premises() {
         .expect("the standard predecessor theorems should load");
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let state = ExecutionState::new();
-    let recorded_snapshots = RecordedSnapshots::new();
+    let recorded_states = RecordedStates::new();
     let value = MachineTerm::Variable(Variable(8_179_000));
     let bound = MachineTerm::Variable(Variable(8_179_001));
     let named = [value.clone(), bound.clone()];
@@ -8968,7 +8971,7 @@ fn predecessor_solves_retain_indexed_named_rule_premises() {
             surface,
             &PureFactContext::new(),
             ParameterBinding::new(parsed_function.parameters(), &arguments),
-            FixedStateFrame::new(&state, &state, None, &recorded_snapshots),
+            FixedStateFrame::new(&state, &state, None, &recorded_states),
             SpecDefinitions::new(&predicate_environment, &click_function_environment),
         )
         .expect("the fixed predecessor proposition should lower")
@@ -9008,7 +9011,7 @@ fn predecessor_solves_retain_indexed_named_rule_premises() {
                 ParameterBinding::new(parsed_function.parameters(), &arguments),
                 &state,
                 &state,
-                &recorded_snapshots,
+                &recorded_states,
                 &surface_propositions,
                 SpecDefinitions::new(&predicate_environment, &click_function_environment),
                 &theorem_environment,
@@ -9424,7 +9427,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 surface_propositions,
                 PersistentSequence::default(),
             ),
@@ -9538,7 +9541,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         parsed_function.parameters(),
         std::slice::from_ref(&source),
         &entry_origins,
-        crate::kernel::MemorySnapshotIdentity::of(state.memory()),
+        crate::kernel::MemoryStateIdentity::of(state.memory()),
     );
     let root = Proof::for_execution_frontier(
         "chosen projection",
@@ -9546,7 +9549,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
         ExecutionProofState::at_entry(
             state.clone(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -9627,7 +9630,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
             .apply_step(ProofStep::Extract(wrong_binder))
             .is_err()
     );
-    let wrong_epoch_selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
+    let wrong_epoch_selector = ProgramPointSelector::ProgramPoint(ProgramPointRef {
         region: CodeRegionRef::Function,
         kind: ProgramPointKind::Exit,
     });
@@ -9636,7 +9639,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
             selector: wrong_epoch_selector.clone(),
             expression: expression.clone(),
         },
-        other => panic!("chosen projection must retain its source snapshot: {other:?}"),
+        other => panic!("chosen projection must retain its source state: {other:?}"),
     };
     let wrong_epoch = match &projection.leaves[0].surface {
         ClickProposition::Comparison {
@@ -9648,7 +9651,7 @@ fn choose_projection_retains_unfolded_source_token_and_is_consumed_by_extract() 
             operator: *operator,
             right: wrong_epoch_expression(right),
         },
-        other => panic!("chosen projection must retain its source snapshot: {other:?}"),
+        other => panic!("chosen projection must retain its source state: {other:?}"),
     };
     assert!(
         chosen
@@ -9746,7 +9749,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -9860,7 +9863,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -9975,7 +9978,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -10113,7 +10116,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -10278,7 +10281,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
         &surface,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("constant equality should lower at the frontier position");
@@ -10296,7 +10299,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 surface_propositions,
                 PersistentSequence::default(),
             ),
@@ -10405,7 +10408,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
         &source,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact transport source should lower");
@@ -10424,7 +10427,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 surface_propositions,
                 PersistentSequence::default(),
             ),
@@ -10534,7 +10537,7 @@ fn statement_assignment_step_ignores_unrelated_proof_facts() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -10648,7 +10651,7 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 surface_propositions,
                 PersistentSequence::default(),
             ),
@@ -10732,7 +10735,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -10867,7 +10870,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
                 ExecutionProofState::at_entry(
                     ExecutionState::new(),
                     frontier,
-                    RecordedSnapshots::new(),
+                    RecordedStates::new(),
                     SurfacePropositionMap::default(),
                     PersistentSequence::default(),
                 ),
@@ -10933,7 +10936,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             .unwrap();
         assert!(
             evidence
-                .snapshot()
+                .recorded_state()
                 .shares_storage_with(&retained_core.state)
         );
         assert!(
@@ -10951,7 +10954,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         successor_core.state = ExecutionState::new().with_local("changed", int32(1)).into();
         assert!(
             !evidence
-                .snapshot()
+                .recorded_state()
                 .shares_storage_with(&successor_core.state)
         );
         let retained_root = root.clone();
@@ -10961,7 +10964,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         };
         let closed = root.with_kernel_state(requested);
         // The one permitted node rewrites the sole goal's execution
-        // snapshot in the persistent goal collection; the bound stays
+        // state in the persistent goal collection; the bound stays
         // independent of ambient fact count.
         assert!(fact_node_allocations() - before <= 1);
         assert!(root.state.shares_state_with(&retained_root.state));
@@ -11133,7 +11136,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -11361,7 +11364,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
         &disjunction,
         &PureFactContext::new(),
         ParameterBinding::new(parsed_function.parameters(), &arguments),
-        FixedStateFrame::new(&state, &state, None, &RecordedSnapshots::new()),
+        FixedStateFrame::new(&state, &state, None, &RecordedStates::new()),
         SpecDefinitions::new(&predicate_environment, &click_function_environment),
     )
     .expect("the exact cases disjunction should lower");
@@ -11379,7 +11382,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -11465,7 +11468,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -11513,7 +11516,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         assert!(
             execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .get(&ProgramPointRef {
                     region: CodeRegionRef::Region(0),
                     kind: ProgramPointKind::Exit,
@@ -11603,7 +11606,7 @@ fn cursor_execution_branch_join_retains_structural_reads_without_bindings() {
                 next_statement_index: 0,
                 ..ExecutionFrontier::default()
             },
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -11689,7 +11692,7 @@ fn cursor_execution_branch_join_retains_structural_reads_without_bindings() {
                 next_statement_index: 0,
                 ..ExecutionFrontier::default()
             },
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -11751,7 +11754,7 @@ fn generated_load_source_event_fixture(
         },
         crate::kernel::GeneratedLoadBinding::Exact {
             variable: Variable(variable.into()),
-            snapshot: crate::kernel::MemorySnapshotIdentity::of(&Memory::new()),
+            retained_state: crate::kernel::MemoryStateIdentity::of(&Memory::new()),
             pointer: pointer.clone(),
             load: MachineTerm::MemoryLoad(
                 Memory::new().into(),
@@ -11769,7 +11772,7 @@ fn generated_load_source_execution() -> ExecutionProofState {
     ExecutionProofState::at_entry(
         ExecutionState::new(),
         ExecutionFrontier::default(),
-        RecordedSnapshots::default(),
+        RecordedStates::default(),
         SurfacePropositionMap::default(),
         PersistentSequence::default(),
     )
@@ -11997,7 +12000,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -12093,7 +12096,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             .open_have(reflexive.clone())
             .expect("the joined proof should open a common nested proposition");
         // The nested proposition goal borrows the frontier's execution
-        // snapshot by identity: its path-local lowering context is
+        // state by identity: its path-local lowering context is
         // shared, never cloned, and can never republish a frontier.
         assert!(Arc::ptr_eq(
             scope
@@ -12102,7 +12105,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
                 .expect("the nested goal borrows its lowering context"),
             applied
                 .branch_execution()
-                .expect("the joined frontier owns its snapshot"),
+                .expect("the joined frontier owns its state"),
         ));
         let refined = scope
             .driver()
@@ -12312,7 +12315,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             ExecutionProofState::at_entry(
                 state,
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -12614,7 +12617,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         parameter_types: Vec::new(),
     };
     let permit_fact = ResourceFact::own_token("permit".to_string(), Vec::new());
-    let mut changed_snapshot_samples = Vec::new();
+    let mut changed_state_samples = Vec::new();
     for size in [16_u32, 64, 256, 1024, 4096] {
         let resources = ResourceContext::new()
             .unchecked_with_facts((0..size).map(|index| {
@@ -12671,8 +12674,8 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let before = fact_node_allocations();
         let joined = branches
             .join_focused_execution_interface(&record, assertions)
-            .expect("independently folded resource snapshots should rejoin");
-        changed_snapshot_samples.push((
+            .expect("independently folded resource states should rejoin");
+        changed_state_samples.push((
             size,
             (u32::BITS - size.leading_zeros()) as usize,
             fact_node_allocations() - before,
@@ -12741,8 +12744,8 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             .apply_step(ProofStep::Step)
             .expect("the transformed owned interface should retain its return frontier");
     }
-    let (_, base_height, base_allocations) = changed_snapshot_samples[0];
-    for (size, height, allocations) in changed_snapshot_samples {
+    let (_, base_height, base_allocations) = changed_state_samples[0];
+    for (size, height, allocations) in changed_state_samples {
         let bound = base_allocations + 96 * (height - base_height);
         assert!(
             allocations <= bound,
@@ -12889,7 +12892,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -12952,7 +12955,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         assert!(
             execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .get(&ProgramPointRef {
                     region: CodeRegionRef::Region(nested_statement),
                     kind: ProgramPointKind::Exit,
@@ -13125,7 +13128,7 @@ fn mixed_call_outcomes_use_the_enclosing_branch_continuation() {
         ExecutionProofState::at_entry(
             ExecutionState::new().with_population_creation_tracking(),
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -13249,7 +13252,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -13521,7 +13524,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 frontier,
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -13855,7 +13858,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
         )),
     };
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let mut allocations = Vec::new();
     for size in [8, 16, 32, 64] {
@@ -13887,7 +13890,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
             ParameterBinding::default(),
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -13944,7 +13947,7 @@ fn completed_application_retention_does_not_rerun_and_scales() {
 #[test]
 fn fixed_state_source_failure_is_only_a_miss_at_an_explicit_search_boundary() {
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -13966,7 +13969,7 @@ fn fixed_state_source_failure_is_only_a_miss_at_an_explicit_search_boundary() {
         ParameterBinding::default(),
         &state,
         &state,
-        &snapshots,
+        &retained_states,
         &surfaces,
         SpecDefinitions::new(&predicates, &functions),
         &theorems,
@@ -14067,7 +14070,7 @@ fn outcome_haves_and_folds_share_facts_and_keep_sibling_resources_isolated() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -14144,13 +14147,13 @@ fn outcome_haves_and_folds_share_facts_and_keep_sibling_resources_isolated() {
             assert_eq!(root.certificate().steps(), terminal.certificate().steps());
             assert_eq!(root.outcome_result(), current.outcome_result());
             let FunctionOutcome::Return { state: initial, .. } =
-                root.focused_outcome_snapshot().unwrap()
+                root.focused_outcome_state().unwrap()
             else {
                 unreachable!()
             };
             let FunctionOutcome::Return {
                 state: final_state, ..
-            } = current.focused_outcome_snapshot().unwrap()
+            } = current.focused_outcome_state().unwrap()
             else {
                 unreachable!()
             };
@@ -14161,8 +14164,8 @@ fn outcome_haves_and_folds_share_facts_and_keep_sibling_resources_isolated() {
             .apply_step(ProofStep::UnfoldResource(resource.clone()))
             .unwrap();
         assert_ne!(
-            unfolded.focused_outcome_snapshot().unwrap(),
-            root.focused_outcome_snapshot().unwrap()
+            unfolded.focused_outcome_state().unwrap(),
+            root.focused_outcome_state().unwrap()
         );
     }
 }
@@ -14315,7 +14318,7 @@ fn checked_callback_statement_publishes_its_typed_read_evidence() {
         ExecutionProofState::at_entry(
             state,
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         ),
@@ -14385,7 +14388,7 @@ fn fixed_state_transport_retains_checked_spellings_for_rewrite() {
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let names = SurfacePropositionMap::default();
     let left = MachineTerm::Variable(Variable(9_104_000));
     let right = MachineTerm::Variable(Variable(9_104_001));
@@ -14429,7 +14432,7 @@ fn fixed_state_transport_retains_checked_spellings_for_rewrite() {
             ParameterBinding::new(parsed.parameters(), &arguments),
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &names,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -14483,7 +14486,7 @@ fn fixed_state_transport_retains_checked_spellings_for_rewrite() {
             ParameterBinding::new(parsed.parameters(), &arguments),
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &names,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -14515,7 +14518,7 @@ fn fixed_state_instantiation_retains_checked_spellings_for_rewrite() {
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let names = SurfacePropositionMap::default();
     let parsed = syntax::parse_function("void noop(int32 left, int32 right) {}").unwrap();
     let left = MachineTerm::Variable(Variable(9_104_100));
@@ -14543,7 +14546,7 @@ fn fixed_state_instantiation_retains_checked_spellings_for_rewrite() {
         &quantified,
         &PureFactContext::new(),
         binding,
-        FixedStateFrame::new(&state, &state, None, &snapshots),
+        FixedStateFrame::new(&state, &state, None, &retained_states),
         SpecDefinitions::new(&predicates, &functions),
     )
     .unwrap();
@@ -14569,7 +14572,7 @@ fn fixed_state_instantiation_retains_checked_spellings_for_rewrite() {
             binding,
             &state,
             &state,
-            &snapshots,
+            &retained_states,
             &names,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,
@@ -14653,7 +14656,7 @@ fn fixed_state_rewrite_keeps_authored_goal_names_after_lookup_substitution() {
     let functions = ClickFunctionEnvironment::new(&[]);
     let theorems = TheoremEnvironment::new(&[]);
     let state = ExecutionState::new();
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let names = SurfacePropositionMap::default();
     let parsed = syntax::parse_function("void noop(int32 left, int32 right) {}").unwrap();
     let left = MachineTerm::Variable(Variable(9_104_200));
@@ -14694,7 +14697,7 @@ fn fixed_state_rewrite_keeps_authored_goal_names_after_lookup_substitution() {
         ParameterBinding::new(parsed.parameters(), &arguments),
         &state,
         &state,
-        &snapshots,
+        &retained_states,
         &names,
         SpecDefinitions::new(&predicates, &functions),
         &theorems,
@@ -15006,7 +15009,7 @@ fn partition_known_uses_the_fixed_state_not_its_entry_partition() {
         left: Box::new(left.clone()),
         right: Box::new(right),
     };
-    let snapshots = RecordedSnapshots::new();
+    let retained_states = RecordedStates::new();
     let surfaces = SurfacePropositionMap::default();
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
@@ -15024,7 +15027,7 @@ fn partition_known_uses_the_fixed_state_not_its_entry_partition() {
             0,
             &[],
             ParameterBinding::default(),
-            FixedStateFrame::new(&entry, &current, None, &snapshots),
+            FixedStateFrame::new(&entry, &current, None, &retained_states),
             &surfaces,
             SpecDefinitions::new(&predicates, &functions),
             &theorems,

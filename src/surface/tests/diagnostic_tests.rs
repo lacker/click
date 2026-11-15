@@ -631,8 +631,8 @@ fn concise_reason_keeps_list_entries_and_definitions_whole() {
         concise_reason_lines(
             "`f.contract` tactic 2: `transport using` found no frame evidence\n  \
              source (holds): x == x\n  cell walks:\n    \
-             address: value#2; width: 8 bytes; stop: snapshot#3: step not proved separate\n  \
-             snapshot#3 = loop effect: may write [p[0..1]]\n  \
+             address: value#2; width: 8 bytes; stop: state#3: step not proved separate\n  \
+             state#3 = loop effect: may write [p[0..1]]\n  \
              C statement at f.c:6:9: `items[i] = 7;`"
         ),
         [
@@ -643,9 +643,9 @@ fn concise_reason_keeps_list_entries_and_definitions_whole() {
             (false, "cell walks:"),
             (
                 true,
-                "address: value#2; width: 8 bytes; stop: snapshot#3: step not proved separate"
+                "address: value#2; width: 8 bytes; stop: state#3: step not proved separate"
             ),
-            (false, "snapshot#3 = loop effect: may write [p[0..1]]"),
+            (false, "state#3 = loop effect: may write [p[0..1]]"),
             (false, "C statement at f.c:6:9"),
             (false, "`items[i] = 7;`"),
         ]
@@ -899,7 +899,7 @@ fn verifier_diagnostics_are_bounded_deterministically_at_utf8_boundaries() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_06")]
-fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
+fn execution_effect_diagnostics_omit_raw_memory_states() {
     let pointer = Pointer {
         block: PointerBlock::ExternalArgument,
         offset: PointerOffsetTerm::Constant(8),
@@ -1237,7 +1237,7 @@ fn negative_mdtest_failures_include_structured_proof_context() {
 /// An undecided C `if` reported its two condition paths with the kernel
 /// `Debug` of their facts. A condition whose load has not been named by a
 /// load variable — the shape `list_count_live` reaches after its recursive
-/// call — then carries the whole `Memory` snapshot, blocks and heap
+/// call — then carries the whole `Memory` state, blocks and heap
 /// included, twice. That is the raw-state dump `AGENTS.md` names. Each path
 /// is now spelled on its own line in the bounded source vocabulary, which is
 /// what says which condition each arm assumes.
@@ -1441,12 +1441,12 @@ fn loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state() {
 /// Two distinct loads over the same address used to render identically
 /// (`left side evaluated to load(p[0]), right side evaluated to load(p[0])`),
 /// which reads as an unprovable `x == x`. The message now reports each side's
-/// surface spelling and which snapshot it reads, and appends the checked proof
+/// surface spelling and which state it reads, and appends the checked proof
 /// context every other failed goal reports. It does not guess which step was
 /// missing.
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_09")]
-fn identical_load_renders_name_distinct_snapshot_loads() {
+fn identical_load_renders_name_distinct_state_loads() {
     let c_source = r#"
             int32 sym_index_clobber(int32* p, int32 i) {
                 p[i] = 7;
@@ -1467,7 +1467,7 @@ fn identical_load_renders_name_distinct_snapshot_loads() {
         .expect_err("a symbolically-indexed write must leave the old-value goal open");
     let message = error.message();
     assert!(
-        message.contains("read the same address in different memory snapshots"),
+        message.contains("read the same address in different memory states"),
         "{message}"
     );
     assert!(
@@ -2715,9 +2715,9 @@ void f(struct node* p) {
         ordinary.concise_report()
     );
     // The ordinary message spells its facts in source terms, with no
-    // kernel snapshot or value labels to define.
+    // kernel state or value labels to define.
     assert!(
-        !ordinary.message().contains("snapshot#") && !ordinary.message().contains("value#"),
+        !ordinary.message().contains("state#") && !ordinary.message().contains("value#"),
         "{}",
         ordinary.message()
     );
@@ -2829,7 +2829,7 @@ fn fold_reports_the_instantiated_body_fact_in_plain_and_matched_resources() {
         // The instance reads the stored cell by name, not the stored `9`.
         assert!(goal.starts_with("p[0] == "), "{report}");
         assert_eq!(report.matches("\ngoal: ").count(), 1, "{report}");
-        assert!(!report.contains("snapshot#"), "{report}");
+        assert!(!report.contains("state#"), "{report}");
         with_proof_trace("f", || {
             let error = verify_c_sources(&source, &[("f.c", c)]).unwrap_err();
             let report = error.trace_context_report().unwrap();
@@ -2880,7 +2880,7 @@ fn fold_reports_the_selected_missing_body_resource() {
 fn memory_history_diagnostic_names_the_store_and_limits_its_claim() {
     use crate::kernel::{LoadKind, intern_memory};
     use crate::surface::proof_diagnostics::render::{
-        SnapshotLabels, render_memory_history_check, render_proposition_labeled,
+        MemoryStateLabels, render_memory_history_check, render_proposition_labeled,
     };
     let read = Pointer {
         block: PointerBlock::ExternalArgument,
@@ -2921,7 +2921,7 @@ fn memory_history_diagnostic_names_the_store_and_limits_its_claim() {
         "earlier",
         ParameterBinding::default(),
     )
-    .expect("different snapshots explain the failure");
+    .expect("different states explain the failure");
     assert!(
         summary.contains("without using the proof context's equality and ownership facts"),
         "{summary}"
@@ -2942,7 +2942,7 @@ fn memory_history_diagnostic_names_the_store_and_limits_its_claim() {
     // Clear the live arena before printing, as the terminal renderer may run
     // after the verification session has ended. The retained result must stand.
     let _fresh_session = crate::kernel::VerificationSession::enter();
-    let mut labels = SnapshotLabels::default();
+    let mut labels = MemoryStateLabels::default();
     let goal_text = render_proposition_labeled(&goal, &mut labels);
     let report = render_memory_history_check(&history, &mut labels).unwrap();
     let write_name = labels.unnamed_pointer(&written);
@@ -3087,7 +3087,7 @@ void call(int32* p, int32* q, int32* anchor) {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_16")]
-fn call_resource_diagnostic_read_shows_snapshot_and_access() {
+fn call_resource_diagnostic_read_shows_state_and_access() {
     use crate::kernel::{MachineTerm, MemoryRange, Pointer, PointerBlock, PointerOffsetTerm};
     let address = Pointer {
         block: PointerBlock::Concrete("selected_child_cell".into()),
@@ -3113,7 +3113,7 @@ fn call_resource_diagnostic_read_shows_snapshot_and_access() {
         rendered.contains("required: views memory(") && rendered.contains("stride=4"),
         "{rendered}"
     );
-    assert!(!rendered.contains("snapshot#"), "{rendered}");
+    assert!(!rendered.contains("state#"), "{rendered}");
 }
 
 /// A budget refusal is still a failure at a checked source frontier. The
@@ -3464,13 +3464,15 @@ fn native_view_solve_distinguishes_a_rejected_kernel_query() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_19")]
-fn pending_call_obligations_use_shared_goal_printer_and_snapshot_legend() {
+fn pending_call_obligations_use_shared_goal_printer_and_state_legend() {
     let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     use crate::kernel::{
         ConditionTerm, MachineTerm, Memory, Pointer, PointerOffsetTerm, ProofObligation,
         Proposition, RuntimeError,
     };
-    use crate::surface::proof_diagnostics::render::{SnapshotLabels, render_proposition_labeled};
+    use crate::surface::proof_diagnostics::render::{
+        MemoryStateLabels, render_proposition_labeled,
+    };
     let memory = Memory::new();
     let pointer = Pointer {
         block: "pending_read_cell".into(),
@@ -3512,7 +3514,7 @@ fn pending_call_obligations_use_shared_goal_printer_and_snapshot_legend() {
     let rendered = super::diagnostics::describe_runtime_error(&error, ParameterBinding::default());
     let expected = render_proposition_labeled(
         &goal,
-        &mut SnapshotLabels::naming(ParameterBinding::default()),
+        &mut MemoryStateLabels::naming(ParameterBinding::default()),
     );
     assert_eq!(
         rendered
@@ -3530,9 +3532,7 @@ fn pending_call_obligations_use_shared_goal_printer_and_snapshot_legend() {
         "{rendered}"
     );
     assert_eq!(
-        rendered
-            .matches("snapshot#1 = initial empty memory")
-            .count(),
+        rendered.matches("state#1 = initial empty memory").count(),
         1,
         "{rendered}"
     );
@@ -3546,7 +3546,7 @@ fn pending_call_obligations_use_shared_goal_printer_and_snapshot_legend() {
 
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_19")]
-fn function_pointer_load_trace_shows_produced_value_and_read_snapshot() {
+fn function_pointer_load_trace_shows_produced_value_and_read_state() {
     use crate::surface::proof_trace::with_proof_trace;
     let c = r#"
 struct callbacks { void (*call)(int *p); };
@@ -3598,9 +3598,9 @@ void symbolic(int32* p, const struct callbacks* cb) {
                 .trace_context_report()
                 .unwrap_or_else(|| panic!("{}", error.concise_report()));
             // The call reads its function pointer itself, and the trace
-            // shows the value it read and the snapshot it read it from.
+            // shows the value it read and the state it read it from.
             assert!(trace.contains("step(cb->call(...))"), "{trace}");
-            assert!(trace.contains("pointer read at snapshot#"), "{trace}");
+            assert!(trace.contains("pointer read at state#"), "{trace}");
             assert!(trace.contains("label definitions"), "{trace}");
             assert!(
                 trace.contains("function `target#inline:callbacks.c`"),
@@ -3611,11 +3611,11 @@ void symbolic(int32* p, const struct callbacks* cb) {
     }
 }
 
-/// Resource comparisons must not collapse snapshot-dependent pointer arguments
+/// Resource comparisons must not collapse state-dependent pointer arguments
 /// to one source address, or replace an unnamed offset with an ellipsis.
 #[test]
 #[cfg_attr(feature = "fast-gate", ignore = "covered by diagnostic_batch_19")]
-fn call_resource_diagnostic_distinguishes_exact_pointer_arguments_and_snapshots() {
+fn call_resource_diagnostic_distinguishes_exact_pointer_arguments_and_states() {
     use crate::kernel::{
         AlgebraicValue, LoadKind, Memory, Pointer, PointerBlock, PointerOffsetTerm, PointerValue,
         ProgramType, ProgramValue, Resource, Variable, intern_memory,
@@ -3672,7 +3672,7 @@ fn call_resource_diagnostic_distinguishes_exact_pointer_arguments_and_snapshots(
     assert!(held.contains("ptr<int32*>(value#1)"), "{rendered}");
     assert!(required.contains("ptr<int32*>(value#2)"), "{rendered}");
     assert!(
-        rendered.contains("snapshot#1") && rendered.contains("snapshot#2"),
+        rendered.contains("state#1") && rendered.contains("state#2"),
         "{rendered}"
     );
     assert!(rendered.contains("read<Bits32>"), "{rendered}");
@@ -3871,7 +3871,7 @@ fn rejected_transport_prints_checked_reads_and_retains_prefix() {
             assert!(message.contains("checked source (holds):"), "{message}");
             assert!(message.contains("checked target (wanted):"), "{message}");
             assert!(message.contains("read<Bits32>"), "{message}");
-            assert!(message.contains("snapshot#"), "{message}");
+            assert!(message.contains("state#"), "{message}");
             // The target names the read of the overwritten cell, not the
             // value the store left there.
             assert!(
@@ -3913,9 +3913,9 @@ fn failed_normalize_using_retains_actual_wide_read_resolution() {
         for expected in [
             "read-resolution check:",
             "read<Bits64>",
-            "producer source: snapshot#",
-            "walk stop: snapshot#",
-            "oldest recorded snapshot reached",
+            "producer source: state#",
+            "walk stop: state#",
+            "oldest recorded state reached",
             "recovered value: none",
             "checked read equality:",
             "equality check: not attempted",
@@ -3996,9 +3996,9 @@ fn rejected_wide_transport_shows_actual_walk_stop_and_prefix() {
             "cell walks performed while checking transport",
             "address: value#",
             "width: 8 bytes",
-            "start: snapshot#",
-            "stop: snapshot#",
-            "oldest recorded snapshot reached",
+            "start: state#",
+            "stop: state#",
+            "oldest recorded state reached",
             "step affects the queried bytes",
             "transport label definitions",
             "store",
@@ -4202,7 +4202,7 @@ fn budget_stopped_known_transport_retains_its_checked_prefix_and_completed_fact(
                 // Its fact survives in the failure context; no legacy
                 // transport node is needed to retain that checked prefix.
                 assert!(failed.contains("value#1 = value#1 is true"), "{trace}");
-                assert!(trace.contains("pointer read at snapshot#"), "{trace}");
+                assert!(trace.contains("pointer read at state#"), "{trace}");
             }
         });
     }
@@ -4524,7 +4524,7 @@ test_batches! {
         verifier_diagnostics_are_bounded_deterministically_at_utf8_boundaries,
     ],
     diagnostic_batch_06: [
-        execution_effect_diagnostics_omit_raw_memory_snapshots,
+        execution_effect_diagnostics_omit_raw_memory_states,
         a_condition_search_miss_spells_its_goal_and_premises,
         verifier_diagnostics_bound_fact_items,
         expired_project_deadline_outweighs_semantic_mismatch_diagnostic,
@@ -4545,7 +4545,7 @@ test_batches! {
         statement_head_names_the_guard_without_the_loop_node,
         loan_refusal_diagnostic_renders_only_its_selected_subject,
         loan_refusal_diagnostic_renders_a_range_subject_without_ledger_state,
-        identical_load_renders_name_distinct_snapshot_loads,
+        identical_load_renders_name_distinct_state_loads,
     ],
     diagnostic_batch_10: [
         a_store_wider_than_an_element_is_refused_by_bytes_not_by_index,
@@ -4586,7 +4586,7 @@ test_batches! {
     diagnostic_batch_16: [
         memory_history_diagnostic_names_the_store_and_limits_its_claim,
         call_resource_diagnostic_shows_the_rejected_argument,
-        call_resource_diagnostic_read_shows_snapshot_and_access,
+        call_resource_diagnostic_read_shows_state_and_access,
         smart_have_budget_refusal_retains_checked_trace_prefix,
     ],
     diagnostic_batch_17: [
@@ -4602,9 +4602,9 @@ test_batches! {
         native_view_solve_distinguishes_a_rejected_kernel_query,
     ],
     diagnostic_batch_19: [
-        pending_call_obligations_use_shared_goal_printer_and_snapshot_legend,
-        function_pointer_load_trace_shows_produced_value_and_read_snapshot,
-        call_resource_diagnostic_distinguishes_exact_pointer_arguments_and_snapshots,
+        pending_call_obligations_use_shared_goal_printer_and_state_legend,
+        function_pointer_load_trace_shows_produced_value_and_read_state,
+        call_resource_diagnostic_distinguishes_exact_pointer_arguments_and_states,
         failed_final_known_preserves_its_checked_trace_context,
     ],
     diagnostic_batch_20: [

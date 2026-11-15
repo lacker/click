@@ -2,7 +2,7 @@
 
 Reduced from `arena_write`: the symbolic store materializes one cell within
 a larger owned interval. Its exact-width read validity is intrinsic to that
-memory snapshot. A post-return quantified proof followed by resource folds
+memory state. A post-return quantified proof followed by resource folds
 must not lose that fact during certification. The C is the unchanged arena
 write function.
 

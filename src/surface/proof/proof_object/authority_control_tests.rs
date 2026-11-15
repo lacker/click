@@ -76,7 +76,7 @@ fn opening_control_retains_loaded_pointer_facts() {
         ExecutionProofState::at_entry(
             state,
             ExecutionFrontier::default(),
-            RecordedSnapshots::new(),
+            RecordedStates::new(),
             surfaces,
             PersistentSequence::default(),
         ),

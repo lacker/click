@@ -55,7 +55,7 @@ fn focused_execute_handles_deep_branches_on_a_two_megabyte_stack() {
                         ExecutionProofState::at_entry(
                             ExecutionState::new(),
                             ExecutionFrontier::default(),
-                            RecordedSnapshots::new(),
+                            RecordedStates::new(),
                             SurfacePropositionMap::default(),
                             PersistentSequence::default(),
                         ),

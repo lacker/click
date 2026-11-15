@@ -3,7 +3,7 @@
 A resource body that names its base through one load and its range endpoint
 through another must unfold: the cells the unfold exposes are named by the same
 load variables the rewrite consistency check recomputes from the memory before
-the unfold. Materializing an earlier clause must not move the naming snapshot
+the unfold. Materializing an earlier clause must not move the naming state
 for a later clause.
 
 ```c filename=load_variable_naming_epoch.c

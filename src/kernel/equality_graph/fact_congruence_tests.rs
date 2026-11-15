@@ -118,7 +118,7 @@ fn fact_lookup_preserves_branch_restriction_and_contradiction() {
 }
 
 #[test]
-fn pure_application_arguments_keep_snapshots_types_and_argument_order() {
+fn pure_application_arguments_keep_states_types_and_argument_order() {
     let _session = VerificationSession::enter();
     let memory = Memory::new().with_block("p", 4).with_block("q", 4);
     let changed = memory

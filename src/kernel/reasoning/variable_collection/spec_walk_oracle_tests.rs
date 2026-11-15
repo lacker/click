@@ -8,9 +8,9 @@ fn old_collect_spec_memory_bitvector_variables(
     _memory: &SpecMemory,
     _variables: &mut BTreeSet<Variable>,
 ) {
-    // A specification memory is an execution snapshot. Its blocks and cells
+    // A specification memory is an execution state. Its blocks and cells
     // are opaque to lexical variable collection; callers still visit the
-    // explicit pointer and expression payloads adjacent to this snapshot.
+    // explicit pointer and expression payloads adjacent to this state.
 }
 
 fn old_collect_spec_expression_bitvector_variables(
@@ -86,7 +86,7 @@ fn old_collect_spec_expression_bitvector_variables(
                 old_collect_spec_function_argument_bitvector_variables(argument, variables);
             }
         }
-        SpecExpression::LoopEntrySnapshot(expression) => {
+        SpecExpression::LoopEntryState(expression) => {
             old_collect_spec_expression_bitvector_variables(expression, variables);
         }
         SpecExpression::PointerOffset {
@@ -432,7 +432,7 @@ fn old_collect_spec_integer_bound_expression(
         | SpecExpression::Cast(expression, _)
         | SpecExpression::NarrowArithmetic(expression, _)
         | SpecExpression::PointerCoercion(expression, _)
-        | SpecExpression::LoopEntrySnapshot(expression) => {
+        | SpecExpression::LoopEntryState(expression) => {
             old_collect_spec_integer_bound_expression(expression, variables, integer_seen);
         }
         SpecExpression::If {
@@ -567,10 +567,10 @@ fn old_collect_spec_memory_bound_identities(
     _variables: &mut BTreeSet<Variable>,
     _integer_seen: &mut SeenTerms,
 ) {
-    // A SpecMemory is a captured execution snapshot, not lexical input to
+    // A SpecMemory is a captured execution state, not lexical input to
     // the expression.  Its blocks, cells, and union overlays are therefore
     // opaque to freshness collection; callers recurse through explicit
-    // pointer and expression payloads adjacent to the snapshot instead.
+    // pointer and expression payloads adjacent to the state instead.
 }
 
 fn old_collect_spec_resource_bound_identities(

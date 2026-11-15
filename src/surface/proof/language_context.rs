@@ -82,12 +82,12 @@ pub(in crate::surface::proof) struct InvariantBodyContext {
     pub(in crate::surface::proof) loop_index: usize,
     pub(in crate::surface::proof) loop_entry_state: ExecutionState,
     /// The recorded program point that names `loop_entry_state` in source.
-    pub(in crate::surface::proof) loop_entry_selector: Option<SnapshotSelector>,
+    pub(in crate::surface::proof) loop_entry_selector: Option<ProgramPointSelector>,
     pub(in crate::surface::proof) iteration_entry_state: ExecutionState,
-    /// The recorded snapshot that names `iteration_entry_state` in source.
+    /// The recorded state that names `iteration_entry_state` in source.
     /// Ranking members read their `pre` values there, so their synthesized
     /// surface spells them `at(<selector>, name)`.
-    pub(in crate::surface::proof) iteration_entry_selector: Option<SnapshotSelector>,
+    pub(in crate::surface::proof) iteration_entry_selector: Option<ProgramPointSelector>,
     /// The head's pass count `K`, which the body's proof reads as
     /// `iterations`; the back edge owes the invariants at `K + 1`.
     pub(in crate::surface::proof) iterations: Option<crate::kernel::IntegerTerm>,

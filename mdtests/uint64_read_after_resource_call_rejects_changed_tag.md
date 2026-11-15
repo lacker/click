@@ -1,4 +1,4 @@
-# A changed wide tag cannot reuse its framed snapshot
+# A changed wide tag cannot reuse its framed state
 
 ```c filename=store_before_resource_call.c
 struct Node { unsigned long tag; struct Node *next; };

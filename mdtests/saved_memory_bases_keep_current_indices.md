@@ -2,7 +2,7 @@
 
 The pointer is captured at entry or at a mark; the bounds belong to the state
 where the descriptor is written. Reassigning the pointer and advancing the index
-must not move either snapshot's base or freeze the index at zero.
+must not move either state's base or freeze the index at zero.
 
 ```c filename=saved_memory.c
 void advance(int *p, int *q, int i) {

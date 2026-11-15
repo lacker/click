@@ -85,7 +85,7 @@ impl LoopControlExit {
 pub(crate) enum CheckedExecutionEvent {
     Statement(Theorem),
     /// One opaque call occurrence introduced by the preceding checked
-    /// statement. Its registered snapshots are exact recomputed views of that
+    /// statement. Its registered states are exact recomputed views of that
     /// occurrence, not a structural claim that matching calls are equal.
     Call(CheckedCallEvent),
     Condition(Theorem),
@@ -203,7 +203,7 @@ impl ExecutionEvidence {
 /// transition adds, so completing a path reads it instead of rebuilding a
 /// context from the path's whole history, which forks share.
 ///
-/// Kernel facts name the values and snapshots they relate, so a fact
+/// Kernel facts name the values and states they relate, so a fact
 /// recorded earlier on a path still holds at its end. A recorded context
 /// that drops or changes a fact, or changes its reasoning policy or resource
 /// compositions, which a fact projection does not show, restarts the
@@ -379,7 +379,7 @@ impl CheckedReturnProposition {
         };
         let outcome = proof.outcome().ok_or("return proof has no outcome")?;
         // As for checked function propositions, resource representation may
-        // change during the proof. The program snapshot and result may not.
+        // change during the proof. The program state and result may not.
         if outcome.is_exceptional
             || !value.matches_native(outcome.result.as_ref())
             || outcome.state.locals() != state.locals()
@@ -390,7 +390,7 @@ impl CheckedReturnProposition {
                 proof.root_assumptions().assumptions(),
             )
         {
-            return Err("return proof has a different program snapshot".into());
+            return Err("return proof has a different program state".into());
         }
         Ok(Self {
             proof,
@@ -457,9 +457,9 @@ impl CheckedTacticApplication {
 
 /// Proof-object-owned authority for one checked call occurrence.
 ///
-/// Construction may register additional exact result snapshots when a later
+/// Construction may register additional exact result states when a later
 /// statement theorem is accepted from a recomputed view of the running state.
-/// Consumers can only cite this opaque object and snapshots in its registry;
+/// Consumers can only cite this opaque object and states in its registry;
 /// evaluator-local havoc variables never act as authority.
 #[derive(Default)]
 struct CheckedCallEventRegistryData {
@@ -782,8 +782,8 @@ struct PreparedReturnFold {
     semantic_facts: Vec<Proposition>,
 }
 
-/// A composite exchange independently checked at the published snapshot.
-/// Its facts retain that snapshot rather than pretending to be C-body reads.
+/// A composite exchange independently checked at the published state.
+/// Its facts retain that state rather than pretending to be C-body reads.
 #[derive(Clone)]
 struct CheckedReturnPresentation {
     /// The selected unfold's outputs are evidence even if already in its input context.
@@ -793,7 +793,7 @@ struct CheckedReturnPresentation {
     rewrite: CheckedResourceRewrite,
 }
 
-/// The same selected resource exchange at the kernel-published return snapshot.
+/// The same selected resource exchange at the kernel-published return state.
 #[derive(Clone)]
 struct ReturnResourceObservation {
     context: Arc<CheckedReturnContext>,
@@ -1232,7 +1232,7 @@ impl CheckedPopulationMemberRewrite {
 /// Whether `after` differs from `before` only by cells that name their own
 /// load: each added cell holds the canonical form of the load of that very
 /// pointer at `before`. Adding one is definitional — it records what the
-/// snapshot already said about the cell — so a rewrite that names the cells it
+/// state already said about the cell — so a rewrite that names the cells it
 /// exposes stays checkable without a second state comparison rule. Bounded by
 /// the cell count, with no assumption consulted and nothing searched.
 ///
@@ -1261,7 +1261,7 @@ fn memory_only_adds_named_cells(
     }
     let base = crate::kernel::intern_memory(before.clone());
     for change in before.cells.diff(&after.cells) {
-        let crate::kernel::SnapshotMapChange::Added(pointer) = change else {
+        let crate::kernel::HashedOrdMapChange::Added(pointer) = change else {
             return Err("removed or rewrote an existing cell".into());
         };
         let value = after.cells.get(pointer).expect("added cell exists");
@@ -1294,7 +1294,7 @@ fn memory_only_adds_named_cells(
 /// Explains a rejected unnamed-cell addition with bounded, actionable detail.
 ///
 /// Names the held value and the recomputed canonical load, the pre-rewrite
-/// snapshot and version identities (compact arena ids, not
+/// state and version identities (compact arena ids, not
 /// memory dumps), and whether the pointer itself embeds an inner load whose own
 /// version drift would cascade into this outer name. The version lookup is the same
 /// assumption-free memoized walk the naming itself uses, so this adds no proof
@@ -1308,23 +1308,23 @@ fn describe_unnamed_cell_addition(
     let held = truncate_debug(value, 240);
     let expected = truncate_debug(load, 240);
     let (base_arena, base_id) = base.arena_id();
-    let version_note = match crate::kernel::resource_tracker::last_same_point(
+    let version_note = match crate::kernel::resource_tracker::last_same_version_point(
         crate::kernel::resource_tracker::TrackedResource::Cell {
             pointer,
             bytes: crate::kernel::resource_tracker::widest_scalar_access_bytes(),
         },
-        &crate::kernel::resource_tracker::ProgramPoint::at(base),
+        &crate::kernel::resource_tracker::VersionPoint::at(base),
     ) {
         Some(version) => {
-            let (version_arena, version_id) = version.snapshot().arena_id();
-            format!("version snapshot ({version_arena},{version_id})")
+            let (version_arena, version_id) = version.shared_memory().arena_id();
+            format!("version state ({version_arena},{version_id})")
         }
-        None => "version snapshot none (unwritten at a derivation root)".to_string(),
+        None => "version state none (unwritten at a derivation root)".to_string(),
     };
     let mut detail = format!(
-        "added a cell at {pointer:?} that is not the canonical load of its own pointer at the pre-rewrite snapshot; \
+        "added a cell at {pointer:?} that is not the canonical load of its own pointer at the pre-rewrite memory state; \
 held {held} but canonical is {expected}; \
-pre-rewrite snapshot ({base_arena},{base_id}), {version_note}"
+pre-rewrite retained_state ({base_arena},{base_id}), {version_note}"
     );
     let embedded: Vec<String> = pointer
         .offset
@@ -1348,7 +1348,7 @@ recomputed from the rewrite's input state; this is an internal naming divergence
 }
 
 /// Renders a value for diagnostics without risking a huge repeated
-/// internal-state dump: load terms can embed whole memory snapshots, so cap
+/// internal-state dump: load terms can embed whole memory states, so cap
 /// the text at `width` chars.
 fn truncate_debug<T: std::fmt::Debug>(value: &T, width: usize) -> String {
     let shown = format!("{value:?}");
@@ -1439,7 +1439,7 @@ impl From<&str> for ResourceRewriteCheckError {
     }
 }
 
-/// A checked body's identical readability range at a snapshot differing only
+/// A checked body's identical readability range at a state differing only
 /// by caches of unchanged reads. This transports neither values nor ownership,
 /// and admits no different address, extent, or wide/narrow representation.
 fn cached_body_loadability(
@@ -2526,12 +2526,12 @@ impl CheckedResourceRewrite {
                 before_state.population_effects.creation.clone();
             if unchanged != *before_state {
                 // An unfold names the cells it exposes, which materializes
-                // them in the snapshot so the body's facts and a later C read
+                // them in the state so the body's facts and a later C read
                 // of one of those cells are one load variable
                 // (`docs/internals/canonicalization.md`). Adding such a cell
                 // is the only memory change a resource rewrite may make, and
                 // each added cell must hold the canonical load form of its own
-                // pointer at the pre-rewrite snapshot. That is a definitional
+                // pointer at the pre-rewrite state. That is a definitional
                 // identity, checked here per added cell with no search.
                 if let Err(detail) =
                     memory_only_adds_named_cells(&before_state.memory, &after_state.memory)
@@ -2542,11 +2542,11 @@ impl CheckedResourceRewrite {
 inconsistently; it {detail}; this is a Click implementation error, not an invalid unfold"
                         )
                     } else {
-                        format!("a fold may not change the memory snapshot, but it {detail}")
+                        format!("a fold may not change the memory state, but it {detail}")
                     });
                 }
                 if !unfold {
-                    return Err("a fold may not change the memory snapshot".to_string());
+                    return Err("a fold may not change the memory state".to_string());
                 }
                 unchanged.memory = before_state.memory.clone();
                 if unchanged != *before_state {
@@ -2579,7 +2579,7 @@ inconsistently; it {detail}; this is a Click implementation error, not an invali
                 .chain(observed_facts)
                 .collect::<std::collections::BTreeSet<_>>();
             // A visible return projection may repeat a fact already checked
-            // at its frozen snapshot. Accept it only when the input context
+            // at its frozen state. Accept it only when the input context
             // independently proves that exact memory/resource proposition.
             let mut cached_comparisons = HashMap::new();
             if let Some(fact) = introduced.iter().find(|fact| {
@@ -4069,7 +4069,7 @@ impl CheckedProofCaseJoin {
                     && lowerings[0].spec == lowerings[2].spec
                     && lowerings[0].reference == lowerings[1].reference
                     && lowerings[0].reference == lowerings[2].reference
-                    && lowerings[2].snapshot == self.joined_state
+                    && lowerings[2].retained_state == self.joined_state
                     && lowerings[0].facts.shares_premises_with(&then_arm.facts)
                     && lowerings[1].facts.shares_premises_with(&else_arm.facts)
                     && lowerings[2].facts.shares_premises_with(&self.joined_facts)
@@ -4868,7 +4868,7 @@ impl CheckedExecutionBranch {
                     && lowerings[0].spec == lowerings[2].spec
                     && lowerings[0].reference == lowerings[1].reference
                     && lowerings[0].reference == lowerings[2].reference
-                    && lowerings[2].snapshot == self.joined_state
+                    && lowerings[2].retained_state == self.joined_state
                     && lowerings[0].facts.shares_premises_with(&self.arms[0].facts)
                     && lowerings[1].facts.shares_premises_with(&self.arms[1].facts)
                     && self
@@ -5025,7 +5025,7 @@ fn interface_chain_memory_matches(
 ) -> bool {
     use crate::kernel::api::contract_certification::memories_definitionally_equal;
     // End the lifetimes first: with them the memories are usually the same
-    // snapshot, which the comparison answers without looking at a cell.
+    // state, which the comparison answers without looking at a cell.
     let mut ended: Option<Memory> = None;
     for block in recorded.ended_local_blocks() {
         if !produced.is_ended_local_block(block) {
@@ -5073,13 +5073,13 @@ fn is_memory_effect(proposition: &Proposition) -> bool {
 /// The walk has already checked that the arm's events follow one another
 /// from the split to the arm's end, so its steps are the arm's whole memory
 /// history. A step that cannot write needs no effect. A step that can is
-/// covered when the effects starting at its first snapshot lead to its last,
-/// and snapshots are matched by identity first: only a statement that reads
+/// covered when the effects starting at its first state lead to its last,
+/// and states are matched by identity first: only a statement that reads
 /// or assigns a local before it stores leaves two that differ, and those
 /// differ in what that one statement cached.
 ///
 /// This is why the join does not compare the arm's memories as wholes. A
-/// comparison of two snapshots that differ in the reads an `unfold` cached
+/// comparison of two states that differ in the reads an `unfold` cached
 /// has to justify each read against the memory history, and its cost grows
 /// with the proof before the split rather than with the arm.
 fn arm_effects_follow_memory_steps(
@@ -5454,7 +5454,7 @@ fn interface_resource_intrinsic_fact(
 #[derive(Clone)]
 struct CheckedInterfaceLowering {
     spec: Arc<SpecProposition>,
-    snapshot: ExecutionState,
+    retained_state: ExecutionState,
     reference: ExecutionState,
     facts: ProofFacts,
     path: Arc<crate::kernel::spec::SpecPropositionPath>,
@@ -5618,7 +5618,7 @@ impl CheckedInterfaceLowering {
             }
             Some(Self {
                 spec: Arc::new(spec.clone()),
-                snapshot: state.clone(),
+                retained_state: state.clone(),
                 reference: reference_state.clone(),
                 facts: facts.clone(),
                 path: Arc::new(path),
@@ -6295,7 +6295,7 @@ pub(crate) struct ExecutionProofCore {
 #[cfg_attr(test, derive(Clone))]
 pub(crate) struct CheckedLoopInvariantLowerings {
     pub(super) body: Option<super::object::CheckedInvariantBody>,
-    pub(super) snapshot: SharedValue<ExecutionState>,
+    pub(super) retained_state: SharedValue<ExecutionState>,
     pub(super) checks: Vec<crate::kernel::LoopInvariantCheck>,
     /// The loop's declared `decreases` components, whose back-edge members
     /// the retained body also closed. Validation compares them exactly, so a
@@ -6310,8 +6310,8 @@ impl CheckedLoopInvariantLowerings {
     pub(crate) fn checks(&self) -> &[crate::kernel::LoopInvariantCheck] {
         &self.checks
     }
-    pub(crate) fn snapshot(&self) -> &SharedValue<ExecutionState> {
-        &self.snapshot
+    pub(crate) fn recorded_state(&self) -> &SharedValue<ExecutionState> {
+        &self.retained_state
     }
 }
 
@@ -6986,11 +6986,11 @@ struct CheckedEvidenceProgress {
 }
 
 /// One change of memory a walk of checked events passed through: the
-/// snapshot before an event and the one after it.
+/// state before an event and the one after it.
 ///
 /// `may_write` is false for an event that only rewrites what the proof holds
 /// (a fold, an unfold, an observation, the end of an automatic lifetime).
-/// Such an event changes which values a snapshot caches, never a byte a
+/// Such an event changes which values a state caches, never a byte a
 /// pointer can reach, and it leaves no effect fact.
 #[derive(Clone)]
 struct CheckedMemoryStep {
@@ -7355,7 +7355,7 @@ fn retain_return_context(
             // Immutable argument facts of an ordinary held resource
             // survive a return. Instantiate with no memory, resources,
             // or ambient read premises so this cannot import a mutable
-            // invariant from an unchecked current snapshot.
+            // invariant from an unchecked current state.
             if !definition[0].is_authorized()
                 && let Some(facts) =
                     crate::kernel::functions::evaluate_composite_resource_fact_propositions(
@@ -7584,9 +7584,9 @@ fn trace_completion_from_entry<E: std::borrow::Borrow<CheckedExecutionEvent>>(
                     if executed_under.proves_exact(fact) {
                         continue;
                     }
-                    // A store materializes its exact cell in this snapshot.
+                    // A store materializes its exact cell in this state.
                     // This is read validity, not ownership or a value equality;
-                    // no ambient range search or cross-snapshot transport occurs.
+                    // no ambient range search or cross-state transport occurs.
                     let materialized_read = matches!(fact,
                         Proposition::MemoryLoadable { memory, base, bytes, wide: false }
                             if bytes.as_const().is_some_and(|width|
@@ -7634,7 +7634,7 @@ fn trace_completion_from_entry<E: std::borrow::Borrow<CheckedExecutionEvent>>(
                     if let Some(observation) = &rewrite.return_observation {
                         // This private event retains the kernel producer's
                         // completed exchange. Its premises were checked there;
-                        // do not choose and check the body again at C's snapshot.
+                        // do not choose and check the body again at C's state.
                         if return_origin.as_ref() != Some(&observation.context.origin) {
                             return Err(
                                 "return resource observation belongs to a different execution path",
@@ -7710,7 +7710,7 @@ fn trace_completion_from_entry<E: std::borrow::Borrow<CheckedExecutionEvent>>(
                         // path; it must not replace or compare that successor
                         // with a newly chosen resource representation.
                         // Import only the selected body's rechecked facts, including
-                        // its identical readability at the caller's cached snapshot.
+                        // its identical readability at the caller's cached state.
                         // Do not import an arbitrary post-rewrite fact context.
                         let allowed = checked
                             .semantic_facts
@@ -7779,7 +7779,7 @@ fn trace_completion_from_entry<E: std::borrow::Borrow<CheckedExecutionEvent>>(
                     }
                     **state = rewrite.after_state.clone();
                     // Only the rechecked exchange's semantic facts enter this
-                    // path, never a proof snapshot's entire assumption context.
+                    // path, never a proof state's entire assumption context.
                 }
             }
             CheckedExecutionEvent::AutomaticLifetimeEnd(end) => {
@@ -11102,7 +11102,7 @@ impl ExecutionProofCore {
         let retained_after = if let Some((presented_before, produced)) = observed {
             // The producer already applied the selected body at the logical
             // return state. Transfer its resource delta, not a second fold in
-            // a different snapshot with differently named pointer arguments.
+            // a different state with differently named pointer arguments.
             let resources = before_state.resources().clone().with_constructed_exchange(
                 presented_before.resources(),
                 produced.state.resources(),
@@ -12003,7 +12003,7 @@ impl ExecutionFrontier {
 }
 
 /// Resolves the named function-entry state used by `old(...)`, falling back
-/// to the current region's start state when the proof has no entry snapshot.
+/// to the current region's start state when the proof has no entry state.
 pub(crate) fn old_reference_state<'a>(
     function_entry_state: Option<&'a ExecutionState>,
     frontier: &'a ExecutionFrontier,

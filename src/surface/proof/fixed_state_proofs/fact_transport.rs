@@ -126,7 +126,7 @@ pub(in crate::surface::proof) fn plan_explicit_fact_transport(
             "explicit fact transport: planning refusal",
         );
         let _exact = render::TypedNotationScope::enter();
-        let mut labels = render::SnapshotLabels::with_state(parameter_binding, state);
+        let mut labels = render::MemoryStateLabels::with_state(parameter_binding, state);
         let checked_source = render::render_proposition_labeled(source, &mut labels);
         let checked_target = render::render_proposition_labeled(target, &mut labels);
         return Err(ClickError::new(format!(
@@ -232,7 +232,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     checked_target: &mut Option<Proposition>,
 ) -> Result<CheckedFixedStateFactTransport, ClickError> {
     // Resource compositions keep separation compact. Materialize only a
-    // listed separation premise on the local checked snapshot so explicit
+    // listed separation premise on the local checked state so explicit
     // `transport using` retains its exact-premise contract without publishing
     // every unrelated member pair.
     let mut available = available.clone();
@@ -258,7 +258,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         };
         available = available.with_selected_resource_separation(&premise);
         // A premise that lowers to a syntactically reflexive equality (two
-        // snapshot reads canonicalized to one term) needs no fact: the exact
+        // state reads canonicalized to one term) needs no fact: the exact
         // check accepts every proposition that holds without facts
         // (`proposition_holds_without_facts`), and a transport also accepts
         // one that holds that way under binders and guards: the reflexive
@@ -335,7 +335,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
             assumptions.assume_proposition(premise)
         });
     // Never resolve the target through the recorded surface map: the same
-    // surface form may deliberately name an older source snapshot.
+    // surface form may deliberately name an older source state.
     let target = lower_fixed_state_proposition_with_assumptions(
         surface_target,
         &target_lowering_assumptions,
@@ -385,7 +385,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     };
     // An explicit alias transport needs only its cited source and equality.
     // Check that selected operation before introducing the live resource
-    // composition or consulting the ambient snapshot/effect context.
+    // composition or consulting the ambient state/effect context.
     if matches!(
         (&source, &target),
         (
@@ -422,7 +422,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
     // to its binder's name, as a listed premise does: a call's postcondition
     // is held with the binder its lowering chose. Both are indexed lookups.
     // Mid-execution transport retains the stricter rule that `using` must
-    // establish its logical source. A selected outcome snapshot that
+    // establish its logical source. A selected outcome state that
     // materializes to true likewise checks the equivalent symbolic source
     // used for frame transport.
     let source_is_available =
@@ -494,7 +494,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         // Load-variable bridges decide search-free before the reachability
         // walk: a target equating two internal names for one unchanged cell
         // needs only the bounded origins proof, and the walk's general
-        // equality legs would re-enter snapshot comparison on exactly these
+        // equality legs would re-enter state comparison on exactly these
         // targets.
         let chain_facts: Vec<Proposition> = {
             let mut chain_facts = explicit_premises.clone();
@@ -502,7 +502,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                 chain_facts.push(source.clone());
             }
             // The frontier's certified effect facts (call postconditions and
-            // effect summaries) may relate a load at one snapshot to the same
+            // effect summaries) may relate a load at one state to the same
             // cell at another: load names are not preserved across call-havoc
             // and store edges by path assumptions (see `MemoryDerivation`).
             // They are certified facts, not user premises.
@@ -574,7 +574,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         //
         // The rule is a checked simple step and answers the same for every
         // caller: an explicit `transport ... using`, a planned transport, and
-        // `solve`'s snapshot transport closure all ask it the same question.
+        // `solve`'s state transport closure all ask it the same question.
         let fold_frame = crate::instrumentation::measure_operation(
             "surface",
             "fact transport",
@@ -669,7 +669,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
         ) {
             // Only where the single-fact route refused, so every transport it
             // already carried costs exactly what it did.
-            // A smart closure asks the same failing frame once per snapshot
+            // A smart closure asks the same failing frame once per state
             // and strategy; it answers a repeat from its failure memo, as it
             // does for the reachability walk.
             let mut frame_refusal = None;
@@ -701,10 +701,10 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                 .or_else(|| quantified_frame().err())
                 .unwrap_or(crate::kernel::QuantifiedFrameRefusal::NothingToFrame);
             let mut labels =
-                render::SnapshotLabels::with_state(parameter_binding, fixed_state.state);
+                render::MemoryStateLabels::with_state(parameter_binding, fixed_state.state);
             labels.source_state(fixed_state.pre_state, "function.entry".into());
-            for (selector, snapshot) in fixed_state.recorded_snapshots.recent(16) {
-                labels.source_state(snapshot, describe_snapshot_selector(selector));
+            for (selector, retained_state) in fixed_state.recorded_states.recent(16) {
+                labels.source_state(retained_state, describe_program_point_selector(selector));
             }
             let mut rendered = describe_unreachable_fact_transport(
                 claim_label,
@@ -736,10 +736,13 @@ fn check_fixed_state_fact_transport_using_facts_inner(
                     // It knows the recorded states the report above names, and
                     // its `where` list says what produced every other state.
                     let mut labels =
-                        render::SnapshotLabels::with_state(parameter_binding, fixed_state.state);
+                        render::MemoryStateLabels::with_state(parameter_binding, fixed_state.state);
                     labels.source_state(fixed_state.pre_state, "function.entry".into());
-                    for (selector, snapshot) in fixed_state.recorded_snapshots.recent(16) {
-                        labels.source_state(snapshot, describe_snapshot_selector(selector));
+                    for (selector, retained_state) in fixed_state.recorded_states.recent(16) {
+                        labels.source_state(
+                            retained_state,
+                            describe_program_point_selector(selector),
+                        );
                     }
                     // A leaf reads at its binder, which the source names.
                     for (kernel, surface) in [(&source, surface_source), (&target, surface_target)]
@@ -775,7 +778,7 @@ fn check_fixed_state_fact_transport_using_facts_inner(
 const NO_FRAME_EVIDENCE: &str =
     "found no frame evidence carrying its source fact to the target's state";
 
-/// Show the written and checked propositions with one shared snapshot legend.
+/// Show the written and checked propositions with one shared state legend.
 /// Include every frontier effect: a truncated list can hide the missing frame.
 /// The name a quantified proposition's source gives its binder: the written
 /// spelling when hygiene renamed it, through any `at(...)` around it.
@@ -800,7 +803,7 @@ fn describe_unreachable_fact_transport(
     source: &Proposition,
     target: &Proposition,
     transition_facts: &(impl ExecutionFactSource + ?Sized),
-    labels: &mut render::SnapshotLabels,
+    labels: &mut render::MemoryStateLabels,
 ) -> String {
     // Refusals must expose checked identities even outside --trace-proof.
     let _exact = render::TypedNotationScope::enter();
@@ -950,8 +953,8 @@ pub(in crate::surface::proof) fn fact_transport_planning_failure(
 /// nothing and whose refusal is the frame check's own.
 const TRANSPORT_SEARCH_MISS: &str = "\n  this is a search miss, not a refusal; if the target holds, list the facts that carry the source in `transport(P, Q) using { ... }`, stating any that is not available with `have` first";
 
-/// Erases every embedded memory snapshot from a comparison proposition so
-/// two forms of the same comparison at different snapshots compare
+/// Erases every embedded memory state from a comparison proposition so
+/// two forms of the same comparison at different states compare
 /// equal; used as a cheap prefilter before attempting a transport proof.
 pub(in crate::surface::proof) fn memory_erased_comparison(
     proposition: &Proposition,
@@ -1029,7 +1032,7 @@ pub(in crate::surface::proof) fn memory_erased_comparison(
     Some(Proposition::ConditionIs(erased, *value))
 }
 
-/// Compares branch facts after erasing the memory snapshot captured at the
+/// Compares branch facts after erasing the memory state captured at the
 /// branch split. In addition to the kernel's canonical forms, accept the
 /// ordinary complementary and operand-reversed forms of 32-bit order
 /// comparisons, signed or `uint32` (for example, `!(a < b)` and `a >= b`).

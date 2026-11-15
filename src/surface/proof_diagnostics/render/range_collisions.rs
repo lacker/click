@@ -50,7 +50,7 @@ impl RangeCollisions {
     }
 }
 
-impl SnapshotLabels {
+impl MemoryStateLabels {
     pub(crate) fn begin_range_collision_detection(&mut self) {
         self.range_collisions = Some(RangeCollisions {
             collecting: true,
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn collision_labels_are_shared_and_collection_is_capped() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         assert!(labels.range_collisions.is_none());
         labels.begin_range_collision_detection();
         for index in 0..100 {
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn ordinary_rendering_does_not_collect_collisions() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         for origin in 987_801..987_805 {
             let fact = ResourceFact::View(Resource::Memory(range(origin)));
             let text = render_resource_fact_labeled(&fact, &mut labels);

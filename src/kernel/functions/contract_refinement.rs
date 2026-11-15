@@ -260,9 +260,9 @@ pub(super) fn exact_resource_interfaces_match(
         .iter()
         .zip(function.resource_ensures())
     {
-        let contract_state = match contract_resource.snapshot() {
-            ResourceSnapshot::Entry => contract_entry,
-            ResourceSnapshot::Current | ResourceSnapshot::Post => contract_post,
+        let contract_state = match contract_resource.state_source() {
+            ResourceStateSource::Entry => contract_entry,
+            ResourceStateSource::Current | ResourceStateSource::Post => contract_post,
         };
         let contract_resource = match evaluate_function_resource_spec_with_entry(
             contract_entry,
@@ -274,9 +274,9 @@ pub(super) fn exact_resource_interfaces_match(
             Ok(resource) => resource,
             Err(_) => return Ok(false),
         };
-        let function_state = match function_resource.snapshot() {
-            ResourceSnapshot::Entry => function_entry,
-            ResourceSnapshot::Current | ResourceSnapshot::Post => function_post,
+        let function_state = match function_resource.state_source() {
+            ResourceStateSource::Entry => function_entry,
+            ResourceStateSource::Current | ResourceStateSource::Post => function_post,
         };
         let function_resource = match evaluate_function_resource_spec_with_entry(
             function_entry,

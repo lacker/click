@@ -830,7 +830,7 @@ Progress:
      16-bit values native: constants, binders (no range facts; the range
      is the format's), loads (each at its own type, byte R-mem relating
      the two reads of one byte, a narrow read a load application of its
-     snapshot, address and kind, equal to a stored value of its width) and
+     state, address and kind, equal to a stored value of its width) and
      byte views; K7' (a narrow cast's `int32` and `uint32` widenings meet
      its masked word, and the two 32-bit widenings of any narrow value are
      one word, rule K1); the minimal `from_machine` widening relation (a
@@ -856,7 +856,7 @@ Progress:
      takes the value's format when it fits. A native comparison and the
      `int32` comparison of its operands' widenings are one fact at the
      fact-identity and lookup-key level only (`ConditionTerm::comparison_fact`,
-     O(1)): identity, hashing and order, the snapshot-blind, alpha and
+     O(1)): identity, hashing and order, the state-blind, alpha and
      identity keys, `condition_match_key`, and the structural condition
      matchers read both as one. A native fact is also filed, inside each
      32-bit index's own adjuster, under its `int32` spelling

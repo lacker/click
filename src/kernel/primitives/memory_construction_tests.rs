@@ -83,7 +83,7 @@ fn construction_metadata_does_not_change_memory_identity_or_proof_edges() {
     let original = Memory::new().with_block("local:identity", 4);
     let interned = intern_memory_ref(&original);
     let mut described = original.clone();
-    // A distinct diagnostic path describes exactly the same semantic snapshot.
+    // A distinct diagnostic path describes exactly the same semantic state.
     described.record_diagnostic_transform("diagnostic test", vec![Memory::new()], Vec::new());
     assert_eq!(original, described);
     assert_eq!(
@@ -108,7 +108,7 @@ fn unrecorded_mutation_cannot_inherit_an_incorrect_origin() {
 }
 
 #[test]
-fn construction_pins_detect_mutation_of_an_uninterned_snapshot() {
+fn construction_pins_detect_mutation_of_an_uninterned_state() {
     let pointer = Pointer {
         block: "local:unpinned".into(),
         offset: PointerOffsetTerm::Constant(0),

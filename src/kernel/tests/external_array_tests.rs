@@ -32,7 +32,7 @@ fn typed_load(memory: &Memory, pointer: &Pointer) -> ProgramValue {
 }
 
 #[test]
-fn external_array_sparse_copies_forward_snapshots_and_preserve_neighbors() {
+fn external_array_sparse_copies_forward_states_and_preserve_neighbors() {
     for count in [8, 1024, 1_000_000] {
         let _session = crate::kernel::VerificationSession::enter();
         let source = external(931_000);
@@ -125,7 +125,7 @@ fn external_array_read_is_not_a_reserved_variable_occurrence() {
 }
 
 #[test]
-fn external_array_snapshots_reject_invalid_storage_and_preserve_empty_semantics() {
+fn external_array_states_reject_invalid_storage_and_preserve_empty_semantics() {
     let source = external(934_000);
     let target = external(934_001);
     let context = PureFactContext::new();

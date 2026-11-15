@@ -59,7 +59,7 @@ impl<'a> Proof<'a> {
     /// Performs the audited C-branch entry work shared by the container
     /// and the in-`Proof` sibling split: guards, source resolution, the
     /// kernel condition transitions, and each feasible arm's checked facts,
-    /// snapshot, path-fact delta, and condition theorem. There is exactly
+    /// state, path-fact delta, and condition theorem. There is exactly
     /// one implementation of this branch-entry law.
     /// Whether the execution frontier is a C `if` whose condition, spelled
     /// at the statement entry, is `surface_condition`. A proof `if` whose
@@ -110,7 +110,7 @@ impl<'a> Proof<'a> {
             kind: ProgramPointKind::Entry,
         };
         let source_condition = surface_program_condition(&condition, &current_state)?;
-        let checked = surface_at_snapshot(&source_condition, &entry_point)?;
+        let checked = surface_at_program_point(&source_condition, &entry_point)?;
         if checked == *surface_condition {
             return Ok(true);
         }
@@ -121,7 +121,7 @@ impl<'a> Proof<'a> {
             return Ok(false);
         }
         if proposition_contains_at_expression(surface_condition)
-            && surface_at_snapshot(surface_condition, &entry_point)
+            && surface_at_program_point(surface_condition, &entry_point)
                 .is_ok_and(|reanchored| reanchored == checked)
         {
             return Err(self.step_error(
@@ -190,7 +190,7 @@ impl<'a> Proof<'a> {
             then_branch: then_branch.clone(),
             else_branch: else_branch.clone(),
         };
-        let surface_condition = surface_at_snapshot(
+        let surface_condition = surface_at_program_point(
             &surface_program_condition(&condition, &current_state)?,
             &ProgramPointRef {
                 region: CodeRegionRef::Region(statement_index),
@@ -345,8 +345,8 @@ impl<'a> Proof<'a> {
                         )
                     ))
                 })?;
-            record_statement_program_snapshot_state(
-                &mut arm_execution.presentation.recorded_snapshots,
+            record_statement_program_state(
+                &mut arm_execution.presentation.recorded_states,
                 context.function_block,
                 statement_index,
                 ProgramPointKind::Entry,
@@ -371,8 +371,8 @@ impl<'a> Proof<'a> {
             arm_execution.core.frontier.continuations = PersistentSequence::default();
             arm_execution.core.frontier.region = ExecutionRegionKind::BranchArm;
             if matches!(selected_branch, ProgramStatement::Skip) {
-                record_statement_program_snapshot_state(
-                    &mut arm_execution.presentation.recorded_snapshots,
+                record_statement_program_state(
+                    &mut arm_execution.presentation.recorded_states,
                     context.function_block,
                     statement_index,
                     ProgramPointKind::Exit,
@@ -386,7 +386,7 @@ impl<'a> Proof<'a> {
             }
             record_current_statement_entry(
                 &arm_execution.core.frontier,
-                &mut arm_execution.presentation.recorded_snapshots,
+                &mut arm_execution.presentation.recorded_states,
                 &arm_execution.core.state,
                 context.function_block,
                 context.function,
@@ -410,7 +410,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &arm_execution.core.state,
                     None,
-                    &arm_execution.presentation.recorded_snapshots,
+                    &arm_execution.presentation.recorded_states,
                 ),
                 context.spec_definitions,
             )
@@ -428,7 +428,7 @@ impl<'a> Proof<'a> {
                 .branch_surface_facts
                 .insert(kernel_path_fact.clone());
             // `surface_path_fact` already reads the `if` statement's entry
-            // snapshot, so it survives the body's later stores and a bundle
+            // state, so it survives the body's later stores and a bundle
             // closer on this arm may name it.
             arm_execution
                 .presentation
@@ -470,7 +470,7 @@ impl<'a> Proof<'a> {
     /// Splits the focused branch execution frontier at a C `if` into sibling
     /// frontier goals inside this same proof state: the in-`Proof` form of
     /// the execution branch. Each kernel-feasible arm becomes one sibling
-    /// goal owning its checked arm facts and snapshot; the returned record
+    /// goal owning its checked arm facts and state; the returned record
     /// carries the split identity, per-arm condition theorems, split-time
     /// fact bases for `introduced_since`, and the shared continuation data
     /// its joins verify — bookkeeping, never semantic authority.
@@ -675,7 +675,7 @@ impl<'a> Proof<'a> {
                 self.step_error("decided execution branch root no longer points at a C `if`")
             );
         };
-        let surface_condition = surface_at_snapshot(
+        let surface_condition = surface_at_program_point(
             &surface_program_condition(&condition, &current_state)?,
             &ProgramPointRef {
                 region: CodeRegionRef::Region(statement_index),
@@ -898,23 +898,23 @@ impl<'a> Proof<'a> {
                 parent_execution,
             )?;
         }
-        let common_snapshots = arms[0]
+        let common_states = arms[0]
             .execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .common_descendant(
-                &arms[1].execution.presentation.recorded_snapshots,
-                &parent_execution.presentation.recorded_snapshots,
+                &arms[1].execution.presentation.recorded_states,
+                &parent_execution.presentation.recorded_states,
             )
             .ok_or_else(|| {
                 self.step_error(
-                    "`branch ensuring` arms do not descend from the root recorded snapshots",
+                    "`branch ensuring` arms do not descend from the root recorded states",
                 )
             })?;
         // A mark freezes only the expressions inside `at(...)`. Mixed facts
         // still read the current arm/successor and need the same checked
         // interface lowering as unmarked facts. Resolve frozen expressions
-        // from snapshots shared by both arms, never an arm-private mark.
+        // from states shared by both arms, never an arm-private mark.
         let interface_specs = assertions
             .iter()
             .filter_map(|assertion| match assertion {
@@ -924,7 +924,7 @@ impl<'a> Proof<'a> {
                     &interface_reference_state,
                     &parent_execution.core.state,
                     &target,
-                    &common_snapshots,
+                    &common_states,
                     context.arguments,
                     context.spec_definitions,
                 )),
@@ -1053,7 +1053,7 @@ impl<'a> Proof<'a> {
         )?;
         execution.core.state = abstract_state.clone().into();
         execution.core.loan_evidence = joined_loan_evidence;
-        execution.presentation.recorded_snapshots = common_snapshots;
+        execution.presentation.recorded_states = common_states;
         execution.core.frontier.execution_start_state = Some(execution_start_state);
         match join_continuation {
             _ if rejoins_cases => {
@@ -1179,10 +1179,10 @@ impl<'a> Proof<'a> {
         let abstract_state = (*execution.core.state).clone();
         execution
             .presentation
-            .recorded_snapshots
+            .recorded_states
             .insert(target, abstract_state.clone());
         if !rejoins_cases {
-            execution.presentation.recorded_snapshots.insert(
+            execution.presentation.recorded_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(statement_index),
                     kind: ProgramPointKind::Exit,
@@ -1191,8 +1191,8 @@ impl<'a> Proof<'a> {
             );
         }
         if !rejoins_cases {
-            record_statement_program_snapshot_state(
-                &mut execution.presentation.recorded_snapshots,
+            record_statement_program_state(
+                &mut execution.presentation.recorded_states,
                 context.function_block,
                 statement_index,
                 ProgramPointKind::Exit,
@@ -1201,7 +1201,7 @@ impl<'a> Proof<'a> {
         }
         record_current_statement_entry(
             &execution.core.frontier,
-            &mut execution.presentation.recorded_snapshots,
+            &mut execution.presentation.recorded_states,
             &execution.core.state,
             context.function_block,
             context.function,
@@ -1531,7 +1531,7 @@ impl<'a> Proof<'a> {
                 );
             };
             (
-                surface_at_snapshot(
+                surface_at_program_point(
                     &surface_program_condition(&condition, &current_state)?,
                     &ProgramPointRef {
                         region: CodeRegionRef::Region(statement_index),
@@ -1586,16 +1586,17 @@ impl<'a> Proof<'a> {
         };
         let then_expansion = &arms[0].execution.presentation.expansion;
         let else_expansion = &arms[1].execution.presentation.expansion;
-        let common_snapshots = arms[0]
+        let common_states = arms[0]
             .execution
-            .presentation.recorded_snapshots
+            .presentation
+            .recorded_states
             .common_descendant(
-                &arms[1].execution.presentation.recorded_snapshots,
-                &parent_execution.presentation.recorded_snapshots,
+                &arms[1].execution.presentation.recorded_states,
+                &parent_execution.presentation.recorded_states,
             )
             .ok_or_else(|| {
                 self.step_error(
-                    "terminal execution arms do not descend from the branch root's recorded snapshots",
+                    "terminal execution arms do not descend from the branch root's recorded states",
                 )
             })?;
 
@@ -1840,7 +1841,7 @@ impl<'a> Proof<'a> {
             false,
         )?;
         execution.core.state = execution_start_state.clone().into();
-        execution.presentation.recorded_snapshots = common_snapshots;
+        execution.presentation.recorded_states = common_states;
         execution.core.frontier.continuations.clear();
         execution.core.frontier.execution_start_state = Some(execution_start_state);
         execution.core.frontier.position = FrontierPosition::FunctionExit {
@@ -2205,7 +2206,7 @@ impl<'a> Proof<'a> {
         )?;
         execution.core.state = (**then_state).clone().into();
         execution.core.loan_evidence = joined_loan_evidence;
-        execution.presentation.recorded_snapshots.insert(
+        execution.presentation.recorded_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Region(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -2256,8 +2257,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
-        record_statement_program_snapshot_state(
-            &mut execution.presentation.recorded_snapshots,
+        record_statement_program_state(
+            &mut execution.presentation.recorded_states,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -2265,7 +2266,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.core.frontier,
-            &mut execution.presentation.recorded_snapshots,
+            &mut execution.presentation.recorded_states,
             &execution.core.state,
             context.function_block,
             context.function,
@@ -2624,13 +2625,13 @@ impl<'a> Proof<'a> {
             // The arms ran the same statements, so the points they recorded
             // on the way are common to both; a point only one arm named is
             // not carried.
-            let Some(snapshots) = arms[0]
+            let Some(retained_states) = arms[0]
                 .execution
                 .presentation
-                .recorded_snapshots
+                .recorded_states
                 .common_descendant(
-                    &arms[1].execution.presentation.recorded_snapshots,
-                    &parent_execution.presentation.recorded_snapshots,
+                    &arms[1].execution.presentation.recorded_states,
+                    &parent_execution.presentation.recorded_states,
                 )
             else {
                 return Ok(None);
@@ -2642,7 +2643,7 @@ impl<'a> Proof<'a> {
             ) else {
                 return Ok(None);
             };
-            execution.presentation.recorded_snapshots = snapshots;
+            execution.presentation.recorded_states = retained_states;
             execution.core.loan_evidence = loan_evidence;
             execution.core.state = arms[0].execution.core.state.clone();
             execution.core.frontier = arms[0].execution.core.frontier.clone();
@@ -3231,7 +3232,7 @@ impl<'a> Proof<'a> {
         let (recorded, result) = proof.clone().edit_execution_presentation(|presentation| {
             record_current_statement_entry(
                 &frontier,
-                &mut presentation.recorded_snapshots,
+                &mut presentation.recorded_states,
                 &state,
                 context.function_block,
                 context.function,
@@ -3244,7 +3245,7 @@ impl<'a> Proof<'a> {
         result?;
         proof = recorded;
         let anchored =
-            super::super::cursor_execution::surface_frozen_at_snapshot(&condition, &point)?;
+            super::super::cursor_execution::surface_frozen_at_program_point(&condition, &point)?;
         let original = proof.lower_surface_proposition(&condition, "execute case condition")?;
         let frozen =
             proof.lower_surface_proposition(&anchored, "anchored execute case condition")?;
@@ -3302,7 +3303,7 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("expanded execution branch root is not a C `if`"));
         };
-        let checked_condition = surface_at_snapshot(
+        let checked_condition = surface_at_program_point(
             &surface_program_condition(&condition, &current_state)?,
             &ProgramPointRef {
                 region: CodeRegionRef::Region(record.statement_index),
@@ -3495,7 +3496,7 @@ impl<'a> Proof<'a> {
         };
         record_current_statement_entry(
             &execution.core.frontier,
-            &mut execution.presentation.recorded_snapshots,
+            &mut execution.presentation.recorded_states,
             &execution.core.state,
             context.function_block,
             context.function,
@@ -4006,7 +4007,7 @@ mod progress_tests {
             ExecutionProofState::at_entry(
                 ExecutionState::new(),
                 ExecutionFrontier::default(),
-                RecordedSnapshots::new(),
+                RecordedStates::new(),
                 SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
@@ -4055,7 +4056,7 @@ mod progress_tests {
                     read.clone(),
                     true,
                     "goal: defined(",
-                    "goal: defined-read(snapshot#1, value#1)",
+                    "goal: defined-read(state#1, value#1)",
                 ),
             ] {
                 let error = proof.interface_join_error(
@@ -4099,10 +4100,7 @@ mod progress_tests {
                     "{trace}"
                 );
                 if side_condition {
-                    assert!(
-                        trace.contains("snapshot#1 = initial empty memory"),
-                        "{trace}"
-                    );
+                    assert!(trace.contains("state#1 = initial empty memory"), "{trace}");
                 }
             }
         }
@@ -4150,7 +4148,7 @@ mod progress_tests {
                 ExecutionProofState::at_entry(
                     ExecutionState::new(),
                     ExecutionFrontier::default(),
-                    RecordedSnapshots::new(),
+                    RecordedStates::new(),
                     SurfacePropositionMap::default(),
                     PersistentSequence::default(),
                 ),

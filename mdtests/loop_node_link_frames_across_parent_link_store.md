@@ -3,7 +3,7 @@
 The loop rotates a parent's right subtree (the `__rb_erase_color` case 3
 shape). After `parent->right` is overwritten, the sibling's own `right` link
 is compared with its value before the stores. The two reads are pointer loads
-of one cell at two snapshots, so the goal is a same-block pointer equality.
+of one cell at two states, so the goal is a same-block pointer equality.
 An explicit separation fact and explicit preservation proof preserve the inner
 node's freshly stored right link across the parent's store. Recovering that
 value must not require finding its older store in memory history.
@@ -209,7 +209,7 @@ void rotate(struct node* parent) {
                                     have parent->right == iid;
                                     have iid->right == sid;
                                     have sid->left == tmp1;
-                                    // Only the parent's store lies between the snapshot and
+                                    // Only the parent's store lies between the retained_state and
                                     // this read of a different node's field.
                                     have sid->right == at(inner_inputs, sid->right) by known();
                                     let s = fold(tree(iid->right), { model: Tree::Node(sid, irm, srm) }, { left: ir, right: sr });

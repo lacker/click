@@ -1,5 +1,5 @@
 //! Read dependencies of the explicitly selected common fold children.
-//! Snapshot checks, opaque-call refusals and address handling stay in the
+//! Memory state checks, opaque-call refusals and address handling stay in the
 //! existing leaf readers; no registry or memory history is searched here.
 use super::*;
 use crate::kernel::{KernelFold, KernelTermNode, KernelType};
@@ -144,8 +144,8 @@ pub(super) fn collect_common_memory_loads(
             }
             KernelTermNode::BoolRead(read) => {
                 let (memory, address) = read.parts();
-                if MemorySnapshotIdentity::of(memory.memory())
-                    == MemorySnapshotIdentity::of(current_memory)
+                if MemoryStateIdentity::of(memory.memory())
+                    == MemoryStateIdentity::of(current_memory)
                 {
                     let ConditionTerm::BoolLoad(_, pointer) =
                         term.boolean_read_native().expect("Boolean read")
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_fold_read_collection_preserves_snapshots_widths_and_opaque_refusals() {
+    fn retained_fold_read_collection_preserves_states_widths_and_opaque_refusals() {
         let _session = crate::kernel::VerificationSession::enter();
         let current = Memory::new();
         let memory = crate::kernel::intern_memory_ref(&current);

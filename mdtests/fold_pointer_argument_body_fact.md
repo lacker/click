@@ -10,13 +10,13 @@ rather than repeating it in every contract.
 must already be an available checked fact. That is why the shape needs a
 regression of its own. A pure function's pointer parameter is lowered as an
 array-ref argument — memory, pointer, element type — so that a function may
-index it. The memory in that triple used to be the ambient snapshot, which made
+index it. The memory in that triple used to be the ambient state, which made
 `is_owner(m, c) == 1` proved before a write and the same proposition demanded by
 a `fold` after it two different terms, and every constructor fold refused with
 `fold requires the instance body facts for the proposed fields` while the
 identical proposition sat in the premise list. A function whose body — and the
 body of everything it calls — reads no C memory is a function of its argument
-*values*, so its pointer arguments are now anchored to one canonical snapshot
+*values*, so its pointer arguments are now anchored to one canonical state
 and the two are one term. `is_owner` here is such a function: it compares a
 pointer payload with its pointer parameter and reads nothing.
 

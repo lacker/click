@@ -3,7 +3,7 @@ use super::*;
 
 /// The call's certified outputs, not its caller frame, provide this authority.
 /// The final return transition takes each constructed fact directly; it does
-/// not evaluate the clause again. Guards and entry snapshots keep their normal
+/// not evaluate the clause again. Guards and entry states keep their normal
 /// return evaluator, so they cannot lend unconditional post-state authority.
 pub(super) fn prepare_produced_argument_supply(
     entry: &ExecutionState,
@@ -20,7 +20,7 @@ pub(super) fn prepare_produced_argument_supply(
         .filter_map(|(index, clause)| {
             crate::instrumentation::record_deterministic_work(1);
             if clause.role() != ResourceTransferRole::Produce
-                || clause.snapshot() == ResourceSnapshot::Entry
+                || clause.state_source() == ResourceStateSource::Entry
                 || clause.guard().is_some()
                 || !matches!(clause.term(), ResourceTerm::Memory(segment) if segment.guard().is_none())
             {

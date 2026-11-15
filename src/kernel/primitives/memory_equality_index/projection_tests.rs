@@ -293,7 +293,7 @@ fn frontier_coverage_selects_and_consumes_through_transitive_address_equality() 
 }
 
 #[test]
-fn frontier_coverage_splits_ownership_and_preserves_the_input_snapshot() {
+fn frontier_coverage_splits_ownership_and_preserves_the_input_state() {
     let (_, _, _, facts, _) = fixture();
     let wanted = coverage_piece(881_002, 0, 1);
     let (input, residual) = coverage_context(
@@ -318,7 +318,7 @@ fn frontier_coverage_splits_ownership_and_preserves_the_input_snapshot() {
     assert_eq!(
         input.facts(),
         &[coverage_piece(881_000, 0, 3)],
-        "proof-local consumption must preserve the input snapshot"
+        "proof-local consumption must preserve the input state"
     );
 }
 

@@ -42,7 +42,7 @@ function entry was incorrect. Static storage is initialized once at program
 startup. A parameterless `main` proof receives initialized writable ownership
 and const views; ordinary function entry neither restores mutable initializers
 nor mints fresh ownership. Ordinary contracts describe current state and use
-`old(...)` for their entry snapshot. `global_entry_initializer_rejected.md`,
+`old(...)` for their entry state. `global_entry_initializer_rejected.md`,
 `static_entry_initializer_rejected.md`, and the kernel startup/call tests
 protect this boundary. Do not restore the old behavior to make a caller pass.
 

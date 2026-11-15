@@ -25,7 +25,7 @@ The refusal that asked for `i != j` was the invitation: stating the premise
 the diagnostic named was what turned the ladder on.
 
 The ladder is now conjoined with the shared `access_byte_overlap`, exactly as
-`step_effect::cell_effect` and the snapshot comparisons conjoin it: the
+`step_effect::cell_effect` and the state comparisons conjoin it: the
 ladder decides whether the addresses differ, and the byte answer decides
 whether the gap it establishes clears both accesses. An unknown gap blocks it
 too. Both widths are exact at this site — the store's is its own, the cell's

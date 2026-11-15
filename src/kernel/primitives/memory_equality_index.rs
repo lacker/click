@@ -26,7 +26,7 @@ fn graph_for_memory_query(assumptions: &PureFactContext, pointer: &Pointer) -> E
     // displaces that read by a constant. Check the read itself, with the
     // same complete-cell endpoint evidence, into this query-local graph.
     // Only a pointer the checked walk found stored in the cell is united
-    // with the read; another snapshot's read of the same cell is not.
+    // with the read; another state's read of the same cell is not.
     if matches!(pointer.block, PointerBlock::LoadedPointer(_)) {
         let read = Pointer {
             block: pointer.block.clone(),
@@ -887,8 +887,8 @@ impl ObjectEvidenceSources {
             } else {
                 held.diff(incoming)
                     .filter_map(|change| match change {
-                        SnapshotMapChange::Added(fact) => Some(fact.clone()),
-                        SnapshotMapChange::Changed(_) | SnapshotMapChange::Removed(_) => None,
+                        HashedOrdMapChange::Added(fact) => Some(fact.clone()),
+                        HashedOrdMapChange::Changed(_) | HashedOrdMapChange::Removed(_) => None,
                     })
                     .collect::<Vec<_>>()
             };
@@ -1495,7 +1495,7 @@ impl ResourceContext {
             }
             None
         };
-        // Content-addressed call snapshots retain their first frame. Rechecking
+        // Content-addressed call states retain their first frame. Rechecking
         // a proof gives that frame another input lineage, whose class IDs cannot
         // be paired with the retained payload. Its prepared index can still
         // select a spelling; the current graph must establish that equality.
@@ -1966,7 +1966,7 @@ impl ResourceContext {
 
     /// Concrete interval coverage supports decisive hits and misses. Exact
     /// whole-cell payloads supply eligible known-equal occurrences; a missing
-    /// footprint is unknown when containment, arithmetic or snapshot reasoning
+    /// footprint is unknown when containment, arithmetic or state reasoning
     /// could apply.
     /// Tests of the concrete fragment keep unknown distinct from a miss.
     #[cfg(test)]
@@ -2281,7 +2281,7 @@ impl ResourceContext {
                 .cloned()
                 .unwrap_or_default();
             // A graph answer is equality or unknown, not disequality. Scalar
-            // arithmetic and snapshot transport can justify an access outside
+            // arithmetic and state transport can justify an access outside
             // this address closure, so an unbound class is unknown within
             // this fragment. A bound whole-cell class
             // supplies checked address evidence and needs no spelling search.

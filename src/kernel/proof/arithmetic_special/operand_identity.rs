@@ -72,7 +72,7 @@ fn payload(root: View<'_>) -> Option<usize> {
 
 // A read is an opaque scalar value, just as its compatibility name was.
 // Ignore the observation's format here; the enclosing comparison checks it,
-// while the descriptor retains the load kind, snapshot and address.
+// while the descriptor retains the load kind, state and address.
 fn read_identity(view: View<'_>) -> Option<crate::kernel::KernelTerm> {
     match view {
         View::Shared(term) if view.read().is_some() => {
@@ -156,7 +156,7 @@ mod tests {
     use crate::kernel::{KernelTermExport, KernelTermImport, SharedMachineIntegerTerm, Variable};
 
     #[test]
-    fn shared_certificate_read_identity_keeps_snapshot_address_and_kind() {
+    fn shared_certificate_read_identity_keeps_state_address_and_kind() {
         use crate::kernel::{LoadKind, Memory, Pointer, ProgramValue, VerificationSession};
         let _session = VerificationSession::enter();
         let address = Pointer::symbolic(Variable(997109));
@@ -183,7 +183,7 @@ mod tests {
         let other_kind = wrong(memory.clone(), address.clone(), LoadKind::Int16);
         let raw =
             MachineTerm::MemoryLoad(memory.clone(), Box::new(address.clone()), LoadKind::UInt16);
-        let other_snapshot = wrong(
+        let other_memory_state = wrong(
             crate::kernel::intern_memory(memory.memory().clone().store(
                 address.clone(),
                 ProgramValue::UInt16(MachineTerm::narrow_constant(MachineIntegerType::UInt16, 7)),
@@ -195,7 +195,7 @@ mod tests {
         assert!(equal(View::Shared(&read), View::Legacy(&named)));
         assert!(equal(View::Shared(&read), View::Legacy(&raw)));
         assert!(equal(View::Legacy(&raw), View::Shared(&read)));
-        for other in [&other_address, &other_kind, &other_snapshot] {
+        for other in [&other_address, &other_kind, &other_memory_state] {
             assert!(!equal(View::Shared(&read), View::Shared(other)));
         }
         crate::kernel::eval::clear_load_variable_registry();

@@ -22,12 +22,12 @@ pub(in crate::kernel) struct InputData {
     /// Conservative source-dependency selectors for parameter-store shortcuts.
     /// These record syntax, not equality classes or permission authority.
     pub(in crate::kernel) scalar_dependencies: crate::persistent::PersistentSet<Variable>,
-    /// Whether an admitted scalar input has a deferred (snapshot) dependency.
+    /// Whether an admitted scalar input has a deferred (state) dependency.
     pub(in crate::kernel) scalar_deferred_inputs: bool,
     /// Canonical edge receipts retain admission-time spellings.
     pub(in crate::kernel) uint64_input_edges:
         crate::persistent::PersistentMap<ConditionTerm, (super::MachineAtom, super::MachineAtom)>,
-    /// Full-width load premises by exact address and interpretation. Snapshot
+    /// Full-width load premises by exact address and interpretation. MemoryState
     /// transport checks only this bucket; it never scans ambient conditions.
     pub(in crate::kernel) wide_load_sources: crate::persistent::PersistentMap<
         (Pointer, LoadKind),
@@ -82,7 +82,7 @@ pub(in crate::kernel) struct InputData {
         crate::persistent::PersistentMap<ConditionTerm, bool>,
     /// Exact defining equations for pointer-typed reads issued on this path,
     /// indexed by their load variable. Producer metadata certifies the C
-    /// value's type; the equation supplies its snapshot and address. Both
+    /// value's type; the equation supplies its state and address. Both
     /// are required before a graph query may use the read as a bridge.
     pub(in crate::kernel) typed_pointer_read_definitions: crate::persistent::PersistentMap<
         Variable,

@@ -28,7 +28,7 @@ surface-independent persistent containers already live in
 `src/kernel/proof/execution.rs`. That module now owns the complete
 surface-independent `ExecutionProofCore`, not only its frontier. The persistent
 fact store's structural keys live in `src/kernel/proof/fact_keys.rs`. The fact store's semantic matching,
-transport, conflict, and snapshot-equivalence rules live beside those keys in
+transport, conflict, and state-equivalence rules live beside those keys in
 `src/kernel/proof/fact_reasoning.rs`; Surface Click fact selection, diagnostic
 rendering, and budgeted smart premise search remain in the language layer.
 The persistent `ProofFacts` store and all of its semantic indexes live in
@@ -216,7 +216,7 @@ flags, structured-branch flags, and unfolded kernel predicates.
 
 Kernel `ProofExecutionState` pairs that core with an opaque language
 `ExecutionProofPresentation` containing only Surface Click construction data:
-recorded snapshots and their selectors, source spellings,
+recorded states and their selectors, source spellings,
 case assumptions, frontier loop clauses, planned statement transitions,
 branch and outcome provenance, deferred post-execution tactics, and the
 `SurfaceRecord` used for certificate extraction. Its `ExpansionCursor` records
@@ -231,9 +231,9 @@ and a preservation arm's certificate come from the `Proof` itself
 builder is only a planning call's construction sink, owned by the planning
 `Proof` method and handed to the executor with the construction environments
 as one `Construction` gate. It lives only as the execution
-snapshot of a `Proof` goal: the checked drivers advance a `Proof`, and every
+state of a `Proof` goal: the checked drivers advance a `Proof`, and every
 source or generated proof tree is checked that way. The earlier interpreter
-that advanced this context as a parallel engine is gone; the snapshot owns the
+that advanced this context as a parallel engine is gone; the state owns the
 C store and the goal owns the facts.
 
 `ExecutionProofCore` also retains one evidence trace per candidate path:
@@ -261,7 +261,7 @@ checked contract exit rule.
 
 Normalizing a call's facts to the source-statement exit retains each original
 execution fact alongside its transported copy. The statement theorem can name
-the original snapshot as a premise even for an ordinary, uncertified call
+the original state as a premise even for an ordinary, uncertified call
 bound. Certification still controls which facts persist as checked effects;
 transport does not replace the evidence the statement was checked under.
 
@@ -275,9 +275,9 @@ without re-certifying every sibling for each fold. Indexing and extending one
 path shares the unchanged traces and history.
 
 An instance exchange also retains its checked observation at the published
-return snapshot, where automatic locals have ended. Its input must be that
+return state, where automatic locals have ended. Its input must be that
 path's publication or the preceding observed exchange's output. Certification
-checks the selected resource body at both snapshots and imports only the
+checks the selected resource body at both states and imports only the
 semantic facts those exchanges produce, including exact read validity facts.
 Before a named output exchange, ordinary composite refolds retain the same
 checked return presentation, including wrappers containing only a static owned
@@ -286,7 +286,7 @@ published before the refold. This uses the existing selected-resource exchange;
 it does not rescan unrelated return paths or resource entries. The gate fixture
 `static_return_refold_before_named_resource.md` covers the static case.
 Post-return unfolds do not materialize additional cached cells: no C statement
-follows the return, and naming those loads would change the snapshot used by
+follows the return, and naming those loads would change the state used by
 claim completion. Unfolds during execution still name their exposed cells.
 
 When a proof matches an already constructed model, an algebraic payload that
@@ -295,7 +295,7 @@ The kernel still allocates fresh constructor witnesses and checks the case;
 constructor injectivity justifies the retained payload spelling. The checked
 case also publishes its equation in that spelling. This keeps unfolded scalar
 facts attached to the same model value across a fold and another match, without
-changing memory snapshots or transferring ownership. Selection reads only the
+changing memory states or transferring ownership. Selection reads only the
 constructor's requested field, with no search through unrelated premises. Ordinary
 resource fold/unfold arguments use these same proof-local bindings, including
 when a match binding shadows a C parameter. The dispatcher substitutes only
@@ -304,7 +304,7 @@ the current frontier before selecting execution or outcome checking. Thus after
 `p = q`, both `fold(tag_at(p))` and `unfold(tag_at(p))` name the resource
 at `q`; ownership at the entry value of `p` does not suffice. Capture uses indexed
 lookups for the written names, without scanning unrelated locals. Storage
-operands such as `&x` retain the C place, and explicit snapshot selectors remain
+operands such as `&x` retain the C place, and explicit program point selectors remain
 intact during current-value substitution. Failing population-body folds render
 the written resource operand, preserving C names even when checking captured
 values. The resource definition, read obligations, and ownership checks remain unchanged. Named-instance
@@ -332,7 +332,7 @@ owned interface from each concrete arm, intersect the residual frames, and
 restore the exported interface under the successor facts. The surface supplies
 the abstract memory and locals and records the state the operation returns;
 it does not construct a second resource exchange for the kernel to compare.
-Execution state, retained evidence, and recorded snapshots use that same
+Execution state, retained evidence, and recorded states use that same
 constructed successor. Clause lowering reads the common frame and projected
 interface models through an unpublished contract view. An arbitrary resource
 in a proposed state cannot add ownership to the result.
@@ -370,7 +370,7 @@ quantified ensures whose binders belong to the original obligation.
 
 Post-return `have` completions used by a later named resource fold remain
 on that returned path's checked trace. The kernel binds them to its published
-program snapshot, checks their root assumptions against the retained path,
+program state, checks their root assumptions against the retained path,
 and imports only the completed conclusions. It imports the path's execution
 facts and resource observations once, then checks persistent fact deltas for
 successive proofs. Resource folds recompute their semantic facts; they never
@@ -589,7 +589,7 @@ when the proof unfolded that predicate. Every proposition a proof states,
 a `have`, a `rewrite` equality, a `frame using` premise, a resource witness,
 goes the same way: elaborated into the kernel's spec form exactly as a
 contract clause is (`elaborate_fixed_state_proposition`, with the proof's
-recorded snapshots, `old(...)` as the function entry, `result`, and the
+recorded states, `old(...)` as the function entry, `result`, and the
 proof's current locals as fixed values) and lowered by the kernel
 (`program_lower_spec_proposition_at_state`), under one reasoning policy
 (`proof_lowering_assumptions`): a proposition that applies a pure function
@@ -695,10 +695,10 @@ guard excludes. Nothing under an existential binder is reachable before a
 `witness` names its value, so the head chain stops at the binder and the
 proof reaches a guard conjunct with `both`.
 
-`RecordedSnapshots` is a persistent map from `SnapshotSelector` to `ExecutionState`.
+`RecordedStates` is a persistent map from `ProgramPointSelector` to `ExecutionState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A
 recorded `ExecutionState` is logically complete, but its memory, facts, and resources
-are immutable shared roots: recording or branching a snapshot copies only
+are immutable shared roots: recording or branching a state copies only
 small roots and changed map paths rather than materializing the whole state.
 
 Premise reconstruction seeks statement entries in that persistent tree:
@@ -706,12 +706,12 @@ entries at or before the selected anchor, nearest first, followed by later
 entries in forward order. It does not enumerate and sort the complete map
 before trying a nearby candidate. Tree traversal and synthesis check the
 active work budget and deadline; an exhausted search stops before trying
-further snapshots or presentation fallbacks. Every accepted spelling still
-has to lower to the exact selected kernel premise. Cross-snapshot equality
+further states or presentation fallbacks. Every accepted spelling still
+has to lower to the exact selected kernel premise. Cross-state equality
 reconstruction uses the visited entries and checks cancellation per operand.
 
 Lowering and fixed-state proofs read execution data through `ExecutionView`, a
-borrowed view of the frontier, recorded snapshots, surface
+borrowed view of the frontier, recorded states, surface
 spellings, execution facts, and the `old(...)` reference state. It is built from
 the presentation and its kernel core (`ExecutionProofState::view`, or
 `ExecutionView::new` for a

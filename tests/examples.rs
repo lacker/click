@@ -551,10 +551,10 @@ fn bounded_audit_batches_only_claims_that_fit_the_remaining_cap() {
 }
 
 #[cfg(not(feature = "fast-gate"))]
-/// Every snapshot a trace names has a recorded origin, including the base
+/// Every state a trace names has a recorded origin, including the base
 /// beneath a global struct array's seeded symbolic storage.
 #[test]
-fn registry_trace_labels_record_every_snapshot_origin() {
+fn registry_trace_labels_record_every_state_origin() {
     let output = Command::new(env!("CARGO_BIN_EXE_click"))
         .args(["verify", "--trace-proof", "registry_run"])
         .arg(
@@ -566,10 +566,7 @@ fn registry_trace_labels_record_every_snapshot_origin() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stdout}{stderr}");
-    assert!(
-        stdout.contains("symbolic storage from snapshot#"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("symbolic storage from state#"), "{stdout}");
     assert!(!stdout.contains("INTERNAL ERROR"), "{stdout}");
     assert!(stdout.contains("declare block access class("), "{stdout}");
 }
@@ -748,7 +745,7 @@ fn rbtree_sized_mirrored_context_double_rotation_retained_session_expansion_rech
     );
 }
 
-/// A metadata alias's snapshot hash must not change which read history a
+/// A metadata alias's state hash must not change which read history a
 /// cold check visits after earlier verification and project summarization.
 #[test]
 #[ignore = "nightly: checks sized uncle rotation cold, after summary, expanded, and retained"]

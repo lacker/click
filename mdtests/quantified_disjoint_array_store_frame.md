@@ -1,6 +1,6 @@
 # A viewed array's cells retain their values across a disjoint store
 
-The index is universally quantified, so load naming must keep both snapshots
+The index is universally quantified, so load naming must keep both states
 on the store's recorded history rather than rely on one concrete cell.
 
 ```c filename=quantified_disjoint_array_store_frame.c

@@ -1,0 +1,10 @@
+{
+  "units": {
+    "states": {
+      "language": "rust",
+      "sources": {
+        "states.rs": {}
+      }
+    }
+  }
+}

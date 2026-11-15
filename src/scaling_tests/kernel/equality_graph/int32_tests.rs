@@ -328,7 +328,7 @@ fn int32_context_insertion_and_forks_scale_with_indexed_work() {
 }
 
 #[test]
-fn scalar_support_tracking_does_not_compare_unrelated_snapshot_contents_across_arenas() {
+fn scalar_support_tracking_does_not_compare_unrelated_state_contents_across_arenas() {
     fn sample(size: usize) -> (PureFactContext, usize) {
         std::thread::spawn(move || {
             let _session = VerificationSession::enter();
@@ -356,7 +356,7 @@ fn scalar_support_tracking_does_not_compare_unrelated_snapshot_contents_across_a
     for size in [16, 64, 256, 1024] {
         // Retain the first context while admitting the same raw load shape in
         // another arena. Global raw-term interning used to compare the two
-        // complete, independently allocated snapshots during the second insert.
+        // complete, independently allocated states during the second insert.
         let (held, _) = sample(size);
         let (_, work) = sample(size);
         assert!(work < 100, "size={size}, second-arena work={work}");
@@ -566,10 +566,10 @@ fn complete_pointer_scalar_evidence_ignores_unrelated_inputs() {
 }
 
 /// Unknown-class reads must not be paired with settled reads at other
-/// snapshots. With N reads in each group, one refused query used to allocate
+/// states. With N reads in each group, one refused query used to allocate
 /// N squared pairs and cost 95*N*N + 1 units (97,281 at N=32).
 #[test]
-fn constant_queries_ignore_other_snapshot_candidates() {
+fn constant_queries_ignore_other_state_candidates() {
     for same_address in [true, false] {
         let mut samples = Vec::new();
         for size in [4u64, 8, 16, 32] {
@@ -583,7 +583,7 @@ fn constant_queries_ignore_other_snapshot_candidates() {
             let mut memory =
                 Memory::new().with_block("constant-bridge-scale", 4 * (size as u32 + 1));
             let mut unknown_reads = Vec::new();
-            // Every snapshot is separated by a call that may write the cell.
+            // Every state is separated by a call that may write the cell.
             // The postconditions can consistently equate the first N reads to
             // an unknown value and the later reads to different constants.
             for index in 0..2 * size {
@@ -620,7 +620,7 @@ fn constant_queries_ignore_other_snapshot_candidates() {
             let (answer, miss_work) = crate::instrumentation::measure_deterministic_work(|| {
                 context.known_signed_constant_after_normalization(&query)
             });
-            assert_eq!(answer, None, "havocs separate the snapshots");
+            assert_eq!(answer, None, "havocs separate the states");
             // Distinct queries, not repeated hits in one query's memo.
             let ((), repeated_work) = crate::instrumentation::measure_deterministic_work(|| {
                 for load in &unknown_reads {

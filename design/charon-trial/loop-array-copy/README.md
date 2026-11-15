@@ -9,7 +9,7 @@ An empty-input contract exercises the same unchanged source without an iteration
 
 Native array `StorageLive` events allocate compact checked automatic storage at
 their actual execution point. Plain record storage starts also recreate backing,
-so their array fields remain readable by snapshot copies. Array locals without a
+so their array fields remain readable by state copies. Array locals without a
 storage-start event retain entry backing. Re-entering a declaration retires its
 old object, checks live loans, and mints a distinct object identity. This does not
 relax array-copy read/write authority or record move/drop checks. Storage end

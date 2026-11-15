@@ -61,8 +61,8 @@ fn stored_load_alias_lookup_ignores_unrelated_cells() {
                 ProgramValue::Int32(MachineTerm::constant(0)),
             );
         }
-        // Snapshot construction/interning belongs to the producer. Measure
-        // only a lookup in the already established snapshot.
+        // Memory state construction/interning belongs to the producer. Measure
+        // only a lookup in the already established state.
         crate::kernel::intern_memory_ref(&memory);
         let (absent, work) = crate::instrumentation::measure_deterministic_work(|| {
             stored_value_at_equal_pointer(&memory, &target, &assumptions)

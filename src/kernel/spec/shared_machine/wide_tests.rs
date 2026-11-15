@@ -107,7 +107,7 @@ fn wide_casts_match_all_existing_integer_directions() {
 }
 
 #[test]
-fn wide_reads_keep_type_and_snapshot_in_casts_and_observations() {
+fn wide_reads_keep_type_and_state_in_casts_and_observations() {
     let _session = VerificationSession::enter();
     let address = Pointer::symbolic(Variable(995703));
     let before = crate::kernel::intern_memory(Memory::new());

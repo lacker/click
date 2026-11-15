@@ -4,7 +4,7 @@ The reads of `pointer_loads_equal_after_late_address_equality.md`, at a field
 eight bytes into each node. The numeric address of `a->next` is `address(a)`
 plus the field's displacement, so the chain of C address equalities between
 the node pointers relates the two field addresses, and the reads of one
-snapshot at them are equal.
+state at them are equal.
 
 ```c filename=late_pointer_field_load_equality.c
 struct node { int32 tag; struct node *next; };

@@ -1,4 +1,4 @@
-# A retained snapshot bound cannot satisfy a contradictory call requirement
+# A retained state bound cannot satisfy a contradictory call requirement
 
 The unchanged array element is nonnegative. Keeping the original call facts
 when transporting them must still reject a call requiring it to be negative.

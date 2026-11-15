@@ -149,14 +149,16 @@ fn charon_owned_array_construction_and_moves_have_bounded_work_at_large_extents(
 }
 
 #[test]
-fn charon_nonuniform_sparse_snapshots_have_bounded_work_at_large_extents() {
+fn charon_nonuniform_sparse_states_have_bounded_work_at_large_extents() {
     let mut samples = Vec::new();
     for length in [4u32, 1024, 1_000_000] {
         let _session = crate::kernel::VerificationSession::enter();
         let mut export = decode(
-            include_bytes!("../../../../../design/charon-trial/array-snapshots/.click/snapshots/snapshots.rs.ullbc"),
-            "snapshots.rs",
-            include_bytes!("../../../../../design/charon-trial/array-snapshots/snapshots.rs"),
+            include_bytes!(
+                "../../../../../design/charon-trial/array-states/.click/states/states.rs.ullbc"
+            ),
+            "states.rs",
+            include_bytes!("../../../../../design/charon-trial/array-states/states.rs"),
         )
         .unwrap();
         export.functions.retain(|f| f.name == "sparse");
@@ -209,7 +211,7 @@ fn charon_nonuniform_sparse_snapshots_have_bounded_work_at_large_extents() {
         let shape = nodes(functions[0].to_kernel_function().body());
         let prepared = super::super::super::import::prepared_for_test(export).unwrap();
         let claim =
-            "verifying \"snapshots.rs\"; fn sparse(a: u32, b: u32) -> u32 { ensures result == b; }";
+            "verifying \"states.rs\"; fn sparse(a: u32, b: u32) -> u32 { ensures result == b; }";
         let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
             ProgramVerificationSession::new_program_prepared(claim, &prepared)
         });

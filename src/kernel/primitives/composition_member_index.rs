@@ -12,14 +12,14 @@
 //! `OwnedMemberKey` of owned members of other resources, the bucket a
 //! direct match reads (`direct_match_candidate_positions`).
 //!
-//! **Incremental admission.** A snapshot is listed only under the owned
-//! members it holds beyond some earlier admitted snapshot, its predecessor:
+//! **Incremental admission.** A state is listed only under the owned
+//! members it holds beyond some earlier admitted state, its predecessor:
 //! the last one of its own storage origin, read from the storage history, or
 //! else the last admitted one or the root when its member index shares
 //! enough persistent structure with them that the difference is smaller
-//! than the snapshot. Successive snapshots of one resource context, a call's
+//! than the state. Successive states of one resource context, a call's
 //! partition beside the frame it was taken from, differ by a few facts, so
-//! admission costs what changed, not what the snapshot holds. A snapshot with
+//! admission costs what changed, not what the state holds. A state with
 //! no such predecessor is listed under all of its owned members. The one exception is the first composition
 //! admitted, commonly the function's whole entry frame: it is not listed at
 //! all but kept as the `root`, a candidate for every question, whose own
@@ -27,20 +27,20 @@
 //! as `ObjectEvidenceSources` holds its first source.
 //!
 //! **Completeness for pairs.** Let two members both be held by an admitted
-//! snapshot `S`. If `S` has no predecessor, it is listed under both members'
+//! state `S`. If `S` has no predecessor, it is listed under both members'
 //! keys or is the root, which every question reads. If its predecessor lacks
 //! one of the two, `S` is listed under that member's keys. Otherwise the
 //! predecessor, admitted earlier, holds both, and the argument repeats on it. A question about a pair
 //! that reads the candidates under both members' keys therefore reaches a
-//! snapshot holding both whenever any stated composition does. The answer it
-//! derives from that snapshot is the one `S` would give: owned members of a
+//! state holding both whenever any stated composition does. The answer it
+//! derives from that state is the one `S` would give: owned members of a
 //! valid composition are disjoint, so each object finds the same member.
 use super::{MemoryRange, OwnedMemberKey, Pointer, PointerBlock, ResourceContext};
 use crate::persistent::{PersistentMap, PersistentSet};
 
-/// How far in size a predecessor candidate may be from the snapshot it
+/// How far in size a predecessor candidate may be from the state it
 /// lists: each step of distance is two more candidates, each a difference
-/// walk of at most the snapshot's size.
+/// walk of at most the state's size.
 const NEAREST_SIZES: usize = 2;
 
 #[derive(Clone, Default)]
@@ -50,11 +50,11 @@ pub(in crate::kernel) struct CompositionMemberIndex {
     by_base: PersistentMap<Pointer, PersistentSet<u32>>,
     by_block: PersistentMap<PointerBlock, PersistentSet<u32>>,
     by_member: PersistentMap<OwnedMemberKey, PersistentSet<u32>>,
-    /// The last snapshot admitted from each storage origin. Holding it keeps
+    /// The last state admitted from each storage origin. Holding it keeps
     /// the origin alive, so its address is never reused as a key.
     checkpoints: PersistentMap<usize, ResourceContext>,
     /// The latest composition admitted with each [`listed_size`]:
-    /// predecessor candidates for a snapshot of another origin, since a
+    /// predecessor candidates for a state of another origin, since a
     /// difference walk visits at least the difference in size.
     latest_by_size: PersistentMap<usize, u32>,
     /// The first admitted composition, unlisted; see the module comment.
@@ -74,7 +74,7 @@ impl std::fmt::Debug for CompositionMemberIndex {
 
 impl CompositionMemberIndex {
     /// Lists `resources`, a composition just stated, under the owned members
-    /// it added since the last snapshot of its origin admitted here.
+    /// it added since the last state of its origin admitted here.
     pub(in crate::kernel) fn admit(&mut self, resources: &ResourceContext) {
         let ordinal = self.next;
         self.next += 1;
@@ -247,7 +247,7 @@ fn listed_size(resources: &ResourceContext) -> usize {
 
 /// The memory and other owned facts `resources` holds beyond `prior`, when walking the
 /// difference of their member indexes costs less than listing `resources`:
-/// subtrees the two persistent indexes share are skipped, so a snapshot
+/// subtrees the two persistent indexes share are skipped, so a state
 /// derived from `prior` by a few changes pays for those changes, and an
 /// unrelated one stops after its own size.
 fn added_beyond(
@@ -266,7 +266,7 @@ fn added_beyond(
         if walked >= size {
             return None;
         }
-        if let super::SnapshotMapChange::Added(fact) = change {
+        if let super::HashedOrdMapChange::Added(fact) = change {
             added.push(fact.clone());
         }
     }

@@ -2256,11 +2256,11 @@ pub fn hidden_prerequisite_census_mismatch(
     Some(report.join("\n"))
 }
 
-/// How many derivation edges were dropped for pointing at a snapshot that is
+/// How many derivation edges were dropped for pointing at a state that is
 /// not younger than their result, by edge kind and by whether the result was
 /// its own base.
 ///
-/// A self edge (`"Store (self)"`) is the documented no-op: the snapshot did
+/// A self edge (`"Store (self)"`) is the documented no-op: the state did
 /// not change, so there is nothing to record. A *backwards* edge is not:
 /// the step ended on an older node, which keeps that node's history and
 /// leaves everything in between recorded nowhere. Counting the two apart is
@@ -2272,7 +2272,7 @@ static BACKWARDS_MEMORY_DERIVATION_CENSUS: std::sync::Mutex<BackwardsMemoryDeriv
 
 pub(crate) fn record_backwards_memory_derivation(kind: &'static str, onto_itself: bool) {
     // Only the genuinely backwards ones are counted. A self edge is the
-    // snapshot saying it did not change, which every store of an already
+    // state saying it did not change, which every store of an already
     // stored value produces and which loses no history.
     if onto_itself {
         return;

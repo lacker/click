@@ -2,7 +2,7 @@
 //!
 //! This deliberately has its own small printer.  `Debug` for a proposition is
 //! useful to developers, but it is an implementation dump: it can repeat a
-//! shared DAG, include whole memory snapshots, and grow without relation to
+//! shared DAG, include whole memory states, and grow without relation to
 //! the useful part of a diagnostic.
 
 use crate::kernel::MachineCastSpelling;
@@ -32,24 +32,24 @@ mod trace_facts;
 const MAX_BYTES: usize = 32 * 1024;
 const MAX_NODES: usize = 4096;
 const MAX_DEPTH: usize = 96;
-/// How many distinct snapshots one report labels before it stops comparing.
+/// How many distinct states one report labels before it stops comparing.
 /// Structural equality is bounded independently of identity retention.
 /// Proposition displays may name more states through constant-time retained
 /// root identities; low-level expression displays stop at this comparison cap.
-const MAX_SNAPSHOT_LABELS: usize = 32;
+const MAX_MEMORY_STATE_LABELS: usize = 32;
 
-/// Report-local labels for memory snapshots and symbolic values.
+/// Report-local labels for memory states and symbolic values.
 ///
-/// A snapshot used to print the addresses of the five `Arc` roots it is built
+/// A state used to print the addresses of the five `Arc` roots it is built
 /// from, so two structurally identical memories printed as different tuples
 /// and a reader could not tell "same memory" from "different memory" — the one
 /// thing those labels exist to show. A label is now a small ordinal, assigned
-/// in order of first appearance and shared by equal memories, so `snapshot#1`
-/// twice means one memory and `snapshot#1`/`snapshot#2` means two. Internal
+/// in order of first appearance and shared by equal memories, so `state#1`
+/// twice means one memory and `state#1`/`state#2` means two. Internal
 /// variable IDs likewise become source names when the checked state provides
 /// one, or distinct alphabetic labels when it does not.
 #[derive(Clone, Default)]
-pub(crate) struct SnapshotLabels {
+pub(crate) struct MemoryStateLabels {
     memories: Vec<Memory>,
     memory_identities: HashMap<(usize, usize, usize, usize, usize), usize>,
     trace_labels: bool,
@@ -59,9 +59,9 @@ pub(crate) struct SnapshotLabels {
     source_memories: Vec<(Memory, String, std::sync::Arc<NamingTables>)>,
     /// Persistent source-point index, consulted only while printing. Older
     /// loop heads must not lose their name when the recent display fills up.
-    recorded_snapshots: Option<crate::surface::RecordedSnapshots>,
+    recorded_states: Option<crate::surface::RecordedStates>,
     source_names: HashMap<Variable, String>,
-    /// Exact structural reads held by source locals or recorded snapshots.
+    /// Exact structural reads held by source locals or recorded states.
     source_read_names: HashMap<MachineTerm, String>,
     source_types: HashMap<Variable, crate::kernel::ProgramType>,
     anonymous_names: HashMap<Variable, String>,
@@ -72,12 +72,12 @@ pub(crate) struct SnapshotLabels {
     /// `<pointer A>`.
     unnamed_pointers: HashMap<Pointer, String>,
     /// Addresses no structural spelling names, spelled as the pointer local
-    /// that held them at a recorded snapshot: `at(region(2).exit, p)`.
-    snapshot_pointers: HashMap<Pointer, String>,
-    /// Typed values a recorded snapshot names that the current state no
+    /// that held them at a recorded state: `at(region(2).exit, p)`.
+    recorded_pointers: HashMap<Pointer, String>,
+    /// Typed values a recorded state names that the current state no
     /// longer holds: a call's result, `<region>.result`. A range over one is
     /// spelled from that name.
-    snapshot_values: Vec<(String, crate::kernel::ProgramValue)>,
+    recorded_values: Vec<(String, crate::kernel::ProgramValue)>,
     /// Source names of mathematical `Integer` variables. Kept apart from
     /// `source_names` because the kernel numbers `Integer` variables
     /// separately from machine ones.
@@ -111,7 +111,7 @@ fn value_binder(term: &MachineTerm) -> Option<Variable> {
     }
 }
 
-impl SnapshotLabels {
+impl MemoryStateLabels {
     pub(crate) fn source_type(
         &mut self,
         variable: Variable,
@@ -229,7 +229,7 @@ impl SnapshotLabels {
         let Some((memory, tables)) = AMBIENT_ENTRY.with(|entry| entry.borrow().clone()) else {
             return;
         };
-        if self.source_memories.len() < MAX_SNAPSHOT_LABELS
+        if self.source_memories.len() < MAX_MEMORY_STATE_LABELS
             && !self
                 .source_memories
                 .iter()
@@ -263,7 +263,7 @@ impl SnapshotLabels {
         {
             return format!("<state {}>", alphabetic_label(index));
         }
-        if self.unknown_states.len() >= MAX_SNAPSHOT_LABELS {
+        if self.unknown_states.len() >= MAX_MEMORY_STATE_LABELS {
             return "<another state>".into();
         }
         self.unknown_states.push(memory.clone());
@@ -274,10 +274,10 @@ impl SnapshotLabels {
     }
 
     /// An address no structural spelling names: the pointer local that held
-    /// it at a recorded snapshot when one did, otherwise a report-local
+    /// it at a recorded state when one did, otherwise a report-local
     /// `<pointer A>`.
     pub(crate) fn unnamed_pointer(&mut self, pointer: &Pointer) -> String {
-        if let Some(name) = self.snapshot_pointers.get(pointer) {
+        if let Some(name) = self.recorded_pointers.get(pointer) {
             return name.clone();
         }
         self.placeholder_pointer(pointer)
@@ -285,14 +285,14 @@ impl SnapshotLabels {
 
     /// The name [`Self::unnamed_pointer`] falls back to before its
     /// placeholder, when one was registered.
-    pub(crate) fn snapshot_pointer_name(&self, pointer: &Pointer) -> Option<&str> {
-        self.snapshot_pointers.get(pointer).map(String::as_str)
+    pub(crate) fn state_pointer_name(&self, pointer: &Pointer) -> Option<&str> {
+        self.recorded_pointers.get(pointer).map(String::as_str)
     }
 
     /// A name for a pointer into `pointer`'s block at offset zero, when a
-    /// local held one at the current state or at a recorded snapshot: the
+    /// local held one at the current state or at a recorded state: the
     /// base an address inside an allocation is spelled from. The current
-    /// state's locals are preferred, then the shortest snapshot name, so the
+    /// state's locals are preferred, then the shortest state name, so the
     /// choice does not depend on map order.
     pub(crate) fn block_base_name(&self, pointer: &Pointer) -> Option<&str> {
         fn shortest<'a>(names: &'a HashMap<Pointer, String>, pointer: &Pointer) -> Option<&'a str> {
@@ -305,7 +305,7 @@ impl SnapshotLabels {
                 .min_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)))
         }
         shortest(&self.pointer_sources, pointer)
-            .or_else(|| shortest(&self.snapshot_pointers, pointer))
+            .or_else(|| shortest(&self.recorded_pointers, pointer))
     }
 
     /// A report-local `<pointer A>`, whatever else names the address.
@@ -397,32 +397,30 @@ impl SnapshotLabels {
         }
         let merged = std::sync::Arc::new(merged);
         self.naming = Some(merged.clone());
-        if self.source_memories.len() < MAX_SNAPSHOT_LABELS {
+        if self.source_memories.len() < MAX_MEMORY_STATE_LABELS {
             self.source_memories
                 .push((state.memory().clone(), "current".into(), merged));
         }
     }
 
-    pub(in crate::surface) fn recorded_snapshots(
+    pub(in crate::surface) fn recorded_states(
         &mut self,
-        snapshots: &crate::surface::RecordedSnapshots,
+        retained_states: &crate::surface::RecordedStates,
     ) {
-        self.recorded_snapshots = Some(snapshots.clone());
+        self.recorded_states = Some(retained_states.clone());
     }
 
     fn recorded_memory_point(&self, memory: &Memory) -> Option<String> {
         let memory = crate::kernel::intern_memory_ref(memory);
         let (selector, _) = self
-            .recorded_snapshots
+            .recorded_states
             .as_ref()?
             .point_reading_memory(&memory)?;
-        Some(crate::surface::diagnostics::describe_snapshot_selector(
-            selector,
-        ))
+        Some(crate::surface::diagnostics::describe_program_point_selector(selector))
     }
 
     pub(crate) fn source_state(&mut self, state: &ExecutionState, point: String) {
-        if self.source_memories.len() < MAX_SNAPSHOT_LABELS {
+        if self.source_memories.len() < MAX_MEMORY_STATE_LABELS {
             let tables = crate::surface::diagnostics::local_naming_tables(state);
             self.source_memories
                 .push((state.memory().clone(), point, std::sync::Arc::new(tables)));
@@ -602,8 +600,8 @@ impl SnapshotLabels {
     /// Spells `pointer` as `name` where no structural spelling names it, when
     /// nothing named it that way yet.
     pub(crate) fn fallback_pointer_name(&mut self, pointer: &Pointer, name: String) {
-        if self.snapshot_pointers.len() < 128 {
-            self.snapshot_pointers
+        if self.recorded_pointers.len() < 128 {
+            self.recorded_pointers
                 .entry(pointer.clone())
                 .or_insert(name);
         }
@@ -612,14 +610,14 @@ impl SnapshotLabels {
     /// Records `value` under `name` for spellings that need a typed value,
     /// a memory range's base, when nothing current names it.
     pub(crate) fn fallback_value_name(&mut self, name: String, value: crate::kernel::ProgramValue) {
-        if self.snapshot_values.len() < 128 && !self.snapshot_values.iter().any(|(n, _)| n == &name)
+        if self.recorded_values.len() < 128 && !self.recorded_values.iter().any(|(n, _)| n == &name)
         {
-            self.snapshot_values.push((name, value));
+            self.recorded_values.push((name, value));
         }
     }
 
-    /// The naming tables extended by the typed snapshot values.
-    pub(crate) fn naming_with_snapshot_values(
+    /// The naming tables extended by the typed state values.
+    pub(crate) fn naming_with_state_values(
         &self,
     ) -> (
         Vec<crate::languages::interface::ImportedParameter>,
@@ -631,7 +629,7 @@ impl SnapshotLabels {
             .map(|tables| (tables.0.clone(), tables.1.clone()))
             .unwrap_or_default();
         let (more_parameters, more_arguments) = crate::surface::diagnostics::value_naming_tables(
-            &self.snapshot_values.iter().cloned().collect(),
+            &self.recorded_values.iter().cloned().collect(),
         );
         parameters.extend(more_parameters);
         arguments.extend(more_arguments);
@@ -705,7 +703,7 @@ impl SnapshotLabels {
         if let Some(index) = self
             .memories
             .iter()
-            .take(MAX_SNAPSHOT_LABELS)
+            .take(MAX_MEMORY_STATE_LABELS)
             .position(|labeled| labeled.same_storage_roots(memory) || labeled == memory)
         {
             return Some(index + 1);
@@ -713,7 +711,7 @@ impl SnapshotLabels {
         let limit = if self.trace_labels {
             MAX_NODES
         } else {
-            MAX_SNAPSHOT_LABELS
+            MAX_MEMORY_STATE_LABELS
         };
         if self.memories.len() >= limit {
             return None;
@@ -725,10 +723,10 @@ impl SnapshotLabels {
         Some(self.memories.len())
     }
 
-    pub(crate) fn snapshot_name(&mut self, memory: &Memory) -> String {
+    pub(crate) fn memory_state_name(&mut self, memory: &Memory) -> String {
         self.label(memory).map_or_else(
-            || "snapshot<untracked>".to_owned(),
-            |index| format!("snapshot#{index}"),
+            || "state<untracked>".to_owned(),
+            |index| format!("state#{index}"),
         )
     }
 }
@@ -739,7 +737,7 @@ impl SnapshotLabels {
 #[cfg(test)]
 pub(crate) fn render_simple_click_fact_labeled(
     proposition: &Proposition,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> Option<String> {
     surface::render(proposition, labels)
 }
@@ -761,7 +759,7 @@ fn alphabetic_label(mut index: usize) -> String {
 /// Use report-wide labels even when no source spelling names the address.
 pub(crate) fn render_read_resolution(
     resolution: &crate::kernel::ReadResolutionDiagnostic,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     let _typed = TypedNotationScope::enter();
     let query = render_proposition_labeled(
@@ -776,11 +774,11 @@ pub(crate) fn render_read_resolution(
         ),
         labels,
     );
-    let producer = labels.snapshot_name(resolution.producer.memory());
+    let producer = labels.memory_state_name(resolution.producer.memory());
     let stopped = resolution
         .stopped_at
         .as_ref()
-        .map(|memory| labels.snapshot_name(memory.memory()));
+        .map(|memory| labels.memory_state_name(memory.memory()));
     let mut result = format!(
         "read-resolution check:\n    checked read equality: {query}\n    producer source: {producer}\n    walk stop: {}{}",
         stopped.map(|at| format!("{at}: ")).unwrap_or_default(),
@@ -812,12 +810,12 @@ pub(crate) fn render_read_resolution(
 
 pub(crate) fn render_transport_cell_walk(
     walk: &crate::kernel::TransportCellWalkDiagnostic,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     let _typed = TypedNotationScope::enter();
     let pointer = labels.pointer_value_name(&walk.pointer);
-    let start = labels.snapshot_name(walk.start.memory());
-    let stop = labels.snapshot_name(walk.stopped_at.memory());
+    let start = labels.memory_state_name(walk.start.memory());
+    let stop = labels.memory_state_name(walk.stopped_at.memory());
     format!(
         "address: {pointer}; width: {} bytes; start: {start}; stop: {stop}: {}; crossed: {} steps; extended bridging: {}; explicit DAG check: {}",
         walk.bytes, walk.reason, walk.crossed, walk.extended, walk.explicit,
@@ -826,7 +824,7 @@ pub(crate) fn render_transport_cell_walk(
 
 /// One cell's address as a report names it: its source spelling when the
 /// report's names give one, and otherwise its labelled address.
-pub(crate) fn render_cell_address(pointer: &Pointer, labels: &mut SnapshotLabels) -> String {
+pub(crate) fn render_cell_address(pointer: &Pointer, labels: &mut MemoryStateLabels) -> String {
     let naming = labels.naming.clone();
     let (parameters, arguments) = naming
         .as_deref()
@@ -847,7 +845,7 @@ pub(crate) fn render_cell_address(pointer: &Pointer, labels: &mut SnapshotLabels
 
 pub(crate) fn render_memory_history_check(
     history: &super::MemoryHistoryDiagnostic,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> Option<String> {
     use crate::kernel::resource_tracker::{Change, OwnedResource};
     let explanation = &history.explanation;
@@ -866,9 +864,9 @@ pub(crate) fn render_memory_history_check(
     let written_bytes = history.written_bytes?;
     let written = render_cell_address(written, labels);
     let read = render_cell_address(read, labels);
-    let memory = at.snapshot().memory();
-    let snapshot = if typed_notation() {
-        labels.snapshot_name(memory)
+    let memory = at.shared_memory().memory();
+    let retained_state = if typed_notation() {
+        labels.memory_state_name(memory)
     } else {
         labels.state_phrase(memory)
     };
@@ -887,15 +885,15 @@ pub(crate) fn render_memory_history_check(
         })
         .unwrap_or_default();
     Some(format!(
-        "memory history without the failed check's facts stops at {snapshot}:\n    store: {} bytes at {written}\n    read range checked: {bytes} bytes at {read}{miss}\n    supplemental history explanation: equality and ownership facts from the failed check are not used by this walk, so a store the check itself crosses (by a quantified fact's guard, for one) can stop it; it does not say why the check failed",
+        "memory history without the failed check's facts stops at {retained_state}:\n    store: {} bytes at {written}\n    read range checked: {bytes} bytes at {read}{miss}\n    supplemental history explanation: equality and ownership facts from the failed check are not used by this walk, so a store the check itself crosses (by a quantified fact's guard, for one) can stop it; it does not say why the check failed",
         written_bytes,
     ))
 }
 
-/// Render one proposition without allowing its shape or attached snapshots to
+/// Render one proposition without allowing its shape or attached states to
 /// determine the size of the error message.
 pub(crate) fn render_proposition(proposition: &Proposition) -> String {
-    let mut labels = SnapshotLabels::ambient();
+    let mut labels = MemoryStateLabels::ambient();
     let mut text = render_proposition_labeled(proposition, &mut labels);
     text.push_str(&labels.trace_legend());
     text
@@ -937,7 +935,7 @@ impl CapturedNaming {
         Self(AMBIENT_ENTRY.with(|entry| entry.borrow().clone()))
     }
 
-    pub(crate) fn register_if_missing(&self, labels: &mut SnapshotLabels) {
+    pub(crate) fn register_if_missing(&self, labels: &mut MemoryStateLabels) {
         if labels.naming.is_some() {
             return;
         }
@@ -946,7 +944,7 @@ impl CapturedNaming {
         };
         labels.register_naming(ParameterBinding::new(&tables.0, &tables.1));
         labels.naming = Some(tables.clone());
-        if labels.source_memories.len() < MAX_SNAPSHOT_LABELS
+        if labels.source_memories.len() < MAX_MEMORY_STATE_LABELS
             && !labels
                 .source_memories
                 .iter()
@@ -998,7 +996,7 @@ thread_local! {
     static AMBIENT_ENTRY: std::cell::RefCell<Option<(Memory, std::sync::Arc<NamingTables>)>> =
         const { std::cell::RefCell::new(None) };
     /// Set while a `--trace-proof` trace is rendered: traces keep their
-    /// typed notation, which names each read's width and snapshot.
+    /// typed notation, which names each read's width and state.
     static TYPED_NOTATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -1056,13 +1054,13 @@ fn typed_notation() -> bool {
 /// A bounded view of one exact resource representation for a proof trace.
 #[cfg(test)]
 pub(crate) fn render_resource_fact(fact: &ResourceFact) -> String {
-    let mut labels = SnapshotLabels::default();
+    let mut labels = MemoryStateLabels::default();
     render_resource_fact_labeled(fact, &mut labels)
 }
 
 pub(crate) fn render_resource_fact_labeled(
     fact: &ResourceFact,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     labels.trace_labels = true;
     let mut renderer = Renderer {
@@ -1095,7 +1093,7 @@ pub(crate) fn render_resource_fact_labeled(
 /// Resource facts follow the same source/typed policy as propositions.
 pub(crate) fn render_resource_fact_spelled(
     fact: &ResourceFact,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     if typed_notation() {
         render_resource_fact_labeled(fact, labels)
@@ -1108,7 +1106,7 @@ pub(in crate::surface) fn render_resource_fact_diagnostic(
     fact: &ResourceFact,
     binding: ParameterBinding<'_>,
 ) -> String {
-    let mut labels = SnapshotLabels::naming(binding);
+    let mut labels = MemoryStateLabels::naming(binding);
     let mut text = render_resource_fact_spelled(fact, &mut labels);
     text.push_str(&labels.trace_legend());
     text
@@ -1118,7 +1116,7 @@ pub(in crate::surface) fn render_resource_facts_diagnostic(
     facts: &[ResourceFact],
     binding: ParameterBinding<'_>,
 ) -> String {
-    let mut labels = SnapshotLabels::naming(binding);
+    let mut labels = MemoryStateLabels::naming(binding);
     let mut text = crate::surface::diagnostics::describe_bounded_list(facts, |fact| {
         render_resource_fact_spelled(fact, &mut labels)
     });
@@ -1132,7 +1130,7 @@ pub(in crate::surface) fn render_resource_facts_diagnostic(
 /// the shared legend once.
 pub(in crate::surface) fn render_resource_facts_labeled(
     facts: &[ResourceFact],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     crate::surface::diagnostics::describe_bounded_list(facts, |fact| {
         render_resource_fact_spelled(fact, labels)
@@ -1147,7 +1145,7 @@ pub(in crate::surface) fn render_hidden_record_instance_labeled(
     arguments: &[crate::kernel::AlgebraicValue],
     schema: &[(String, crate::kernel::ResourceFieldType)],
     fields: &[crate::kernel::AlgebraicValue],
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> Option<String> {
     let record = surface::source_hidden_record(schema, fields, labels)?;
     let application = surface::source_resource(
@@ -1164,7 +1162,7 @@ pub(in crate::surface) fn render_resource_diagnostic(
     resource: &Resource,
     binding: ParameterBinding<'_>,
 ) -> String {
-    let mut labels = SnapshotLabels::naming(binding);
+    let mut labels = MemoryStateLabels::naming(binding);
     let mut text = if typed_notation() {
         let fact = render_resource_fact_labeled(&ResourceFact::View(resource.clone()), &mut labels);
         fact.strip_prefix("views ").unwrap_or(&fact).to_owned()
@@ -1179,11 +1177,11 @@ pub(in crate::surface) fn render_resource_diagnostic(
 /// Ordinary verifier errors spell every proposition in Click or source
 /// syntax (`surface::source`). A `--trace-proof` trace uses source spelling
 /// only when it preserves the checked identities; otherwise its typed
-/// renderer names each read's width, snapshot, and address with report-local
+/// renderer names each read's width, state, and address with report-local
 /// labels.
 pub(crate) fn render_proposition_labeled(
     proposition: &Proposition,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     if !typed_notation() {
         return surface::source(proposition, labels);
@@ -1197,7 +1195,7 @@ pub(crate) fn render_proposition_labeled(
 #[cfg(test)]
 pub(crate) fn render_internal_proposition_labeled(
     proposition: &Proposition,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     render_kernel_fact(proposition, labels, false)
 }
@@ -1205,7 +1203,7 @@ pub(crate) fn render_internal_proposition_labeled(
 #[cfg(test)]
 pub(crate) fn render_trace_fact_labeled(
     proposition: &Proposition,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     let _typed = crate::surface::proof_diagnostics::render::TypedNotationScope::enter();
     render_proposition_labeled(proposition, labels)
@@ -1213,7 +1211,7 @@ pub(crate) fn render_trace_fact_labeled(
 
 fn render_kernel_fact(
     proposition: &Proposition,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
     trace_facts: bool,
 ) -> String {
     let mut renderer = Renderer {
@@ -1245,13 +1243,13 @@ fn render_kernel_fact(
 /// elimination, so its `Debug` reaches the same datatype schemas a
 /// proposition's does.
 pub(crate) fn render_integer_term(term: &IntegerTerm) -> String {
-    render_integer_term_labeled(term, &mut SnapshotLabels::ambient())
+    render_integer_term_labeled(term, &mut MemoryStateLabels::ambient())
 }
 
 /// One exact-arithmetic term under the report's labels.
 pub(crate) fn render_integer_term_labeled(
     term: &IntegerTerm,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     surface::integer(term, labels)
 }
@@ -1259,7 +1257,7 @@ pub(crate) fn render_integer_term_labeled(
 /// One C value in source syntax, under the report's labels.
 pub(crate) fn render_program_value_labeled(
     value: &crate::kernel::ProgramValue,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     surface::source_value(value, labels)
 }
@@ -1273,7 +1271,7 @@ pub(crate) fn render_integer_comparison(
     operator: &str,
     right: &IntegerTerm,
 ) -> String {
-    let mut labels = SnapshotLabels::ambient();
+    let mut labels = MemoryStateLabels::ambient();
     let left = surface::integer(left, &mut labels);
     let right = surface::integer(right, &mut labels);
     format!("{left} {operator} {right}")
@@ -1282,12 +1280,12 @@ pub(crate) fn render_integer_comparison(
 /// Describe a refused Integer capture: which written subterm carries an
 /// evaluation condition, and which condition the proof context is missing.
 pub(crate) fn describe_spec_capture_refusal(refusal: &SpecCaptureRefusal) -> String {
-    describe_spec_capture_refusal_labeled(refusal, &mut SnapshotLabels::ambient())
+    describe_spec_capture_refusal_labeled(refusal, &mut MemoryStateLabels::ambient())
 }
 
 pub(crate) fn describe_spec_capture_refusal_labeled(
     refusal: &SpecCaptureRefusal,
-    labels: &mut SnapshotLabels,
+    labels: &mut MemoryStateLabels,
 ) -> String {
     match refusal {
         SpecCaptureRefusal::Message(message) => message.clone(),
@@ -1307,7 +1305,7 @@ struct Renderer<'a> {
     nodes: usize,
     depth: usize,
     truncated: bool,
-    labels: &'a mut SnapshotLabels,
+    labels: &'a mut MemoryStateLabels,
     bound_names: Vec<(Variable, String)>,
     trace_facts: bool,
 }
@@ -1715,8 +1713,8 @@ impl Renderer<'_> {
             Term::PointerOffset(o) => self.offset(o, 0),
             Term::ProgramValue(v) => self.cvalue(v),
             Term::ExpressionOutcome(o) => self.outcome(o),
-            Term::StatementOutcome(_) => self.push("statement-outcome(<state snapshot>)"),
-            Term::FunctionOutcome(_) => self.push("function-outcome(<state snapshot>)"),
+            Term::StatementOutcome(_) => self.push("statement-outcome(<state state>)"),
+            Term::FunctionOutcome(_) => self.push("function-outcome(<state state>)"),
             Term::Memory(m) => self.memory(m),
             Term::ExecutionState(s) => self.state(s),
             Term::Sequence(_) => self.push("sequence(<bounded opaque value>)"),
@@ -1839,7 +1837,7 @@ impl Renderer<'_> {
             }
             PureFunctionArgument::Integer(value) => self.integer_shared(value),
             PureFunctionArgument::Algebraic(value) => self.algebraic(value),
-            // The snapshot identity is printed, not elided. A goal that
+            // The state identity is printed, not elided. A goal that
             // compares the same pure function at two states -- a loop
             // invariant about a sequence, or a ranking measure's pre and post
             // -- differs only in this argument's memory, so eliding it
@@ -2152,14 +2150,14 @@ impl Renderer<'_> {
             self.depth -= 1;
             return;
         }
-        if let MachineTerm::MemoryLoad(snapshot, pointer, kind) = v {
-            // `memory` prints its own `snapshot=` prefix.
+        if let MachineTerm::MemoryLoad(retained_state, pointer, kind) = v {
+            // `memory` prints its own memory label.
             if self.trace_facts {
                 self.fmt(format_args!("read<{}>(", trace_load_kind(*kind)));
             } else {
                 self.push("load(");
             }
-            self.memory(snapshot.as_ref());
+            self.memory(retained_state.as_ref());
             self.push(", pointer=");
             self.pointer(pointer);
             self.push(")");
@@ -2168,13 +2166,14 @@ impl Renderer<'_> {
         }
         // A registered load variable is a name for one load, and the load it
         // names is the part a reader compares. Printing the bare id made two
-        // reads of one address at two snapshots look like two unrelated
+        // reads of one address at two states look like two unrelated
         // numbers, and printing only the address made them look identical;
         // neither says which memory each side reads, which is the whole
         // question wherever a load fact fails to carry across a step.
         if let MachineTerm::Variable(variable) = v
             && crate::kernel::is_load_variable(variable)
-            && let Some((snapshot, pointer)) = crate::kernel::registered_load_for_variable(variable)
+            && let Some((retained_state, pointer)) =
+                crate::kernel::registered_load_for_variable(variable)
         {
             let name = self.variable_name(*variable, "load");
             if self.trace_facts {
@@ -2185,7 +2184,7 @@ impl Renderer<'_> {
             } else {
                 self.fmt(format_args!("{name}=load("));
             }
-            self.memory(snapshot.memory());
+            self.memory(retained_state.memory());
             self.push(", pointer=");
             self.pointer(&pointer);
             self.push(")");
@@ -2557,8 +2556,8 @@ impl Renderer<'_> {
 
     fn memory(&mut self, memory: &Memory) {
         match self.labels.label(memory) {
-            Some(label) => self.fmt(format_args!("snapshot#{label}")),
-            None => self.push("snapshot<untracked>"),
+            Some(label) => self.fmt(format_args!("state#{label}")),
+            None => self.push("state<untracked>"),
         }
     }
     fn state(&mut self, state: &ExecutionState) {
@@ -2708,21 +2707,21 @@ mod tests {
 
     #[test]
     fn old_projected_reads_keep_the_recorded_point_without_out_of_scope_values() {
-        use crate::surface::{CodeRegionRef, ProgramPointKind, ProgramPointRef, RecordedSnapshots};
+        use crate::surface::{CodeRegionRef, ProgramPointKind, ProgramPointRef, RecordedStates};
         let _session = crate::kernel::VerificationSession::enter();
         let cell = Pointer::symbolic(Variable(989_100));
         let memory = Memory::new().with_block("unrelated", 4);
         let projected = crate::kernel::canonical_program_memory_for_pointer_load(&memory, &cell);
         let head = ExecutionState::new().with_memory(memory.clone());
-        let mut snapshots = RecordedSnapshots::new();
-        snapshots.insert(
+        let mut retained_states = RecordedStates::new();
+        retained_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Loop(0),
                 kind: ProgramPointKind::Entry,
             },
             head,
         );
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         // Fill the recent display with later, distinct memories. The exact
         // read-identity index must still name the old iteration entry.
         for index in 0..40 {
@@ -2734,7 +2733,7 @@ mod tests {
                     crate::kernel::ProgramValue::UInt64(MachineTerm::uint64_constant(index as u64)),
                 ),
             );
-            snapshots.insert(
+            retained_states.insert(
                 ProgramPointRef {
                     region: CodeRegionRef::Region(index),
                     kind: ProgramPointKind::Exit,
@@ -2743,7 +2742,7 @@ mod tests {
             );
             labels.source_state(&state, format!("region({index}).exit"));
         }
-        labels.recorded_snapshots(&snapshots);
+        labels.recorded_states(&retained_states);
         let description = labels.describe_state(&projected);
         assert!(description.contains("loop(0).entry"), "{description}");
         assert!(
@@ -2762,7 +2761,7 @@ mod tests {
     }
 
     fn render_proposition(proposition: &Proposition) -> String {
-        render_proposition_labeled(proposition, &mut SnapshotLabels::ambient())
+        render_proposition_labeled(proposition, &mut MemoryStateLabels::ambient())
     }
 
     #[test]
@@ -2802,13 +2801,13 @@ mod tests {
             },
             true,
         );
-        let ordinary = super::render_proposition_labeled(&fact, &mut SnapshotLabels::default());
+        let ordinary = super::render_proposition_labeled(&fact, &mut MemoryStateLabels::default());
         assert!(
             ordinary.contains("<unnamed A>") && ordinary.contains("<unnamed B>"),
             "{ordinary}"
         );
         let _typed = super::TypedNotationScope::enter();
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         let rendered = super::render_proposition_labeled(&fact, &mut labels);
         assert!(rendered.contains("value A=c.value"), "{rendered}");
         assert!(rendered.contains("value B=c.value"), "{rendered}");
@@ -2847,7 +2846,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_store_descriptions_keep_generated_rust_locals_private() {
+    fn state_store_descriptions_keep_generated_rust_locals_private() {
         for (local, expected) in [
             ("__rust_mir_14", "the memory after a store"),
             ("total", "the memory after the store to `total`"),
@@ -2860,13 +2859,16 @@ mod tests {
                 pointer,
                 crate::kernel::ProgramValue::Int32(MachineTerm::constant(7)),
             );
-            assert_eq!(SnapshotLabels::default().describe_state(&memory), expected);
+            assert_eq!(
+                MemoryStateLabels::default().describe_state(&memory),
+                expected
+            );
         }
     }
 
     #[test]
     fn source_names_and_report_local_names_replace_variable_ids() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(7), "cur".into());
         let proposition = Proposition::ConditionIs(
             ConditionTerm::Compare {
@@ -2913,7 +2915,7 @@ mod tests {
 
     #[test]
     fn click_fact_spelling_requires_named_non_load_operands() {
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(7), "r".into());
         let equality = |variable| {
             Proposition::ConditionIs(
@@ -2992,11 +2994,11 @@ mod tests {
     }
 
     /// A label says what a reader needs it to say: equal memory reads as one
-    /// snapshot whether or not it shares storage roots, and memory that differs
+    /// state whether or not it shares storage roots, and memory that differs
     /// reads as another. The five `Arc` addresses this used to print made two
-    /// separately built empty snapshots look like different memory.
+    /// separately built empty states look like different memory.
     #[test]
-    fn equal_snapshots_share_one_label_and_different_memory_does_not() {
+    fn equal_states_share_one_label_and_different_memory_does_not() {
         let first = Memory::default();
         let shared = first.clone();
         let rebuilt = Memory::default();
@@ -3004,24 +3006,24 @@ mod tests {
         assert_ne!(first.diagnostic_identity(), rebuilt.diagnostic_identity());
 
         let first_text = render_proposition(&loadable_at(first));
-        assert!(first_text.contains("snapshot#1"), "{first_text}");
+        assert!(first_text.contains("state#1"), "{first_text}");
         assert_eq!(first_text, render_proposition(&loadable_at(shared)));
         assert_eq!(first_text, render_proposition(&loadable_at(rebuilt)));
 
         // Within one report the labels are the order of first appearance, so
         // two different memories are visibly two.
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         let empty = render_proposition_labeled(&loadable_at(Memory::default()), &mut labels);
         let blocked = render_proposition_labeled(&loadable_at(different), &mut labels);
-        assert!(empty.contains("snapshot#1"), "{empty}");
-        assert!(blocked.contains("snapshot#2"), "{blocked}");
+        assert!(empty.contains("state#1"), "{empty}");
+        assert!(blocked.contains("state#2"), "{blocked}");
     }
 
     /// The comparison stops at its cap rather than growing with the report.
     #[test]
-    fn snapshot_labels_stop_comparing_past_their_cap() {
-        let mut labels = SnapshotLabels::default();
-        for size in 0..MAX_SNAPSHOT_LABELS as u32 {
+    fn state_labels_stop_comparing_past_their_cap() {
+        let mut labels = MemoryStateLabels::default();
+        for size in 0..MAX_MEMORY_STATE_LABELS as u32 {
             let memory = Memory::new().with_block(format!("block{size}"), 16);
             assert_eq!(labels.label(&memory), Some(size as usize + 1));
         }
@@ -3034,7 +3036,7 @@ mod tests {
         let beyond = Memory::new().with_block("beyond", 16);
         assert_eq!(labels.label(&beyond), None);
         let rendered = render_proposition_labeled(&loadable_at(beyond), &mut labels);
-        assert!(rendered.contains("snapshot<untracked>"), "{rendered}");
+        assert!(rendered.contains("state<untracked>"), "{rendered}");
     }
 
     #[test]
@@ -3151,7 +3153,7 @@ mod wide_range_reader_tests {
             parent: Box::new(Resource::Memory(wide.clone())),
             child: Box::new(Resource::Memory(wide)),
         };
-        let text = render_internal_proposition_labeled(&fact, &mut SnapshotLabels::default());
+        let text = render_internal_proposition_labeled(&fact, &mut MemoryStateLabels::default());
         assert!(text.contains("8589934592"), "{text}");
     }
 }
@@ -3217,7 +3219,7 @@ mod resource_detail_tests {
             let fact = ResourceFact::own(Resource::Iterated(std::sync::Arc::new(
                 iterated.with_hole(MachineTerm::constant(hole)),
             )));
-            let mut labels = SnapshotLabels::default();
+            let mut labels = MemoryStateLabels::default();
             let mut text = render_resource_fact_labeled(&fact, &mut labels);
             text.push_str(&labels.trace_legend());
             text

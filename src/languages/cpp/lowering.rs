@@ -1757,11 +1757,11 @@ impl LoweringContext<'_> {
         let has_nested = arguments
             .iter()
             .any(|argument| matches!(argument, CppCallArgument::Call { .. }));
-        // Check and snapshot field reads before a nested call can throw. Scalar
+        // Check and state field reads before a nested call can throw. Scalar
         // isolation keeps their values invariant in every argument order.
-        let mut snapshots = Vec::with_capacity(arguments.len());
+        let mut retained_states = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            let snapshot = if let CppCallArgument::Value { value } = argument {
+            let retained_state = if let CppCallArgument::Value { value } = argument {
                 if has_nested && super::schema::field_scalar_argument(value) {
                     let capture = self.fresh_call_capture()?;
                     let expression = self.lower_expression(value)?;
@@ -1782,13 +1782,13 @@ impl LoweringContext<'_> {
             } else {
                 None
             };
-            snapshots.push(snapshot);
+            retained_states.push(retained_state);
         }
         let mut lowered = Vec::with_capacity(arguments.len());
-        for (argument, snapshot) in arguments.iter().zip(snapshots) {
+        for (argument, retained_state) in arguments.iter().zip(retained_states) {
             crate::instrumentation::record_deterministic_work(1);
-            if let Some(snapshot) = snapshot {
-                lowered.push(snapshot);
+            if let Some(retained_state) = retained_state {
+                lowered.push(retained_state);
             } else if let CppCallArgument::Value {
                 value:
                     CppExpression::ClosureInstance {

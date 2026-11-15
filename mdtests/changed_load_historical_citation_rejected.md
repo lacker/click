@@ -2,7 +2,7 @@
 
 This is the direct-citation companion to
 `resource_match_quantified_fact_rejects_changed_load.md`. The entry fact is
-valid at its original snapshot, but `p[0]` in the proof after the store means
+valid at its original state, but `p[0]` in the proof after the store means
 the new C state. A presentation record for the older fact cannot substitute
 for the current proposition.
 

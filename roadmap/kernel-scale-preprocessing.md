@@ -252,8 +252,8 @@ must bind a complete immutable input/search environment or demonstrate an
 equivalent validation scheme. Do not introduce that optimization in the first
 slice without a concrete need and regressions.
 
-Compiler output, source snapshots, and digest calculation must describe one
-consistent input state. Use immutable/snapshotted inputs where possible;
+Compiler output, source states, and digest calculation must describe one
+consistent input state. Use immutable/stateted inputs where possible;
 otherwise detect concurrent input changes and reject/retry within bounds.
 Do not hash one state and preprocess a different one. Avoid host path rewriting
 that changes `__FILE__` values or other executable tokens. Source-root mapping
@@ -803,7 +803,7 @@ in [the import reference](../docs/reference/cli/import.md) and
 Compiler artifacts are freshly reproduced from controlled GCC arguments and
 environment. Validation binds compiler/cc1/resources, the ABI probe, exact used
 dependencies (including system headers), ordered source options, source bytes,
-and output bytes. Before/after input snapshots catch concurrent changes;
+and output bytes. Before/after input states catch concurrent changes;
 ambiguous roots and unsupported arguments fail explicitly. A proof result
 carries a fixed-size identity of the complete selected prepared project.
 Imported incremental verification is rejected and verification markers are
@@ -819,7 +819,7 @@ identity, lowering diagnostics, unsupported directives and retained assembly,
 and checked expansion/reverification. It requires installed GCC and creates
 fresh temporary artifacts; it does not download or silently skip prerequisites.
 Deterministic multi-size checks cover actual line-marker decoding/lookup,
-root snapshots, translation-unit caching, and functions sharing one import.
+root states, translation-unit caching, and functions sharing one import.
 
 The complete Linux input and its original acceptance criteria remain open.
 The discovery evidence still does not constitute a passing Linux fixture.

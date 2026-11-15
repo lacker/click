@@ -586,7 +586,7 @@ fn prove_claims_by_checked_tactics(
         parsed_function.parameters(),
         &pure_facts,
         &entry_fact_origins,
-        crate::kernel::MemorySnapshotIdentity::of(state.memory()),
+        crate::kernel::MemoryStateIdentity::of(state.memory()),
         Some(spec_definitions.predicates),
     );
     let function = annotated_function_with_assumptions(
@@ -716,11 +716,11 @@ fn prove_claims_by_checked_tactics(
         nested_tactic_capture,
     };
     let frontier = ExecutionFrontier::default();
-    let mut recorded_snapshots =
-        RecordedSnapshots::new().with_source_layout(constants.source_layout.clone());
+    let mut recorded_states =
+        RecordedStates::new().with_source_layout(constants.source_layout.clone());
     record_current_statement_entry(
         &frontier,
-        &mut recorded_snapshots,
+        &mut recorded_states,
         &state,
         function_block,
         &function,
@@ -732,7 +732,7 @@ fn prove_claims_by_checked_tactics(
     let mut initial = ExecutionProofState::at_entry(
         state,
         frontier,
-        recorded_snapshots,
+        recorded_states,
         surface_propositions,
         PersistentSequence::default(),
     );
@@ -1655,7 +1655,7 @@ fn close_claim_directly_from_outcome<'a>(
     // the bare place, a read of the entry memory is `old(...)`, and any
     // other memory a value reads is a `<state A>` defined after the context.
     let mut labels =
-        crate::surface::proof_diagnostics::render::SnapshotLabels::naming(parameter_binding);
+        crate::surface::proof_diagnostics::render::MemoryStateLabels::naming(parameter_binding);
     if let FunctionOutcome::Return { state, .. } | FunctionOutcome::Throw { state, .. } = outcome {
         labels.register_current_state(state);
     }
@@ -1666,15 +1666,15 @@ fn close_claim_directly_from_outcome<'a>(
     // at a statement boundary this path recorded, which an `ensures` cites
     // as `at(region(N).entry, x)`.
     if let Some(view) = proof.outcome_fixed_state_view() {
-        super::proof_object::register_recorded_snapshot_names(
+        super::proof_object::register_recorded_state_names(
             &mut labels,
-            view.fixed_state.recorded_snapshots,
+            view.fixed_state.recorded_states,
         );
     }
     // A comparison reports what each side evaluates to at the outcome, by
     // the same kernel evaluation every proof-side expression gets. Two
     // distinct load variables over one address render identically, so that
-    // case names the surface spellings and which snapshot each reads.
+    // case names the surface spellings and which state each reads.
     let evaluated_sides = match (surface_goal, outcome) {
         (
             ClickProposition::Comparison { left, right, .. },
@@ -1692,7 +1692,7 @@ fn close_claim_directly_from_outcome<'a>(
                         pre_state,
                         state,
                         Some(&value.native()),
-                        &RecordedSnapshots::new(),
+                        &RecordedStates::new(),
                     ),
                     spec_definitions,
                     &BTreeSet::new(),
@@ -1720,7 +1720,7 @@ fn close_claim_directly_from_outcome<'a>(
                         == describe_program_value(&kernel_right, parameter_binding);
                     // Two reads of one address of different kinds are two
                     // values whatever happened in between: say that, and not
-                    // which snapshot or store set them apart.
+                    // which state or store set them apart.
                     if let Some(mismatch) = crate::surface::diagnostics::describe_load_kind_mismatch(
                         &kernel_left,
                         &kernel_right,
@@ -1734,13 +1734,13 @@ fn close_claim_directly_from_outcome<'a>(
                     } else {
                         // Which state a side reads, as the reader would name it.
                         // Both branches below need it: one to say the two sides
-                        // read different snapshots, the other to say what a value
+                        // read different states, the other to say what a value
                         // may have changed *since*.
-                        let snapshot_role = |expression: &ContractExpression| {
+                        let state_role = |expression: &ContractExpression| {
                             if contains_old_expression(expression) {
                                 "function entry"
                             } else if contains_at_expression(expression) {
-                                "a recorded snapshot"
+                                "a recorded state"
                             } else {
                                 "the outcome state"
                             }
@@ -1748,9 +1748,9 @@ fn close_claim_directly_from_outcome<'a>(
                         if same_address && kernel_left != kernel_right {
                             let surface_left = describe_contract_expression(left);
                             let surface_right = describe_contract_expression(right);
-                            let left_role = snapshot_role(left);
-                            let right_role = snapshot_role(right);
-                            let snapshot_note = if left_role == right_role {
+                            let left_role = state_role(left);
+                            let right_role = state_role(right);
+                            let program_point_note = if left_role == right_role {
                                 format!(
                                     "`{surface_left}` and `{surface_right}` both read {left_role}"
                                 )
@@ -1772,7 +1772,7 @@ fn close_claim_directly_from_outcome<'a>(
                             .map(|mismatch| format!("; {mismatch}"))
                             .unwrap_or_default();
                             format!(
-                                "; the two sides read the same address in different memory snapshots ({snapshot_note}){tracked}"
+                                "; the two sides read the same address in different memory states ({program_point_note}){tracked}"
                             )
                         } else {
                             // A side still standing as a load did not survive the
@@ -1808,8 +1808,8 @@ fn close_claim_directly_from_outcome<'a>(
                                 describe_unseparated_write(&kernel_right, parameter_binding)
                             })
                             .or_else(|| {
-                                model_field(&kernel_left, snapshot_role(left))
-                                    .or_else(|| model_field(&kernel_right, snapshot_role(right)))
+                                model_field(&kernel_left, state_role(left))
+                                    .or_else(|| model_field(&kernel_right, state_role(right)))
                                     .map(|mismatch| format!("; {mismatch}"))
                             })
                             .unwrap_or_default();
@@ -2059,18 +2059,18 @@ fn apply_post_execution_arithmetic_using<'a>(
                 )
             }
             ArithmeticPlan::IntegerAffine(plan) => {
-                let snapshot = surface_snapshot_selector(surface_goal);
-                let integer_pairs = if let Some(selector) = snapshot {
+                let retained_state = surface_program_point_selector(surface_goal);
+                let integer_pairs = if let Some(selector) = retained_state {
                     pairs
                         .iter()
                         .map(|(kernel, surface)| {
-                            surface_at_snapshot(surface, &selector)
+                            surface_at_program_point(surface, &selector)
                                 .map(|anchored| (kernel.clone(), anchored))
                         })
                         .collect::<Result<Vec<_>, _>>()
                         .map_err(|error| {
                             focused.step_error(format!(
-                                "post-execution Integer premise snapshot could not be serialized: {error}"
+                                "post-execution Integer premise state could not be serialized: {error}"
                             ))
                         })?
                 } else {
@@ -2152,7 +2152,7 @@ fn fold_produced_resources<'a>(
             check_verification_deadline()?;
             continue;
         };
-        *outcome = folded.focused_outcome_snapshot()?;
+        *outcome = folded.focused_outcome_state()?;
         let added = folded.certificate_since(&before)?.to_proof_tactics();
         if capturing_this_tactic {
             path_deferred_capture_tactics.extend(added.iter().cloned());
@@ -2276,7 +2276,7 @@ fn close_post_execution_claims_with_solve<'a, 'e>(
         match required_outcome(outcome_proof)?.apply_outcome_contract_resources(pre_state, function)
         {
             Ok(transitioned) => {
-                *outcome = transitioned.focused_outcome_snapshot()?;
+                *outcome = transitioned.focused_outcome_state()?;
                 *resource_transition_applied = true;
                 *outcome_proof = Some(transitioned);
             }
@@ -3274,7 +3274,7 @@ pub(super) fn finish_ordered_proof<'a>(
     let claim_targets: BTreeMap<_, _> = function
         .contract_claims()
         .iter()
-        // A proof-local clause may mention execution snapshots, which cannot
+        // A proof-local clause may mention execution states, which cannot
         // occur in a reusable contract. Such a function has no modular
         // proposition contract to register: prove its source clauses as local
         // obligations. Never confuse failure to open a registered goal with
@@ -3710,7 +3710,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     }
                     if let Some(root) = outcome_proof.take() {
                         let root = root.with_contract_return_counts(&completed_execution)?;
-                        outcome = root.focused_outcome_snapshot()?;
+                        outcome = root.focused_outcome_state()?;
                         let contract_claims = claims.iter().map(|claim| {
                             let key = claim.key();
                             crate::instrumentation::record_deterministic_work(1);
@@ -3841,7 +3841,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             && let Ok(transitioned) = required_outcome(&outcome_proof)?
                                 .apply_outcome_contract_resources(pre_state, function)
                         {
-                            outcome = transitioned.focused_outcome_snapshot()?;
+                            outcome = transitioned.focused_outcome_state()?;
                             resource_transition_applied = true;
                             outcome_proof = Some(transitioned);
                         }
@@ -4089,7 +4089,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             .core
                                             .has_checked_return_resource_rewrite(path_index)
                                     });
-                                outcome = folded.focused_outcome_snapshot()?;
+                                outcome = folded.focused_outcome_state()?;
                                 let surface_tactics =
                                     folded.certificate_since(&before)?.to_proof_tactics();
                                 outcome_proof = Some(folded);
@@ -4189,7 +4189,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             )
                                         },
                                     )?;
-                                outcome = closed.focused_outcome_snapshot()?;
+                                outcome = closed.focused_outcome_state()?;
                                 outcome_proof = Some(closed);
                                 // The scope was recorded when its body ended;
                                 // its close's proof joins it as its `by`.
@@ -4301,7 +4301,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     && let Ok(transitioned) = required_outcome(&outcome_proof)?
                                         .apply_outcome_contract_resources(pre_state, function)
                                 {
-                                    outcome = transitioned.focused_outcome_snapshot()?;
+                                    outcome = transitioned.focused_outcome_state()?;
                                     return_claim_context = None;
                                     resource_transition_applied = true;
                                     outcome_proof = Some(transitioned);
@@ -4613,7 +4613,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         && let Ok(transitioned) = required_outcome(&outcome_proof)?
                                             .apply_outcome_contract_resources(pre_state, function)
                                     {
-                                        outcome = transitioned.focused_outcome_snapshot()?;
+                                        outcome = transitioned.focused_outcome_state()?;
                                         return_claim_context = None;
                                         resource_transition_applied = true;
                                         outcome_proof = Some(transitioned);
@@ -5127,7 +5127,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         | ProofTactic::UnfoldResource(_)
                                         | ProofTactic::ConstructResource(_)
                                 ) {
-                                    outcome = applied.focused_outcome_snapshot()?;
+                                    outcome = applied.focused_outcome_state()?;
                                 }
                                 if let ProofTactic::UnfoldPredicate(name) = tactic
                                     && !unfolded_predicates.contains(name)
@@ -5931,7 +5931,7 @@ fn finish_deferred_expansion(
     {
         // Reuse the execution prefix at its original branch points.
         // Repeating only its guards at function exit can reread a
-        // mutable local or a loop statement's overwritten snapshot.
+        // mutable local or a loop statement's overwritten state.
         // The selected closer therefore expands the checked prefix
         // too, putting each delta in the leaf where it was checked.
         capture = retained_surface.clone();

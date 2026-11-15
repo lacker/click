@@ -1,7 +1,7 @@
 //! Opaque atoms used by the checked mathematical-Integer affine fragment.
 //!
 //! Range folds are not expanded by affine normalization.  They are leaves
-//! whose identity is recomputed from the checked, snapshot-aware alpha key
+//! whose identity is recomputed from the checked, state-aware alpha key
 //! for the complete fold term.  The interner below only uses the key's
 //! fingerprint to select a bucket; equality within a bucket always compares
 //! the retained exact key.  This keeps a hash collision from merging two
@@ -209,9 +209,9 @@ impl IntegerFoldAtomInterner {
         if !self.clean_some() {
             return None;
         }
-        // The snapshot-aware key accounts for its complete canonical graph
+        // The state-aware key accounts for its complete canonical graph
         // before hashing. This includes nested machine payloads and pointer
-        // snapshots, so a deep key cannot hide behind a unit charge here.
+        // states, so a deep key cannot hide behind a unit charge here.
         let fingerprint = key.checked_fingerprint()?;
         if let Some(bucket) = self.buckets.get(&fingerprint) {
             for candidate in bucket {

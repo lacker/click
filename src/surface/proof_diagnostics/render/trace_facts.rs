@@ -138,7 +138,7 @@ mod tests {
     use crate::kernel::{AlgebraicType, LoadKind, MemoryRange, ProgramValue, ResourceContext};
 
     fn render(fact: &Proposition) -> String {
-        render_trace_fact_labeled(fact, &mut SnapshotLabels::default())
+        render_trace_fact_labeled(fact, &mut MemoryStateLabels::default())
     }
 
     #[test]
@@ -264,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn trace_reads_preserve_snapshot_and_load_kind_without_current_pointer_names() {
+    fn trace_reads_preserve_state_and_load_kind_without_current_pointer_names() {
         let address = Pointer::symbolic(Variable(986_702));
         let first = crate::kernel::intern_memory(Memory::new());
         let second = crate::kernel::intern_memory(Memory::new().with_block("trace_changed", 4));
@@ -276,15 +276,15 @@ mod tests {
             ))
         };
         let fact = Proposition::Equal(load(first, LoadKind::UInt8), load(second, LoadKind::Bits64));
-        let mut labels = SnapshotLabels::default();
+        let mut labels = MemoryStateLabels::default();
         labels.source_name(Variable(986_702), "mutable_local".into());
         let text = render_trace_fact_labeled(&fact, &mut labels);
         assert!(
-            text.contains("read<UInt8>(snapshot#1, pointer=value#1)"),
+            text.contains("read<UInt8>(state#1, pointer=value#1)"),
             "{text}"
         );
         assert!(
-            text.contains("read<Bits64>(snapshot#2, pointer=value#1)"),
+            text.contains("read<Bits64>(state#2, pointer=value#1)"),
             "{text}"
         );
         assert!(!text.contains("mutable_local"));
@@ -350,24 +350,24 @@ mod tests {
 }
 
 #[cfg(test)]
-mod extended_snapshot_tests {
+mod extended_state_tests {
     use super::*;
 
     #[test]
-    fn trace_labels_retain_late_snapshot_identities_without_more_structural_comparisons() {
-        let mut labels = SnapshotLabels::default();
+    fn trace_labels_retain_late_state_identities_without_more_structural_comparisons() {
+        let mut labels = MemoryStateLabels::default();
         let fact = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
         render_trace_fact_labeled(&fact, &mut labels);
         let memories: Vec<_> = (0..64)
             .map(|i| Memory::new().with_block(format!("late_{i}"), 8))
             .collect();
         for (i, memory) in memories.iter().enumerate() {
-            assert_eq!(labels.snapshot_name(memory), format!("snapshot#{}", i + 1));
+            assert_eq!(labels.memory_state_name(memory), format!("state#{}", i + 1));
         }
         for (i, memory) in memories.iter().enumerate().rev() {
             assert_eq!(
-                labels.snapshot_name(&memory.clone()),
-                format!("snapshot#{}", i + 1)
+                labels.memory_state_name(&memory.clone()),
+                format!("state#{}", i + 1)
             );
         }
         assert!(

@@ -629,14 +629,14 @@ mod tests {
         );
     }
     #[test]
-    fn symbolic_footprints_follow_endpoint_equalities_and_snapshot_origins() {
+    fn symbolic_footprints_follow_endpoint_equalities_and_state_origins() {
         let slot = Pointer::symbolic(Variable(940_000));
         let alias = Pointer::symbolic(Variable(940_001));
         let n = MachineTerm::Variable(Variable(940_002));
         let m = MachineTerm::Variable(Variable(940_003));
-        let snapshot = crate::kernel::intern_memory(Memory::new());
-        let loaded = Pointer::loaded_value(&snapshot, &slot);
-        let loaded_alias = Pointer::loaded_value(&snapshot, &alias);
+        let retained_state = crate::kernel::intern_memory(Memory::new());
+        let loaded = Pointer::loaded_value(&retained_state, &slot);
+        let loaded_alias = Pointer::loaded_value(&retained_state, &alias);
         let empty = PureFactContext::new();
         let equal_base = empty.clone().assume_condition(
             ConditionTerm::pointer_equal(slot.clone(), alias.clone()),

@@ -774,9 +774,9 @@ mod tests {
     }
 
     #[test]
-    fn registered_pointer_rewrite_uses_observed_snapshot() {
-        // Projected identity snapshots have no target-cell content. Rewriting
-        // the address must use the observed snapshot, including its latest
+    fn registered_pointer_rewrite_uses_observed_state() {
+        // Projected identity states have no target-cell content. Rewriting
+        // the address must use the observed state, including its latest
         // overwrite, rather than inventing a disconnected target load.
         for (case, stored) in [(0, 17), (1, 29)] {
             let source = Pointer::symbolic(Variable(910_000 + case));
@@ -823,8 +823,8 @@ mod tests {
                 &equality,
                 std::slice::from_ref(&equality),
             )
-            .expect("rewrite the registered load at its observed snapshot");
-            // The rewritten goal reads the target at the observed snapshot,
+            .expect("rewrite the registered load at its observed state");
+            // The rewritten goal reads the target at the observed state,
             // named as a read: the read-over-write authority relates it to
             // the latest overwrite stored there.
             let Proposition::ConditionIs(ConditionTerm::Compare { left, right, .. }, true) =
@@ -907,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn pointer_rewrite_changes_every_matching_field_load_at_one_snapshot() {
+    fn pointer_rewrite_changes_every_matching_field_load_at_one_state() {
         let memory = crate::kernel::intern_memory(Memory::new());
         let source = Pointer {
             block: PointerBlock::Symbolic(Variable(91)),
@@ -1300,7 +1300,7 @@ mod tests {
     }
 
     #[test]
-    fn integer_observation_rewrite_does_not_cross_memory_snapshots() {
+    fn integer_observation_rewrite_does_not_cross_memory_states() {
         let pointer = Pointer {
             block: PointerBlock::Concrete("rewrite-cell".into()),
             offset: PointerOffsetTerm::Constant(0),
@@ -1347,7 +1347,7 @@ mod tests {
             &equality,
             std::slice::from_ref(&equality),
         )
-        .expect_err("a checked equality from another memory snapshot must not rewrite this load");
+        .expect_err("a checked equality from another memory state must not rewrite this load");
         assert!(
             error.contains("does not occur in the current goal"),
             "{error}"

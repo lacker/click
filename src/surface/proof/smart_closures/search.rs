@@ -390,8 +390,8 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         let Some(mut spelled) = search_input.spelled_goal_for_search(&fact) else {
             return Ok(None);
         };
-        // A fact recorded at a snapshot is spelled `at(selector, ...)`; its
-        // consequent is read at the same snapshot.
+        // A fact recorded at a state is spelled `at(selector, ...)`; its
+        // consequent is read at the same state.
         let selector = match spelled {
             ClickProposition::At {
                 selector,
@@ -1920,7 +1920,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             substitute_click_proposition(&body, &BTreeMap::from([(source_name, replacement)]))
                 .map_err(|message| search_input.step_error(message))?;
         let source = ClickProposition::At {
-            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Function,
                 kind: ProgramPointKind::Entry,
             }),
@@ -1972,7 +1972,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         };
         let mut proof = witnessed;
         for source in &source_leaves {
-            // At the entry snapshot the leaves already close the goal.
+            // At the entry state the leaves already close the goal.
             if proof.focused_discharged() {
                 return Ok(Some(proof));
             }
@@ -2040,7 +2040,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         #[cfg(test)]
         crate::kernel::search::record_discovery("try_carry_entry_conjunct");
         let entry = |proposition: &ClickProposition| ClickProposition::At {
-            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
+            selector: ProgramPointSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Function,
                 kind: ProgramPointKind::Entry,
             }),
@@ -2155,7 +2155,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             && let Some(anchor) = frontier_premise_anchor(execution)
             && let Some(surface_goal) = search_input.surface_goal()
             && let Ok(source) =
-                surface_at_snapshot(surface_goal, &SnapshotSelector::ProgramPoint(anchor))
+                surface_at_program_point(surface_goal, &ProgramPointSelector::ProgramPoint(anchor))
             && let Ok(proof) = search_input.driver().apply_step(ProofStep::Extract(source))
             && proof.is_complete()
         {
@@ -2228,7 +2228,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 _ => None,
             }
         }
-        /// The equality a written disequality denies, under its snapshot.
+        /// The equality a written disequality denies, under its state.
         fn denied_surface(surface: &ClickProposition) -> Option<ClickProposition> {
             match surface {
                 ClickProposition::At {
@@ -2762,7 +2762,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
         // Population bounds are arithmetic on the authority's count, even
         // when that count shares a carrier with a C field. Try its indexed
-        // bounds before searching memory equalities and recorded snapshots.
+        // bounds before searching memory equalities and recorded states.
         // Compound signed orders likewise select indexed bounds before
         // spelling historical aliases, including terminal outcomes with
         // many earlier clauses. Simple terminal comparisons retain their
@@ -3216,7 +3216,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             return Ok(Some(rewritten));
         }
         if let Some(surface_goal) = search_input.surface_goal()
-            && let Some(proof) = crate::kernel::search::ProofSearch::try_snapshot_transport_closure(
+            && let Some(proof) = crate::kernel::search::ProofSearch::try_state_transport_closure(
                 search_input,
                 surface_goal,
             )?
@@ -3662,7 +3662,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         let unsigned_goal = crate::surface::checking::is_unsigned_order_goal(goal);
         // Count lowering can leave a read expression where the bounds index
         // names its registered load variable. Seed from that canonical value,
-        // not from variables in the read's address or memory snapshot.
+        // not from variables in the read's address or memory state.
         let canonical_goal = crate::kernel::canonical_condition_fact(goal);
         let mut pending = crate::kernel::proposition_variables(&canonical_goal)
             .into_iter()
@@ -4493,11 +4493,11 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                             .into_iter()
                             .flat_map(|view| {
                                 view.fixed_state
-                                    .recorded_snapshots
+                                    .recorded_states
                                     .recent(MAX_TRANSPORT_SOURCE_POINTS)
                                     .into_iter()
                                     .filter_map(|(selector, _)| {
-                                        surface_at_snapshot(&direct, selector).ok()
+                                        surface_at_program_point(&direct, selector).ok()
                                     })
                                     .collect::<Vec<_>>()
                             }),
@@ -4518,11 +4518,11 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 if let Some(view) = search_input.premise_fixed_state_view() {
                     surface_candidates.extend(
                         view.fixed_state
-                            .recorded_snapshots
+                            .recorded_states
                             .recent(MAX_TRANSPORT_SOURCE_POINTS)
                             .into_iter()
                             .filter_map(|(selector, _)| {
-                                surface_at_snapshot(&direct, selector).ok()
+                                surface_at_program_point(&direct, selector).ok()
                             }),
                     );
                 }
@@ -4727,7 +4727,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             let ordered = premise_pairs
                 .iter()
                 .filter_map(|(_, surface)| {
-                    let anchored = surface_at_snapshot(surface, anchor).ok()?;
+                    let anchored = surface_at_program_point(surface, anchor).ok()?;
                     let parts = surface_nonstrict_parts(&anchored)?;
                     Some((anchored, parts))
                 })
@@ -4797,7 +4797,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             let mut lower_bounds = Vec::new();
             let mut upper_bounds = Vec::new();
             for (kernel, surface) in premise_pairs {
-                let anchored = surface_at_snapshot(surface, anchor).ok()?;
+                let anchored = surface_at_program_point(surface, anchor).ok()?;
                 if let Some(parts) = surface_nonstrict_parts(&anchored) {
                     lower_bounds.push((
                         anchored.clone(),
@@ -4816,7 +4816,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             for (lower_surface, (surface_lower, lower_value), lower_kernel) in &lower_bounds {
                 for (upper_surface, (upper_value, _), upper_kernel) in &upper_bounds {
                     // Entry requirements and resource observations can spell
-                    // the same checked value at different snapshots. Select
+                    // the same checked value at different states. Select
                     // by the kernel endpoint as well as identical syntax;
                     // ApplyTheoremUsing still validates both named premises
                     // and the result at the chosen historical boundary.
@@ -4877,14 +4877,14 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
     /// recorded program point. This also applies to proposition scopes opened
     /// mid-execution, such as loop-invariant initialization and preservation.
     /// The candidate space is the execution's
-    /// recorded-snapshot index, not the ambient fact set; every accepted source
+    /// recorded-state index, not the ambient fact set; every accepted source
     /// and target is checked by `TransportUsing` on this immutable Proof.
-    pub(in crate::surface::proof) fn try_snapshot_transport_closure(
+    pub(in crate::surface::proof) fn try_state_transport_closure(
         search_input: &Proof<'a>,
         surface_goal: &ClickProposition,
     ) -> Result<Option<Proof<'a>>, ClickError> {
         #[cfg(test)]
-        crate::kernel::search::record_discovery("try_snapshot_transport_closure");
+        crate::kernel::search::record_discovery("try_state_transport_closure");
         if super::selected_arithmetic::machine_equality_bridge_active() {
             return Ok(None);
         }
@@ -4894,10 +4894,10 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         crate::instrumentation::measure_operation(
             "surface",
             "solve closure",
-            "solve closure: snapshot transport",
+            "solve closure: state transport",
             || {
                 crate::kernel::with_closure_failure_memo(|| {
-                    crate::kernel::search::ProofSearch::try_snapshot_transport_closure_candidates(
+                    crate::kernel::search::ProofSearch::try_state_transport_closure_candidates(
                         search_input,
                         surface_goal,
                     )
@@ -4906,12 +4906,12 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         )
     }
 
-    pub(in crate::surface::proof) fn try_snapshot_transport_closure_candidates(
+    pub(in crate::surface::proof) fn try_state_transport_closure_candidates(
         search_input: &Proof<'a>,
         surface_goal: &ClickProposition,
     ) -> Result<Option<Proof<'a>>, ClickError> {
         #[cfg(test)]
-        crate::kernel::search::record_discovery("try_snapshot_transport_closure_candidates");
+        crate::kernel::search::record_discovery("try_state_transport_closure_candidates");
         if let Some(proof) = crate::kernel::search::ProofSearch::try_cell_frame_transport_closure(
             search_input,
             surface_goal,
@@ -4920,7 +4920,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
         // Outcome transport is a general closure. Extending it to fixed-state
         // and mid-execution proposition scopes is needed for opaque Click
-        // applications, whose snapshot arguments cannot be refreshed by
+        // applications, whose state arguments cannot be refreshed by
         // ordinary field rewrites, and for goals that read memory: a read
         // written through one alias of a cell whose fact was stated through
         // another, before a store the alias shows separate, is carried here
@@ -4985,16 +4985,16 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // path's length for each goal, and quadratic over a function's
         // early-return paths. An older point is still reachable by an
         // explicit `transport`.
-        let selectors = std::iter::once(SnapshotSelector::ProgramPoint(first)).chain(
+        let selectors = std::iter::once(ProgramPointSelector::ProgramPoint(first)).chain(
             view.fixed_state
-                .recorded_snapshots
+                .recorded_states
                 .recent(MAX_TRANSPORT_SOURCE_POINTS)
                 .into_iter()
                 .map(|(selector, _)| selector.clone()),
         );
         let mut tried = BTreeSet::new();
         for selector in selectors {
-            if (names_result && !crate::surface::snapshot_can_name_result(Some(&selector)))
+            if (names_result && !crate::surface::program_point_can_name_result(Some(&selector)))
                 || !tried.insert(selector.clone())
             {
                 continue;
@@ -5015,13 +5015,11 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     check_verification_deadline()?;
                 }
             }
-            if let Some(proof) =
-                crate::kernel::search::ProofSearch::try_projected_snapshot_transport(
-                    search_input,
-                    &source,
-                    surface_goal,
-                )?
-            {
+            if let Some(proof) = crate::kernel::search::ProofSearch::try_projected_state_transport(
+                search_input,
+                &source,
+                surface_goal,
+            )? {
                 return Ok(Some(proof));
             }
         }
@@ -5038,13 +5036,13 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
     /// lowering and one lookup. The proof is one explicit transport from
     /// the larger fact to the goal, which the checked quantified frame
     /// decides by conjunction elimination; expansion prints it.
-    pub(in crate::surface::proof) fn try_projected_snapshot_transport(
+    pub(in crate::surface::proof) fn try_projected_state_transport(
         search_input: &Proof<'a>,
         source: &ClickProposition,
         surface_goal: &ClickProposition,
     ) -> Result<Option<Proof<'a>>, ClickError> {
         #[cfg(test)]
-        crate::kernel::search::record_discovery("try_projected_snapshot_transport");
+        crate::kernel::search::record_discovery("try_projected_state_transport");
         let Ok(lowered) = search_input
             .lower_surface_proposition_direct(source, "smart projected transport source")
         else {
@@ -5082,7 +5080,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
     }
 
-    /// A goal that reads one cell at two snapshots, such as
+    /// A goal that reads one cell at two states, such as
     /// `owner->cell[0] == owner->phase` right after a store wrote the first
     /// side from the second, holds when nothing in between wrote that cell.
     /// That is a frame fact: carry the cell's reflexive equality from a
@@ -5149,7 +5147,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         };
         let selectors = view
             .fixed_state
-            .recorded_snapshots
+            .recorded_states
             .recent(MAX_TRANSPORT_SOURCE_POINTS)
             .into_iter()
             .map(|(selector, _)| selector.clone())
@@ -6520,10 +6518,12 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // or program-point scan participates.
         let anchors = premise_pairs
             .iter()
-            .filter_map(|(_, surface)| match surface_snapshot_selector(surface) {
-                Some(SnapshotSelector::ProgramPoint(point)) => Some(point),
-                Some(SnapshotSelector::Mark(_)) | None => None,
-            })
+            .filter_map(
+                |(_, surface)| match surface_program_point_selector(surface) {
+                    Some(ProgramPointSelector::ProgramPoint(point)) => Some(point),
+                    Some(ProgramPointSelector::Mark(_)) | None => None,
+                },
+            )
             .collect::<BTreeSet<_>>();
         if anchors.len() == 1 {
             let inferred = anchors.first().expect("one inferred anchor");
@@ -6761,7 +6761,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // A refold moves a constructor equation: a proof `match` arm's case
         // fact states the scrutinee's constructor at unchanged function entry,
         // and once the arm has refolded its instance, `c.model == C(..)` reads
-        // the refolded field. Like a snapshot selector recorded again in a
+        // the refolded field. Like a program point selector recorded again in a
         // loop, that spelling may stop denoting its old checked fact.
         // Re-lower those movable forms below; other live recorded pairs keep
         // their indexed lookup without repeating proposition lowering.
@@ -6794,7 +6794,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             if crate::instrumentation::deadline_exceeded() {
                 return None;
             }
-            // `result` exists only once the function returns: a snapshot
+            // `result` exists only once the function returns: a state
             // before the return that reads it lowers, but does not parse.
             if reads_result_before_return(candidate) {
                 return None;
@@ -6865,10 +6865,10 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                                 && !view.fixed_state.state.locals().contains_name(name)
                                 && !view.fixed_state.pre_state.locals().contains_name(name)
                                 && !premise_anchor
-                                    .and_then(|anchor| {
-                                        view.fixed_state.recorded_snapshots.get(anchor)
+                                    .and_then(|anchor| view.fixed_state.recorded_states.get(anchor))
+                                    .is_some_and(|retained_state| {
+                                        retained_state.locals().contains_name(name)
                                     })
-                                    .is_some_and(|snapshot| snapshot.locals().contains_name(name))
                                 && search_input.local_binding(name).is_none()
                                 && search_input.local_integer_values().get(name).is_none()
                                 && search_input.local_algebraic_values().get(name).is_none()
@@ -6876,9 +6876,9 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     });
                 // A statement selector can be recorded again on a later
                 // loop iteration. Its old pair remains a checked fact, but
-                // an explicit snapshot spelling must still denote it now.
-                let snapshot_spelling = proposition_contains_at_expression(candidate);
-                if !constructor_equation && !names_a_dead_local && !snapshot_spelling {
+                // an explicit state spelling must still denote it now.
+                let state_spelling = proposition_contains_at_expression(candidate);
+                if !constructor_equation && !names_a_dead_local && !state_spelling {
                     // The recorded pair is authoritative for this shape.
                     return Some(());
                 }
@@ -6917,7 +6917,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             return Some(surface.clone());
         }
         // A selected fact can instead name a fresh loop-head value in the
-        // current state. Recover it there before searching older snapshots
+        // current state. Recover it there before searching older states
         // which cannot name that value at all.
         let pointer_goal = matches!(
             search_input.goal(),
@@ -6969,7 +6969,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         };
         if let Some(surface) = requirement_surface {
             let anchored = ClickProposition::At {
-                selector: SnapshotSelector::ProgramPoint(function_entry.clone()),
+                selector: ProgramPointSelector::ProgramPoint(function_entry.clone()),
                 proposition: Box::new(surface.clone()),
             };
             if matches_kernel(&anchored, true).is_some() {
@@ -6978,7 +6978,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
         if search_input.premise_fixed_state_view().is_some() {
             if let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
-                let anchored = surface_at_snapshot(surface, &function_entry).ok()?;
+                let anchored = surface_at_program_point(surface, &function_entry).ok()?;
                 matches_kernel(&anchored, true).map(|()| anchored)
             }) {
                 return Some(anchored);
@@ -6989,7 +6989,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                     view.parameter_binding,
                     view.fixed_state.pre_state,
                 )
-                && let Ok(anchored) = surface_at_snapshot(&surface, &function_entry)
+                && let Ok(anchored) = surface_at_program_point(&surface, &function_entry)
                 && matches_kernel(&anchored, true).is_some()
             {
                 return Some(anchored);
@@ -6997,14 +6997,14 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
         if let Some(anchor) = premise_anchor
             && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
-                let anchored = surface_at_snapshot(surface, anchor).ok()?;
+                let anchored = surface_at_program_point(surface, anchor).ok()?;
                 matches_kernel(&anchored, true).map(|()| anchored)
             })
         {
             return Some(anchored);
         }
         // A selected scalar fact may combine a current value with an entry
-        // read, which no single earlier snapshot can spell. Try these named
+        // read, which no single earlier state can spell. Try these named
         // states before walking history. New scalar candidates lower directly: a
         // recorded unanchored form may name an earlier value of the same local.
         // The structural speller: values the current state and the proof's
@@ -7013,7 +7013,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // in one lookup.
         let _recorded_points = search_input.premise_fixed_state_view().map(|view| {
             super::surface_synthesis::SynthesisRecordedPointsScope::enter(
-                view.fixed_state.recorded_snapshots,
+                view.fixed_state.recorded_states,
             )
         });
         if let Some(view) = search_input.premise_fixed_state_view() {
@@ -7039,9 +7039,9 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
         // Before accepting an unanchored recorded form, which may have been
         // stated at an earlier value of a variable that later changed,
-        // spell the fact against the recorded snapshot where it was read.
+        // spell the fact against the recorded state where it was read.
         if let Some(anchor) = premise_anchor
-            && let Some((parameters, arguments, recorded_snapshots)) = match search_input
+            && let Some((parameters, arguments, recorded_states)) = match search_input
                 .context
                 .as_ref()
             {
@@ -7049,25 +7049,25 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
                 ProofContext::FixedState(context) => Some((
                     context.parameter_binding.parameters,
                     context.parameter_binding.arguments,
-                    context.fixed_state.recorded_snapshots,
+                    context.fixed_state.recorded_states,
                 )),
                 ProofContext::Execution(_) => search_input.premise_fixed_state_view().map(|view| {
                     (
                         view.parameter_binding.parameters,
                         view.parameter_binding.arguments,
-                        view.fixed_state.recorded_snapshots,
+                        view.fixed_state.recorded_states,
                     )
                 }),
             }
             && let Some(anchored) = crate::instrumentation::measure_operation(
                 "surface",
                 "solve premise",
-                "solve premise surface at recorded snapshots",
+                "solve premise surface at recorded states",
                 || {
-                    synthesize_surface_at_recorded_snapshots(
+                    synthesize_surface_at_recorded_states(
                         kernel,
                         ParameterBinding::new(parameters, arguments),
-                        recorded_snapshots,
+                        recorded_states,
                         anchor,
                     )
                     .find(|surface| matches_kernel(surface, true).is_some())
@@ -7079,20 +7079,20 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // A fact can mix states: a call's `ensures` that names its own
         // `old(..)` value holds a value only that call's entry state reads,
         // beside values the current state names. Spell it at the current
-        // state with one recorded statement entry as the further snapshot.
+        // state with one recorded statement entry as the further state.
         if let Some(anchor) = premise_anchor
             && let Some(view) = search_input.premise_fixed_state_view()
             && let Some(mixed) = crate::instrumentation::measure_operation(
                 "surface",
                 "solve premise",
-                "solve premise surface across recorded snapshots",
+                "solve premise surface across recorded states",
                 || {
-                    synthesize_surface_with_recorded_snapshot(
+                    synthesize_surface_with_recorded_state(
                         kernel,
                         view.parameter_binding,
                         view.fixed_state.pre_state,
                         view.fixed_state.state,
-                        view.fixed_state.recorded_snapshots,
+                        view.fixed_state.recorded_states,
                         anchor,
                     )
                     .find(|surface| matches_kernel(surface, true).is_some())
@@ -7138,7 +7138,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         }
         // Quantified execution facts may be retained in the canonical memory
         // form used by the kernel while their recorded Surface form lowers to
-        // a term carrying a check-equivalent memory snapshot. Probe only the
+        // a term carrying a check-equivalent memory state. Probe only the
         // persistent alpha/canonical-form bucket for this selected premise;
         // `InstantiateUsing` validates the same equivalence on check.
         if matches!(kernel, Proposition::ForAll { .. }) {
@@ -7236,7 +7236,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         {
             return Some(surface);
         }
-        // The same recorded snapshots and matcher already completed their
+        // The same recorded states and matcher already completed their
         // search above. The intervening presentation candidates do not change
         // this proof's state, so repeating that miss cannot find a new source.
         None
@@ -7548,7 +7548,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             }
             // A registered read definition remains available to the
             // kernel, but cannot supply a source rewrite. Do not search
-            // recorded snapshots for a spelling of this metadata.
+            // recorded states for a spelling of this metadata.
             if crate::kernel::is_verified_load_variable_defining_fact(&equality) {
                 continue;
             }
@@ -9071,7 +9071,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         let data = proof.focused_outcome_data()?;
         let anchor = data.premise_anchor.as_ref()?;
         let view = proof.outcome_fixed_state_view()?;
-        let anchor_state = view.fixed_state.recorded_snapshots.get(anchor)?;
+        let anchor_state = view.fixed_state.recorded_states.get(anchor)?;
         let mut anchored_candidates = Vec::new();
         for (kernel, _) in premise_pairs.iter().chain(&source_pairs) {
             let Some(surface) =
@@ -9079,7 +9079,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             else {
                 continue;
             };
-            let Ok(surface) = surface_at_snapshot(&surface, anchor) else {
+            let Ok(surface) = surface_at_program_point(&surface, anchor) else {
                 continue;
             };
             let Some((left, right)) = surface_nonstrict_parts(&surface) else {
@@ -9140,7 +9140,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
         // fact.  Special derivations cite the exact relation leaf, so expose
         // that leaf through the ordinary checked `extract` transition before
         // constructing a certificate.  This keeps certificate premises
-        // top-level and preserves the source spelling/snapshot that produced
+        // top-level and preserves the source spelling/state that produced
         // the resource fact.
         match crate::kernel::search::ProofSearch::extract_special_conjunct_premises(
             search_input,
@@ -9210,7 +9210,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             // The selected derivation and its exact Surface correspondence
             // are one candidate. Do not resolve the spelling again after a
             // checked transition: at an execution outcome the same written
-            // load may then denote a different memory snapshot.
+            // load may then denote a different memory state.
             let source = exact_sources
                 .get(premise)
                 .copied()
@@ -9242,7 +9242,7 @@ impl<'a> crate::kernel::search::ProofSearch<Proof<'a>> {
             // lowers in this successor's context. A stale presentation record
             // can therefore make the step succeed without publishing the
             // exact premise selected above. Exact top-level membership is the
-            // progress measure; polarity or snapshot conversion requires its
+            // progress measure; polarity or state conversion requires its
             // own checked proof step rather than being assumed here.
             if !successor.checked_facts().contains(premise) {
                 return Err(());

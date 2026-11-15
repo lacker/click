@@ -2,7 +2,7 @@
 
 This checks that execution proofs retain source-region identity after entering a
 C branch. The then arm advances across a verified loop and records its labeled
-exit snapshot; the else arm executes an ordinary assignment. Both continue at
+exit state; the else arm executes an ordinary assignment. Both continue at
 the common return.
 
 ```c filename=step_loop_inside_branch.c

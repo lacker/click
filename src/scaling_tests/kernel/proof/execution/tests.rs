@@ -568,27 +568,25 @@ fn return_instance_folds_are_indexed_and_do_not_copy_sibling_traces() {
             ),
             true,
         );
-        let snapshot_facts = facts.with_fact(extra.clone());
-        let mut snapshot = base.clone();
-        snapshot
-            .record_return_resource_rewrite(
-                &function,
-                0,
-                &snapshot_facts,
-                &selected,
-                &snapshot_facts,
-            )
+        let state_facts = facts.with_fact(extra.clone());
+        let mut retained_state = base.clone();
+        retained_state
+            .record_return_resource_rewrite(&function, 0, &state_facts, &selected, &state_facts)
             .unwrap();
         let (_, retained, _) = trace_completion(
             &function,
-            &snapshot.return_resource_rewrites.get(&0).unwrap().to_vec(),
+            &retained_state
+                .return_resource_rewrites
+                .get(&0)
+                .unwrap()
+                .to_vec(),
             facts.assumptions(),
             false,
         )
         .unwrap();
         assert!(
             !crate::kernel::search::ProofSearch::proves(&(retained), &extra),
-            "a fold must not publish unrelated snapshot assumptions"
+            "a fold must not publish unrelated state assumptions"
         );
         let mut repeated = base.clone();
         let mut repeated_facts = facts.clone();
@@ -1061,7 +1059,7 @@ fn interface_lowering_retention_shares_unrelated_history() {
             .unwrap();
             let copy = checked.clone();
             assert!(copy.facts.shares_premises_with(&facts));
-            assert_eq!(copy.snapshot, state);
+            assert_eq!(copy.retained_state, state);
             assert_eq!(copy.reference, state);
             assert!(Arc::ptr_eq(&copy.path, &checked.path));
         });

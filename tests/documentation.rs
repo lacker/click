@@ -1753,8 +1753,8 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
         "proof frontier",
         "raw load",
         "raw loads",
-        "snapshot bridge",
-        "snapshot bridging",
+        "state bridge",
+        "state bridging",
     ];
     let mut failures = Vec::new();
     for path in files {

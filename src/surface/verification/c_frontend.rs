@@ -961,8 +961,8 @@ pub(super) fn parse_c_source_unit(
     Ok(unit)
 }
 
-/// A qualified scalar name denotes its storage read in the selected snapshot,
-/// including `old` and recorded snapshots, rather than one fixed input value.
+/// A qualified scalar name denotes its storage read in the selected state,
+/// including `old` and recorded states, rather than one fixed input value.
 fn qualified_scalar_read(
     address: ProgramValue,
     value_type: ProgramType,
@@ -1235,9 +1235,9 @@ pub(super) fn record_function_tables(
                 .map(|object| object.name().to_string()),
         )
         .collect();
-    // Statement snapshots can name locals at the recorded boundary. Index
+    // Statement states can name locals at the recorded boundary. Index
     // their declarations once, alongside the function's ambient objects;
-    // snapshot lowering still checks whether each local is available there.
+    // state lowering still checks whether each local is available there.
     let mut pending = vec![function.body()];
     while let Some(statement) = pending.pop() {
         match statement {

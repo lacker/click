@@ -5,11 +5,11 @@ each. The C writes only one of them, and the arm refolds the frame with the
 other fact unchanged.
 
 The fact that must survive is about an `unsigned long` cell, which is the
-rbtree's packed parent word. A load names its cell and the snapshot of the
+rbtree's packed parent word. A load names its cell and the state of the
 cell's last write (`docs/internals/canonicalization.md`), so the value read
 before the write and the value read after it are one term: the store is to a
 disjoint cell of the same node, and the epoch walk crosses it. Without that
-naming the fold would compare a load over the post-write snapshot with a fact
+naming the fold would compare a load over the post-write state with a fact
 stated over the pre-write one and refuse the refold.
 
 `change_child_requires` states the same proof with the arm selected by a

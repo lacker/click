@@ -176,7 +176,7 @@ fn goals_alternatives_and_weak_cast_metadata_do_not_admit_type_evidence() {
 }
 
 #[test]
-fn object_type_evidence_does_not_bridge_changed_read_snapshots() {
+fn object_type_evidence_does_not_bridge_changed_read_states() {
     let _session = VerificationSession::enter();
     let slot = pointer(9);
     let memory = Memory::new().with_block(slot.block.clone(), 8);

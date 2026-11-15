@@ -82,7 +82,7 @@ implicit tail's early `return` does, a failure on one outcome path shows the
 arm that produced that path, with its steps, instead of `(joined)`.
 
 A goal about memory, such as a `transport` target or any goal that reads
-`read<...>(snapshot#N, pointer=value#M)`, depends on what its labels denote.
+`read<...>(state#N, pointer=value#M)`, depends on what its labels denote.
 Record the legend line defining each label the goal uses: two spellings of one
 C address, such as a pointer local and the `g + 16 bytes` cell it was loaded
 from, or a read at entry and the same read inside a loop, are often the whole
@@ -366,7 +366,7 @@ The implicit tail runs the `return` and closes the claim. The proof verifies:
 An explicitly requested `--trace-proof` keeps its typed diagnostic notation:
 readable Click expressions are used there only when they preserve the checked
 operands, and otherwise a memory operand prints as
-`read<Bits64>(snapshot#1, pointer=value#1)`, in an added fact just as in a goal.
+`read<Bits64>(state#1, pointer=value#1)`, in an added fact just as in a goal.
 The width, memory label, and address remain visible even when the source wrote only
 `parent->__rb_parent_color`.
 

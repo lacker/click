@@ -1254,7 +1254,7 @@ fn valid_marker(
         )
 }
 
-/// Compare the commit's complete input bundle with the snapshot that was
+/// Compare the commit's complete input bundle with the state that was
 /// actually verified, including transitively included headers.
 fn baseline_matches_verified(
     baseline: &LoadedSidecar,
@@ -1293,7 +1293,7 @@ fn has_full_verification_marker(
 }
 
 /// Attest only commits whose complete input bundle equals the verified
-/// snapshot. Re-reading the working tree here could certify a different
+/// state. Re-reading the working tree here could certify a different
 /// program if a file changed after verification.
 fn record_full_verification(
     sidecar: &Path,
@@ -1837,7 +1837,7 @@ mod tests {
     }
 
     fn assert_source_diagnostic(report: &str) {
-        for internal in ["snapshot#", "snapshot<", "load A=", "pointer(pointer "] {
+        for internal in ["state#", "state<", "load A=", "pointer(pointer "] {
             assert!(!report.contains(internal), "{report}");
         }
         assert!(
