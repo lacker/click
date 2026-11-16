@@ -88,6 +88,108 @@ pub(super) fn fresh_return_facts(pointer: &Pointer, cells: u32) -> [ResourceFact
 }
 
 #[test]
+fn fresh_return_group_checks_sibling_overlap_before_restoration() {
+    for overlap in [false, true] {
+        let _session = crate::kernel::VerificationSession::enter();
+        let facts = PureFactContext::new();
+        let (caller, entry, post, pointer) = allocated_call(16);
+        let creator = checked_allocation_creator(&caller, &entry).unwrap();
+        let events = post.population_effects.creation.as_ref().unwrap();
+        let memory_spec = |start, end| {
+            ResourceSpec::owned_memory(
+                MemorySegment::new(variable("p"), int32_literal(start), int32_literal(end))
+                    .with_uninitialized(true),
+            )
+            .with_role(ResourceTransferRole::Produce)
+            .with_state_source(ResourceStateSource::Post)
+        };
+        let second_start = u32::from(!overlap);
+        let first =
+            ResourceFact::own_memory(MemoryRange::new(pointer.clone(), 0u32.into(), 1u32.into()));
+        let second = ResourceFact::own_memory(MemoryRange::new(
+            pointer,
+            second_start.into(),
+            (second_start + 1).into(),
+        ));
+        // Allocation provenance is valid for either piece separately, even
+        // when both descriptions name the same cell. It is not a partition.
+        assert_eq!(
+            FreshAllocationReturn::from_created_owner(&first, &creator, events),
+            FreshAllocationReturn::from_created_owner(&second, &creator, events),
+        );
+        assert!(FreshAllocationReturn::from_created_owner(&first, &creator, events).is_some());
+        let function =
+            program_function(ProgramType::Void, "fresh_siblings", vec![], program_skip())
+                .with_resource_summary(
+                    vec![],
+                    vec![
+                        memory_spec(0, 1),
+                        memory_spec(second_start, second_start + 1),
+                    ],
+                );
+        // Body return checks joint custody separately. Even though either
+        // slice is fresh, the actual owner cannot supply the same cell twice.
+        let required =
+            ResourceContext::new_with_equalities(&facts).unchecked_with_facts([first, second]);
+        assert_eq!(
+            jointly_consume_returned_resource_units(
+                post.resources(),
+                &required,
+                &post,
+                function.contract_interface(),
+                &facts,
+            ),
+            !overlap,
+        );
+        let result = evaluate_contract_return_resource_context(
+            function.contract_interface(),
+            &[],
+            &[],
+            &[],
+            &entry,
+            &post,
+            2,
+            &[],
+            ReturnResourceComposition::BodyAllocations {
+                consumed: None,
+                creator: &creator,
+                events,
+            },
+            &facts,
+            &mut ExecutionBudget::beside_live_state(),
+        )
+        .unwrap();
+        if overlap {
+            assert!(matches!(
+                result,
+                Err(RuntimeError::OverlappingOwnedMemoryResources { .. })
+            ));
+        } else {
+            let evaluated = result.unwrap();
+            assert_eq!(evaluated.occurrences.len(), 2);
+            let (resources, transfers) = evaluated
+                .restore_entry_borrows(
+                    caller.resources().clone(),
+                    ReturnResourceComposition::BodyAllocations {
+                        consumed: None,
+                        creator: &creator,
+                        events,
+                    },
+                    &facts,
+                )
+                .unwrap()
+                .finish(&facts)
+                .unwrap();
+            assert_eq!(transfers.len(), 2);
+            assert_eq!(
+                resources.facts().len(),
+                caller.resources().facts().len() + 2
+            );
+        }
+    }
+}
+
+#[test]
 fn allocator_provenance_is_attached_to_each_emitted_ownership_occurrence() {
     let _session = crate::kernel::VerificationSession::enter();
     let facts = PureFactContext::new();

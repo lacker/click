@@ -1,5 +1,88 @@
 use super::*;
 
+fn early_return_group_alias_work(symbolic_end: bool) -> Vec<[usize; 3]> {
+    let mut curves = Vec::new();
+    for overlap in [false, true] {
+        let samples = [4_u64, 16, 64].map(|count| {
+            let _session = crate::kernel::VerificationSession::enter();
+            let pointer = Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: PointerOffsetTerm::scale_int32(MachineTerm::Variable(Variable(100)), 4),
+            };
+            let neighbor = Pointer::symbolic(Variable(9_810_000));
+            let mut facts = PureFactContext::new();
+            let end = MachineTerm::Variable(Variable(9_820_000));
+            if symbolic_end {
+                facts = facts
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(2u32.into(), end.clone()),
+                        true,
+                    )
+                    .assume_condition(
+                        ConditionTerm::signed_less_equal(end.clone(), 16u32.into()),
+                        true,
+                    );
+            }
+            for index in 0..count {
+                facts = facts.assume_condition(
+                    ConditionTerm::pointer_equal(
+                        pointer.clone(),
+                        Pointer::symbolic(Variable(9_810_000 + index)),
+                    ),
+                    true,
+                );
+            }
+            let start = u32::from(!overlap);
+            let first = ResourceFact::own_memory(MemoryRange::new(
+                neighbor,
+                start.into(),
+                if symbolic_end {
+                    end
+                } else {
+                    (start + 1).into()
+                },
+            ));
+            let second =
+                ResourceFact::own_memory(MemoryRange::new(pointer, 0u32.into(), 1u32.into()));
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                EvaluatedReturnResources::new(&facts)
+                    .admit(first, ReturnOwnershipOrigin::Description, &facts)
+                    .unwrap()
+                    .admit(second, ReturnOwnershipOrigin::Description, &facts)
+            });
+            assert_eq!(result.is_ok(), !overlap);
+            if let Ok(evaluated) = result {
+                assert_eq!(evaluated.occurrences.len(), 2);
+                assert_eq!(evaluated.resources.facts().len(), 2);
+            }
+            work
+        });
+        eprintln!(
+            "early return group: symbolic_end={symbolic_end}, overlap={overlap}, aliases=[4,16,64], work={samples:?}"
+        );
+        curves.push(samples);
+    }
+    curves
+}
+
+#[test]
+fn constant_return_group_admission_ignores_ambient_aliases() {
+    for samples in early_return_group_alias_work(false) {
+        assert!(
+            samples.iter().all(|work| *work <= samples[0] + 32),
+            "early return-group admission walks ambient aliases: {samples:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic: measure symbolic return-group admission work"]
+fn symbolic_return_group_admission_work() {
+    // This preserves the success/refusal controls and exposes work counts;
+    // it does not claim a fast bound for unsupported indexed geometry.
+    early_return_group_alias_work(true);
+}
+
 #[test]
 fn mixed_return_composition_ignores_related_aliases_and_retained_owners() {
     for axis in ["aliases", "related owners", "unrelated owners"] {

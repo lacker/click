@@ -125,9 +125,47 @@ and [`functions.rs`](https://github.com/clicklang/click/blob/master/src/kernel/f
 The regressions `raw_description_mode_never_authorizes_restoration_from_a_role_marker`
 and `a_consumed_cell_cannot_supply_two_return_occurrences` preserve the
 distinction between a description and a selected, single-use transfer.
-The alias diagnostic `raw_ownership_admission_must_not_search_ambient_pointer_aliases`
+The active regression `raw_ownership_admission_must_not_search_ambient_pointer_aliases`
 measures raw insertion separately from instance unfold. It does not establish
 the cost or necessity of every caller above.
+
+#### Early return-group evidence
+
+`admit_clause` checks the returned descriptions together before
+`restore_entry_borrows` constructs their destination occurrences. A
+`FreshAllocationReturn` records the allocation's identity, not a consumed
+slice or a partition of its outputs. Two descriptions of the same fresh cell
+can both carry that provenance. The regression
+`fresh_return_group_checks_sibling_overlap_before_restoration` exercises
+adjacent and duplicate slices from an actual allocation: early admission
+rejects the duplicate, and the body's separate
+`jointly_consume_returned_resource_units` check cannot supply it twice either.
+Freshness alone therefore does not justify skipping group construction. A
+replacement should retain the outputs of joint consumption rather than
+reconstructing ownership from independent descriptions and checking it again.
+
+Fresh measurements against `da5639eb1d`, with two fixed descriptors and
+4, 16, and 64 exact pointer aliases, distinguish indexed intervals from the
+symbolic-endpoint fallback. Setup of the ambient alias facts is outside the
+measurement; early-group work includes construction of its context and both
+admissions.
+
+| Measured operation | Adjacent slices: work at 4 / 16 / 64 aliases | Overlap refusal: work at 4 / 16 / 64 aliases |
+| --- | --- | --- |
+| Raw insertion into a prepared frame, constant endpoints | 228 / 228 / 228 | 74 / 74 / 74 |
+| Early return group, constant endpoints | 261 / 261 / 261 | 93 / 93 / 93 |
+| Early return group, symbolic upper endpoint | 337 / 349 / 397 | 382 / 550 / 1222 |
+
+The symbolic case returns `q[1..n]` beside `p[0..1]` on success, or
+`q[0..n]` beside `p[0..1]` on refusal, with `p == q` and `2 <= n <= 16`.
+Additional aliases change neither the two descriptors nor the result. The
+diagnostic `symbolic_return_group_admission_work` retains both semantic
+controls and prints the counts; it does not assert that the fallback meets
+the fast-part contract. The constant-endpoint regression is
+`constant_return_group_admission_ignores_ambient_aliases`. Both live in
+[`the return scaling tests`](https://github.com/clicklang/click/blob/master/src/scaling_tests/kernel/functions/mixed_return_resources.rs).
+These measurements cover admission of evaluated descriptions, not a complete
+source call, and do not establish an impractical real-world proof workload.
 
 These are current implementation boundaries, not exceptions to construction
 without re-validation. Remove repeated checking where the producer already

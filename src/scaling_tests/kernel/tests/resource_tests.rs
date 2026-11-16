@@ -4817,8 +4817,8 @@ fn symbolic_ownership_query_scales_with_selected_pieces() {
     );
 }
 
-/// Measure the selected exchange separately from the still-unmigrated raw
-/// insertion and the rest of the complete kernel unfold.
+/// Measure the selected exchange separately from raw insertion and the rest
+/// of the complete kernel unfold. This fixes the indexed interval shape.
 fn instance_unfold_alias_work() -> Vec<[(usize, usize, usize, usize); 3]> {
     let mut curves = Vec::new();
     for overlap in [false, true] {
@@ -4908,8 +4908,8 @@ fn instance_unfold_alias_work() -> Vec<[(usize, usize, usize, usize); 3]> {
                 "persistent parent is unchanged"
             );
 
-            // Raw ownership admission still searches candidates. Measure that
-            // separate operation as a control, not as part of unfold.
+            // Measure raw admission separately from unfold. This indexed
+            // geometry must not fall back to ambient alias discovery.
             let context =
                 ResourceContext::new_with_equalities(&assumptions).unchecked_with_fact(retained);
             context.synchronize_memory_equalities(&assumptions);
@@ -4956,7 +4956,6 @@ fn instance_unfold_ignores_ambient_pointer_aliases() {
 }
 
 #[test]
-#[ignore = "red diagnostic: raw ownership admission still grows"]
 fn raw_ownership_admission_must_not_search_ambient_pointer_aliases() {
     for samples in instance_unfold_alias_work() {
         assert!(

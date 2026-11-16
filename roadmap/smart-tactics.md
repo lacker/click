@@ -396,10 +396,18 @@ publication and reinsertion together are also flat (248 units for the adjacent
 case, 190 for the contradictory case). These are bounds for this fixed body,
 not all unfolding routes or Surface materialization.
 
-The ignored `raw_ownership_admission_must_not_search_ambient_pointer_aliases`
-diagnostic retains the separate raw-admission growth and overlap-refusal control.
-Raw ownership admission and output-description validation remain callers to
-diagnose and migrate.
+`raw_ownership_admission_must_not_search_ambient_pointer_aliases` is now an
+active regression. Fresh measurements at `da5639eb1d` are flat at 228 units
+for adjacent constant intervals and 74 for overlap refusal with 4/16/64
+aliases; its former "still grows" annotation was stale for that shape.
+Early return-group admission is also flat for constant endpoints (261 and
+93 units respectively). The separate diagnostic
+`symbolic_return_group_admission_work` measures two fixed output descriptions
+with a symbolic upper endpoint: work is 337 / 349 / 397 for adjacency and
+382 / 550 / 1222 for overlap refusal at the same alias counts. It retains
+correct-result controls without claiming a fast bound. These are admission
+measurements, not a complete source-call curve. See
+[early return-group evidence](../docs/internals/verification-efficiency.md#early-return-group-evidence).
 
 Hold one inserted owner and one relevant neighbor fixed. Independently grow
 same-block owners, owned blocks, coordinate origins and exact/offset aliases;
