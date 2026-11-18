@@ -1,3 +1,4 @@
+import click::rust::option::{unwrap_or};
 import click::rust::i8;
 import click::rust::i16;
 import click::rust::i32;
@@ -79,7 +80,7 @@ fn fewer(a: usize, b: usize) -> usize {
 }
 
 fn or_default(o: Option<u32>) -> u32 {
-    ensures result == option::unwrap_or(o, 7u32);
+    ensures result == unwrap_or(o, 7u32);
     ensures o == Option<u32>::None implies result == 7u32;
 }
 

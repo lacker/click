@@ -24,6 +24,8 @@ imports with `import click::...;`, and the modules those import:
 | `cpp/span.click` | appended to a C++ sidecar when an import calls one of its methods | `std::span<T>` and static-extent `std::span<T, N>` contracts, as template methods written out at each called element type and extent |
 | `cpp/array.click` | appended to a C++ sidecar when an import calls one of its methods | `std::array<T, N>` contracts, with each element accessor's `const` and mutable overload as two template methods |
 | `cpp/as_writable_bytes.click` | appended to a C++ sidecar when an import calls it | The `std::as_writable_bytes<T, N>` contract, a function template written out at each called instance |
+| `rust/option.click` | `import click::rust::option;` | Rust's `Option::unwrap_or` proof helper |
+| `rust/result.click` | `import click::rust::result;` | Rust's `Result::unwrap_or` proof helper |
 | `rust/vec.click` | `import click::rust::vec;` | The primitive type `Vec<T>`, its bodyless operations and their trusted axioms |
 | `rust/slice.click` | `import click::rust::slice;` | `Slice<T>`, a Rust slice as its data pointer and length |
 | `rust/core.click` | appended to a Rust sidecar when an import calls one of its methods | The `Vec`, `slice::swap` and `Option`/`Result` unwrapping contracts, as generic `extern fn` blocks written out at each called type; a block no call names is dropped |

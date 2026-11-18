@@ -72,7 +72,7 @@ extern fn Option::expect<T>(o: Option<T>) -> T {
 
 // `Option::unwrap_or(o, d)` is the library's `option::unwrap_or`.
 extern fn Option::unwrap_or<T>(o: Option<T>, d: T) -> T {
-    ensures result == click::option::unwrap_or(o, d);
+    ensures result == click::rust::option::unwrap_or(o, d);
 }
 
 // `Result::unwrap(r)` and `Result::expect(r, message)`: Rust panics unless
@@ -89,5 +89,5 @@ extern fn Result::expect<T, E>(r: Result<T, E>) -> T {
 
 // `Result::unwrap_or(r, d)` is the library's `result::unwrap_or`.
 extern fn Result::unwrap_or<T, E>(r: Result<T, E>, d: T) -> T {
-    ensures result == click::result::unwrap_or(r, d);
+    ensures result == click::rust::result::unwrap_or(r, d);
 }

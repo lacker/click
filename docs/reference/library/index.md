@@ -53,6 +53,8 @@ how far it is trusted:
 | [`click::c::string`](#clickcstring) | when the C declares or calls one of its functions | C library interface |
 | [C++ standard library interfaces](#c-standard-library-interfaces), `library/cpp/` (not a module) | when a C++ import calls one of its functions | C++ library interface |
 | [`click::rust::i8` ... `click::rust::usize`](#clickrusti8-through-clickrustusize) | `import click::rust::u32;`; named by path in Rust core-method contracts | specification |
+| [`click::rust::option`](#clickrustoption) | `import click::rust::option;` | specification |
+| [`click::rust::result`](#clickrustresult) | `import click::rust::result;` | specification |
 | [`click::rust::vec`](#clickrustvec) | `import click::rust::vec;` | specification, with trusted axioms |
 | [`click::rust::slice`](#clickrustslice) | `import click::rust::slice;` | specification |
 | [Rust core interfaces](#rust-core-interfaces), `library/rust/core.click` (not a module) | when a Rust import calls one of its methods | Rust library interface |
@@ -651,25 +653,6 @@ spec enum Option<T> {
 this value in a contract: `ensures result == Option<u32>::Some(x);`. The
 importer lays the Rust value out itself; a contract never reads that layout.
 
-### `option::unwrap_or`
-
-```click
-function unwrap_or<T>(o: Option<T>, default: T) -> T {
-    match o {
-        Option::Some(value) => value,
-        Option::None => default,
-    }
-}
-```
-
-**Meaning:** Rust's `Option::unwrap_or`: the payload of `Some`, else
-`default`. A call `o.unwrap_or(d)` in imported Rust calls an external function
-whose contract is `ensures result == click::option::unwrap_or(o, d);`. The
-module is implicit, so a sidecar writes `option::unwrap_or(o, d)` with no
-import.
-
-**Verified use:** [`design/charon-trial/option-values`](https://github.com/clicklang/click/blob/master/design/charon-trial/option-values/options.click).
-
 ## `click::result`
 
 Source: `library/result.click`, implicit.
@@ -686,24 +669,6 @@ spec enum Result<T, E> {
 **Meaning:** A value or an error. A Rust `Result<u32, u8>` parameter or result
 is this value in a contract: `ensures result == Result<u32, u8>::Ok(x);`. As
 for `Option`, the importer lays the Rust value out itself.
-
-### `result::unwrap_or`
-
-```click
-function unwrap_or<T, E>(r: Result<T, E>, default: T) -> T {
-    match r {
-        Result::Ok(value) => value,
-        Result::Err(error) => default,
-    }
-}
-```
-
-**Meaning:** Rust's `Result::unwrap_or`: the payload of `Ok`, else `default`.
-A call `r.unwrap_or(d)` in imported Rust calls an external function whose
-contract is `ensures result == click::result::unwrap_or(r, d);`. The module is
-implicit; a sidecar writes `click::result::unwrap_or(r, d)` with no import.
-
-**Verified use:** [`design/charon-trial/result-values`](https://github.com/clicklang/click/blob/master/design/charon-trial/result-values/results.click).
 
 ## `click::integer`
 
@@ -10905,6 +10870,50 @@ proved by applying it.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md); `tests/rust_import.rs` applies it to imported Rust (`rust_usize_arithmetic_casts_and_expansion_verify`).
 
+## `click::rust::option`
+
+The proof helper in `library/rust/option.click` states the result of Rust's
+`Option::unwrap_or`.
+
+### `option::unwrap_or`
+
+```click
+function unwrap_or<T>(o: Option<T>, default: T) -> T {
+    match o {
+        Option::Some(value) => value,
+        Option::None => default,
+    }
+}
+```
+
+`unwrap_or` returns the payload of `Some` or the supplied default.
+A sidecar can write `click::rust::option::unwrap_or(o, d)` or selectively
+import it with `import click::rust::option::{unwrap_or};`.
+
+**Verified use:** [`core-methods/methods.click`](https://github.com/clicklang/click/blob/master/design/charon-trial/core-methods/methods.click).
+
+## `click::rust::result`
+
+The proof helper in `library/rust/result.click` states the result of Rust's
+`Result::unwrap_or`.
+
+### `result::unwrap_or`
+
+```click
+function unwrap_or<T, E>(r: Result<T, E>, default: T) -> T {
+    match r {
+        Result::Ok(value) => value,
+        Result::Err(error) => default,
+    }
+}
+```
+
+`unwrap_or` returns the payload of `Ok` or the supplied default.
+A sidecar can write `click::rust::result::unwrap_or(r, d)` or selectively
+import it with `import click::rust::result::{unwrap_or};`.
+
+**Verified use:** [`result-values/results.click`](https://github.com/clicklang/click/blob/master/design/charon-trial/result-values/results.click).
+
 ## `click::rust::vec`
 
 Source: `library/rust/vec.click`, `import click::rust::vec;`.
@@ -11199,7 +11208,7 @@ extern fn Option::expect<T>(o: Option<T>) -> T {
     ensures o == Option<T>::Some(result);
 }
 extern fn Option::unwrap_or<T>(o: Option<T>, d: T) -> T {
-    ensures result == click::option::unwrap_or(o, d);
+    ensures result == click::rust::option::unwrap_or(o, d);
 }
 extern fn Result::unwrap<T, E>(r: Result<T, E>) -> T {
     requires exists (value: T) { r == Result<T, E>::Ok(value) };
@@ -11210,7 +11219,7 @@ extern fn Result::expect<T, E>(r: Result<T, E>) -> T {
     ensures r == Result<T, E>::Ok(result);
 }
 extern fn Result::unwrap_or<T, E>(r: Result<T, E>, d: T) -> T {
-    ensures result == click::result::unwrap_or(r, d);
+    ensures result == click::rust::result::unwrap_or(r, d);
 }
 ```
 

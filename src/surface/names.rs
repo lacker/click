@@ -295,8 +295,6 @@ const QUALIFIED_MODULES: &[&str] = &[
     "library/separation.click",
     "library/nat.click",
     "library/list.click",
-    "library/option.click",
-    "library/result.click",
     "library/bytes.click",
     "library/cstr.click",
     "library/permutation.click",
@@ -312,6 +310,8 @@ const QUALIFIED_MODULES: &[&str] = &[
     "library/rust/u32.click",
     "library/rust/u64.click",
     "library/rust/usize.click",
+    "library/rust/option.click",
+    "library/rust/result.click",
     "library/rust/vec.click",
     "library/rust/slice.click",
 ];

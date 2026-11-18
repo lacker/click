@@ -331,7 +331,7 @@ impl Adapter<'_> {
         let (parameters, specification) = if method == "unwrap_or" {
             (
                 vec![parameter("o", option), parameter("d", payload.clone())],
-                "click::option::unwrap_or",
+                "click::rust::option::unwrap_or",
             )
         } else {
             (

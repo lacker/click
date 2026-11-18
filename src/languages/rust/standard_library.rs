@@ -115,7 +115,7 @@ pub(crate) fn is_library_generic(generic: &str) -> bool {
 pub(super) const RESULT_UNWRAP: &str = "result::unwrap";
 
 /// The `core_method` of `Result::unwrap_or`.
-pub(super) const RESULT_UNWRAP_OR: &str = "click::result::unwrap_or";
+pub(super) const RESULT_UNWRAP_OR: &str = "click::rust::result::unwrap_or";
 
 /// The `core_method` of `Option::unwrap` and `Option::expect`, which Rust
 /// panics on at `None`.

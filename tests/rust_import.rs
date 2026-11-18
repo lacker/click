@@ -3442,7 +3442,7 @@ fn charon_result_values_read_as_click_results() {
             "result_values::must_say",
         ),
         (
-            "ensures result == click::result::unwrap_or(r, d);",
+            "ensures result == unwrap_or(r, d);",
             "ensures result == d;",
             "result_values::or_default.ensures_0",
         ),

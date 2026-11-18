@@ -1,3 +1,5 @@
+import click::rust::result::{unwrap_or};
+
 verifying "results.rs";
 
 fn result_values::ok_if(x: u32, good: bool) -> Result<u32, u8> {
@@ -58,5 +60,5 @@ fn result_values::must_say(r: Result<u32, u8>) -> u32 {
 }
 
 fn result_values::or_default(r: Result<u32, u8>, d: u32) -> u32 {
-    ensures result == click::result::unwrap_or(r, d);
+    ensures result == unwrap_or(r, d);
 }

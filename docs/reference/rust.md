@@ -939,9 +939,10 @@ The importer recognizes `min` and `max` of `Ord` and the inherent
 integer type, and `unsigned_abs` of a signed one, by the callee's identity and
 signature. A `checked_*` result is the library's `Option`. `o.unwrap_or(d)` of
 an `Option` of a scalar calls `Option::unwrap_or` the same way, whose contract
-states its result with `option::unwrap_or(o, d)`; that module is implicit, so
-a sidecar needs no import. `Result::unwrap_or` is the same with
-`click::result::unwrap_or` ([Result values](#result-values)). `unwrap` and `expect` are described under
+states its result with `click::rust::option::unwrap_or(o, d)`. A
+sidecar can selectively import the helper with
+`import click::rust::option::{unwrap_or};`. The `Result` method uses
+`click::rust::result::unwrap_or` ([Result values](#result-values)). `unwrap` and `expect` are described under
 [Panics](#panics). The library
 function is opaque until `unfold` gives its definition, so a claim that needs
 the value, `result <= a`, unfolds it, and a proof of one arm states the value
@@ -1895,7 +1896,7 @@ known constructor's payload as the witness, and a contract that reads the
 result through `match r { .. }` reduces the `match` by the call's
 `r == Ok(result)`.
 `r.unwrap_or(d)` calls `Result::unwrap_or`, whose contract is
-`ensures result == click::result::unwrap_or(r, d);`.
+`ensures result == click::rust::result::unwrap_or(r, d);`.
 
 [`design/charon-trial/result-values`](https://github.com/clicklang/click/blob/master/design/charon-trial/result-values/results.click)
 verifies `ok_if`, `or_zero` and a caller `round` composing them, `plus_one`

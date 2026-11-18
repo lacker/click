@@ -731,6 +731,14 @@ const CLICK_LIBRARY_MODULES: &[(&str, &str)] = &[
         include_str!("../library/rust/usize.click"),
     ),
     (
+        "library/rust/option.click",
+        include_str!("../library/rust/option.click"),
+    ),
+    (
+        "library/rust/result.click",
+        include_str!("../library/rust/result.click"),
+    ),
+    (
         "library/rust/vec.click",
         include_str!("../library/rust/vec.click"),
     ),
