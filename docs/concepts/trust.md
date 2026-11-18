@@ -234,6 +234,11 @@ proved. Each family is an assumption in the same sense:
 | Verifier primitive | `primitive` | `__click_constant_p_unknown`, the value of `__builtin_constant_p`, is 0 or 1 ([verifier primitives](../reference/language/index.md#verifier-primitives)): it stands for a compiler decision, not a library function | `library/c/builtins.click` |
 | Thread runtime | `runtime` | The selected `modeled-pthread` specification: create/join, shared mutex calls and one-shot atomic publication obey it | `src/languages/c/thread_runtime.rs` |
 
+The hosted C target supplies a stable, nonnull standard output handle when
+the program uses Click's projected `<stdio.h>`. Startup can hand one
+stream resource for that handle to `main`.
+[Hosted standard output](../reference/language/c.md#hosted-standard-output)
+
 The C++ `ios_failure` profile assumes that constructing the pinned
 `std::ios_base::failure(const char*, const std::error_code& = ...)`
 returns a fresh opaque value of that exact type, with no caller-observable

@@ -204,6 +204,17 @@ impl CStringLiteral {
     }
 }
 
+// The projected header's reserved binding denotes a value, with no C
+// storage that a program can address or that a call can invalidate.
+const HOSTED_STDOUT_BINDING: &str = "__click_c_stdio_stdout";
+
+fn hosted_stdout_value() -> crate::kernel::ProgramValue {
+    crate::kernel::ProgramValue::typed_pointer(
+        crate::kernel::SymbolicMemory::global_pointer("__click_c_stdio_stdout_stream"),
+        crate::kernel::ProgramType::Int32Pointer,
+    )
+}
+
 /// A file-scope scalar declaration collected from one C translation unit.
 /// `initializer` is absent for an `extern` declaration and present for the
 /// definition that supplies storage (including an implicit zero initializer).
@@ -221,6 +232,7 @@ pub struct CGlobal {
     /// the private object the initializer names, so it reads this value and
     /// never re-evaluates the initializer against its own names.
     resolved_address: Option<crate::kernel::ProgramValue>,
+    hosted_stdout: bool,
     tentative: bool,
     file_static: bool,
     volatile: bool,
@@ -242,6 +254,7 @@ impl CGlobal {
             struct_name,
             initializer: None,
             resolved_address: None,
+            hosted_stdout: false,
             tentative: false,
             file_static: false,
             volatile: false,
@@ -264,6 +277,7 @@ impl CGlobal {
             struct_name,
             initializer: Some(initializer),
             resolved_address: None,
+            hosted_stdout: false,
             tentative: false,
             file_static: false,
             volatile: false,
@@ -287,6 +301,7 @@ impl CGlobal {
             struct_name,
             initializer: Some(initializer),
             resolved_address: None,
+            hosted_stdout: false,
             tentative: false,
             file_static: true,
             volatile: false,
@@ -321,6 +336,14 @@ impl CGlobal {
 
     pub fn is_defined(&self) -> bool {
         self.initializer.is_some()
+    }
+
+    pub(crate) fn is_hosted_stdout(&self) -> bool {
+        self.hosted_stdout
+    }
+
+    pub(crate) fn hosted_stdout(&self) -> Option<crate::kernel::ProgramValue> {
+        self.is_hosted_stdout().then(hosted_stdout_value)
     }
 
     /// Returns whether this is a C tentative definition such as `int x;`.
@@ -4456,6 +4479,9 @@ impl CExpression {
                 ends: true,
             },
             Self::Void => crate::kernel::program_void_value(),
+            Self::Variable(name) if name.is_named(HOSTED_STDOUT_BINDING) => {
+                crate::kernel::ProgramExpression::Value(hosted_stdout_value())
+            }
             Self::Variable(name) => crate::kernel::program_expression::variable(name.clone()),
             Self::Call { .. } => {
                 unreachable!("call expressions must be lowered before kernel conversion")
@@ -7909,12 +7935,21 @@ impl Parser {
 
     fn from_tokens(
         source: &str,
-        tokens: Vec<Token>,
+        mut tokens: Vec<Token>,
         positions: Vec<SourcePosition>,
         abi: CAbi,
         source_identity: Option<&str>,
         import_mode: bool,
     ) -> Result<Self, CSyntaxError> {
+        // The modeled <stdio.h> projects the stdout macro through a reserved
+        // identifier. Keep the source name in both C and sidecar bindings.
+        for token in &mut tokens {
+            if let Token::Ident(name) = token
+                && name == HOSTED_STDOUT_BINDING
+            {
+                *name = "stdout".into();
+            }
+        }
         Ok(Self {
             tokens,
             positions,

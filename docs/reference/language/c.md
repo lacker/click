@@ -188,6 +188,7 @@ does. Verifying plain C needs no compiler or system headers; see the
 | `<stddef.h>` | user space | `NULL` |
 | `<string.h>` | user space | `memcpy`, `memcmp`, `memset`, `strlen`, and `NULL` |
 | `<stdlib.h>` | user space | `malloc`, `calloc`, `realloc`, `free`, and `NULL` |
+| `<stdio.h>` | user space | opaque `FILE` and the hosted `stdout` handle |
 | `<stdarg.h>` | user space | the `va_list` type only, so prototypes that take one parse; `va_start`, `va_arg`, `va_copy` and `va_end` are not provided, since variadic bodies are not modeled |
 | `<sys/types.h>` | user space | `ssize_t` and `off_t`, both `long` on LP64 |
 | `<pthread.h>` | user space | the modeled pthread subset; see [the modeled binding](#conditional-modeled-pthread-binding) |
@@ -1958,6 +1959,20 @@ are supported.
 <!-- verified-example: mdtests/string_literals_call.md -->
 <!-- verified-example: mdtests/string_literals_reject_write.md -->
 <!-- verified-example: mdtests/concatenated_string_literals.md -->
+
+## Hosted standard output
+
+The userspace target supplies `stdout` as a stable, nonnull `FILE *`
+through the projected `<stdio.h>`. The pointee type is incomplete.
+Copying the handle preserves the stream's identity, and the sidecar
+can refer to its value as `stdout`.
+
+Hosted startup supplies one `click::c::stdio::stream(stdout)` instance
+with an empty write history. A `main` contract can name it with a single
+`owns` clause. The stream resource carries proof state for the C handle.
+Other program-entry preconditions remain unsupported.
+
+<!-- verified-example: mdtests/hosted_stdout_stream_follows_file_pointer_alias.md -->
 
 ## Formatted output
 

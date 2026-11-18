@@ -240,9 +240,10 @@ pub(in crate::surface) fn resolve_resource_field_schema(
 pub(in crate::surface) fn check_resource_field_schemas(
     file: &mut ClickFile,
 ) -> Result<(), ClickError> {
-    if file
-        .resource_definitions
+    let library_resources = super::super::validation::file_library(file)?.resource_definitions();
+    if library_resources
         .iter()
+        .chain(&file.resource_definitions)
         .all(ResourceDefinition::is_fieldless)
     {
         return Ok(());
@@ -251,21 +252,22 @@ pub(in crate::surface) fn check_resource_field_schemas(
         &[],
         &super::super::validation::combined_algebraic_type_definitions(file)?,
     );
+    let mut schemas = BTreeMap::new();
+    for definition in library_resources
+        .iter()
+        .filter(|definition| !definition.is_fieldless())
+    {
+        let schema = resolve_resource_field_schema(definition, &environment)?;
+        schemas.insert(definition.name().to_string(), schema);
+    }
     for definition in &mut file.resource_definitions {
         if definition.is_fieldless() {
             continue;
         }
-        definition.field_schema = Some(resolve_resource_field_schema(definition, &environment)?);
+        let schema = resolve_resource_field_schema(definition, &environment)?;
+        schemas.insert(definition.name().to_string(), schema.clone());
+        definition.field_schema = Some(schema);
     }
-    let schemas = file
-        .resource_definitions
-        .iter()
-        .filter_map(|definition| {
-            definition
-                .field_schema()
-                .map(|schema| (definition.name().to_string(), schema.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
     // Separate from the existing C/spec and composite-witness ranges. These
     // variables are collected from the entry resource state by the kernel's
     // fresh-variable allocator, so later execution cannot reuse their IDs.
@@ -1810,7 +1812,10 @@ fn annotate_function(
         spec_definitions,
         resource_environment,
     )?;
-    let resource_derived_mutable_frame = !function_block.is_tactic_procedure()
+    // Startup already provides the memory frame for main. Its stream
+    // resource carries a logical history without transferring C memory.
+    let resource_derived_mutable_frame = parsed_function.program_entry_state.is_none()
+        && !function_block.is_tactic_procedure()
         && (construction_result_layout(parsed_function).is_some()
             || function_block
                 .requires()

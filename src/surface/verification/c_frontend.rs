@@ -103,6 +103,7 @@ pub(super) fn link_c_units(
                         Some(previous) if previous.is_initialized_definition() => previous.clone(),
                         Some(_) if global.is_initialized_definition() => global.clone(),
                         Some(previous) if previous.is_tentative() => previous.clone(),
+                        Some(previous) if previous.is_hosted_stdout() => previous.clone(),
                         None => global.clone(),
                         Some(_) => global.clone(),
                     };
@@ -143,6 +144,7 @@ pub(super) fn link_c_units(
                         Some(previous) if previous.is_initialized_definition() => previous.clone(),
                         Some(_) if global.is_initialized_definition() => global.clone(),
                         Some(previous) if previous.is_tentative() => previous.clone(),
+                        Some(previous) if previous.is_hosted_stdout() => previous.clone(),
                         None => global.clone(),
                         Some(_) => global.clone(),
                     };
@@ -152,7 +154,9 @@ pub(super) fn link_c_units(
         }
     }
     if let Some((name, _)) = globals.iter().find(|(name, global)| {
-        referenced_external_objects.contains(name.as_str()) && !global.is_defined()
+        referenced_external_objects.contains(name.as_str())
+            && !global.is_defined()
+            && !global.is_hosted_stdout()
     }) {
         return Err(ClickError::new(format!(
             "global `{name}` is declared `extern` but has no definition"
@@ -577,6 +581,15 @@ pub(super) fn link_c_units(
         .into_iter()
         .map(|(name, (source_path, function))| {
             let mut visible_globals = globals.clone();
+            if !globals_by_source
+                .get(&source_path)
+                .is_some_and(|objects| objects.contains_key("stdout"))
+                && visible_globals
+                    .get("stdout")
+                    .is_some_and(syntax::CGlobal::is_hosted_stdout)
+            {
+                visible_globals.remove("stdout");
+            }
             let mut visible_global_arrays = global_arrays.clone();
             let mut visible_global_aggregates = global_aggregates.clone();
             let mut visible_global_aggregate_arrays = global_aggregate_arrays.clone();
@@ -798,6 +811,13 @@ pub(super) fn c_layouts(
     let mut frontend_contracts = BTreeMap::<String, String>::new();
     for source_path in verifying_paths {
         let unit = parse_c_source_unit(&source_path, c_sources, target)?;
+        if unit
+            .globals
+            .get("stdout")
+            .is_some_and(syntax::CGlobal::is_hosted_stdout)
+        {
+            tables.library_modules.insert("library/c/stdio.click");
+        }
         tables
             .qualified_objects
             .insert(source_path.clone(), unit_qualified_objects(&unit));
@@ -1002,6 +1022,19 @@ pub(super) fn unit_qualified_objects(
 ) -> BTreeMap<String, parser::QualifiedCObject> {
     let mut objects = BTreeMap::new();
     for (name, global) in &unit.globals {
+        if let Some(value) = global.hosted_stdout() {
+            objects.insert(
+                name.clone(),
+                parser::QualifiedCObject {
+                    expression: ProgramExpression::Value(value),
+                    address: None,
+                    struct_name: global.struct_name().map(str::to_owned),
+                    array_shape: None,
+                    ambiguous: false,
+                },
+            );
+            continue;
+        }
         if let Some(pointer_type) = global.interface_type().pointer_type() {
             let pointer = SymbolicMemory::global_pointer(global.kernel_name());
             let address = ProgramValue::typed_pointer(pointer, pointer_type.to_kernel_type())
@@ -1247,6 +1280,10 @@ pub(super) fn record_function_tables(
                 .map(|object| object.name().to_string()),
         )
         .collect();
+    let mut stdout_shadowed = function
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.name() == "stdout");
     // Statement states can name locals at the recorded boundary. Index
     // their declarations once, alongside the function's ambient objects;
     // state lowering still checks whether each local is available there.
@@ -1255,6 +1292,7 @@ pub(super) fn record_function_tables(
         match statement {
             syntax::CStatement::Declare { name, .. }
             | syntax::CStatement::DeclareStructValue { name, .. } => {
+                stdout_shadowed |= name.source_name() == "stdout";
                 names.insert(name.source_name().to_owned());
             }
             syntax::CStatement::Seq(first, second) => {
@@ -1298,6 +1336,16 @@ pub(super) fn record_function_tables(
             }
             _ => {}
         }
+    }
+    if !stdout_shadowed
+        && let Some(stdout) = function
+            .globals()
+            .get("stdout")
+            .and_then(syntax::CGlobal::hosted_stdout)
+    {
+        tables
+            .hosted_stdout
+            .insert(function.name().to_owned(), stdout);
     }
     let names = std::sync::Arc::new(names);
     tables

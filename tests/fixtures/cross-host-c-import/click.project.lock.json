@@ -5,7 +5,7 @@
       "language": "c",
       "lock": {
         "c": {
-          "click_header_catalog_sha256": "1eb5c9764e83c5a13e4d4fb5274581350b8dd3b03a35ab1038ebc30d1be51108",
+          "click_header_catalog_sha256": "85f54784943ef5a1b3420f9d51fd48e14bbb8954eed20e66c313b085f2a20c6a",
           "compiler_path": "/usr/bin/x86_64-linux-gnu-gcc-13",
           "config_directory": "/home/user/click-b/tests/fixtures/cross-host-c-import",
           "mode": "userspace",
@@ -189,7 +189,7 @@
               "path": ".click/main/main.c.i",
               "sha256": "2cbb6c3a850babf82686b7f9b91a4471d5e3971d21a5cc39d1433aa2ff928881"
             },
-            "identity": "6fcf638f2d94f03fcb670774ddab0b96de4a7e88dfbfad080f5ff0e39b5058f6",
+            "identity": "c775dc596dc8843f072c8e722739299c3bdd156a60821337f4f42f5e9f98e097",
             "inputs": {
               "/home/user/click-b/tests/fixtures/cross-host-c-import/bits.h": "e407af23fc10c5000afa7f7c712697b080d37ddbcf8ca0e979a46439388bd374",
               "/home/user/click-b/tests/fixtures/cross-host-c-import/local.h": "afd7473f8201458ca657e5c17efb468cf809139b9f8ca2256ee77d9ec5efa52a",

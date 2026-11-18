@@ -50,6 +50,7 @@ how far it is trusted:
 | [`click::bytes`](#clickbytes) | `import click::bytes;`, or with `click::c::string` | specification |
 | [`click::cstr`](#clickcstr) | `import click::cstr;`, or with `click::c::string` | specification |
 | [`click::format`](#clickformat) | `import click::format;`; named by path in `snprintf` contracts | specification |
+| [`click::c::stdio`](#clickcstdio) | `import click::c::stdio;`, or with the projected `<stdio.h>` | C library interface |
 | [`click::c::string`](#clickcstring) | when the C declares or calls one of its functions | C library interface |
 | [C++ standard library interfaces](#c-standard-library-interfaces), `library/cpp/` (not a module) | when a C++ import calls one of its functions | C++ library interface |
 | [`click::rust::i8` ... `click::rust::usize`](#clickrusti8-through-clickrustusize) | `import click::rust::u32;`; named by path in Rust core-method contracts | specification |
@@ -9489,6 +9490,27 @@ theorem padded_digit_lower_bound(v: uint64, width: uint64, k: uint64) {
 **Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+## `click::c::stdio`
+
+The declarations live in `library/c/stdio.click`. The write history
+records the requested bytes and outcome of each modeled write.
+
+### `WriteAttempt` and `stream`
+
+```click
+spec enum WriteAttempt {
+    Accepted(List<uint8>),
+    Failed(List<uint8>),
+}
+
+abstract resource stream(file: void*) {
+    field write_history: List<WriteAttempt>;
+}
+```
+
+[Hosted startup](../language/c.md#hosted-standard-output) supplies the
+standard output stream with an empty history.
 
 ## `click::c::string`
 

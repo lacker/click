@@ -51,6 +51,7 @@ pub(crate) fn modeled_header_names(target: CTarget) -> &'static [&'static str] {
             "stdbool.h",
             "stddef.h",
             "stdint.h",
+            "stdio.h",
             "stdlib.h",
             "string.h",
             "sys/types.h",
@@ -109,7 +110,6 @@ const HOSTED_UNMODELED: &[&str] = &[
     "signal.h",
     "spawn.h",
     "stdalign.h",
-    "stdio.h",
     "stdnoreturn.h",
     "strings.h",
     "stropts.h",
@@ -244,6 +244,7 @@ fn modeled_text(name: &str, target: CTarget) -> String {
             }
             text
         }
+        "stdio.h" => include_str!("modeled_stdio.h").to_string(),
         "string.h" => include_str!("modeled_string.h").to_string(),
         "stdlib.h" => include_str!("modeled_stdlib.h").to_string(),
         "stdarg.h" => include_str!("modeled_stdarg.h").to_string(),
@@ -297,7 +298,8 @@ mod tests {
                 .text
                 .contains("#define CHAR_MIN (-128)\n")
         );
-        assert!(by_name["stdio.h"].text.contains("#error"));
+        assert_eq!(by_name["stdio.h"].text, include_str!("modeled_stdio.h"));
+        assert!(by_name["ctype.h"].text.contains("#error"));
         assert!(
             by_name["pthread.h"]
                 .text

@@ -20314,7 +20314,7 @@ fn evaluate_function_declared_resource_spec(
         }
         // Logical resource indices observe numbers; they do not store C
         // representation records or carry those records through loop models.
-        values.push(match value {
+        values.push(match value.resource_argument_at_type(*parameter_type) {
             ProgramValue::PointerInteger(word) => *word.numeric,
             value => value,
         });

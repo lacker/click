@@ -1502,11 +1502,11 @@ fn compiler_import_supplies_clicks_modeled_headers_beside_project_flags() {
 #[test]
 #[ignore = "nightly: 9s serial; the examples gate locks a modeled-header import"]
 fn compiler_import_refuses_unmodeled_system_headers_by_name() {
-    let project = userspace_import(&[("main.c", "#include <stdio.h>\nint x;\n")], &[]);
+    let project = userspace_import(&[("main.c", "#include <ctype.h>\nint x;\n")], &[]);
     let config = project.path().join("main.import-description.json");
     let error = create_lock(&config).unwrap_err();
     assert!(
-        error.contains("<stdio.h> is not one of Click's modeled system headers")
+        error.contains("<ctype.h> is not one of Click's modeled system headers")
             && error.contains("docs/reference/language/c.md#system-headers")
             && !error.contains("click-import-headers"),
         "{error}"

@@ -5,7 +5,7 @@
       "language": "c",
       "lock": {
         "c": {
-          "click_header_catalog_sha256": "1eb5c9764e83c5a13e4d4fb5274581350b8dd3b03a35ab1038ebc30d1be51108",
+          "click_header_catalog_sha256": "85f54784943ef5a1b3420f9d51fd48e14bbb8954eed20e66c313b085f2a20c6a",
           "compiler_path": "/usr/bin/x86_64-linux-gnu-gcc-13",
           "config_directory": "$project",
           "mode": "userspace",
@@ -206,7 +206,7 @@
               "path": ".click/label/label_copy.c.i",
               "sha256": "3dc664ac3ed6f9dfc79a0cd8b76320296081e0dba30dd99bd2951b42a958597a"
             },
-            "identity": "a752a1f6bf15c8f4fa732e1046897250ffd423f1cef80c916851dbc0fd009040",
+            "identity": "0f4002c1227aa4a4abcfa769c387829c5a347c5cebc0544ebe270a4dec6bf0a9",
             "inputs": {
               "$project/label.h": "6c588c7e8f6e1180c63f8a38a72de5ee0ae7bfc8d2d5574752fab41d5b2e8c91",
               "label_copy.c": "c2165466d1be7415e6a17011bb5808b1c6f09a228692fcc9a6af3fa34d2312bc"
@@ -218,7 +218,7 @@
               "path": ".click/label/label_fit.c.i",
               "sha256": "94dbb747ca3f57be0cbb7a5d715e8f5803a163c3189a58274a2dd7901b828485"
             },
-            "identity": "a5a78479f884bcfd09d813aadd5e5367461be9fe0ac0dff700e981b873b18463",
+            "identity": "33c96c771b9507c4128d0371f75851c9a4911ac6f19b1b08ac05e152014ac220",
             "inputs": {
               "$project/include/label_config.h": "0df31092d5991f82d9d0dd156449f5932420fd74b247881d717bff19542fc3b8",
               "$project/label.h": "6c588c7e8f6e1180c63f8a38a72de5ee0ae7bfc8d2d5574752fab41d5b2e8c91",

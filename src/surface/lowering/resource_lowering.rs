@@ -2349,7 +2349,8 @@ fn lower_resource_clause_with_values_mode_at_entry(
                         crate::surface::validation::describe_interface_type(*parameter_type)
                     )));
                 }
-                resource_values.push(value);
+                resource_values
+                    .push(value.resource_argument_at_type(parameter_type.to_kernel_type()));
             }
             if name == "mutex_guard" {
                 let [ProgramValue::Pointer(mutex)] = resource_values.as_slice() else {

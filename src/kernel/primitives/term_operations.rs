@@ -4534,6 +4534,17 @@ impl ProgramValue {
         })
     }
 
+    /// Canonicalize the C object-pointer conversions a resource's declared
+    /// parameter type admits, preserving the pointer's provenance and bounds.
+    pub(crate) fn resource_argument_at_type(self, expected: ProgramType) -> Self {
+        match self {
+            Self::Pointer(pointer) if pointer.program_type().pointer_types_compatible(expected) => {
+                Self::Pointer(pointer.with_type(expected))
+            }
+            value => value,
+        }
+    }
+
     /// Mathematical observation, deliberately without a representation record.
     pub(crate) fn numeric_value(&self) -> &Self {
         match self {

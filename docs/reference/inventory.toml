@@ -5355,3 +5355,11 @@ path = "reference/library/index.md#integerfloat64_pointer_translate_uint64"
 [[item]]
 id = "library.theorem.integer::float64_pointer_add_associate_uint64"
 path = "reference/library/index.md#integerfloat64_pointer_add_associate_uint64"
+
+[[item]]
+id = "library.type.WriteAttempt"
+path = "reference/library/index.md#writeattempt-and-stream"
+
+[[item]]
+id = "library.resource.stream"
+path = "reference/library/index.md#writeattempt-and-stream"

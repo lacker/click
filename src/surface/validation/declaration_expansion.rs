@@ -344,6 +344,10 @@ impl LibrarySelection {
         self.file.function_blocks()
     }
 
+    pub(in crate::surface) fn resource_definitions(&'static self) -> &'static [ResourceDefinition] {
+        self.file.resource_definitions()
+    }
+
     pub(in crate::surface) fn theorem_definitions(&'static self) -> &'static [TheoremDefinition] {
         self.file.theorem_definitions()
     }
@@ -876,7 +880,7 @@ fn expand_declared_resource_clauses_with_rules(
     // follow them. The standard library's own expansion has its resources in
     // `file` already.
     let library_resources = if family_rules {
-        file_library(&file)?.file.resource_definitions()
+        file_library(&file)?.resource_definitions()
     } else {
         &[]
     };
@@ -3765,7 +3769,7 @@ pub(in crate::surface) fn combined_click_function_definitions(
 pub(in crate::surface) fn combined_resource_definitions(
     file: &ClickFile,
 ) -> Result<Vec<ResourceDefinition>, ClickError> {
-    let mut definitions = file_library(file)?.file.resource_definitions().to_vec();
+    let mut definitions = file_library(file)?.resource_definitions().to_vec();
     definitions.extend(file.resource_definitions().iter().cloned());
     Ok(definitions)
 }

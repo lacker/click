@@ -115,7 +115,7 @@
       "language": "c",
       "lock": {
         "c": {
-          "click_header_catalog_sha256": "1eb5c9764e83c5a13e4d4fb5274581350b8dd3b03a35ab1038ebc30d1be51108",
+          "click_header_catalog_sha256": "85f54784943ef5a1b3420f9d51fd48e14bbb8954eed20e66c313b085f2a20c6a",
           "compiler_path": "/usr/bin/x86_64-linux-gnu-gcc-13",
           "config_directory": "$project",
           "mode": "userspace",
@@ -312,7 +312,7 @@
               "path": ".click/zlib/adler32.c.i",
               "sha256": "46a4957cc681a51156c385736ccca9636f7e8aab0468dafdeeeb44f696241a75"
             },
-            "identity": "0dcdb90440575b9eba99752a60cf51c0a14e43ada5224585fddbd5dee58a5e8d",
+            "identity": "4f8a4c24d118903efb4f6f46c037ee30d7696e42eb136a0c4a9594237a64ae43",
             "inputs": {
               "$unit/zconf.h": "f5134250a67d57459234b63858f0d9d3ef8dcc48e9e1028d3f4fdcf6eae677ae",
               "$unit/zlib.h": "8a5579af72ea4f427ff00a4150f0ccb3fc5c1e4379f726e101133b1ab9fc600c",
@@ -328,7 +328,7 @@
       "language": "c",
       "lock": {
         "c": {
-          "click_header_catalog_sha256": "1eb5c9764e83c5a13e4d4fb5274581350b8dd3b03a35ab1038ebc30d1be51108",
+          "click_header_catalog_sha256": "85f54784943ef5a1b3420f9d51fd48e14bbb8954eed20e66c313b085f2a20c6a",
           "compiler_path": "/usr/bin/x86_64-linux-gnu-gcc-13",
           "config_directory": "$project",
           "mode": "userspace",
@@ -527,7 +527,7 @@
               "path": ".click/zlib_incremental/project/zlib/incremental.c.i",
               "sha256": "340239227cbe7bfc1dd4cc23ef70dd4e7f2a38c69d2cd0a7fcaf7350382aac63"
             },
-            "identity": "e7f454d88f798e31e1fef11fa3d668d6f9b3b2fe35c8c44856af39a85cabac94",
+            "identity": "4686df0dd06e7e2b2569a668716162311c9ee4c23f55e6b1e61f0c60eeaaefb2",
             "inputs": {
               "$unit/vendor/zlib-1.3.1/adler32.c": "9cd1443a24ff2a3053961695bd432035c58347386a420d3388232376ebabe211",
               "$unit/vendor/zlib-1.3.1/zconf.h": "f5134250a67d57459234b63858f0d9d3ef8dcc48e9e1028d3f4fdcf6eae677ae",

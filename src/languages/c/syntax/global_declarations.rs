@@ -49,11 +49,6 @@ impl Parser {
             .as_ref()
             .filter(|_| parsed_type.interface_type.is_pointer())
             .cloned();
-        if let Some(struct_name) = &struct_pointer_name
-            && !self.structs.contains_key(struct_name)
-        {
-            return Err(self.error_here(format!("unknown struct declaration `{struct_name}`")));
-        }
         let aggregate_struct = if is_plain_struct_type(&parsed_type) {
             if parsed_type.is_volatile {
                 return Err(self.error_here(
@@ -87,8 +82,19 @@ impl Parser {
         }
 
         loop {
+            let declaration_site = self.here();
             let name = self.expect_ident("global name")?;
-            let kernel_name = if is_file_static {
+            let hosted_stdout = name == "stdout"
+                && declaration_site
+                    .and_then(|site| site.origin)
+                    .is_some_and(|origin| origin.filename.as_ref() == "<stdio.h>")
+                && is_extern
+                && parsed_type.is_constant
+                && parsed_type.interface_type == InterfaceType::Int32Pointer
+                && struct_pointer_name.as_deref() == Some("__click_c_stdio_FILE");
+            let kernel_name = if hosted_stdout {
+                HOSTED_STDOUT_BINDING.into()
+            } else if is_file_static {
                 self.file_static_kernel_name(&name)
             } else {
                 name.clone().into()
@@ -528,7 +534,7 @@ impl Parser {
                             }
                         })
                         .unwrap_or_else(|| {
-                            CGlobal::declaration(
+                            let mut global = CGlobal::declaration(
                                 name.clone(),
                                 parsed_type.interface_type,
                                 struct_pointer_name.clone(),
@@ -536,7 +542,12 @@ impl Parser {
                             .with_volatile(parsed_type.object_is_volatile())
                             .with_pointee_volatile(parsed_type.pointee_is_volatile())
                             .with_constant(parsed_type.is_constant)
-                            .with_pointee_constant(parsed_type.pointee_constant)
+                            .with_pointee_constant(parsed_type.pointee_constant);
+                            if hosted_stdout {
+                                global.hosted_stdout = true;
+                                global.kernel_name = kernel_name.clone();
+                            }
+                            global
                         }),
                 )?;
                 self.variable_types
@@ -1020,6 +1031,7 @@ impl Parser {
             Some(previous) if previous.is_initialized_definition() => previous.clone(),
             Some(_) if declaration.is_initialized_definition() => declaration,
             Some(previous) if previous.is_tentative() => previous.clone(),
+            Some(previous) if previous.hosted_stdout => previous.clone(),
             _ => declaration,
         };
         self.globals.insert(name, merged);

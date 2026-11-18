@@ -1933,6 +1933,83 @@ fn bool_range_surface(name: &str) -> ClickProposition {
     ClickProposition::Or(Box::new(equals("0")), Box::new(equals("1")))
 }
 
+/// The hosted boundary supplies the one stream exported by the projected
+/// header. A main contract can name it, but cannot supply its own inputs.
+fn bind_hosted_startup(
+    state: ExecutionState,
+    function: &FunctionBlock,
+    parsed: &crate::languages::interface::ImportedFunction,
+) -> Result<ExecutionState, ClickError> {
+    use crate::kernel::{AlgebraicTerm, AlgebraicTermNode, ResourceFieldType, ResourceInstance};
+    let invalid = || {
+        ClickError::new(
+            "program-entry main currently requires no parameters or preconditions; ownership comes from startup",
+        )
+    };
+    if !parsed.parameters().is_empty() {
+        return Err(invalid());
+    }
+    let requirement = match function.requires() {
+        [] => return Ok(state),
+        [Requirement::Resource(requirement @ ResourceClause::Named { .. })] => requirement,
+        _ => return Err(invalid()),
+    };
+    let Some(ProgramValue::Pointer(stdout)) = parsed
+        .globals()
+        .get("stdout")
+        .and_then(|global| global.hosted_stdout())
+    else {
+        return Err(invalid());
+    };
+    let atom = super::lowering::lower_resource_clause_at_state(
+        requirement,
+        ParameterBinding::new(&[], &[]),
+        &state,
+    )?;
+    let Resource::Instance(instance) = atom.resource() else {
+        return Err(invalid());
+    };
+    if instance.name() != "stream" || !instance.resource_arguments().is_empty() {
+        return Err(invalid());
+    }
+    let arguments = instance.arguments().native_values();
+    let [AlgebraicValue::Program(ProgramValue::Pointer(file))] = arguments.as_ref() else {
+        return Err(invalid());
+    };
+    if file.address() != stdout.address() {
+        return Err(ClickError::new(
+            "program-entry stream ownership requires the hosted stdout handle",
+        ));
+    }
+    let [(field, ResourceFieldType::Algebraic(history))] = instance.schema().fields() else {
+        return Err(invalid());
+    };
+    if field != "write_history" {
+        return Err(invalid());
+    }
+    let empty = AlgebraicValue::Algebraic(AlgebraicTerm {
+        algebraic_type: history.clone(),
+        node: AlgebraicTermNode::Constructor {
+            variant: "Nil".to_string(),
+            fields: Vec::new(),
+        },
+    });
+    let stream = ResourceInstance::new(
+        instance.identity(),
+        instance.name().to_string(),
+        instance.arguments().clone(),
+        instance.schema().clone(),
+        vec![empty].into(),
+    )
+    .ok_or_else(invalid)?;
+    // The entry state has static storage and no stream instance yet.
+    let resources = state
+        .resources()
+        .clone()
+        .unchecked_with_fact(ResourceFact::own(Resource::Instance(stream)));
+    Ok(state.with_resource_context(resources))
+}
+
 pub(super) fn initial_claim_context_with_caller_owner(
     function_block: &FunctionBlock,
     parsed_function: &crate::languages::interface::ImportedFunction,
@@ -1944,16 +2021,12 @@ pub(super) fn initial_claim_context_with_caller_owner(
     let (mut state, arguments, entry_assumptions) = if let Some(startup) =
         &parsed_function.program_entry_state
     {
-        if !function_block.requires().is_empty() || !parsed_function.parameters().is_empty() {
-            return Err(ClickError::new(
-                "program-entry main currently requires no parameters or preconditions; static ownership comes from startup",
-            ));
-        }
+        let state = crate::kernel::initialize_program_function_globals(
+            &startup.as_ref().clone().with_population_creation_tracking(),
+            &parsed_function.to_kernel_function(),
+        );
         (
-            crate::kernel::initialize_program_function_globals(
-                &startup.as_ref().clone().with_population_creation_tracking(),
-                &parsed_function.to_kernel_function(),
-            ),
+            bind_hosted_startup(state, function_block, parsed_function)?,
             vec![],
             PureFactContext::new(),
         )

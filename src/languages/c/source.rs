@@ -620,9 +620,10 @@ fn expand_source<'a>(
                     }
                     (
                         super::target::CTarget::X86_64LinuxUserspace,
-                        "string.h" | "stdlib.h" | "stdarg.h" | "sys/types.h",
+                        "string.h" | "stdlib.h" | "stdio.h" | "stdarg.h" | "sys/types.h",
                     ) => {
                         let (name, text) = match header.as_str() {
+                            "stdio.h" => ("<stdio.h>", include_str!("modeled_stdio.h")),
                             "string.h" => ("<string.h>", include_str!("modeled_string.h")),
                             "stdlib.h" => ("<stdlib.h>", include_str!("modeled_stdlib.h")),
                             "stdarg.h" => ("<stdarg.h>", include_str!("modeled_stdarg.h")),
@@ -867,7 +868,7 @@ fn collect_local_include_paths(
                     }
                     (
                         super::target::CTarget::X86_64LinuxUserspace,
-                        "pthread.h" | "stdatomic.h" | "stdarg.h" | "sys/types.h",
+                        "pthread.h" | "stdatomic.h" | "stdarg.h" | "stdio.h" | "sys/types.h",
                     ) => {}
                     _ => {
                         return Err(unsupported_system_header(
@@ -3770,8 +3771,8 @@ int selected_if;
     #[test]
     fn unsupported_preprocessor_directives_are_rejected() {
         let cases = [(
-            "#include <stdio.h>\n",
-            "system header `<stdio.h>` is not supported",
+            "#include <ctype.h>\n",
+            "system header `<ctype.h>` is not supported",
         )];
         for (source, expected) in cases {
             let error = local_include_paths("main.c", source).unwrap_err();
