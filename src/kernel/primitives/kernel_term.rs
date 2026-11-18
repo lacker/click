@@ -318,6 +318,8 @@ struct TermData {
     integer: Mutex<WeakIntegerTerm>,
     machine_leaf: MachineLeafCache,
     argument_leaf: std::sync::OnceLock<Box<PureFunctionArgument>>,
+    word_storage_key:
+        std::sync::OnceLock<Option<crate::kernel::execution_value::storage_keys::WordKey>>,
 }
 
 struct NodeKeyData {
@@ -710,6 +712,7 @@ impl Interner {
             integer: Mutex::default(),
             machine_leaf: Default::default(),
             argument_leaf: Default::default(),
+            word_storage_key: Default::default(),
         });
         self.terms.insert(key.clone(), Arc::downgrade(&value));
         self.cleanup.push_back(key);
@@ -728,6 +731,15 @@ pub(crate) fn clear_integer_bridge_memo() {
 }
 
 impl KernelTerm {
+    pub(in crate::kernel) fn word_storage_key(
+        &self,
+    ) -> Option<&crate::kernel::execution_value::storage_keys::WordKey> {
+        self.0
+            .word_storage_key
+            .get_or_init(|| crate::kernel::execution_value::storage_keys::WordKey::shared(self))
+            .as_ref()
+    }
+
     pub(in crate::kernel) fn float_storage_key(
         &self,
     ) -> crate::kernel::execution_value::storage_keys::FloatStorageKey {

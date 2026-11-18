@@ -295,6 +295,7 @@ pub(super) enum NativeStorageIdentity<'a> {
     Float64(&'a FloatStorageKey),
     Algebraic(&'a AlgebraicStorageKey),
     Pointer(&'a PointerStorageKey),
+    Word(&'a WordKey),
     Value(&'a ProgramValue),
 }
 impl NativeStorageIdentity<'_> {
@@ -304,6 +305,7 @@ impl NativeStorageIdentity<'_> {
             Self::Float32(_) => 13,
             Self::Float64(_) => 14,
             Self::Algebraic(_) => 16,
+            Self::Word(_) => 8,
             Self::Pointer(_) => 15,
             Self::Value(v) => native_rank(v),
         }
@@ -316,6 +318,7 @@ impl Hash for NativeStorageIdentity<'_> {
             Self::Boolean(v) => v.hash(state),
             Self::Float32(v) | Self::Float64(v) => v.hash(state),
             Self::Algebraic(v) => v.hash(state),
+            Self::Word(v) => v.hash(state),
             Self::Pointer(v) => v.hash(state),
             Self::Value(v) => v.hash(state),
         }
@@ -337,6 +340,9 @@ impl Ord for NativeStorageIdentity<'_> {
                 }
                 (Self::Algebraic(a), Self::Algebraic(b)) => a.cmp(b),
                 (Self::Pointer(a), Self::Pointer(b)) => a.cmp(b),
+                (Self::Word(a), Self::Word(b)) => a.cmp(b),
+                (Self::Word(a), Self::Value(ProgramValue::UInt32(b))) => a.cmp_native(b),
+                (Self::Value(ProgramValue::UInt32(a)), Self::Word(b)) => b.cmp_native(a).reverse(),
                 (Self::Value(a), Self::Value(b)) => a.cmp(b),
                 _ => unreachable!("each migrated family uses its projection"),
             })
@@ -364,6 +370,9 @@ impl Drop for ConditionStorageKey {
         }
     }
 }
+
+mod word;
+pub(in crate::kernel) use word::WordKey;
 
 mod pointer;
 pub(in crate::kernel) use pointer::PointerStorageKey;

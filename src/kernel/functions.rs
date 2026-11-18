@@ -1676,7 +1676,7 @@ fn refresh_returned_local_bindings_from_stores(
         crate::kernel::eval::refresh_scalar_local_after_memory_store(
             state,
             &store.pointer,
-            &store.value,
+            store.value.byte_width(),
             assumptions,
         );
     }

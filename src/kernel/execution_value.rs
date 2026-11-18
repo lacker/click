@@ -373,7 +373,7 @@ impl From<ExpressionPath> for ExpressionPath<ExecutionValue> {
 
 /// A memory cell retains its producer and native structural equality/order.
 /// Shared family keys cache structural fingerprints instead of exporting an
-/// enclosing native value. Numeric cells keep their existing native carrier.
+/// enclosing native value.
 #[derive(Clone)]
 pub struct StoredMemoryValue(std::sync::Arc<StoredMemoryData>);
 #[derive(Debug)]
@@ -405,7 +405,7 @@ impl StoredMemoryValue {
             .value
             .native_payload()
             .or_else(|| self.0.value.shared()?.algebraic_native_value())
-            .or_else(|| self.0.value.shared()?.float_native_value())
+            .or_else(|| self.0.value.shared()?.program_value_native_compat())
             .expect("native cell or retained value")
     }
     pub(crate) fn value(&self) -> &ExecutionValue {
@@ -426,6 +426,20 @@ impl StoredMemoryValue {
     }
     pub(crate) fn into_native(self) -> ProgramValue {
         self.into_value().into_native()
+    }
+    pub(in crate::kernel) fn retained_word(root: &KernelTerm) -> Option<Self> {
+        if root.ty() != &KernelType::Program(ProgramType::UInt32) {
+            return None;
+        }
+        let key = root.word_storage_key()?.clone();
+        Some(Self(std::sync::Arc::new(StoredMemoryData {
+            value: ExecutionValue::Shared(root.clone()),
+            key: std::sync::OnceLock::from(StoredKey::Word(key)),
+        })))
+    }
+
+    pub(in crate::kernel) fn is_retained_word(&self) -> bool {
+        self.value().shared().is_some() && matches!(self.0.key.get(), Some(StoredKey::Word(_)))
     }
     pub(crate) fn program_type(&self) -> ProgramType {
         self.0.value.program_type()
@@ -513,10 +527,11 @@ enum StoredIdentity<'a> {
     Native(NativeStorageIdentity<'a>),
 }
 /// Local machine keys own shared observation handles. SymbolicMemory cells reuse the
-/// structural family projections and leave native numeric carriers explicit.
+/// structural family projections and keep boundary-specific machine identities.
 #[derive(Debug)]
 enum StoredKey {
     Machine(SharedMachineIntegerTerm),
+    Word(storage_keys::WordKey),
     Algebraic(AlgebraicStorageKey),
     Pointer(PointerStorageKey),
     Boolean(BooleanStorageKey),
@@ -527,6 +542,9 @@ enum StoredKey {
 impl StoredKey {
     fn for_native_memory_value(value: &ProgramValue) -> Self {
         match value {
+            ProgramValue::UInt32(word) => {
+                storage_keys::WordKey::native(word).map_or(Self::Native, Self::Word)
+            }
             ProgramValue::Bool(word) => Self::Boolean(BooleanStorageKey::native(word)),
             ProgramValue::Float32(word) => Self::Float32(FloatStorageKey::native(word)),
             ProgramValue::Float64(word) => Self::Float64(FloatStorageKey::native(word)),
@@ -540,6 +558,7 @@ impl StoredKey {
         native: impl FnOnce() -> &'a ProgramValue,
     ) -> NativeStorageIdentity<'a> {
         match self {
+            Self::Word(key) => NativeStorageIdentity::Word(key),
             Self::Boolean(key) => NativeStorageIdentity::Boolean(key),
             Self::Float32(key) => NativeStorageIdentity::Float32(key),
             Self::Float64(key) => NativeStorageIdentity::Float64(key),
@@ -605,6 +624,7 @@ impl StoredExecutionValue {
             .get_or_init(|| StoredKey::for_value(&self.0.value))
         {
             StoredKey::Machine(identity) => StoredIdentity::Machine(identity),
+            StoredKey::Word(_) => unreachable!("word syntax keys are for memory"),
             StoredKey::Algebraic(key) => {
                 StoredIdentity::Native(NativeStorageIdentity::Algebraic(key))
             }

@@ -4832,16 +4832,14 @@ impl RecordedStates {
             }
         }
         self.last_resources = Some(state.resources().clone());
-        for term in state
+        for fingerprint in state
             .memory()
-            .changed_cell_integers(self.last_memory.as_ref())
+            .changed_cell_integer_fingerprints(self.last_memory.as_ref())
         {
             crate::instrumentation::record_deterministic_work(1);
             let newest_first = usize::MAX - self.cell_points.len();
-            self.cell_points.insert(
-                (crate::kernel::held_term_fingerprint(term), newest_first),
-                selector.clone(),
-            );
+            self.cell_points
+                .insert((fingerprint, newest_first), selector.clone());
         }
         self.last_memory = Some(state.memory().clone());
     }

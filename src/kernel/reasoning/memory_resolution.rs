@@ -5085,15 +5085,6 @@ impl StoreByteInterval {
     /// answer whether two *addresses* denote different locations: `p` and
     /// `p + 4` are different addresses, and a one-byte write at `p + 4`
     /// still overwrites part of an `int64` cell at `p`.
-    pub(in crate::kernel) fn overwrites(
-        &self,
-        cell_pointer: &Address,
-        cell_value: &ProgramValue,
-    ) -> bool {
-        let cell_width = i64::from(cell_value.byte_width());
-        self.overwrites_bytes(cell_pointer, cell_width)
-    }
-
     pub(in crate::kernel) fn overwrites_typed(
         &self,
         cell_pointer: &Address,
@@ -5113,14 +5104,6 @@ impl StoreByteInterval {
     /// the other seven bytes are knowledge the result no longer has. Calling
     /// that partial case stale let the produced state claim to be the state
     /// before the store.
-    pub(in crate::kernel) fn overwrites_completely(
-        &self,
-        cell_pointer: &Address,
-        cell_value: &ProgramValue,
-    ) -> bool {
-        self.covers_bytes(cell_pointer, i64::from(cell_value.byte_width()))
-    }
-
     pub(in crate::kernel) fn overwrites_typed_completely(
         &self,
         cell_pointer: &Address,

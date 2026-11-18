@@ -605,3 +605,36 @@ fn memory_hash_collisions_still_compare_values() {
         );
     }
 }
+
+#[test]
+fn retained_unsigned_cell_keys_preserve_exact_native_syntax() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let format = MachineIntegerType::UInt32;
+    let mut root = KernelTerm::variable(KernelType::Program(ProgramType::UInt32), Variable(998810));
+    let three = KernelTermImport::default().machine(format, &MachineTerm::uint32_constant(3));
+    let mut prior: Option<(StoredMemoryValue, ProgramValue)> = None;
+    for depth in 1..=48 {
+        root = KernelTerm::machine_binary_shared(
+            format,
+            MachineBinaryOp::Multiply,
+            [root, three.clone()],
+        );
+        let shared = StoredMemoryValue::retained_word(&root).unwrap();
+        let exports = KernelTermExport::machine_export_count();
+        let _ = hash(&shared);
+        assert_eq!(
+            KernelTermExport::machine_export_count(),
+            exports,
+            "depth {depth}"
+        );
+        let native = ProgramValue::UInt32(KernelTermExport::machine(&root).unwrap());
+        let stored = StoredMemoryValue::from(native.clone());
+        assert_eq!(shared, stored);
+        assert_eq!(hash(&shared), hash(&stored));
+        if let Some((prior_shared, prior_native)) = &prior {
+            assert_ne!(&shared, prior_shared);
+            assert_eq!(shared.cmp(prior_shared), native.cmp(prior_native));
+        }
+        prior = Some((shared, native));
+    }
+}

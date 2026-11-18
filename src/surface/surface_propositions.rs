@@ -79,18 +79,24 @@ struct StoreReadKey {
 impl StoreReadKey {
     fn of(equation: &Proposition) -> Option<(Self, &Address)> {
         use crate::kernel::{AddressBase, LoadKind};
-        let Some((
-            ConditionTerm::Compare {
-                relation: CompareRelation::Equal,
-                left,
-                ..
-            },
-            true,
-        )) = equation.condition_native()
-        else {
-            return None;
+        let left = match equation.condition_native()? {
+            (
+                ConditionTerm::Compare {
+                    relation: CompareRelation::Equal,
+                    left,
+                    ..
+                },
+                true,
+            ) => left.as_ref(),
+            (ConditionTerm::IntegerEqual(left, _), true) => {
+                let crate::kernel::IntegerTerm::Machine(left) = left.as_ref() else {
+                    return None;
+                };
+                left.retained_written_operand()?
+            }
+            _ => return None,
         };
-        let MachineTerm::MemoryLoad(point, address, LoadKind::UInt32) = left.as_ref() else {
+        let MachineTerm::MemoryLoad(point, address, LoadKind::UInt32) = left else {
             return None;
         };
         if address.base != AddressBase::ExternalArgument || !address.offset.is_shallow() {

@@ -833,7 +833,6 @@ fn write_program_lvalue_paths_for_initialization(
                     Some(crate::kernel::effective_type::CAccessClass::BitFieldByte(_))
                 ))
             .then(|| value.clone());
-            let value = value.into_native();
             // The loan obligation names the evaluated source lvalue. Keep its
             // address before storage chooses an equivalent owner's coordinates.
             let source_pointer = pointer.clone();
@@ -995,6 +994,66 @@ fn write_program_lvalue_paths_for_initialization(
                     obligations,
                 )]);
             }
+            // An ordinary word at this external address already has its exact
+            // checked width and payload. Byte assembly, worker deltas and
+            // guarded iteration keep using their existing native consumers.
+            if has_external_write_resource
+                && write_range.base().base == AddressBase::ExternalArgument
+                && write_range.base().offset.is_shallow()
+                && pointer.base == AddressBase::ExternalArgument
+                && !is_volatile
+                && state.pending_thread_create.is_none()
+                && !state.resources().has_iterated_facts()
+                && let Some(stored) = value.shared().and_then(StoredMemoryValue::retained_word)
+            {
+                let bytes = stored.byte_width();
+                let mut facts = facts;
+                let effective_assumptions = store_composition_context(
+                    state,
+                    &pointer,
+                    bytes,
+                    &effective_assumptions,
+                    &mut facts,
+                );
+                let before = state.memory.clone();
+                let memory = before.clone().store_retained_classed_with_context(
+                    pointer.clone(),
+                    stored.clone(),
+                    &effective_assumptions,
+                    lvalue_classes
+                        .0
+                        .as_ref()
+                        .and_then(|class| class.effective_type_of_store()),
+                );
+                let mut state = state.clone();
+                state.set_memory_with_checked_stores(memory, true);
+                let mut fact = ExecutionPureFact::certified_store(
+                    before,
+                    state.memory.clone(),
+                    pointer.clone(),
+                    stored,
+                    authorized_range,
+                );
+                let certificate = fact
+                    .certified_store
+                    .as_mut()
+                    .expect("fresh store certificate");
+                certificate.source = store_source.clone();
+                certificate.source_address = Some(write_range.base().clone());
+                facts.push(fact);
+                refresh_scalar_local_after_memory_store(
+                    &mut state,
+                    &pointer,
+                    bytes,
+                    &effective_assumptions,
+                );
+                return Ok(vec![StatementExecutionPath::new(
+                    StatementOutcome::Normal(Box::new(state)),
+                    facts,
+                    obligations,
+                )]);
+            }
+            let value = value.into_native();
             let obligations = if has_external_write_resource {
                 obligations
             } else {
@@ -1142,21 +1201,13 @@ fn write_program_lvalue_paths_for_initialization(
             // framing reads the same members
             // (`functions::store_opened_instance_composition`).
             let mut facts = facts;
-            let effective_assumptions =
-                match crate::kernel::functions::store_opened_instance_composition(
-                    &state,
-                    &written_pointer,
-                    written_value.byte_width(),
-                    &effective_assumptions,
-                ) {
-                    Some(opened) => {
-                        facts.push(ExecutionPureFact::new(Proposition::ResourceComposition(
-                            opened.clone(),
-                        )));
-                        effective_assumptions.with_additional_store_owner(opened)
-                    }
-                    None => effective_assumptions,
-                };
+            let effective_assumptions = store_composition_context(
+                &state,
+                &written_pointer,
+                written_value.byte_width(),
+                &effective_assumptions,
+                &mut facts,
+            );
             let retained_written = if let Some(root) = retained_direct
                 && ExecutionValue::Shared(root.clone()).program_type()
                     == written_value.program_type()
@@ -1240,7 +1291,7 @@ fn write_program_lvalue_paths_for_initialization(
             refresh_scalar_local_after_memory_store(
                 &mut state,
                 &written_pointer,
-                &written_value,
+                written_value.byte_width(),
                 &effective_assumptions,
             );
             if is_volatile {
@@ -1258,6 +1309,28 @@ fn write_program_lvalue_paths_for_initialization(
                 obligations,
             )])
         }
+    }
+}
+
+fn store_composition_context(
+    state: &ExecutionState,
+    pointer: &Address,
+    bytes: u32,
+    assumptions: &PureFactContext,
+    facts: &mut ExecutionFacts,
+) -> PureFactContext {
+    if let Some(opened) = crate::kernel::functions::store_opened_instance_composition(
+        state,
+        pointer,
+        bytes,
+        assumptions,
+    ) {
+        facts.push(ExecutionPureFact::new(Proposition::ResourceComposition(
+            opened.clone(),
+        )));
+        assumptions.clone().with_additional_store_owner(opened)
+    } else {
+        assumptions.clone()
     }
 }
 
@@ -6516,7 +6589,7 @@ fn begin_aggregate_construction(
 pub(in crate::kernel) fn refresh_scalar_local_after_memory_store(
     state: &mut ExecutionState,
     pointer: &Address,
-    value: &ProgramValue,
+    bytes: u32,
     assumptions: &PureFactContext,
 ) {
     let slot = Address {
@@ -6531,7 +6604,7 @@ pub(in crate::kernel) fn refresh_scalar_local_after_memory_store(
     };
     let overlap = crate::kernel::reasoning::memory_resolution::access_byte_overlap(
         pointer,
-        value.byte_width(),
+        bytes,
         &slot,
         program_type.byte_width(),
         assumptions,

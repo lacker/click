@@ -5,7 +5,7 @@ use crate::kernel::binary_node;
 use crate::kernel::binary_term;
 use crate::kernel::{BitvectorUnaryOp, MachineCastSpelling, cast_term};
 use crate::kernel::{CompareRelation, MachineIntegerType};
-use crate::kernel::{ExecutionFactSource, ExecutionValue};
+use crate::kernel::{ExecutionFactSource, ExecutionValue, StoredMemoryValue};
 use crate::kernel::{bits32_constant, int64_constant, native_constant, uint64_constant};
 use std::collections::BTreeSet;
 
@@ -4819,7 +4819,7 @@ pub(crate) fn rewrite_condition_through_certified_stores(
         let Some(store) = &transition.certified_store else {
             continue;
         };
-        let value_term = match &store.value {
+        let value_term = match store.value.native() {
             ProgramValue::Int8(term) => term.clone(),
             ProgramValue::Int16(term)
             | ProgramValue::Int32(term)
@@ -4829,7 +4829,7 @@ pub(crate) fn rewrite_condition_through_certified_stores(
             _ => continue,
         };
         // The store's value is the read of its own kind at its own address.
-        let Some(kind) = LoadKind::of_value(&store.value) else {
+        let Some(kind) = LoadKind::of_value(store.value.native()) else {
             continue;
         };
         equations.push((
@@ -6271,6 +6271,39 @@ pub(crate) fn certified_store_equations(
         .collect()
 }
 
+pub(super) fn stored_value_equation(
+    after: &SymbolicMemory,
+    pointer: &Address,
+    value: &StoredMemoryValue,
+) -> Option<Proposition> {
+    if !value.is_retained_word() {
+        return store_value_equation(after, pointer, value.native());
+    }
+    let bytes = value.byte_width();
+    let root = value.value().shared().expect("retained word");
+    crate::kernel::eval::record_load_access_width(after, pointer, bytes);
+    let memory = crate::kernel::intern_memory(after.clone());
+    let read = if matches!(root.node(), KernelTermNode::MachineBinary { .. }) {
+        // This checked write installed an arithmetic result at this exact
+        // cell. Its root cannot forward an earlier read. Name the write
+        // directly instead of resolving and walking the word to discover that.
+        crate::kernel::eval::scalar_read_for_exact_cell(&memory, pointer, LoadKind::UInt32, bytes)
+    } else {
+        // A bare variable may itself name a read that the normal selector
+        // forwards. Keep that selection for leaf values.
+        crate::kernel::canonical_form_of_load(memory, pointer.clone(), LoadKind::UInt32)
+    };
+    let condition = crate::kernel::machine_integer::comparison::condition_for_operand_views(
+        MachineIntegerType::UInt32,
+        CompareRelation::Equal,
+        [
+            MachineOperandView::Legacy(&read),
+            MachineOperandView::Shared(root),
+        ],
+    );
+    Some(Proposition::condition_is(condition, true))
+}
+
 /// Construct the value equation from this one store's operands at admission.
 /// Later consumers reuse the retained equation instead of naming its read again.
 pub(super) fn store_value_equation(
@@ -6357,10 +6390,10 @@ pub(crate) fn certified_store_loadability_facts(
             let store = fact.certified_store_data()?;
             // The store materializes one cell of the value's own width; a
             // pointer is `C_POINTER_BYTE_WIDTH` bytes, not four.
-            let byte_width = match &store.value {
-                ProgramValue::Void => return None,
-                value => value.byte_width(),
-            };
+            if store.value.program_type() == ProgramType::Void {
+                return None;
+            }
+            let byte_width = store.value.byte_width();
             Some(Proposition::MemoryLoadable {
                 memory: store.after.clone(),
                 base: store.pointer.clone(),

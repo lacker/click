@@ -634,8 +634,8 @@ fn memories_equal_by_derivation(
                     assumptions,
                 )))
                 && program_values_proven_equal_for_memory_resolution(
-                    &left.value,
-                    &right.value,
+                    left.value.native(),
+                    right.value.native(),
                     assumptions,
                 )
         })

@@ -10482,10 +10482,11 @@ impl ExecutionPureFact {
         before: SymbolicMemory,
         after: SymbolicMemory,
         pointer: Address,
-        value: ProgramValue,
+        value: impl Into<StoredMemoryValue>,
         authorized_range: Option<MemoryRange>,
     ) -> Self {
-        let value_equation = super::memory_history::store_value_equation(&after, &pointer, &value)
+        let value = value.into();
+        let value_equation = super::memory_history::stored_value_equation(&after, &pointer, &value)
             .map(std::sync::Arc::new);
         Self {
             proposition: std::sync::Arc::new(Proposition::MemoryMutatesOnly {

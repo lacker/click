@@ -3210,7 +3210,10 @@ fn collect_memory_bound_variables(memory: &SymbolicMemory, variables: &mut BTree
         #[cfg(test)]
         count_memory_bound_cell_visit();
         collect_pointer_bound_variables(pointer, variables);
-        collect_program_value_bound_variables(value.native(), variables);
+        // The retained word fragment contains no binders.
+        if !value.is_retained_word() {
+            collect_program_value_bound_variables(value.native(), variables);
+        }
     }
     // A run's slots are named uniformly per spelling shape wherever
     // `run_shape_representatives` says so, and then mention the same bound
@@ -3273,7 +3276,10 @@ fn collect_memory_bound_variables_entering(
             #[cfg(test)]
             count_memory_bound_cell_visit();
             collect_pointer_bound_variables(pointer, variables);
-            collect_program_value_bound_variables(value.native(), variables);
+            // The retained word fragment contains no binders.
+            if !value.is_retained_word() {
+                collect_program_value_bound_variables(value.native(), variables);
+            }
         }
     }
     for (_, after) in base.cells.run_diff(&memory.cells) {

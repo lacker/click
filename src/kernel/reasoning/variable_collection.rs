@@ -6235,7 +6235,7 @@ fn variables_entering(base: &SymbolicMemory, memory: &SymbolicMemory) -> BTreeSe
     for change in base.cells.concrete().diff(memory.cells.concrete()) {
         let pointer = change.key();
         if let Some(value) = memory.cells.concrete().get(pointer) {
-            variables.extend(cell_variables(pointer, value.native()));
+            variables.extend(stored_cell_variables(pointer, value));
         }
     }
     for (_, after) in base.cells.run_diff(&memory.cells) {
@@ -6481,6 +6481,18 @@ fn cell_variables(pointer: &Address, value: &ProgramValue) -> BTreeSet<Variable>
     variables
 }
 
+fn stored_cell_variables(pointer: &Address, value: &StoredMemoryValue) -> BTreeSet<Variable> {
+    if !value.is_retained_word() {
+        return cell_variables(pointer, value.native());
+    }
+    #[cfg(test)]
+    CELLS_COLLECTED.with(|visited| visited.set(visited.get() + 1));
+    let mut variables = BTreeSet::new();
+    collect_pointer_bitvector_variables(pointer, &mut variables);
+    collect_expression_value_bitvector_variables(value.value(), &mut variables);
+    variables
+}
+
 /// Counts a run's variables in or out: as one entry when its
 /// representatives stand for it, and otherwise as one entry per live slot.
 /// Either way the variables counted are exactly the run's
@@ -6605,13 +6617,13 @@ fn counts_whole(memory: &SymbolicMemory, whole: WholeCount) -> VariableCounts {
         add_counts(&mut counts, block_variables(block, contents), 1);
     }
     for (pointer, value) in memory.cells.concrete().iter() {
-        add_counts(&mut counts, cell_variables(pointer, value.native()), 1);
+        add_counts(&mut counts, stored_cell_variables(pointer, value), 1);
     }
     for run in memory.cells.runs() {
         add_run_counts(&mut counts, run, 1);
     }
     for ((pointer, _), value) in memory.union_cells.iter() {
-        add_counts(&mut counts, cell_variables(pointer, value.native()), 1);
+        add_counts(&mut counts, stored_cell_variables(pointer, value), 1);
     }
     counts
 }
@@ -6661,10 +6673,10 @@ fn counts_from_base(
     for change in base.cells.concrete().diff(memory.cells.concrete()) {
         let pointer = change.key();
         if let Some(value) = base.cells.concrete().get(pointer) {
-            add_counts(&mut counts, cell_variables(pointer, value.native()), -1);
+            add_counts(&mut counts, stored_cell_variables(pointer, value), -1);
         }
         if let Some(value) = memory.cells.concrete().get(pointer) {
-            add_counts(&mut counts, cell_variables(pointer, value.native()), 1);
+            add_counts(&mut counts, stored_cell_variables(pointer, value), 1);
         }
     }
     for (before, after) in base.cells.run_diff(&memory.cells) {

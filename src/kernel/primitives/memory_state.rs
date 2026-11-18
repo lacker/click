@@ -4927,8 +4927,7 @@ impl SymbolicMemory {
                                     .cells
                                     .concrete()
                                     .get(pointer)
-                                    .map(|value| value.native())
-                                    == Some(cell)
+                                    .is_some_and(|value| cell.matches(value))
                         })
                 {
                     return CachedValueFate::Kept;
@@ -6685,7 +6684,7 @@ impl SymbolicMemory {
     pub(in crate::kernel) fn store_retained_classed_with_context(
         self,
         pointer: Address,
-        value: ExecutionValue,
+        value: impl Into<StoredMemoryValue>,
         context: &PureFactContext,
         class: Option<crate::kernel::effective_type::CAccessClass>,
     ) -> Self {
@@ -6700,11 +6699,14 @@ impl SymbolicMemory {
         effective_type: Option<Option<crate::kernel::effective_type::CAccessClass>>,
         invalidate_aliases: bool,
     ) -> Self {
-        crate::kernel::debug_assert_widths(
-            "a stored value",
-            || crate::kernel::value_mismatch(value.native()),
-            value.native(),
-        );
+        // The retained word fragment has checked 32-bit operators and leaves.
+        if !value.is_retained_word() {
+            crate::kernel::debug_assert_widths(
+                "a stored value",
+                || crate::kernel::value_mismatch(value.native()),
+                &value,
+            );
+        }
         let base = intern_derivation_base(&mut self);
         // Cache invalidation is internal to this store, not a memory event.
         // Retain its original input, and never intern the intermediate cache.
@@ -6863,26 +6865,30 @@ impl SymbolicMemory {
     /// since `earlier`, or by every concrete cell when there is no earlier
     /// memory: what a recorded point newly names in memory. The walk visits
     /// only the changed cells of memories derived from one another.
-    pub(crate) fn changed_cell_integers<'a>(
-        &'a self,
-        earlier: Option<&'a Self>,
-    ) -> Vec<&'a MachineTerm> {
+    pub(crate) fn changed_cell_integer_fingerprints(&self, earlier: Option<&Self>) -> Vec<u64> {
         self.cells
             .changed_concrete_cells(earlier.map(|earlier| earlier.cells.as_ref()))
             .into_iter()
-            .filter_map(|(_, value)| match value.numeric_value() {
-                ProgramValue::Bool(term)
-                | ProgramValue::Int8(term)
-                | ProgramValue::Int16(term)
-                | ProgramValue::Int32(term)
-                | ProgramValue::UInt8(term)
-                | ProgramValue::UInt16(term)
-                | ProgramValue::UInt32(term)
-                | ProgramValue::Int64(term)
-                | ProgramValue::UInt64(term)
-                | ProgramValue::Int128(term)
-                | ProgramValue::UInt128(term) => Some(term),
-                _ => None,
+            .filter_map(|(_, value)| {
+                if value.is_retained_word() {
+                    return held_kernel_term_fingerprint(
+                        value.value().shared().expect("retained word"),
+                    );
+                }
+                match value.native().numeric_value() {
+                    ProgramValue::Bool(term)
+                    | ProgramValue::Int8(term)
+                    | ProgramValue::Int16(term)
+                    | ProgramValue::Int32(term)
+                    | ProgramValue::UInt8(term)
+                    | ProgramValue::UInt16(term)
+                    | ProgramValue::Int64(term)
+                    | ProgramValue::UInt64(term)
+                    | ProgramValue::Int128(term)
+                    | ProgramValue::UInt128(term)
+                    | ProgramValue::UInt32(term) => Some(held_term_fingerprint(term)),
+                    _ => None,
+                }
             })
             .collect()
     }
@@ -7320,7 +7326,7 @@ impl SymbolicMemory {
         let mut forgotten_cells = Vec::new();
         let dropped_run_slots;
         {
-            let mut keep_cell = |pointer: &Address, value: &ProgramValue| match fate(
+            let mut keep_cell = |pointer: &Address, value: CachedCell<'_>| match fate(
                 pointer,
                 CachedValue::Cell(value),
             ) {
@@ -7407,7 +7413,8 @@ impl SymbolicMemory {
             Arc::make_mut(&mut self.heap)
                 .initialized
                 .forget_partial_values(candidates, |address, value| {
-                    fate(address, CachedValue::Cell(value)) == CachedValueFate::Kept
+                    fate(address, CachedValue::Cell(CachedCell::Native(value)))
+                        == CachedValueFate::Kept
                 })
         };
         self.record_dropped_initialized_cells(&forgotten_cells);
@@ -7658,7 +7665,7 @@ impl SymbolicMemory {
         // Objects a known address equality ties to the written one may share
         // the written bytes.
         let address_connected = assumptions.address_connected_objects(&normalized_pointer);
-        let cell_fate = |cell_pointer: &Address, cell_value: &ProgramValue| {
+        let cell_fate = |cell_pointer: &Address, cell_value: CachedCell<'_>| {
             let normalized_cell_pointer = Address {
                 base: cell_pointer.base.clone(),
                 offset: normalize_exact_memory_loads_in_pointer_offset(
@@ -7667,15 +7674,18 @@ impl SymbolicMemory {
                 ),
             };
             if normalized_cell_pointer.base == normalized_pointer.base
-                && written
-                    .as_ref()
-                    .is_some_and(|written| written.overwrites(&normalized_cell_pointer, cell_value))
+                && written.as_ref().is_some_and(|written| {
+                    written.overwrites_typed(&normalized_cell_pointer, cell_value.program_type())
+                })
             {
                 // Only a cell the store writes *completely* is stale. One it
                 // writes part of leaves the untouched bytes unrecorded, so the
                 // result knows strictly less than its source and has to say so.
                 return if written.as_ref().is_some_and(|written| {
-                    written.overwrites_completely(&normalized_cell_pointer, cell_value)
+                    written.overwrites_typed_completely(
+                        &normalized_cell_pointer,
+                        cell_value.program_type(),
+                    )
                 }) {
                     CachedValueFate::Overwritten
                 } else {
@@ -7691,7 +7701,7 @@ impl SymbolicMemory {
                     &normalized_pointer,
                     bytes,
                     &normalized_cell_pointer,
-                    crate::kernel::reasoning::cell_access_byte_width(cell_value),
+                    cell_value.access_byte_width(),
                     assumptions,
                 )
                 .is_some()
@@ -7705,13 +7715,13 @@ impl SymbolicMemory {
                 &owned_footprint,
                 &normalized_pointer,
                 &normalized_cell_pointer,
-                crate::kernel::reasoning::cell_access_byte_width(cell_value),
+                cell_value.access_byte_width(),
             ) {
                 return CachedValueFate::Kept;
             }
             let address_inequality_separates_bytes = crate::kernel::reasoning::access_byte_overlap(
                 &normalized_cell_pointer,
-                crate::kernel::reasoning::cell_access_byte_width(cell_value),
+                cell_value.access_byte_width(),
                 &normalized_pointer,
                 bytes,
                 assumptions,
@@ -11135,12 +11145,52 @@ mod join_allocation_spelling_tests {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::kernel) enum CachedCell<'a> {
+    Native(&'a ProgramValue),
+    Retained(&'a StoredMemoryValue),
+}
+
+impl<'a> CachedCell<'a> {
+    pub(super) fn native(self) -> &'a ProgramValue {
+        match self {
+            Self::Native(value) => value,
+            Self::Retained(value) => value.native(),
+        }
+    }
+
+    fn matches(self, value: &StoredMemoryValue) -> bool {
+        self.native() == value.native()
+    }
+
+    fn program_type(self) -> ProgramType {
+        match self {
+            Self::Native(value) => value.program_type(),
+            Self::Retained(value) => value.program_type(),
+        }
+    }
+
+    fn byte_width(self) -> u32 {
+        match self {
+            Self::Native(value) => value.byte_width(),
+            Self::Retained(value) => value.byte_width(),
+        }
+    }
+
+    pub(super) fn access_byte_width(self) -> u32 {
+        match self.byte_width() {
+            0 => crate::kernel::resource_tracker::widest_scalar_access_bytes(),
+            bytes => bytes,
+        }
+    }
+}
+
 /// One cached value a forgetting transition is asked about
 /// ([`SymbolicMemory::forget_cached_values`]).
 #[derive(Clone, Copy, Debug)]
 pub(super) enum CachedValue<'a> {
     /// A cell, or one slot of a run.
-    Cell(&'a ProgramValue),
+    Cell(CachedCell<'a>),
     /// A typed view of union storage, keyed by the member type it records.
     UnionView(ProgramType, &'a ProgramValue),
 }
@@ -11148,7 +11198,8 @@ pub(super) enum CachedValue<'a> {
 impl<'a> CachedValue<'a> {
     pub(super) fn value(self) -> &'a ProgramValue {
         match self {
-            Self::Cell(value) | Self::UnionView(_, value) => value,
+            Self::Cell(value) => value.native(),
+            Self::UnionView(_, value) => value,
         }
     }
 

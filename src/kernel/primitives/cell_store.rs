@@ -1245,7 +1245,7 @@ impl CellStore {
             if let Some(base) = assumptions.parameter_partition_cell_base(
                 resources,
                 &key,
-                crate::kernel::reasoning::cell_access_byte_width(value.native()),
+                super::memory_state::CachedCell::Retained(value).access_byte_width(),
             ) {
                 index.known.insert((base.clone(), key.clone()), ());
                 index.bases.insert(key, base);
@@ -1660,7 +1660,7 @@ impl CellStore {
         selected: &[Address],
         candidates: &AliasCandidates,
         selected_runs: Option<&[RunKey]>,
-        mut keep: impl FnMut(&Address, &ProgramValue) -> bool,
+        mut keep: impl FnMut(&Address, super::memory_state::CachedCell<'_>) -> bool,
         mut run_rule: impl FnMut(&CellRun) -> (SlotSet, RuleAnswer),
     ) -> Vec<DroppedRunSlots> {
         self.reset();
@@ -1669,7 +1669,7 @@ impl CellStore {
             if self
                 .concrete
                 .get(key)
-                .is_some_and(|value| !keep(key, value.native()))
+                .is_some_and(|value| !keep(key, super::memory_state::CachedCell::Retained(value)))
             {
                 self.concrete.remove(key);
             }
@@ -1681,7 +1681,11 @@ impl CellStore {
                 .collect(),
             None => self.visited_runs(Some(candidates)),
         };
-        self.retain_runs_from(runs, keep, &mut run_rule)
+        self.retain_runs_from(
+            runs,
+            |key, value| keep(key, super::memory_state::CachedCell::Native(value)),
+            &mut run_rule,
+        )
     }
 
     /// The concrete cells alone, without any run: what a caller that only
@@ -2058,6 +2062,12 @@ impl CellStore {
             }
         }
         if let Some(value) = self.concrete.get(pointer) {
+            if value.is_retained_word() {
+                let root = value.value().shared().expect("retained word");
+                return crate::kernel::MachineOperandView::Shared(root)
+                    .variable()
+                    .copied();
+            }
             return variable(value.native());
         }
         let slot = self.live_run_slot(pointer)?;
@@ -2296,21 +2306,19 @@ impl CellStore {
     pub(crate) fn changed_concrete_cells<'a>(
         &'a self,
         earlier: Option<&'a Self>,
-    ) -> Vec<(&'a Address, &'a ProgramValue)> {
+    ) -> Vec<(&'a Address, &'a StoredMemoryValue)> {
         match earlier {
             Some(earlier) => earlier
                 .concrete
                 .diff(&self.concrete)
                 .filter_map(|change| match change {
                     HashedOrdMapChange::Added(pointer) | HashedOrdMapChange::Changed(pointer) => {
-                        self.concrete
-                            .get(pointer)
-                            .map(|value| (pointer, value.native()))
+                        self.concrete.get(pointer).map(|value| (pointer, value))
                     }
                     HashedOrdMapChange::Removed(_) => None,
                 })
                 .collect(),
-            None => self.concrete.iter().map(native_cell).collect(),
+            None => self.concrete.iter().collect(),
         }
     }
 
@@ -2638,15 +2646,20 @@ impl CellStore {
 
     /// [`Self::retain`] with a whole-run answer from `run_rule`, as for
     /// [`Self::retain_only_candidates_by`]. Returns the run slots it dropped.
-    pub(crate) fn retain_by(
+    pub(super) fn retain_by(
         &mut self,
-        mut keep: impl FnMut(&Address, &ProgramValue) -> bool,
+        mut keep: impl FnMut(&Address, super::memory_state::CachedCell<'_>) -> bool,
         mut run_rule: impl FnMut(&CellRun) -> (SlotSet, RuleAnswer),
     ) -> Vec<DroppedRunSlots> {
         self.reset();
-        self.concrete
-            .retain(|pointer, value| keep(pointer, value.native()));
-        self.retain_runs_by(None, keep, &mut run_rule)
+        self.concrete.retain(|pointer, value| {
+            keep(pointer, super::memory_state::CachedCell::Retained(value))
+        });
+        self.retain_runs_by(
+            None,
+            |key, value| keep(key, super::memory_state::CachedCell::Native(value)),
+            &mut run_rule,
+        )
     }
 
     /// Keeps the candidate cells `keep` accepts, leaving cells outside the
@@ -2657,18 +2670,22 @@ impl CellStore {
     /// `kept`: those cells are kept without being visited
     /// ([`AliasCandidates::retain_map_outside`]). Runs are asked as before.
     /// Returns the run slots it dropped.
-    pub(crate) fn retain_candidates_outside_by(
+    pub(super) fn retain_candidates_outside_by(
         &mut self,
         candidates: &AliasCandidates,
         kept: &[(Address, Address)],
-        mut keep: impl FnMut(&Address, &ProgramValue) -> bool,
+        mut keep: impl FnMut(&Address, super::memory_state::CachedCell<'_>) -> bool,
         mut run_rule: impl FnMut(&CellRun) -> (SlotSet, RuleAnswer),
     ) -> Vec<DroppedRunSlots> {
         self.reset();
         candidates.retain_map_outside(&mut self.concrete, kept, |pointer, value| {
-            keep(pointer, value.native())
+            keep(pointer, super::memory_state::CachedCell::Retained(value))
         });
-        self.retain_runs_by(Some(candidates), keep, &mut run_rule)
+        self.retain_runs_by(
+            Some(candidates),
+            |key, value| keep(key, super::memory_state::CachedCell::Native(value)),
+            &mut run_rule,
+        )
     }
 
     /// The runs a retain visits: those `candidates` admits, or every run.
@@ -3503,9 +3520,12 @@ mod tests {
                     _ => {
                         let only = AliasCandidates::only_block(&global);
                         let keep = |pointer: &Address, _: &ProgramValue| !matches!(pointer.offset, AddressOffset::Constant(offset) if offset % 8 == 4);
-                        store.retain_candidates_outside_by(&only, &[], keep, |_| {
-                            (SlotSet::PerSlot, RuleAnswer::Exact)
-                        });
+                        store.retain_candidates_outside_by(
+                            &only,
+                            &[],
+                            |pointer, value| keep(pointer, value.native()),
+                            |_| (SlotSet::PerSlot, RuleAnswer::Exact),
+                        );
                         model.retain(|pointer, value| {
                             pointer.base != global || keep(pointer, value)
                         });

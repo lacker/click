@@ -234,7 +234,10 @@ pub(super) fn execute(
                         && let ExpressionOutcome::Value(value) = next.memory.load(target)
                     {
                         refresh_scalar_local_after_memory_store(
-                            &mut next, target, &value, &selected,
+                            &mut next,
+                            target,
+                            value.byte_width(),
+                            &selected,
                         );
                     }
                     StatementOutcome::Normal(Box::new(next))

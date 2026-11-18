@@ -15334,7 +15334,7 @@ pub(super) struct CertifiedMemoryStore {
     pub(super) before: SymbolicMemory,
     pub(super) after: SymbolicMemory,
     pub(super) pointer: Address,
-    pub(super) value: ProgramValue,
+    pub(super) value: StoredMemoryValue,
     pub(super) authorized_range: Option<MemoryRange>,
     pub(super) source: super::StatementStoreSource,
     pub(super) value_equation: Option<Arc<Proposition>>,

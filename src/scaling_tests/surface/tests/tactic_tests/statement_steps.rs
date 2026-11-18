@@ -1022,3 +1022,54 @@ fn check_word_store_source_publication(
         "{lvalue} publication grew with RHS depth: {publication_work:?}"
     );
 }
+
+#[test]
+fn repeated_unsigned_stores_keep_preparation_independent_of_rhs_depth() {
+    use crate::instrumentation::VerificationEvent;
+    let mut samples = Vec::new();
+    for count in [8, 24, 48] {
+        let body = "    p[0] = x; x = x * 3u + 1u;\n".repeat(count);
+        let c = format!("void set(uint32* p, uint32 x) {{\n{body}}}");
+        let steps = "    step();\n".repeat(2 * count);
+        let last = 2 * count - 2;
+        let click = format!(
+            "verifying \"store.c\";\nvoid set(uint32* p, uint32 x) {{ owns *p; }} by {{\n{steps}\
+             have at(statement({last}).exit, p[0]) == at(statement({last}).entry, x) by {{ known(); }}\n}}"
+        );
+        let (verified, events) = crate::instrumentation::collect(|| {
+            verify_c_sources(&click, &[("store.c", c.as_str())])
+        });
+        verified.unwrap_or_else(|error| panic!("count {count}: {}", error.report()));
+        let preparation = events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                VerificationEvent::OperationFinished { name, work, .. }
+                    if name == "verification statement: store" =>
+                {
+                    Some(*work)
+                }
+                _ => None,
+            })
+            .expect("the store was executed");
+        let step = events
+            .iter()
+            .find_map(|event| match event {
+                VerificationEvent::TacticFinished { tactic, work, .. }
+                    if tactic.tactic_name == "step" && tactic.source_index == last =>
+                {
+                    Some(*work)
+                }
+                _ => None,
+            })
+            .expect("the last store stepped");
+        samples.push((preparation, step));
+    }
+    assert!(
+        samples
+            .iter()
+            .all(|&(preparation, step)| preparation <= samples[0].0 + 32
+                && step <= samples[0].1 + 64),
+        "a store grew with RHS depth: {samples:?}"
+    );
+}
