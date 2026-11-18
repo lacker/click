@@ -7976,10 +7976,11 @@ fn project_explicit_memory_segments(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
     require_decided_guards: bool,
-) -> ExecutionResult<Result<(Vec<MemoryRange>, ExecutionFacts), String>> {
+) -> ExecutionResult<Result<FunctionMemoryEffectProjection, String>> {
     let mut projection_assumptions = assumptions.clone();
     let mut ranges = BTreeSet::new();
     let mut evidence_facts = Vec::new();
+    let mut has_exact_write_ranges = true;
     for segment in segments {
         if let Some(guard) = segment.guard() {
             match evaluate_guarded_contract_condition(guard, entry, &projection_assumptions, budget)
@@ -7989,7 +7990,7 @@ fn project_explicit_memory_segments(
                 None if require_decided_guards => {
                     return Ok(Err("mutable footprint guard is undecided".to_string()));
                 }
-                None => {}
+                None => has_exact_write_ranges = false,
             }
         }
         match evaluate_loop_effect_segment_with_facts(
@@ -8008,7 +8009,12 @@ fn project_explicit_memory_segments(
             Err(message) => return Ok(Err(message.into())),
         }
     }
-    Ok(Ok((ranges.into_iter().collect(), evidence_facts.into())))
+    Ok(Ok(FunctionMemoryEffectProjection {
+        ranges: ranges.into_iter().collect(),
+        evidence_facts: evidence_facts.into(),
+        has_exact_write_ranges,
+        range_sources: Vec::new(),
+    }))
 }
 
 /// The canonical owned memory ranges one checked owned fact denotes, derived
@@ -8799,8 +8805,7 @@ impl<'a> OwnedFootprintDerivation<'a> {
         if !self.enters(definition) {
             return;
         }
-        self.exact &= definition.condition.is_none()
-            && definition.witnesses.is_empty()
+        self.exact &= definition.witnesses.is_empty()
             && definition.resource_parameters.is_empty()
             && !definition.authorized
             && !definition.is_sealed();
@@ -8986,14 +8991,15 @@ impl<'a> OwnedFootprintDerivation<'a> {
         let mut budget = ExecutionBudget::beside_live_state();
         // An undecided guard counts the body as active: the footprint is an
         // upper bound, and a body that is not active owns nothing extra.
-        if evaluate_composite_resource_body_condition(
+        match evaluate_composite_resource_body_condition(
             definition,
             &evaluation,
             &self.evaluation_assumptions,
             &mut budget,
-        ) == Some(false)
-        {
-            return;
+        ) {
+            Some(false) => return,
+            Some(true) => {}
+            None => self.exact = false,
         }
         for spec in contains {
             // A flat body contributes exactly its unconditional memory
@@ -9201,13 +9207,11 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
     // modular-call source.  Functions without resource clauses retain their
     // explicit effect segments here.
     let explicit_segments = if !interface.resource_derived_mutable_frame() {
-        let segments = interface.contract_mutable();
-        has_exact_write_ranges = segments.iter().all(|segment| segment.guard().is_none());
-        segments
+        interface.contract_mutable()
     } else {
         &[]
     };
-    let (explicit_ranges, explicit_evidence) = match project_explicit_memory_segments(
+    let explicit = match project_explicit_memory_segments(
         entry,
         explicit_segments,
         assumptions,
@@ -9217,8 +9221,9 @@ pub(crate) fn project_contract_memory_effects_with_guard_policy(
         Ok(result) => result,
         Err(message) => return Ok(Err(message)),
     };
-    ranges.extend(explicit_ranges);
-    evidence_facts.extend(explicit_evidence);
+    ranges.extend(explicit.ranges);
+    evidence_facts.extend(explicit.evidence_facts);
+    has_exact_write_ranges &= explicit.has_exact_write_ranges;
     Ok(Ok(FunctionMemoryEffectProjection {
         ranges: ranges.into_iter().collect(),
         evidence_facts: evidence_facts.into(),
@@ -9438,7 +9443,7 @@ fn evaluate_decided_contract_mutable_ranges_for_interface(
                 None => return Ok(None),
             }
         }
-        let Ok((mut projected, _)) = project_explicit_memory_segments(
+        let Ok(mut projected) = project_explicit_memory_segments(
             entry,
             std::slice::from_ref(segment),
             &guard_assumptions,
@@ -9448,7 +9453,7 @@ fn evaluate_decided_contract_mutable_ranges_for_interface(
         else {
             return Ok(None);
         };
-        let Some(range) = projected.pop() else {
+        let Some(range) = projected.ranges.pop() else {
             return Ok(None);
         };
         ranges.push(range);

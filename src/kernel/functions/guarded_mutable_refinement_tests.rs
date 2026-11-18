@@ -123,6 +123,32 @@ fn active_is_zero(value: bool) -> PureFactContext {
     ))
 }
 
+#[test]
+fn explicit_write_projection_retains_guard_certainty() {
+    let entry = entry_state();
+    let segments = [segment(Some(guard(ComparisonOperator::NotEqual, 0)), 0, 1)];
+    let project = |assumptions: &PureFactContext| {
+        project_explicit_memory_segments(
+            &entry,
+            &segments,
+            assumptions,
+            &mut ExecutionBudget::new(),
+            false,
+        )
+        .expect("projection fits the execution budget")
+        .expect("the segment has evaluable bounds")
+    };
+    let active = project(&active_is_zero(false));
+    assert!(active.has_exact_write_ranges);
+    assert_eq!(active.ranges.len(), 1);
+    let inactive = project(&active_is_zero(true));
+    assert!(inactive.has_exact_write_ranges);
+    assert!(inactive.ranges.is_empty());
+    let undecided = project(&PureFactContext::new());
+    assert!(!undecided.has_exact_write_ranges);
+    assert_eq!(undecided.ranges, active.ranges);
+}
+
 /// An available guard that only logical search could discharge is treated
 /// as unsettled, so its segment is not available. The same footprint with
 /// the guard spelled as the exactly available condition is accepted, so

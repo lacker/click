@@ -594,7 +594,7 @@ pub(super) fn explicit_refinement_effects_are_compatible(
         if let Some(guard) = required_guard {
             active_assumptions = active_assumptions.assume_proposition(guard);
         }
-        let Ok((required_ranges, _)) = project_explicit_memory_segments(
+        let Ok(required) = project_explicit_memory_segments(
             function_entry,
             std::slice::from_ref(required_segment),
             &active_assumptions,
@@ -604,7 +604,7 @@ pub(super) fn explicit_refinement_effects_are_compatible(
         else {
             return Ok(false);
         };
-        let Some(required_range) = required_ranges.first() else {
+        let Some(required_range) = required.ranges.first() else {
             return Ok(false);
         };
         let mut covered = false;
@@ -618,7 +618,7 @@ pub(super) fn explicit_refinement_effects_are_compatible(
             }
             let mut available_segment = available_segment.clone();
             available_segment.guard = None;
-            let Ok((available_ranges, _)) = project_explicit_memory_segments(
+            let Ok(available) = project_explicit_memory_segments(
                 contract_entry,
                 std::slice::from_ref(&available_segment),
                 &active_assumptions,
@@ -628,7 +628,7 @@ pub(super) fn explicit_refinement_effects_are_compatible(
             else {
                 continue;
             };
-            if available_ranges.iter().any(|available_range| {
+            if available.ranges.iter().any(|available_range| {
                 memory_range_covers(available_range, required_range, &active_assumptions)
             }) {
                 covered = true;
@@ -683,7 +683,7 @@ pub(super) fn project_refinement_effects(
             // lowering itself remains identical to call/certification paths.
             let mut segment = segment.clone();
             segment.guard = None;
-            let Ok((segment_ranges, segment_evidence)) = project_explicit_memory_segments(
+            let Ok(projected) = project_explicit_memory_segments(
                 entry,
                 std::slice::from_ref(&segment),
                 &active_assumptions,
@@ -693,8 +693,8 @@ pub(super) fn project_refinement_effects(
             else {
                 return Ok(Err("could not evaluate mutable footprint".to_string()));
             };
-            ranges.extend(segment_ranges);
-            evidence_facts.extend(segment_evidence);
+            ranges.extend(projected.ranges);
+            evidence_facts.extend(projected.evidence_facts);
         }
         return Ok(Ok(FunctionMemoryEffectProjection {
             ranges,
