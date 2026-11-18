@@ -20,7 +20,7 @@ uint64 read_terminator(uint8 haystack[], uint64 known_len) {
     requires defined(known_len + 1u64);
     requires viewable(haystack[0..known_len + 1u64]);
     let n: uint64;
-    views click::cstr::cstr_at(haystack, n);
+    views click::c::string::cstr_at(haystack, n);
     views haystack[0..known_len + 1u64];
     ensures result < 18446744073709551615u64;
 }

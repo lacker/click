@@ -3656,7 +3656,7 @@ pub(crate) fn array_ref_elements_compatible(
 
 /// [`click_types_compatible`] for an argument of a predicate or pure
 /// function, which also passes a signed character pointer as `uint8` bytes, so a
-/// specification such as `cstr::readable(s)` reads a C string's bytes. Under
+/// specification such as `string::readable(s)` reads a C string's bytes. Under
 /// either signedness of `char` this reads the same objects: the kernel
 /// lets a character type read a one-byte cell of the other signedness as the
 /// same eight bits (C11 6.5p7), so `bytes[k] == '\0'` holds exactly when the

@@ -2191,7 +2191,7 @@ fn reordered_cstr_requirement_expands_without_planning_and_reverifies() {
             return length;
         }
     "#;
-    let click_source = r#"import click::cstr;
+    let click_source = r#"import click::c::string;
 
         verifying "source_identity.c";
 

@@ -15,7 +15,7 @@ uint64 measure(uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_owner_lends_its_string_to_a_viewing_callee.c";
 

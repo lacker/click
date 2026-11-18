@@ -1609,7 +1609,7 @@ fn call_binder_transport_rejects_a_frontier_call_to_another_function() {
 fn named_function_call_map_prints_as_written_and_retires_the_other_spellings() {
     let source = |proof: &str| {
         format!(
-            r#"import click::cstr;
+            r#"import click::c::string;
         verifying "measure.c";
         extern uint64 measure(const char* s) {{
             let n: uint64;

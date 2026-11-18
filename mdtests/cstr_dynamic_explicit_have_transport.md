@@ -16,14 +16,14 @@ int32 read_terminator(uint8 bytes[], uint64 known_len) {
 verifying "cstr_dynamic_explicit_have_transport.c";
 
 int32 read_terminator(uint8 bytes[], uint64 known_len) {
-    requires click::cstr::readable(bytes);
-    requires click::cstr::readable_len(bytes, known_len);
+    requires click::c::string::readable(bytes);
+    requires click::c::string::readable_len(bytes, known_len);
     requires known_len < 18446744073709551615u64;
     requires viewable(bytes[0..known_len + 1u64]);
-    views click::cstr::cstr_at(bytes, known_len);
+    views click::c::string::cstr_at(bytes, known_len);
     ensures result == '\0' by {
         step_until(region(1));
-        observe(click::cstr::cstr_at(bytes, known_len));
+        observe(click::c::string::cstr_at(bytes, known_len));
         have viewable(bytes[0..known_len + 1u64]) by { observe(bytes[0..known_len + 1u64]); known(); }
         have forall (k: uint64) { to_integer(k) < to_integer(known_len + 1u64) implies defined(bytes[k]) } by {
             intro(); intro();

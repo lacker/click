@@ -23,7 +23,7 @@ uint64 relay(const uint8 *src)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_call_map_gives_the_length_of_a_string_a_call_assembles.c";
 

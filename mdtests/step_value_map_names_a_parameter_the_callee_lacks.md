@@ -18,7 +18,7 @@ int f(char *buf, int len)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "step_value_map_names_a_parameter_the_callee_lacks.c";

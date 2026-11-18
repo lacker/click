@@ -2,7 +2,7 @@
 
 C string literals lower to a byte array with one explicit terminating NUL.
 The returned pointer remains usable through the existing `uint8[]` and
-`cstr::len` proof interfaces.
+`string::len` proof interfaces.
 
 ```c filename=string_literals.c
 uint8* string_literal() {

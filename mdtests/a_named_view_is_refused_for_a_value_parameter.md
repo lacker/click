@@ -10,7 +10,7 @@ unsigned long measure(const char *s);
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 verifying "a_named_view_is_refused_for_a_value_parameter.c";
 
 extern uint64 measure(const char* s) {

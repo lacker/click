@@ -2617,14 +2617,14 @@ int32 increment(int32 x) {
 #[cfg_attr(feature = "fast-gate", ignore = "covered by expansion_api_batch_11")]
 fn expanded_post_execution_apply_retains_its_facts_for_the_closer() {
     let c_source = "int32 inspect(uint8 p[], uint64 len) { return 0; }";
-    let click_source = r#"import click::cstr;
+    let click_source = r#"import click::c::string;
 verifying "inspect.c";
 int32 inspect(uint8 p[], uint64 len) {
     requires viewable(p[0..len + 1u64]);
-    requires cstr::len(p, len);
+    requires string::len(p, len);
     ensures p[len] == '\0' by {
         step_until(function.exit);
-        apply(cstr::len_has_terminator(p, len));
+        apply(string::len_has_terminator(p, len));
         solve();
     }
 }"#;
@@ -2638,7 +2638,7 @@ int32 inspect(uint8 p[], uint64 len) {
     )
     .expect("post-execution apply should expand");
 
-    assert!(expanded.contains("apply(cstr::len_has_terminator(p, len)) using"));
+    assert!(expanded.contains("apply(string::len_has_terminator(p, len)) using"));
     verify_c_sources(&expanded, &[("inspect.c", c_source)])
         .expect("explicit apply conclusions should remain available to the trailing solve");
 }

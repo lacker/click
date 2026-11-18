@@ -15,7 +15,7 @@ uint64 measure(const uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_call_map_refuses_a_length_the_caller_holds_no_string_for.c";
 

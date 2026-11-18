@@ -48,10 +48,9 @@ how far it is trusted:
 | [`click::integer`](#clickinteger) | `import click::integer;` | specification |
 | [`click::permutation`](#clickpermutation) | `import click::permutation;` | specification |
 | [`click::bytes`](#clickbytes) | `import click::bytes;`, or with `click::c::string` | specification |
-| [`click::cstr`](#clickcstr) | `import click::cstr;`, or with `click::c::string` | specification |
 | [`click::format`](#clickformat) | `import click::format;`; named by path in `snprintf` contracts | specification |
 | [`click::c::stdio`](#clickcstdio) | `import click::c::stdio;`, or with the projected `<stdio.h>` | C library interface |
-| [`click::c::string`](#clickcstring) | when the C declares or calls one of its functions | C library interface |
+| [`click::c::string`](#clickcstring) | `import click::c::string;`, or when the C declares or calls a modeled string function | C library interface and specification |
 | [C++ standard library interfaces](#c-standard-library-interfaces), `library/cpp/` (not a module) | when a C++ import calls one of its functions | C++ library interface |
 | [`click::rust::i8` ... `click::rust::usize`](#clickrusti8-through-clickrustusize) | `import click::rust::u32;`; named by path in Rust core-method contracts | specification |
 | [`click::rust::vec`](#clickrustvec) | `import click::rust::vec;` | specification, with trusted axioms |
@@ -7951,279 +7950,6 @@ theorem comparison_zero_when_equal(left: uint8[], right: uint8[], length: uint64
 
 **Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) applies the comparison laws. C ordering clients are checked in [`mdtests/memcmp_orders_the_first_differing_byte.md`](https://github.com/clicklang/click/blob/master/mdtests/memcmp_orders_the_first_differing_byte.md) and [`mdtests/memcmp_orders_after_equal_prefix.md`](https://github.com/clicklang/click/blob/master/mdtests/memcmp_orders_after_equal_prefix.md).
 
-## `click::cstr`
-
-Source: `library/cstr.click`, `import click::cstr;`, or brought by `click::c::string`.
-
-### `cstr::prefix`
-
-```click
-predicate prefix(bytes: uint8[], len: uint64) {
-    forall (k: uint64) { k < len implies bytes[k] != '\0' }
-}
-```
-
-**Meaning:** States that the first `len` bytes contain no null terminator.
-
-**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr::prefix(args))` when a proof needs the predicate body.
-
-### `cstr::len`
-
-```click
-predicate len(bytes: uint8[], len: uint64) {
-    len < 18446744073709551615u64 and
-        viewable(bytes[0..len + 1u64]) and
-        cstr::prefix(bytes, len) and
-        bytes[len] == '\0'
-}
-```
-
-**Meaning:** States that `len` is a `size_t` length below `SIZE_MAX`, the
-complete prefix through its terminator is readable, the preceding bytes contain
-no null terminator, and byte `len` is a null terminator.
-
-**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr::len(args))` when a proof needs the predicate body.
-
-### `cstr::cstr`
-
-```click
-predicate cstr(bytes: uint8[]) {
-    exists (len: uint64) {
-        cstr::len(bytes, len)
-    }
-}
-```
-
-**Meaning:** States that the byte array has some exact specification-level C-string length.
-
-**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr::cstr(args))` when a proof needs the predicate body.
-
-### `cstr::readable_len`
-
-```click
-predicate readable_len(bytes: uint8[], len: uint64) {
-    len < 18446744073709551615u64 and
-        viewable(bytes[0..len + 1u64]) and
-        forall (k: uint64) { k < len implies bytes[k] != '\0' } and
-        bytes[len] == '\0' and
-        forall (k: uint64) { to_integer(k) < to_integer(len + 1u64) implies defined(bytes[k]) }
-}
-```
-
-**Meaning:** States that `len` is a `size_t` C-string length below
-`SIZE_MAX`, the complete prefix through its terminator is dynamically viewable,
-the prefix has no embedded terminator, and every byte through the null
-terminator is defined.
-
-**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr::readable_len(args))` when a proof needs the predicate body.
-
-### `cstr::readable_len_unique`
-
-```click
-theorem readable_len_unique(bytes: uint8[], left: uint64, right: uint64) {
-    requires forall (k: uint64) { k < left implies bytes[k] != '\0' };
-    requires bytes[left] == '\0';
-    requires forall (k: uint64) { k < right implies bytes[k] != '\0' };
-    requires bytes[right] == '\0';
-
-    ensures left == right by {
-        have left < right or not (left < right) by {
-            if left < right {
-                known();
-            } else {
-                known();
-            }
-        }
-        cases {
-            left < right => {
-                instantiate(forall (k: uint64) { k < right implies bytes[k] != '\0' }, left);
-                contradiction(false);
-            }
-            not (left < right) => {
-                have right < left or not (right < left) by {
-                    if right < left {
-                        known();
-                    } else {
-                        known();
-                    }
-                }
-                cases {
-                    right < left => {
-                        instantiate(forall (k: uint64) { k < left implies bytes[k] != '\0' }, right);
-                        contradiction(false);
-                    }
-                    not (right < left) => {
-                        have left <= right by {
-                            solve();
-                        }
-                        solve();
-                    }
-                }
-            }
-        }
-    }
-}
-```
-
-**Meaning:** Proves that two `size_t` lengths with the same null-free prefix
-condition and null terminator for one byte array are equal. It is a pure
-content theorem; it does not grant viewability or read/write permission.
-
-**Kind:** theorem. The proof is checked as part of the standard-library
-definition and its requirements and guarantee are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
-
-### `cstr::readable`
-
-```click
-predicate readable(bytes: uint8[]) {
-    exists (len: uint64) {
-        len < 18446744073709551615u64 and
-            viewable(bytes[0..len + 1u64]) and
-            forall (k: uint64) { k < len implies bytes[k] != '\0' } and
-            bytes[len] == '\0' and
-            forall (k: uint64) { to_integer(k) < to_integer(len + 1u64) implies defined(bytes[k]) }
-    }
-}
-```
-
-**Meaning:** States that the byte array has some dynamically viewable,
-null-terminated C-string prefix. The length remains existential; unfold the
-predicate when a proof needs to expose that witness. A caller can pass the same
-unchanged plain-`char` or signed-character pointer to a callee requiring this predicate:
-contract expansion retains the predicate's unsigned byte reads. The caller
-must supply the requirement; it does not cover an offset pointer or survive
-an arbitrary write to the string. See
-[`cstr_plain_char_caller_requirement_reaches_callee.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_plain_char_caller_requirement_reaches_callee.md).
-
-**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr::readable(args))` when a proof needs the predicate body.
-
-### `cstr_at`
-
-```click
-resource cstr_at(p: const uint8*, len: uint64) {
-    owns p[0..len + 1u64];
-    fact len < 18446744073709551615u64;
-    fact forall (k: uint64) { 0u64 <= k and k < len implies p[k] != '\0' };
-    fact p[len] == '\0';
-    fact forall (k: uint64) { 0u64 <= k and to_integer(k) < to_integer(len + 1u64) implies defined(p[k]) };
-}
-```
-
-**Meaning:** A C string: the `len + 1` bytes of `p` through its first
-terminator, with the facts that make them the C string of length `len`. The
-body owns the bytes, and a contract chooses how it holds them. `views
-cstr_at(p, len);` borrows the string read-only: the callee cannot write it,
-and an opened view exposes the bytes as views. `owns cstr_at(p, len);` holds
-it exclusively and returns the same instance, so `len` is unchanged at exit.
-A function that changes the length, such as one that writes an earlier
-terminator, states `consumes cstr_at(p, len);` and `produces` the new
-instance with the bytes it no longer covers. The bytes determine `len`, so
-`fold(cstr_at(p, m))` at any other length fails. An owner lends its instance
-to a callee that views it, and a caller that owns the bytes and holds the
-facts but no instance has the call assemble the view; the caller keeps its
-bytes. `open(cstr_at(p, len)) { ... }` exposes the body and the facts. A
-`char`, `signed char`, or `unsigned char` pointer may be passed for `p`, as
-for the C-string predicates; a signed character pointer is read through its
-byte view `p as (uint8 *)`.
-
-**Kind:** composite resource. Parameter types, memory clause, and facts are normative in the declaration above.
-
-**Verified use:** [`cstr_at_view_passes_through_a_call.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_view_passes_through_a_call.md),
-[`cstr_at_opens_and_lends_a_prefix_to_a_copy.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_opens_and_lends_a_prefix_to_a_copy.md),
-[`cstr_at_fold_refuses_a_wrong_length.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_fold_refuses_a_wrong_length.md),
-[`cstr_at_viewed_string_cannot_be_written.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_viewed_string_cannot_be_written.md),
-[`cstr_at_owner_rewrites_a_byte_and_refolds_the_same_length.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_owner_rewrites_a_byte_and_refolds_the_same_length.md),
-[`cstr_at_owns_clause_cannot_shorten_the_string.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_owns_clause_cannot_shorten_the_string.md),
-[`cstr_at_consumes_and_produces_a_shorter_string.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_consumes_and_produces_a_shorter_string.md),
-[`cstr_at_owner_lends_its_string_to_a_viewing_callee.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_owner_lends_its_string_to_a_viewing_callee.md),
-[`cstr_at_call_assembles_a_view_from_owned_bytes.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_call_assembles_a_view_from_owned_bytes.md),
-and, through character pointers,
-[`cstr_at_borrows_a_char_string_from_the_library.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_borrows_a_char_string_from_the_library.md).
-
-### `cstr::bounded`
-
-```click
-predicate bounded(bytes: uint8[], max: uint64) {
-    exists (k: uint64) { k < max and bytes[k] == '\0' }
-}
-```
-
-**Meaning:** States that a null terminator occurs before the exclusive bound `max`.
-
-**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(cstr::bounded(args))` when a proof needs the predicate body.
-
-### `cstr::len_is_viewable`
-
-```click
-theorem len_is_viewable(bytes: uint8[], len: uint64) {
-    requires cstr::len(bytes, len);
-
-    ensures viewable(bytes[0..len + 1u64]) by {
-        unfold(cstr::len(bytes, len));
-        solve();
-    }
-}
-```
-
-**Meaning:** Given an exact C-string length, exposes the viewability of the
-prefix and its terminator as a separate fact for a subsequent proof step.
-
-**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/cstr_viewable_witness.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_viewable_witness.md) checks this witness projection.
-
-### `cstr::len_has_prefix`
-
-```click
-theorem len_has_prefix(bytes: uint8[], len: uint64) {
-    requires cstr::len(bytes, len);
-
-    ensures cstr::prefix(bytes, len) by {
-        unfold(cstr::len(bytes, len));
-        solve();
-    }
-}
-```
-
-**Meaning:** Given its listed requirements, proves `cstr::prefix(bytes, len)`.
-
-**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
-
-### `cstr::len_has_terminator`
-
-```click
-theorem len_has_terminator(bytes: uint8[], len: uint64) {
-    requires cstr::len(bytes, len);
-
-    ensures bytes[len] == '\0' by {
-        unfold(cstr::len(bytes, len));
-        solve();
-    }
-}
-```
-
-**Meaning:** Given its listed requirements, proves `bytes[len] == '\0'`.
-
-**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
-
-**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
-
 ## `click::format`
 
 Source: `library/format.click`, `import click::format;`. The C front end's `snprintf` contracts name it by path.
@@ -9514,7 +9240,11 @@ standard output stream with an empty history.
 
 ## `click::c::string`
 
-Source: `library/c/string.click`, a C library interface: it comes with a C declaration of, or call to, one of its functions, not with an import.
+`library/c/string.click` defines the C library contracts and the proof
+vocabulary for C strings. A C declaration or call brings the modeled
+contracts. To use a proof helper, a sidecar can name its full path or import
+the module. For example, `import click::c::string::{cstr_at, readable};`
+selects the C-string resource and its readability predicate.
 
 ### External C contracts
 
@@ -9610,7 +9340,7 @@ assembles from owned bytes and the string's facts when the caller holds
 none. The string's facts (the length is
 below `SIZE_MAX`, no earlier terminator, the terminator at `len`, every byte
 defined) come with the instance, so the result points at its terminator.
-`cstr::readable` alone grants no resource and does not satisfy the call.
+`string::readable` alone grants no resource and does not satisfy the call.
 
 **Kind:** external C contract. The declaration is an explicit verification assumption.
 
@@ -9618,7 +9348,278 @@ defined) come with the instance, so the result points at its terminator.
 [`mdtests/cstr_readable_witness_stated_before_call.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_readable_witness_stated_before_call.md)
 names the string a call assembles; and
 [`mdtests/cstr_dynamic_indexed_read_requires_permission.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_dynamic_indexed_read_requires_permission.md)
-refuses a caller that holds only `cstr::readable`.
+refuses a caller that holds only `string::readable`.
+
+### C-string resources, predicates and theorems
+
+### `string::prefix`
+
+```click
+predicate prefix(bytes: uint8[], len: uint64) {
+    forall (k: uint64) { k < len implies bytes[k] != '\0' }
+}
+```
+
+**Meaning:** States that the first `len` bytes contain no null terminator.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(string::prefix(args))` when a proof needs the predicate body.
+
+### `string::len`
+
+```click
+predicate len(bytes: uint8[], len: uint64) {
+    len < 18446744073709551615u64 and
+        viewable(bytes[0..len + 1u64]) and
+        string::prefix(bytes, len) and
+        bytes[len] == '\0'
+}
+```
+
+**Meaning:** States that `len` is a `size_t` length below `SIZE_MAX`, the
+complete prefix through its terminator is readable, the preceding bytes contain
+no null terminator, and byte `len` is a null terminator.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(string::len(args))` when a proof needs the predicate body.
+
+### `string::cstr`
+
+```click
+predicate cstr(bytes: uint8[]) {
+    exists (len: uint64) {
+        string::len(bytes, len)
+    }
+}
+```
+
+**Meaning:** States that the byte array has some exact specification-level C-string length.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(string::cstr(args))` when a proof needs the predicate body.
+
+### `string::readable_len`
+
+```click
+predicate readable_len(bytes: uint8[], len: uint64) {
+    len < 18446744073709551615u64 and
+        viewable(bytes[0..len + 1u64]) and
+        forall (k: uint64) { k < len implies bytes[k] != '\0' } and
+        bytes[len] == '\0' and
+        forall (k: uint64) { to_integer(k) < to_integer(len + 1u64) implies defined(bytes[k]) }
+}
+```
+
+**Meaning:** States that `len` is a `size_t` C-string length below
+`SIZE_MAX`, the complete prefix through its terminator is dynamically viewable,
+the prefix has no embedded terminator, and every byte through the null
+terminator is defined.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(string::readable_len(args))` when a proof needs the predicate body.
+
+### `string::readable_len_unique`
+
+```click
+theorem readable_len_unique(bytes: uint8[], left: uint64, right: uint64) {
+    requires forall (k: uint64) { k < left implies bytes[k] != '\0' };
+    requires bytes[left] == '\0';
+    requires forall (k: uint64) { k < right implies bytes[k] != '\0' };
+    requires bytes[right] == '\0';
+
+    ensures left == right by {
+        have left < right or not (left < right) by {
+            if left < right {
+                known();
+            } else {
+                known();
+            }
+        }
+        cases {
+            left < right => {
+                instantiate(forall (k: uint64) { k < right implies bytes[k] != '\0' }, left);
+                contradiction(false);
+            }
+            not (left < right) => {
+                have right < left or not (right < left) by {
+                    if right < left {
+                        known();
+                    } else {
+                        known();
+                    }
+                }
+                cases {
+                    right < left => {
+                        instantiate(forall (k: uint64) { k < left implies bytes[k] != '\0' }, right);
+                        contradiction(false);
+                    }
+                    not (right < left) => {
+                        have left <= right by {
+                            solve();
+                        }
+                        solve();
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+**Meaning:** Proves that two `size_t` lengths with the same null-free prefix
+condition and null terminator for one byte array are equal. It is a pure
+content theorem; it does not grant viewability or read/write permission.
+
+**Kind:** theorem. The proof is checked as part of the standard-library
+definition and its requirements and guarantee are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `string::readable`
+
+```click
+predicate readable(bytes: uint8[]) {
+    exists (len: uint64) {
+        len < 18446744073709551615u64 and
+            viewable(bytes[0..len + 1u64]) and
+            forall (k: uint64) { k < len implies bytes[k] != '\0' } and
+            bytes[len] == '\0' and
+            forall (k: uint64) { to_integer(k) < to_integer(len + 1u64) implies defined(bytes[k]) }
+    }
+}
+```
+
+**Meaning:** States that the byte array has some dynamically viewable,
+null-terminated C-string prefix. The length remains existential; unfold the
+predicate when a proof needs to expose that witness. A caller can pass the same
+unchanged plain-`char` or signed-character pointer to a callee requiring this predicate:
+contract expansion retains the predicate's unsigned byte reads. The caller
+must supply the requirement; it does not cover an offset pointer or survive
+an arbitrary write to the string. See
+[`cstr_plain_char_caller_requirement_reaches_callee.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_plain_char_caller_requirement_reaches_callee.md).
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(string::readable(args))` when a proof needs the predicate body.
+
+### `cstr_at`
+
+```click
+resource cstr_at(p: const uint8*, len: uint64) {
+    owns p[0..len + 1u64];
+    fact len < 18446744073709551615u64;
+    fact forall (k: uint64) { 0u64 <= k and k < len implies p[k] != '\0' };
+    fact p[len] == '\0';
+    fact forall (k: uint64) { 0u64 <= k and to_integer(k) < to_integer(len + 1u64) implies defined(p[k]) };
+}
+```
+
+**Meaning:** A C string: the `len + 1` bytes of `p` through its first
+terminator, with the facts that make them the C string of length `len`. The
+body owns the bytes, and a contract chooses how it holds them. `views
+cstr_at(p, len);` borrows the string read-only: the callee cannot write it,
+and an opened view exposes the bytes as views. `owns cstr_at(p, len);` holds
+it exclusively and returns the same instance, so `len` is unchanged at exit.
+A function that changes the length, such as one that writes an earlier
+terminator, states `consumes cstr_at(p, len);` and `produces` the new
+instance with the bytes it no longer covers. The bytes determine `len`, so
+`fold(cstr_at(p, m))` at any other length fails. An owner lends its instance
+to a callee that views it, and a caller that owns the bytes and holds the
+facts but no instance has the call assemble the view; the caller keeps its
+bytes. `open(cstr_at(p, len)) { ... }` exposes the body and the facts. A
+`char`, `signed char`, or `unsigned char` pointer may be passed for `p`, as
+for the C-string predicates; a signed character pointer is read through its
+byte view `p as (uint8 *)`.
+
+**Kind:** composite resource. Parameter types, memory clause, and facts are normative in the declaration above.
+
+**Verified use:** [`cstr_at_view_passes_through_a_call.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_view_passes_through_a_call.md),
+[`cstr_at_opens_and_lends_a_prefix_to_a_copy.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_opens_and_lends_a_prefix_to_a_copy.md),
+[`cstr_at_fold_refuses_a_wrong_length.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_fold_refuses_a_wrong_length.md),
+[`cstr_at_viewed_string_cannot_be_written.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_viewed_string_cannot_be_written.md),
+[`cstr_at_owner_rewrites_a_byte_and_refolds_the_same_length.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_owner_rewrites_a_byte_and_refolds_the_same_length.md),
+[`cstr_at_owns_clause_cannot_shorten_the_string.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_owns_clause_cannot_shorten_the_string.md),
+[`cstr_at_consumes_and_produces_a_shorter_string.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_consumes_and_produces_a_shorter_string.md),
+[`cstr_at_owner_lends_its_string_to_a_viewing_callee.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_owner_lends_its_string_to_a_viewing_callee.md),
+[`cstr_at_call_assembles_a_view_from_owned_bytes.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_call_assembles_a_view_from_owned_bytes.md),
+and, through character pointers,
+[`cstr_at_borrows_a_char_string_from_the_library.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_at_borrows_a_char_string_from_the_library.md).
+
+### `string::bounded`
+
+```click
+predicate bounded(bytes: uint8[], max: uint64) {
+    exists (k: uint64) { k < max and bytes[k] == '\0' }
+}
+```
+
+**Meaning:** States that a null terminator occurs before the exclusive bound `max`.
+
+**Kind:** predicate. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate. Use `unfold(string::bounded(args))` when a proof needs the predicate body.
+
+### `string::len_is_viewable`
+
+```click
+theorem len_is_viewable(bytes: uint8[], len: uint64) {
+    requires string::len(bytes, len);
+
+    ensures viewable(bytes[0..len + 1u64]) by {
+        unfold(string::len(bytes, len));
+        solve();
+    }
+}
+```
+
+**Meaning:** Given an exact C-string length, exposes the viewability of the
+prefix and its terminator as a separate fact for a subsequent proof step.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/cstr_viewable_witness.md`](https://github.com/clicklang/click/blob/master/mdtests/cstr_viewable_witness.md) checks this witness projection.
+
+### `string::len_has_prefix`
+
+```click
+theorem len_has_prefix(bytes: uint8[], len: uint64) {
+    requires string::len(bytes, len);
+
+    ensures string::prefix(bytes, len) by {
+        unfold(string::len(bytes, len));
+        solve();
+    }
+}
+```
+
+**Meaning:** Given its listed requirements, proves `string::prefix(bytes, len)`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
+
+### `string::len_has_terminator`
+
+```click
+theorem len_has_terminator(bytes: uint8[], len: uint64) {
+    requires string::len(bytes, len);
+
+    ensures bytes[len] == '\0' by {
+        unfold(string::len(bytes, len));
+        solve();
+    }
+}
+```
+
+**Meaning:** Given its listed requirements, proves `bytes[len] == '\0'`.
+
+**Kind:** theorem. Parameter types, requirements, and guarantees are normative in the declaration above.
+
+**Verified use:** [`mdtests/stdlib_every_symbol.md`](https://github.com/clicklang/click/blob/master/mdtests/stdlib_every_symbol.md) exercises this symbol and is checked by the ordinary mdtest gate.
 
 ## C++ standard library interfaces
 

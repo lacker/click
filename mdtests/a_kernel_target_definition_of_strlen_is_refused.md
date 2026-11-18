@@ -32,7 +32,7 @@ mode "kernel";
 verifying "main.c";
 
 uint64 name_length(const char* name) {
-    requires click::cstr::readable(name);
+    requires click::c::string::readable(name);
     ensures name[result] == '\0';
 }
 ```

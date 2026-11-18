@@ -15,7 +15,7 @@ uint64 outer(uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 verifying "cstr_at_owner_opens_its_body.c";
 
 uint64 outer(uint8* src, uint64 n) {

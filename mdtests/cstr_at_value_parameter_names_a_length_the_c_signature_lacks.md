@@ -17,7 +17,7 @@ uint64 measure(const uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_value_parameter_names_a_length_the_c_signature_lacks.c";
 

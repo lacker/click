@@ -1432,7 +1432,7 @@ verifying "main.c";
 
 int32 label_fits(const char* label) {
     let n: uint64;
-    views click::cstr::cstr_at(label, n);
+    views click::c::string::cstr_at(label, n);
     ensures result == 0 or result == 1;
 }
 "#;
@@ -1485,7 +1485,7 @@ fn compiler_import_supplies_clicks_modeled_headers_beside_project_flags() {
     // The call is checked against the contract: without its precondition
     // the proof fails, and so does a claim the length does not decide.
     let unreadable = LABEL_PROOF.replace(
-        "    let n: uint64;\n    views click::cstr::cstr_at(label, n);\n",
+        "    let n: uint64;\n    views click::c::string::cstr_at(label, n);\n",
         "",
     );
     assert!(verify_c_prepared_sources(&unreadable, &imports).is_err());

@@ -7,7 +7,7 @@ int terminator(const char *src, uint64 n) {
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 target "x86_64-unknown-linux-gnu";
 verifying "terminator.c";
 int32 terminator(const char* src, uint64 n) {

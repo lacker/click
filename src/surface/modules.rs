@@ -848,7 +848,7 @@ theorem local_conditional(x: int32) {
             [
                 ClickModuleSource::new(
                     "model.click",
-                    "import click::cstr;\nimport click::bytes;\n",
+                    "import click::c::string;\nimport click::bytes;\n",
                     [],
                 ),
                 ClickModuleSource::new(
@@ -862,7 +862,7 @@ theorem local_conditional(x: int32) {
         assert_eq!(file.imports().len(), 1);
         assert_eq!(
             file.library_imports(),
-            ["library/cstr.click", "library/bytes.click"]
+            ["library/c/string.click", "library/bytes.click"]
         );
     }
 

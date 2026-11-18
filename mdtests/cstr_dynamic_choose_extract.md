@@ -16,12 +16,12 @@ uint64 read_terminator(uint8 bytes[]) {
 verifying "cstr_dynamic_choose_extract.c";
 
 uint64 read_terminator(uint8 bytes[]) {
-    requires click::cstr::readable(bytes);
+    requires click::c::string::readable(bytes);
     let n: uint64;
-    views click::cstr::cstr_at(bytes, n);
+    views click::c::string::cstr_at(bytes, n);
     ensures result < 18446744073709551615u64 by {
         step_until(region(1));
-        observe(click::cstr::cstr_at(bytes, n));
+        observe(click::c::string::cstr_at(bytes, n));
         have viewable(bytes[0..n + 1u64]) by { observe(bytes[0..n + 1u64]); known(); }
         have forall (k: uint64) { to_integer(k) < to_integer(n + 1u64) implies defined(bytes[k]) } by {
             intro(); intro();

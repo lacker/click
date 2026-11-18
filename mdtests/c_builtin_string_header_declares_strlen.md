@@ -29,7 +29,7 @@ verifying "builtin_strlen.c";
 
 uint64 last_index(const char* s) {
     let len: uint64;
-    views click::cstr::cstr_at(s, len);
+    views click::c::string::cstr_at(s, len);
     ensures result == len;
     ensures s[result] == '\0';
 }

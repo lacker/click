@@ -12,7 +12,7 @@ void poke(uint8 *s, uint64 n) { s[0] = 'a'; }
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_owner_rewrites_a_byte_and_refolds_the_same_length.c";
 

@@ -248,8 +248,8 @@ Direct memory reads in `requires` propositions are limited. Use a named
 predicate for memory-reading preconditions, and unfold it in proof scripts when
 the body is needed.
 
-Plain `cstr::cstr(p)` introduces an exact spec length, but it does not by itself
-produce a structural `viewable` fact. `cstr::readable(p)` is the corresponding
+Plain `string::cstr(p)` introduces an exact spec length, but it does not by itself
+produce a structural `viewable` fact. `string::readable(p)` is the corresponding
 dynamic-viewability relation: it carries an existential `size_t` length
 together with `viewable(p[0..len + 1u64])` and the prefix/terminator
 conditions. Unfold it when a

@@ -205,7 +205,7 @@ pub(crate) fn contract_source(name: &str, pieces: &[FormatPiece]) -> String {
                 parameters.push(format!("const uint8* a{argument}"));
                 clauses.push(format!("    let n{argument}: uint64;"));
                 clauses.push(format!(
-                    "    views click::cstr::cstr_at(a{argument}, n{argument});"
+                    "    views click::c::string::cstr_at(a{argument}, n{argument});"
                 ));
                 clauses.push(format!("    requires n{argument} <= 2147483647u64;"));
                 lengths.push(format!("n{argument}"));

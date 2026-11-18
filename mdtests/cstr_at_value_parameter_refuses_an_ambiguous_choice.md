@@ -16,7 +16,7 @@ uint64 measure(const uint8 *src, uint64 n, uint64 m)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_value_parameter_refuses_an_ambiguous_choice.c";
 

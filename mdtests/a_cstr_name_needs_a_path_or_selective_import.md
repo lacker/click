@@ -1,10 +1,10 @@
 # a cstr name needs a path or a selective import
 
-After `import click::cstr;` a sidecar writes `cstr::readable`; the bare
+After `import click::c::string;` a sidecar writes `string::readable`; the bare
 `readable` is not in scope.
 
 ```click
-import click::cstr;
+import click::c::string;
 
 theorem readable_by_bare_name(text: uint8[]) {
     requires readable(text);

@@ -120,16 +120,15 @@ selection boundary.
 
 ## Click library imports
 
-A Click library module is named by a `click::` path that mirrors its file
-under `library/`:
+A Click library module has a `click::` path that mirrors its file under
+`library/`.
 
 <!-- verified-example: mdtests/click_library_import.md -->
 ```click
-import click::cstr;
+import click::c::string;
 ```
 
-`click::cstr` is `library/cstr.click`, and `click::c::string` is
-`library/c/string.click`. Importing a module twice is accepted. An unknown
+`click::c::string` names `library/c/string.click`. Importing a module twice is accepted. An unknown
 module, or a path outside the `click` root such as `std::list`, is refused at
 the import. A project file is always imported by a quoted path. A module's
 library imports reach the files that import it, like its other declarations.
@@ -140,13 +139,13 @@ Without an import a file sees the implicit modules: `click::nat`,
 declared in `click::primitives` and `click::c::builtins`. Library contracts come
 with the code instead of an import: when the verified C declares or calls
 `memcpy`, `memcmp`, `memset` or `strlen`, through `<string.h>` or its own
-prototype, the file sees `click::c::string` and the modules its contracts are
-stated in, `click::bytes` and `click::cstr`
-(`mdtests/a_string_function_call_brings_the_c_string_contracts.md`). Every
-other module—`click::bytes` and `click::cstr` without such a call,
-`click::integer` and `click::permutation`—must be
-imported before a file names one of its declarations by a bare name or a
-short path such as `cstr::readable`; a full `click::` path needs no import
+prototype, the file sees the C string contracts and proof declarations in
+`click::c::string`, along with the shared `click::bytes` predicates used by
+the contracts
+(`mdtests/a_string_function_call_brings_the_c_string_contracts.md`).
+A short path such as `string::readable` requires an import of its module. A
+selective import can bring `readable` into scope by itself, and the full
+`click::c::string::readable` path can be used directly
 (`mdtests/string_predicates_need_an_import_without_a_string_function.md`).
 The C++ and Rust library contracts are generated for the calls a program
 makes, so they too arrive with the code.
@@ -214,7 +213,7 @@ theorem append_nil_by_bare_names(xs: List<int32>) {
 ```
 
 Without a path or a selective import, a function, predicate or theorem of
-`click::nat`, `click::list`, `click::bytes`, `click::cstr` or
+`click::nat`, `click::list`, `click::bytes`, `click::c::string` or
 `click::permutation` is not in scope by its bare name, even when the module is implicit
 (`mdtests/a_bare_library_name_needs_a_path_or_selective_import.md`,
 `mdtests/a_bare_list_theorem_citation_needs_a_path_or_selective_import.md`).

@@ -19,7 +19,7 @@ uint64 measure(uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_call_assembly_needs_the_terminator_fact.c";
 

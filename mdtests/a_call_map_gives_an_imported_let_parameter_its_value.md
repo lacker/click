@@ -25,7 +25,7 @@ unsigned long h(void)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 import "a_call_map_gives_an_imported_let_parameter_its_value_module.click";
 verifying "a_call_map_gives_an_imported_let_parameter_its_value.c";
 

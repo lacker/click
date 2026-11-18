@@ -26,17 +26,17 @@ verifying "measure.c";
 
 uint64 measure(const char* src) {
     let len: uint64;
-    views click::cstr::cstr_at(src, len);
+    views click::c::string::cstr_at(src, len);
     ensures result == len;
     ensures src[result] == '\0';
 }
 
 uint64 outer(char* src) {
     let len: uint64;
-    owns click::cstr::cstr_at(src, len);
+    owns click::c::string::cstr_at(src, len);
     ensures src[result] == '\0';
 } by {
-    unfold(click::cstr::cstr_at(src, len));
+    unfold(click::c::string::cstr_at(src, len));
 }
 ```
 

@@ -1,7 +1,7 @@
 # A borrowed C string passes through a call
 
 `views cstr_at(src, n)` borrows the `n + 1` bytes of `src` through its
-terminator; `cstr_at` is declared in the `click::cstr` library module.
+terminator; `cstr_at` is declared in the `click::c::string` library module.
 `measure` receives that loan and lends the same composite to `string_length`
 without opening it: the call needs no unfold, refold, or restatement of the
 string's facts. `string_length` stands for a library
@@ -19,7 +19,7 @@ uint64 measure(const uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string::{cstr_at};
 
 verifying "cstr_at_view_passes_through_a_call.c";
 

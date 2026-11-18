@@ -2291,48 +2291,48 @@ id = "library.theorem.bytes::comparison_zero_when_equal"
 path = "reference/library/index.md#bytescomparison_zero_when_equal"
 
 [[item]]
-id = "library.predicate.cstr::prefix"
-path = "reference/library/index.md#cstrprefix"
+id = "library.predicate.string::prefix"
+path = "reference/library/index.md#stringprefix"
 
 [[item]]
-id = "library.predicate.cstr::len"
-path = "reference/library/index.md#cstrlen"
+id = "library.predicate.string::len"
+path = "reference/library/index.md#stringlen"
 
 [[item]]
-id = "library.predicate.cstr::cstr"
-path = "reference/library/index.md#cstrcstr"
+id = "library.predicate.string::cstr"
+path = "reference/library/index.md#stringcstr"
 
 [[item]]
-id = "library.predicate.cstr::readable_len"
-path = "reference/library/index.md#cstrreadable_len"
+id = "library.predicate.string::readable_len"
+path = "reference/library/index.md#stringreadable_len"
 
 [[item]]
-id = "library.theorem.cstr::readable_len_unique"
-path = "reference/library/index.md#cstrreadable_len_unique"
+id = "library.theorem.string::readable_len_unique"
+path = "reference/library/index.md#stringreadable_len_unique"
 
 [[item]]
-id = "library.predicate.cstr::readable"
-path = "reference/library/index.md#cstrreadable"
+id = "library.predicate.string::readable"
+path = "reference/library/index.md#stringreadable"
 
 [[item]]
 id = "library.resource.cstr_at"
 path = "reference/library/index.md#cstr_at"
 
 [[item]]
-id = "library.predicate.cstr::bounded"
-path = "reference/library/index.md#cstrbounded"
+id = "library.predicate.string::bounded"
+path = "reference/library/index.md#stringbounded"
 
 [[item]]
-id = "library.theorem.cstr::len_is_viewable"
-path = "reference/library/index.md#cstrlen_is_viewable"
+id = "library.theorem.string::len_is_viewable"
+path = "reference/library/index.md#stringlen_is_viewable"
 
 [[item]]
-id = "library.theorem.cstr::len_has_prefix"
-path = "reference/library/index.md#cstrlen_has_prefix"
+id = "library.theorem.string::len_has_prefix"
+path = "reference/library/index.md#stringlen_has_prefix"
 
 [[item]]
-id = "library.theorem.cstr::len_has_terminator"
-path = "reference/library/index.md#cstrlen_has_terminator"
+id = "library.theorem.string::len_has_terminator"
+path = "reference/library/index.md#stringlen_has_terminator"
 
 [[item]]
 id = "primitive.extern.__click_constant_p_unknown"

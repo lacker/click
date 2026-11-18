@@ -23,14 +23,14 @@ verifying "strlen_casts.c";
 
 uint64 through_const_char(uint8 bytes[]) {
     let length: uint64;
-    views click::cstr::cstr_at(bytes, length);
+    views click::c::string::cstr_at(bytes, length);
     ensures result == length;
     ensures bytes[result] == '\0';
 }
 
 uint64 through_unsigned_char(uint8 bytes[]) {
     let length: uint64;
-    views click::cstr::cstr_at(bytes, length);
+    views click::c::string::cstr_at(bytes, length);
     ensures result == length;
     ensures bytes[result] == '\0';
 }

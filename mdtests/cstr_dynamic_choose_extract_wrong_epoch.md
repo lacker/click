@@ -12,9 +12,9 @@ uint64 read_terminator(uint8 bytes[]) {
 verifying "cstr_dynamic_choose_extract_wrong_epoch.c";
 
 uint64 read_terminator(uint8 bytes[]) {
-    requires click::cstr::readable(bytes);
+    requires click::c::string::readable(bytes);
     ensures result < 18446744073709551615u64 by {
-        unfold(click::cstr::readable(bytes));
+        unfold(click::c::string::readable(bytes));
         step_until(region(1));
         have exists (len: uint64) {
             len < 18446744073709551615u64 and

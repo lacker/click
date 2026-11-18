@@ -17,7 +17,7 @@ unsigned long f(void)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 verifying "step_value_map_value_has_the_parameter_type.c";
 
 extern uint64 measure(const char* s) {

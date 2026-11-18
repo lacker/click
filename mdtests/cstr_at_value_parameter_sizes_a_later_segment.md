@@ -15,7 +15,7 @@ void use(uint8 *dst, const uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_value_parameter_sizes_a_later_segment.c";
 

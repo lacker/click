@@ -2,7 +2,7 @@
 
 A string literal is a read-only array that holds its bytes and a terminator
 (C11 6.4.5p6), so it is a C string by construction. A call whose contract
-views `click::cstr::cstr_at(p, _)` for a pointer into a literal takes the view
+views `click::c::string::cstr_at(p, _)` for a pointer into a literal takes the view
 from the literal itself: the literal's bytes decide the resource's body facts
 and fix its `len`, and nothing can write them, so the view is read authority
 the caller always has, never a loan.

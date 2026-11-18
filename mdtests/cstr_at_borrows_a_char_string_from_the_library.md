@@ -1,10 +1,10 @@
 # The library's borrowed C string takes a character pointer
 
-`cstr_at(p, len)` from `click::cstr` has a `const uint8*` parameter, and a
+`cstr_at(p, len)` from `click::c::string` has a `const uint8*` parameter, and a
 resource argument follows the predicate rule: a `char`, `signed char`, or
 `unsigned char` pointer is passed as `uint8` bytes. A signed character
 pointer is read through its explicit byte view `src as (uint8 *)`, as
-`cstr::readable(src)` is, so the resource's facts state the string's unsigned
+`string::readable(src)` is, so the resource's facts state the string's unsigned
 bytes. `measure` lends the borrowed
 string to a callee whose parameter has the same character type, and
 `copy_prefix` opens it and lends a prefix of its bytes to a `memcpy`-style copy
@@ -39,7 +39,7 @@ uint64 copy_prefix(char *dst, const char *src, uint64 n, uint64 k)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_borrows_a_char_string_from_the_library.c";
 

@@ -3,7 +3,7 @@
 Specification arithmetic is over Integer, so a guard that means the C sum
 observes it exactly: `to_integer(k) < to_integer(len + 1u64)` is the native
 `k < len + 1u64`, and it bounds the fact's read of `p[k]` by the owned
-`p[0..len + 1u64]`. This is how `click::cstr`'s `cstr_at` states its
+`p[0..len + 1u64]`. This is how `click::c::string`'s `cstr_at` states its
 definedness fact. The same guard one element wider is
 `resource_fact_guard_of_exact_observations_past_its_range_is_refused.md`.
 

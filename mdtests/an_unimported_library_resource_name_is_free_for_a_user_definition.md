@@ -1,6 +1,6 @@
 # a resource name in an unimported library module is free for a user definition
 
-`click::cstr` declares the resource `cstr_at`, but this file does not import
+`click::c::string` declares the resource `cstr_at`, but this file does not import
 it, so its own `cstr_at`, which states no terminator, is the only one it
 sees. The negative twin is
 [`an_imported_library_resource_conflicts_with_a_user_definition.md`](an_imported_library_resource_conflicts_with_a_user_definition.md).

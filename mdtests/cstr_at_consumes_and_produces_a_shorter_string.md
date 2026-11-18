@@ -14,7 +14,7 @@ void cut(uint8 *s, uint64 n) { s[0] = 0; }
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_consumes_and_produces_a_shorter_string.c";
 

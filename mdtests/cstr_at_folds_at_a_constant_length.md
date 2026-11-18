@@ -15,7 +15,7 @@ int32 empty(const uint8 *p) { return 0; }
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_folds_at_a_constant_length.c";
 

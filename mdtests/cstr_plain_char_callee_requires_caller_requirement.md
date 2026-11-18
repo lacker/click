@@ -23,7 +23,7 @@ verifying "measure.c";
 
 uint64 measure(const char* src) {
     let n: uint64;
-    views click::cstr::cstr_at(src, n);
+    views click::c::string::cstr_at(src, n);
     ensures result == n;
     ensures src[result] == '\0';
 }

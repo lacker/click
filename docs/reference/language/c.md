@@ -1225,7 +1225,7 @@ Supported C surface includes:
   library's, and a program may not define one with external linkage; see
   [System headers](#system-headers). A specification may
   pass a `char` or `signed char` pointer where a predicate or pure function
-  takes `uint8` bytes, as in `requires cstr::readable(s);` for a `const char *s`.
+  takes `uint8` bytes, as in `requires string::readable(s);` for a `const char *s`.
   For a signed character type, the argument is elaborated to the explicit byte view
   `s as (uint8 *)`: the predicate reads the string's bytes as unsigned values,
   and since a signed read of a byte is the conversion of its unsigned read,
@@ -1939,7 +1939,7 @@ file-scope pointer initializer cannot name a literal yet
 (`mdtests/a_file_scope_string_pointer_table_is_refused.md`).
 
 A literal is also a C string by construction. A call whose contract views
-`click::cstr::cstr_at(p, n)` for a value parameter `n`, or any composite resource whose every piece is
+`click::c::string::cstr_at(p, n)` for a value parameter `n`, or any composite resource whose every piece is
 string-literal bytes, for a pointer `p` into a literal takes that view from
 the literal: its bytes decide the resource's body facts and fix the
 instance's `len`, and since no path can write them the view is intrinsic read
@@ -1999,7 +1999,7 @@ The contract, for `buffer`, `size`, and the arguments `a0`, `a1`, ...:
 - requires `size` and the number of characters the format produces to be at
   most `INT_MAX`, and owns `uninitialized(buffer[0..size])`, so a caller may
   pass a buffer no one has written;
-- views each `%s` argument as a C string, `click::cstr::cstr_at`, so a null
+- views each `%s` argument as a C string, `click::c::string::cstr_at`, so a null
   pointer is refused;
 - ensures the result is the number of characters the format produces, as
   `int`, whether or not they fit (C11 7.21.6.5p3), and that it is not

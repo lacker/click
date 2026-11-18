@@ -1,5 +1,5 @@
 import click::bytes;
-import click::cstr;
+import click::c::string::{cstr_at};
 import click::separation;
 
 verifying "label_fit.c";

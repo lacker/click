@@ -29,7 +29,7 @@ unsigned long f(void)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "a_local_char_array_lends_its_c_string_view.c";

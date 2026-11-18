@@ -15,7 +15,7 @@ why a proof error happened. A rejected proof may need an available explicit
 step, expose a missing capability, or reveal a bug in a documented rule.
 
 Parsing errors in the embedded Click library name the module file, such as
-`library/cstr.click`, and the line within that file. An enclosing module-checking context names the
+`library/c/string.click`, and the line within that file. An enclosing module-checking context names the
 verification being attempted; it does not change the error's source location.
 
 A failed proof is evidence, but it does not by itself identify a Click bug.

@@ -1,6 +1,6 @@
 # A C string cannot be folded at a wrong length
 
-`cstr_at(p, len)`, the `click::cstr` library resource, states that byte
+`cstr_at(p, len)`, the `click::c::string` library resource, states that byte
 `len` is the first terminator. The bytes
 determine that length, so a fold at any other length must fail. `mk` owns the
 bytes of a string of length `n` and claims to produce `cstr_at(p, n + 1)`: byte
@@ -12,7 +12,7 @@ int32 mk(const uint8 *p, uint64 n) { return 0; }
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_fold_refuses_a_wrong_length.c";
 

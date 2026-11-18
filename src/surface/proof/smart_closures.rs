@@ -3818,7 +3818,7 @@ fn conjunction_under_binders(goal: Option<&Proposition>) -> bool {
 }
 
 /// The existential witness closer is reserved for the source-backed range
-/// slice.  In particular, a generated overflow guard (as in `cstr::readable`)
+/// slice.  In particular, a generated overflow guard (as in `string::readable`)
 /// remains on the dynamic state-transport route.  The worklist is bounded
 /// because this predicate is part of smart closure dispatch.
 fn quantified_external_range_goal(goal: &Proposition) -> bool {

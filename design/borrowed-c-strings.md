@@ -15,7 +15,7 @@ proposal. Assembly from viewed bytes is deferred (see
 [(d)](#d-call-site-assembly-of-a-viewed-composite)). M3 landed: `memcpy` and
 `memcmp` read under `views`.
 
-`click::cstr` declares the C string:
+`click::c::string` declares the C string:
 
 ```click
 resource cstr_at(p: const uint8*, len: uint64) {
@@ -329,7 +329,7 @@ step 2 is deferred.
      states the string's facts with `have` before
      `step(strlen(bytes), { s: cstr_at(bytes, 2u64) })`, which assembles the
      string.
-   - The transport tests keep their `cstr::readable` witnesses and
+   - The transport tests keep their `string::readable` witnesses and
      transports: the positive ones add the viewed string the call uses, the
      refusals that fail before the call are unchanged, and
      `cstr_dynamic_indexed_read_requires_permission.md` and
@@ -387,7 +387,7 @@ step 2 is deferred.
    assembly fixture, since assembly from viewed bytes is deferred.
 6. Open. The strlen-shaped tests in `src/surface/proof/surface_synthesis/tests.rs`
    synthesize the guarded quantified `loadable` carrier of
-   `cstr::readable`, which no longer depends on `strlen`. Revisit them with
+   `string::readable`, which no longer depends on `strlen`. Revisit them with
    M3: rename them to C-string shapes if `memcmp`'s guarded `defined` range
    still produces that carrier, otherwise retire them.
 7. Done: M3, `memcpy` views its source and `memcmp` both operands, and

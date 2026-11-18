@@ -3,9 +3,9 @@
 This checks the first C-string layer over `uint8[]`. These predicates are still
 facts about C memory, not first-class Click string values:
 
-- `cstr::len(p, len)` records an exact ghost length.
-- `cstr::bounded(p, max)` records that a terminator exists before a bound.
-- `cstr::cstr(p)` records that some exact ghost length exists for a plain pointer.
+- `string::len(p, len)` records an exact ghost length.
+- `string::bounded(p, max)` records that a terminator exists before a bound.
+- `string::cstr(p)` records that some exact ghost length exists for a plain pointer.
 
 Lengths and bounds are `size_t` values, as C measures them.
 
@@ -22,7 +22,7 @@ int32 plain_cstr(uint8 p[]) {
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_stdlib.c";
 verifying "plain_cstr.c";
@@ -30,37 +30,37 @@ verifying "plain_cstr.c";
 int32 cstr_stdlib(uint8 p[], uint64 len, uint64 max) {
     requires viewable(p[0..len + 1u64]);
     requires viewable(p[0..max]);
-    requires cstr::len(p, len);
-    requires cstr::bounded(p, max);
+    requires string::len(p, len);
+    requires string::bounded(p, max);
 
-    ensures exact_prefix_has_no_null: cstr::prefix(p, len) by {
+    ensures exact_prefix_has_no_null: string::prefix(p, len) by {
         step_until(function.exit);
-        apply(cstr::len_has_prefix(p, len));
+        apply(string::len_has_prefix(p, len));
         solve();
     }
 
     ensures exact_has_terminator: p[len] == '\0' by {
         step_until(function.exit);
-        apply(cstr::len_has_terminator(p, len));
+        apply(string::len_has_terminator(p, len));
         solve();
     }
 
     ensures bounded_has_terminator: exists (k: uint64) { k < max and p[k] == '\0' } by {
         step_until(function.exit);
-        unfold(cstr::bounded(p, max));
+        unfold(string::bounded(p, max));
         solve();
     }
 }
 
 int32 plain_cstr(uint8 p[]) {
-    requires cstr::cstr(p);
+    requires string::cstr(p);
 
     ensures exposes_ghost_length: exists (len: uint64) {
-        cstr::len(p, len)
+        string::len(p, len)
     } by {
         step_until(function.exit);
-        unfold(cstr::cstr(p));
-        let found_len = obtain(at(function.entry, exists (found_len: uint64) { cstr::len(p, found_len) }));
+        unfold(string::cstr(p));
+        let found_len = obtain(at(function.entry, exists (found_len: uint64) { string::len(p, found_len) }));
         witness(found_len);
         solve();
     }

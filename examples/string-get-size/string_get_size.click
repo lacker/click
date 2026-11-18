@@ -6,7 +6,7 @@
 // terminated string: the result, the number of characters the format
 // produces, is never negative, and the terminator follows the output when it
 // fits and ends the buffer when it does not.
-import click::cstr;
+import click::c::string;
 import click::format;
 import click::integer;
 import click::separation;

@@ -19,7 +19,7 @@ unsigned long f(void)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "a_local_char_array_view_names_the_fact_its_bytes_lack.c";

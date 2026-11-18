@@ -14,9 +14,8 @@ imports with `import click::...;`, and the modules those import:
 | `result.click` | implicit | `Result<T, E>`, the value of a Rust `Result` |
 | `permutation.click` | `import click::permutation;` | `permutation::count`, generic over the element type, and `permutation::permutation` over `int32[]` |
 | `bytes.click` | `import click::bytes;`, or with `c/string` | `bytes::count`, `bytes::equal` and the other byte-range predicates over `uint8[]` |
-| `cstr.click` | `import click::cstr;`, or with `c/string` | C-string predicates and theorems, and the C-string resource `cstr_at` |
 | `c/builtins.click` | implicit | Verifier primitive `__click_constant_p_unknown`, the value of `__builtin_constant_p` |
-| `c/string.click` | when the C declares or calls one of its functions | `memcpy`, `memcmp`, `memset` and `strlen` contracts |
+| `c/string.click` | `import click::c::string;`, or when the C declares or calls a modeled string function | `memcpy`, `memcmp`, `memset` and `strlen` contracts, C-string predicates and theorems, and the `cstr_at` resource |
 | `c/stdio.click` | `import click::c::stdio;`, or with the projected `<stdio.h>` | Stream ownership and write history |
 | `integer.click` | `import click::integer;` | `integer::` order, increment and definedness lemmas over native integer widths, `to_integer` bridges for native arithmetic, unsigned wrapping operations, and `Integer` division laws |
 | `format.click` | `import click::format;`; the C front end's `snprintf` contracts name it by path | `format::decimal_length`, `format::decimal_digit` and the other decimal rendering functions `printf` writes, with evaluation theorems |
@@ -74,11 +73,9 @@ trusted kernel constructors. Their declarations must match the corresponding ker
 axioms exactly. The `extern` contracts are knowns, listed in
 [trust](../docs/concepts/trust.md).
 
-A module is named by a `click::` path that mirrors its file:
-`import click::cstr;` is `cstr.click` and `import click::c::string;` is
-`c/string.click`. A declaration's qualified name adds its own name:
-`click::cstr::len`, or `cstr::len` once the module is in scope
-(`src/surface/parser/library_paths.rs`).
+A module's `click::` path mirrors its file. Importing `click::c::string`
+selects `c/string.click`. Its length predicate is `click::c::string::len`
+or `string::len` once the module is in scope.
 
 The library is checked on its own, like any dependency: `verify_standard_library`
 proves every library theorem that has a proof, checks each kernel standard

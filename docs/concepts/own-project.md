@@ -361,7 +361,7 @@ uint64 label_fit(uint64 length) {
 
 uint64 label_measure(const char* src) {
     let n: uint64;
-    views click::cstr::cstr_at(src, n);
+    views click::c::string::cstr_at(src, n);
     ensures result < 32;
     ensures result <= n;
 }
@@ -430,7 +430,7 @@ Try the remaining function, `label_copy`:
 
 ```click filename=label.click
 import click::bytes;
-import click::cstr;
+import click::c::string::{cstr_at};
 import click::separation;
 
 verifying "label_fit.c";
@@ -494,7 +494,7 @@ uint64 label_copy(char* dst, const char* src) {
 fits, 31 bytes otherwise. The omitted
 proof of `label_fit` proves its two new claims: on each path of
 the C branch it refutes the claim's other hypothesis, such as `length < 32u64`
-where `length >= 32`. The sidecar imports `click::cstr` for
+where `length >= 32`. The sidecar imports `click::c::string` for
 `cstr_at`; see [Click library imports](sidecars.md#click-library-imports).
 `label_copy` opens the string it views to lend a prefix of its bytes to
 `memcpy`. `memcpy` owns its destination and views its source, and a call

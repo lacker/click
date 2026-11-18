@@ -1,6 +1,6 @@
 # An `snprintf` call map gives the length of the C string a `%s` copies
 
-A `%s` argument is viewed as `click::cstr::cstr_at(aN, nN)` for a value
+A `%s` argument is viewed as `click::c::string::cstr_at(aN, nN)` for a value
 parameter `nN`, so its length must come from somewhere. For a local array,
 such as `tmp` here, nothing the caller holds supplies it. The call step gives
 it: `step(snprintf, { n1: 0u64 })`. The format comes from the call at the
@@ -23,7 +23,7 @@ int f(char *buf, int len)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 import click::format;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";

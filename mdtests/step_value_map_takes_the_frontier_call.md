@@ -23,7 +23,7 @@ int f(char *buf, int len, unsigned int flags)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "step_value_map_takes_the_frontier_call.c";

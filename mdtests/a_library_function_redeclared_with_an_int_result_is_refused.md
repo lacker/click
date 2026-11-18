@@ -20,7 +20,7 @@ target "x86_64-unknown-linux-gnu";
 verifying "main.c";
 
 int32 name_length(const char* s) {
-    requires click::cstr::readable(s);
+    requires click::c::string::readable(s);
     ensures result >= 0;
 }
 ```

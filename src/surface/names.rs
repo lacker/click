@@ -298,7 +298,7 @@ const QUALIFIED_MODULES: &[&str] = &[
     "library/option.click",
     "library/result.click",
     "library/bytes.click",
-    "library/cstr.click",
+    "library/c/string.click",
     "library/permutation.click",
     "library/integer.click",
     "library/format.click",

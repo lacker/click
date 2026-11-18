@@ -19,7 +19,7 @@ uint64 measure(const uint8 *src, uint64 m)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_value_parameter_is_proved_for_every_length.c";
 

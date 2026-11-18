@@ -6,7 +6,7 @@ sources.
 
 They may begin with local specification imports such as
 `import "../models/common.click";`, and Click library imports such as
-`import click::cstr;`. Imports contribute declarations but do not select the
+`import click::c::string;`. Imports contribute declarations but do not select the
 imported file's theorem, C function, or tactic proofs. See
 [Files and sidecars](../../concepts/sidecars.md#local-specification-imports)
 for the module and selection rules.
@@ -2127,7 +2127,7 @@ resource uncalled(flag: int32*) {
 }
 ```
 
-A Click library module may declare resources too, such as `click::cstr`'s
+A Click library module may declare resources too, such as `click::c::string`'s
 C string `cstr_at(p, len)`. A file sees a library resource exactly
 when it sees that module's predicates and functions: the module is implicit,
 imported, or brought by the C program's library calls. Declaring a resource
@@ -4319,7 +4319,7 @@ pure helper over `uint8[]` can appear in an invariant or inside `old(...)`.
 The Click library provides byte-slice helpers over `uint8[]`: `bytes::count`,
 `bytes::equal`, `bytes::equal_range`, `bytes::all_equal`, `bytes::contains`, and
 `bytes::all_not_equal`. It also provides C-string predicates:
-`cstr::prefix`, `cstr::len`, `cstr::cstr`, and `cstr::bounded`, whose lengths and bounds
+`string::prefix`, `string::len`, `string::cstr`, and `string::bounded`, whose lengths and bounds
 are `size_t` (`uint64`) values as C measures them. These are ordinary Click
 functions and predicates, not built-in kernel concepts.
 

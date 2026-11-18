@@ -11,7 +11,7 @@ unsigned long keep(unsigned char *p);
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 verifying "an_open_resource_argument_is_refused_outside_a_count.c";
 
 extern uint64 keep(uint8* p) {

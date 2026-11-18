@@ -13,20 +13,20 @@ int outer(const signed char *src) {
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "cstr_signed_char_kernel_requirement_reaches_callee.c";
 int32 check(const int8* src) {
-    requires cstr::readable(src);
+    requires string::readable(src);
     ensures result == 0;
 }
 int32 outer(const int8* src) {
-    requires cstr::readable(src);
+    requires string::readable(src);
     ensures result == 0;
 } by {
-    unfold(cstr::readable(src));
+    unfold(string::readable(src));
     have entry_string: at(function.entry, exists (n: uint64) {
         n < 18446744073709551615u64 and
         viewable((src as (uint8 *))[0..n + 1u64]) and

@@ -13,7 +13,7 @@ void poke(uint8 *s, uint64 n) { s[0] = 'a'; }
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 verifying "cstr_at_owner_open_names_the_body_fact_left_at_close.c";
 
 void poke(uint8* s, uint64 n) {

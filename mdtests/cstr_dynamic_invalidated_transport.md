@@ -18,14 +18,14 @@ uint64 read_terminator(uint8 bytes[], uint64 known_len) {
 verifying "cstr_dynamic_invalidated_transport.c";
 
 uint64 read_terminator(uint8 bytes[], uint64 known_len) {
-    requires click::cstr::readable(bytes);
-    requires click::cstr::readable_len(bytes, known_len);
+    requires click::c::string::readable(bytes);
+    requires click::c::string::readable_len(bytes, known_len);
     requires known_len < 18446744073709551615u64;
     requires viewable(bytes[0..known_len + 1u64]);
     owns bytes[0..known_len + 1u64];
     ensures result < 18446744073709551615u64;
 } by {
-    unfold(click::cstr::readable_len(bytes, known_len));
+    unfold(click::c::string::readable_len(bytes, known_len));
     step();
     have forall (k: uint64) {
         to_integer(k) < to_integer(known_len) + 1 implies defined(bytes[k])

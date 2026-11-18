@@ -1,6 +1,6 @@
 # A borrowed C string opens and lends a prefix of its bytes
 
-`copy_prefix` borrows the `click::cstr` library resource `cstr_at(src, n)`,
+`copy_prefix` borrows the `click::c::string` library resource `cstr_at(src, n)`,
 the `n + 1` bytes of `src` through
 its terminator with all four facts that make them the C string of length `n`.
 It opens the composite and passes the first `k` bytes, for `k <= n`, to a
@@ -18,7 +18,7 @@ uint64 copy_prefix(uint8 *dst, const uint8 *src, uint64 n, uint64 k)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_opens_and_lends_a_prefix_to_a_copy.c";
 

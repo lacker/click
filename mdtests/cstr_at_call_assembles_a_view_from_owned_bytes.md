@@ -20,7 +20,7 @@ uint64 measure(uint8 *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_call_assembles_a_view_from_owned_bytes.c";
 

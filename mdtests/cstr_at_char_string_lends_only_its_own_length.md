@@ -17,7 +17,7 @@ uint64 measure(const char *src, uint64 n)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_char_string_lends_only_its_own_length.c";
 

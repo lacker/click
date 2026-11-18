@@ -20,7 +20,7 @@ uint64 measure(uint8 *src, uint64 m)
 ```
 
 ```click
-import click::cstr;
+import click::c::string;
 
 verifying "cstr_at_owned_value_parameter_keeps_its_length.c";
 
