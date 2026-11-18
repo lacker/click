@@ -213,15 +213,31 @@ pub(crate) fn describe_function(name: &str) -> Option<String> {
 
 fn stream_contract(name: &str, bytes: &[u8]) -> String {
     let mut message = String::new();
+    write_byte_list(&mut message, bytes, 0);
+    include_str!("../../../library/c/stream_output.click.in")
+        .replace("@function@", name)
+        .replace("@length@", &bytes.len().to_string())
+        .replace("@message@", &message)
+}
+
+/// Leave depth for the event constructor and the lists in the template.
+/// Longer requests use balanced appends so the generated term remains shallow.
+fn write_byte_list(message: &mut String, bytes: &[u8], nesting: usize) {
+    const MAX_LIST_DEPTH: usize = 13;
+    if bytes.len() + nesting > MAX_LIST_DEPTH {
+        let (left, right) = bytes.split_at(bytes.len() / 2);
+        message.push_str("click::list::append(");
+        write_byte_list(message, left, nesting + 1);
+        message.push_str(", ");
+        write_byte_list(message, right, nesting + 1);
+        message.push(')');
+        return;
+    }
     for byte in bytes {
         let _ = write!(message, "List::Cons({byte}u8, ");
     }
     message.push_str("List<uint8>::Nil");
     message.extend(std::iter::repeat_n(')', bytes.len()));
-    include_str!("../../../library/c/stream_output.click.in")
-        .replace("@function@", name)
-        .replace("@length@", &bytes.len().to_string())
-        .replace("@message@", &message)
 }
 
 /// The `extern` contract of the formatted-output function `name` for a

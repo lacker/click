@@ -8,6 +8,12 @@ int print_percent(FILE *file)
     return fprintf(file, "%%");
 }
 
+int print_long(FILE *file)
+{
+    return fprintf(file, "0123456789abcdef0123456789abcdef"
+                         "0123456789abcdef0123456789abcdef");
+}
+
 int main(void)
 {
     FILE *file = stdout;
@@ -36,6 +42,11 @@ int32 print_percent(FILE* file) {
         old(out.write_history));
     ensures write_requests(out.write_history)
         == List::Cons(List::Cons('%', List::Nil), old(write_requests(out.write_history)));
+}
+
+int32 print_long(FILE* file) {
+    owns out: stream(file);
+    ensures result == 64 or result < 0;
 }
 
 int32 main() {
