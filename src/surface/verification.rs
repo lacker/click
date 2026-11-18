@@ -3517,6 +3517,9 @@ pub enum ModelFamily {
     Allocator,
     /// The contract the C front end writes for one `snprintf` format.
     Snprintf,
+    /// The contract the C front end writes for a literal `printf` or `fprintf`.
+    Printf,
+    Fprintf,
     /// A C++ standard-library catalog contract.
     CppStd,
     /// A Rust core-method contract.
@@ -3529,11 +3532,13 @@ pub enum ModelFamily {
 impl ModelFamily {
     /// Every family a function's assumptions can belong to; the thread
     /// runtime, which a whole verification assumes, is reported apart.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Extern,
         Self::CLibrary,
         Self::Allocator,
         Self::Snprintf,
+        Self::Printf,
+        Self::Fprintf,
         Self::CppStd,
         Self::RustCore,
         Self::Primitive,
@@ -3546,6 +3551,8 @@ impl ModelFamily {
             Self::CLibrary => "C library",
             Self::Allocator => "allocator",
             Self::Snprintf => "snprintf",
+            Self::Printf => "printf",
+            Self::Fprintf => "fprintf",
             Self::CppStd => "C++ std",
             Self::RustCore => "Rust core",
             Self::Primitive => "primitive",
@@ -3566,7 +3573,9 @@ impl ModelAssumption {
     /// format, `"%s"`, and any other by its name.
     pub fn display(&self) -> String {
         match crate::languages::c::formatted_output::function_format(&self.name) {
-            Some(format) => format!("\"{}\"", String::from_utf8_lossy(&format).escape_default()),
+            Some((_, format)) => {
+                format!("\"{}\"", String::from_utf8_lossy(&format).escape_default())
+            }
             None => self.name.clone(),
         }
     }
@@ -3601,10 +3610,15 @@ fn program_assumptions_parsed(
                 } else {
                     ModelFamily::CLibrary
                 }
-            } else if name
-                .starts_with(crate::languages::c::formatted_output::FORMATTED_OUTPUT_PREFIX)
+            } else if let Some((function, _)) =
+                crate::languages::c::formatted_output::function_format(name)
             {
-                ModelFamily::Snprintf
+                use crate::languages::c::formatted_output::FormattedOutput;
+                match function {
+                    FormattedOutput::Snprintf => ModelFamily::Snprintf,
+                    FormattedOutput::Printf => ModelFamily::Printf,
+                    FormattedOutput::Fprintf => ModelFamily::Fprintf,
+                }
             } else if library_models.is_some_and(|models| models.contains(name)) {
                 frontend_family
             } else {

@@ -47,10 +47,58 @@ about char*, float64, or malloc into the kernel.
 
 ## Only humans may edit the content above this point. AIs may edit below this point.
 
-## Verify a C function
+## Hello, world
 
-Click proves properties of existing C. You write the claims and proofs in a
-`.click` sidecar next to the C; the C itself stays as it is.
+Click checks C against a contract in a separate `.click` file. Start with
+the original hello-world program from Kernighan and Ritchie.
+
+```c filename=hello.c
+#include <stdio.h>
+
+main()
+{
+    printf("hello, world\n");
+}
+```
+
+```click filename=hello.click
+verifying "hello.c";
+import click::c::stdio::{stream, write_requests};
+
+function greeting() -> List<uint8> {
+    List::Cons('h', List::Cons('e', List::Cons('l', List::Cons('l',
+    List::Cons('o', List::Cons(',', List::Cons(' ', List::Cons('w',
+    List::Cons('o', List::Cons('r', List::Cons('l', List::Cons('d',
+    List::Cons('\n', List::Nil)))))))))))))
+}
+
+int32 main() {
+    owns out: stream(stdout);
+    ensures write_requests(out.write_history) == List::Cons(greeting(), List::Nil);
+} by {
+    unfold(greeting());
+    unfold(write_requests(List<WriteAttempt>::Nil));
+}
+```
+
+```console
+$ click verify hello.click
+assumptions: main -> printf: "hello, world\n"
+2 selected proofs verified
+```
+
+Click supplies an open `stdout` stream at program startup. The contract
+checks that `main` makes one write attempt with the exact greeting, including
+the newline. A successful `printf` reports that the stream accepted all 13
+bytes. An I/O error can leave partial output, and buffered output can still
+fail when flushed. The C program ignores the return value.
+
+Try changing a letter in the C program and running Click again. The proof
+fails because the requested bytes differ from the contract.
+
+[Example files](examples/hello-world/)
+
+## Verify a return value
 
 ```c filename=clamp.c
 int clamp(int x, int lo, int hi) {

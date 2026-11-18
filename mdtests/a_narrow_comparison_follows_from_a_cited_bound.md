@@ -2,7 +2,7 @@
 
 An 8-bit comparison is native, so it keeps its own constant's format. The
 explicit closers decide it from a cited bound on the same operand as they do
-at 32 and 64 bits. The library's `format::padded_digit_lower_bound` proof
+at 32 and 64 bits. The library's `stdio::padded_digit_lower_bound` proof
 closes its else arm this way, after the `if` reduces to the digit.
 
 ```click

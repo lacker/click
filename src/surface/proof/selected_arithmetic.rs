@@ -692,14 +692,14 @@ theorem shift_bound(v: uint64) {{
     #[test]
     fn listed_narrowed_length_equalities_expand_to_explicit_rewrites() {
         let source = r#"
-import click::format;
+import click::c::stdio;
 theorem narrowed_length_result(n: uint64, result: int32) {
-    requires format::padded_length(n, 3u64) == 3u64;
-    requires result == (1u64 + format::padded_length(n, 3u64)) as int32;
+    requires stdio::padded_length(n, 3u64) == 3u64;
+    requires result == (1u64 + stdio::padded_length(n, 3u64)) as int32;
     ensures result == 4 by {
         solve() using {
-            result == (1u64 + format::padded_length(n, 3u64)) as int32;
-            format::padded_length(n, 3u64) == 3u64;
+            result == (1u64 + stdio::padded_length(n, 3u64)) as int32;
+            stdio::padded_length(n, 3u64) == 3u64;
         };
     }
 }
@@ -715,8 +715,8 @@ theorem narrowed_length_result(n: uint64, result: int32) {
         assert!(expanded.contains("rewrite("), "{expanded}");
         without_implicit_solve(|| crate::surface::verify_click_theorems(&expanded)).unwrap();
         let missing = source
-            .replace("    requires format::padded_length(n, 3u64) == 3u64;\n", "")
-            .replace("            format::padded_length(n, 3u64) == 3u64;\n", "");
+            .replace("    requires stdio::padded_length(n, 3u64) == 3u64;\n", "")
+            .replace("            stdio::padded_length(n, 3u64) == 3u64;\n", "");
         assert!(crate::surface::verify_click_theorems(&missing).is_err());
     }
 

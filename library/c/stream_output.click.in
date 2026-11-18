@@ -1,0 +1,8 @@
+extern int32 @function@(FILE* file) {
+    owns out: click::c::stdio::stream(file);
+    ensures result == @length@ or result < 0;
+    ensures out.write_history == List::Cons(
+        WriteAttempt::Attempt(@message@, result), old(out.write_history));
+    ensures click::c::stdio::write_requests(out.write_history) == List::Cons(
+        @message@, old(click::c::stdio::write_requests(out.write_history)));
+}

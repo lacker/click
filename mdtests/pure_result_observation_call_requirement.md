@@ -8,17 +8,17 @@ int native_comparison(void) { return take_native(123u); }
 ```
 
 ```click
-import click::format;
+import click::c::stdio;
 verifying "call.c";
 extern int32 take(uint32 a) {
-    requires to_integer(click::format::decimal_length(a as uint64)) <= 2147483647;
+    requires to_integer(click::c::stdio::decimal_length(a as uint64)) <= 2147483647;
     ensures result == 0;
 }
 int32 native_call() {
     ensures result == 0;
 }
 extern int32 take_native(uint32 a) {
-    requires click::format::decimal_length(a as uint64) <= 2147483647u64;
+    requires click::c::stdio::decimal_length(a as uint64) <= 2147483647u64;
     ensures result == 0;
 }
 int32 native_comparison() {

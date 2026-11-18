@@ -21,14 +21,14 @@ int f(void)
 ```
 
 ```click
-import click::format;
+import click::c::stdio;
 verifying "a_static_table_of_string_tables_does_not_stop_a_theorem_application.c";
 
 int32 f() {
     ensures result == 0;
 } by {
-    have format::decimal_length(0u64) == 1u64 by {
-        apply(format::decimal_length_1(0u64));
+    have stdio::decimal_length(0u64) == 1u64 by {
+        apply(stdio::decimal_length_1(0u64));
     }
 }
 ```

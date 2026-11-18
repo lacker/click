@@ -1129,7 +1129,7 @@ impl<'a> Proof<'a> {
     /// The call at the frontier that `step(callee, { ... })` runs, once it is
     /// shown to call `callee` and each value entry to name one of the
     /// callee's `let` value parameters: one statement read, then one pass
-    /// over those parameters per entry. `snprintf` names the formatted-output
+    /// over those parameters per entry. The C name identifies the formatted-output
     /// function of whatever format the call passes.
     fn frontier_call_for_named_function(
         &self,
@@ -1190,8 +1190,8 @@ impl<'a> Proof<'a> {
                     .predicates
                     .function_execution_name(written)
                     == callee
-                || (written == "snprintf"
-                    && crate::languages::c::formatted_output::describe_function(callee).is_some())
+                || crate::languages::c::formatted_output::function_format(callee)
+                    .is_some_and(|(function, _)| function.source_name() == written)
         };
         let Some(call) = call.filter(|call| names_written(&call.callee)) else {
             return Err(self.step_error(format!(

@@ -678,16 +678,12 @@ const CLICK_LIBRARY_MODULES: &[(&str, &str)] = &[
         include_str!("../library/c/string.click"),
     ),
     (
-        "library/c/stdio.click",
-        include_str!("../library/c/stdio.click"),
-    ),
-    (
         "library/integer.click",
         include_str!("../library/integer.click"),
     ),
     (
-        "library/format.click",
-        include_str!("../library/format.click"),
+        "library/c/stdio.click",
+        include_str!("../library/c/stdio.click"),
     ),
     (
         "library/rust/i8.click",

@@ -1,15 +1,72 @@
-//! `snprintf` calls whose format is a string literal (C11 7.21.6.1,
-//! 7.21.6.5). The format fixes the call's arity and the meaning of each
-//! argument, so each format is one fixed-arity function,
-//! `__click_snprintf_<format bytes in hex>`, and its `extern` contract is
-//! written here from the format's pieces. The contract states the output
-//! with the decimal rendering functions of `library/format.click`, named by
-//! their full `click::` paths so the text needs no import.
+//! Literal-format calls in the C `printf` family. A checked format fixes
+//! the call's argument types and selects a fixed-arity `extern` contract.
+//! Stream writes use the template in `library/c/stream_output.click.in`.
+//! The `snprintf` contract renders conversions with `click::c::stdio`.
 
 use std::fmt::Write as _;
 
 /// The prefix of a formatted-output function's name.
-pub(crate) const FORMATTED_OUTPUT_PREFIX: &str = "__click_snprintf_";
+const SNPRINTF_PREFIX: &str = "__click_snprintf_";
+const PRINTF_PREFIX: &str = "__click_printf_";
+const FPRINTF_PREFIX: &str = "__click_fprintf_";
+
+/// The standard function behind a checked, fixed-arity call.
+#[derive(Clone, Copy)]
+pub(crate) enum FormattedOutput {
+    Snprintf,
+    Printf,
+    Fprintf,
+}
+
+impl FormattedOutput {
+    pub(crate) fn source_name(self) -> &'static str {
+        match self {
+            Self::Snprintf => "snprintf",
+            Self::Printf => "printf",
+            Self::Fprintf => "fprintf",
+        }
+    }
+
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Snprintf => SNPRINTF_PREFIX,
+            Self::Printf => PRINTF_PREFIX,
+            Self::Fprintf => FPRINTF_PREFIX,
+        }
+    }
+
+    pub(crate) fn function_name(self, format: &[u8]) -> String {
+        let mut name = self.prefix().to_string();
+        for byte in format {
+            let _ = write!(name, "{byte:02x}");
+        }
+        name
+    }
+}
+
+/// A stream request is a concrete list in its contract. Keep generated
+/// terms within the surface language's nesting budget.
+const MAX_STREAM_OUTPUT_BYTES: usize = 64;
+
+pub(crate) fn stream_output_bytes(
+    function: FormattedOutput,
+    format: &[u8],
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    for piece in parse_format(format)? {
+        let FormatPiece::Literal(literal) = piece else {
+            return Err("Click models only literal text and `%%`".to_string());
+        };
+        bytes.extend(literal);
+    }
+    if bytes.len() > MAX_STREAM_OUTPUT_BYTES {
+        return Err(format!(
+            "Click models at most {MAX_STREAM_OUTPUT_BYTES} output bytes in one `{}`",
+            function.source_name()
+        ));
+    }
+    Ok(bytes)
+}
 
 /// The widest field a conversion may request. It only keeps a field's
 /// arithmetic small; the contract still bounds the whole output by `INT_MAX`.
@@ -117,37 +174,54 @@ pub(crate) fn parse_format(format: &[u8]) -> Result<Vec<FormatPiece>, String> {
 }
 
 /// The format of the formatted-output function `name`, when it is one.
-pub(crate) fn function_format(name: &str) -> Option<Vec<u8>> {
-    let hex = name.strip_prefix(FORMATTED_OUTPUT_PREFIX)?;
-    (0..hex.len())
+pub(crate) fn function_format(name: &str) -> Option<(FormattedOutput, Vec<u8>)> {
+    let (function, hex) = [
+        FormattedOutput::Snprintf,
+        FormattedOutput::Printf,
+        FormattedOutput::Fprintf,
+    ]
+    .into_iter()
+    .find_map(|function| Some((function, name.strip_prefix(function.prefix())?)))?;
+    let format = (0..hex.len())
         .step_by(2)
         .map(|index| u8::from_str_radix(hex.get(index..index + 2)?, 16).ok())
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    Some((function, format))
 }
 
-/// The `extern` contract of `name` when it is a formatted-output function.
+/// The `extern` contract of a checked literal-format call.
 pub(crate) fn contract_for_function(name: &str) -> Option<String> {
-    let pieces = parse_format(&function_format(name)?).ok()?;
-    Some(contract_source(name, &pieces))
+    let (function, format) = function_format(name)?;
+    match function {
+        FormattedOutput::Snprintf => Some(contract_source(name, &parse_format(&format).ok()?)),
+        FormattedOutput::Printf | FormattedOutput::Fprintf => {
+            let bytes = stream_output_bytes(function, &format).ok()?;
+            Some(stream_contract(name, &bytes))
+        }
+    }
 }
 
-/// The C call a formatted-output function stands for, as a diagnostic
-/// names it: `snprintf` with its format.
+/// The source name and literal format of a checked formatted-output call.
 pub(crate) fn describe_function(name: &str) -> Option<String> {
-    let format = function_format(name)?;
+    let (function, format) = function_format(name)?;
     Some(format!(
-        "`snprintf` with format \"{}\"",
+        "`{}` with format \"{}\"",
+        function.source_name(),
         String::from_utf8_lossy(&format).escape_default()
     ))
 }
 
-/// The formatted-output function for `format`.
-pub(crate) fn function_name(format: &[u8]) -> String {
-    let mut name = FORMATTED_OUTPUT_PREFIX.to_string();
-    for byte in format {
-        let _ = write!(name, "{byte:02x}");
+fn stream_contract(name: &str, bytes: &[u8]) -> String {
+    let mut message = String::new();
+    for byte in bytes {
+        let _ = write!(message, "List::Cons({byte}u8, ");
     }
-    name
+    message.push_str("List<uint8>::Nil");
+    message.extend(std::iter::repeat_n(')', bytes.len()));
+    include_str!("../../../library/c/stream_output.click.in")
+        .replace("@function@", name)
+        .replace("@length@", &bytes.len().to_string())
+        .replace("@message@", &message)
 }
 
 /// The `extern` contract of the formatted-output function `name` for a
@@ -181,23 +255,25 @@ pub(crate) fn contract_source(name: &str, pieces: &[FormatPiece]) -> String {
                 let value = format!("a{argument} as uint64");
                 parameters.push(format!("uint32 a{argument}"));
                 if *width == 0 {
-                    lengths.push(format!("click::format::decimal_length({value})"));
+                    lengths.push(format!("click::c::stdio::decimal_length({value})"));
                     contents.push(Content::Each(format!(
-                        "click::format::decimal_digit({value}, k)"
+                        "click::c::stdio::decimal_digit({value}, k)"
                     )));
                 } else {
-                    lengths.push(format!("click::format::padded_length({value}, {width}u64)"));
+                    lengths.push(format!(
+                        "click::c::stdio::padded_length({value}, {width}u64)"
+                    ));
                     contents.push(Content::Each(format!(
-                        "click::format::padded_digit({value}, {width}u64, {pad}u8, k)"
+                        "click::c::stdio::padded_digit({value}, {width}u64, {pad}u8, k)"
                     )));
                 }
                 argument += 1;
             }
             FormatPiece::Signed => {
                 parameters.push(format!("int32 a{argument}"));
-                lengths.push(format!("click::format::signed_length(a{argument})"));
+                lengths.push(format!("click::c::stdio::signed_length(a{argument})"));
                 contents.push(Content::Each(format!(
-                    "click::format::signed_digit(a{argument}, k)"
+                    "click::c::stdio::signed_digit(a{argument}, k)"
                 )));
                 argument += 1;
             }
@@ -368,18 +444,18 @@ mod tests {
 
     #[test]
     fn a_contract_places_each_piece_after_the_ones_before_it() {
-        let name = function_name(b"%u kB");
+        let name = FormattedOutput::Snprintf.function_name(b"%u kB");
         let contract = contract_for_function(&name).unwrap();
         for clause in [
             "extern int32 __click_snprintf_2575206b42(uint8 buffer[], uint64 size, uint32 a0) {",
             "    requires size <= 2147483647u64;",
-            "    requires click::format::decimal_length(a0 as uint64) <= 2147483644u64;",
+            "    requires click::c::stdio::decimal_length(a0 as uint64) <= 2147483644u64;",
             "    owns uninitialized(buffer[0..size]);",
-            "    ensures result == (click::format::decimal_length(a0 as uint64) + 3u64) as int32;",
+            "    ensures result == (click::c::stdio::decimal_length(a0 as uint64) + 3u64) as int32;",
             "    ensures 0 <= result;",
             "    ensures result as uint64 < size implies buffer[result as uint64] == 0u8;",
-            "    ensures forall (k: uint64) { k < click::format::decimal_length(a0 as uint64) and k + 1u64 < size implies buffer[k] == click::format::decimal_digit(a0 as uint64, k) };",
-            "    ensures click::format::decimal_length(a0 as uint64) + 1u64 + 1u64 < size implies buffer[click::format::decimal_length(a0 as uint64) + 1u64] == 107u8;",
+            "    ensures forall (k: uint64) { k < click::c::stdio::decimal_length(a0 as uint64) and k + 1u64 < size implies buffer[k] == click::c::stdio::decimal_digit(a0 as uint64, k) };",
+            "    ensures click::c::stdio::decimal_length(a0 as uint64) + 1u64 + 1u64 < size implies buffer[click::c::stdio::decimal_length(a0 as uint64) + 1u64] == 107u8;",
         ] {
             assert!(contract.contains(clause), "{clause}\n{contract}");
         }
@@ -388,6 +464,9 @@ mod tests {
 
     #[test]
     fn a_format_names_its_function_by_its_bytes() {
-        assert_eq!(function_name(b"%u"), "__click_snprintf_2575");
+        assert_eq!(
+            FormattedOutput::Snprintf.function_name(b"%u"),
+            "__click_snprintf_2575"
+        );
     }
 }

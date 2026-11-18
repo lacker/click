@@ -25,7 +25,7 @@ int copy_name(char *buf, int n)
 ```
 
 ```click
-import click::format;
+import click::c::stdio;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "integer_stated_cstr.c";

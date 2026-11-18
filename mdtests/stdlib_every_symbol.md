@@ -44,7 +44,10 @@ The external catalog symbol `__click_constant_p_unknown`, the value of the C
 builtin `__builtin_constant_p`, is verified in
 [`c_builtin_constant_p.md`](c_builtin_constant_p.md).
 
-The `WriteAttempt` datatype and `stream` resource are used by
+The `WriteAttempt` datatype, `stream` resource and `stdio::write_requests`
+function are used by
+[`printf_and_fprintf_share_the_streams_write_history.md`](printf_and_fprintf_share_the_streams_write_history.md).
+The stream also appears in
 [`hosted_stdout_stream_follows_file_pointer_alias.md`](hosted_stdout_stream_follows_file_pointer_alias.md).
 
 The borrowed C-string resource `cstr_at` is verified in
@@ -146,7 +149,7 @@ import click::integer;
 import click::permutation;
 import click::cstr;
 import click::bytes;
-import click::format;
+import click::c::stdio;
 import click::rust::i8;
 import click::rust::i16;
 import click::rust::i32;
@@ -942,153 +945,153 @@ theorem use_int32_remainder_to_integer(left: int32, right: int32) {
 
 
 theorem use_format_pow10_0() {
-    ensures format::pow10(0u64) == 1u64 by apply(format::pow10_0());
+    ensures stdio::pow10(0u64) == 1u64 by apply(stdio::pow10_0());
 }
 
 theorem use_format_pow10_1() {
-    ensures format::pow10(1u64) == 10u64 by apply(format::pow10_1());
+    ensures stdio::pow10(1u64) == 10u64 by apply(stdio::pow10_1());
 }
 
 theorem use_format_pow10_2() {
-    ensures format::pow10(2u64) == 100u64 by apply(format::pow10_2());
+    ensures stdio::pow10(2u64) == 100u64 by apply(stdio::pow10_2());
 }
 
 theorem use_format_pow10_3() {
-    ensures format::pow10(3u64) == 1000u64 by apply(format::pow10_3());
+    ensures stdio::pow10(3u64) == 1000u64 by apply(stdio::pow10_3());
 }
 
 theorem use_format_pow10_4() {
-    ensures format::pow10(4u64) == 10000u64 by apply(format::pow10_4());
+    ensures stdio::pow10(4u64) == 10000u64 by apply(stdio::pow10_4());
 }
 
 theorem use_format_pow10_5() {
-    ensures format::pow10(5u64) == 100000u64 by apply(format::pow10_5());
+    ensures stdio::pow10(5u64) == 100000u64 by apply(stdio::pow10_5());
 }
 
 theorem use_format_pow10_6() {
-    ensures format::pow10(6u64) == 1000000u64 by apply(format::pow10_6());
+    ensures stdio::pow10(6u64) == 1000000u64 by apply(stdio::pow10_6());
 }
 
 theorem use_format_pow10_7() {
-    ensures format::pow10(7u64) == 10000000u64 by apply(format::pow10_7());
+    ensures stdio::pow10(7u64) == 10000000u64 by apply(stdio::pow10_7());
 }
 
 theorem use_format_pow10_8() {
-    ensures format::pow10(8u64) == 100000000u64 by apply(format::pow10_8());
+    ensures stdio::pow10(8u64) == 100000000u64 by apply(stdio::pow10_8());
 }
 
 theorem use_format_pow10_9() {
-    ensures format::pow10(9u64) == 1000000000u64 by apply(format::pow10_9());
+    ensures stdio::pow10(9u64) == 1000000000u64 by apply(stdio::pow10_9());
 }
 
 theorem use_format_decimal_length_1(v: uint64) {
     requires v < 10u64;
-    ensures format::decimal_length(v) == 1u64 by apply(format::decimal_length_1(v));
+    ensures stdio::decimal_length(v) == 1u64 by apply(stdio::decimal_length_1(v));
 }
 
 theorem use_format_decimal_length_2(v: uint64) {
     requires 10u64 <= v;
     requires v < 100u64;
-    ensures format::decimal_length(v) == 2u64 by apply(format::decimal_length_2(v));
+    ensures stdio::decimal_length(v) == 2u64 by apply(stdio::decimal_length_2(v));
 }
 
 theorem use_format_decimal_length_3(v: uint64) {
     requires 100u64 <= v;
     requires v < 1000u64;
-    ensures format::decimal_length(v) == 3u64 by apply(format::decimal_length_3(v));
+    ensures stdio::decimal_length(v) == 3u64 by apply(stdio::decimal_length_3(v));
 }
 
 theorem use_format_decimal_length_4(v: uint64) {
     requires 1000u64 <= v;
     requires v < 10000u64;
-    ensures format::decimal_length(v) == 4u64 by apply(format::decimal_length_4(v));
+    ensures stdio::decimal_length(v) == 4u64 by apply(stdio::decimal_length_4(v));
 }
 
 theorem use_format_decimal_length_5(v: uint64) {
     requires 10000u64 <= v;
     requires v < 100000u64;
-    ensures format::decimal_length(v) == 5u64 by apply(format::decimal_length_5(v));
+    ensures stdio::decimal_length(v) == 5u64 by apply(stdio::decimal_length_5(v));
 }
 
 theorem use_format_decimal_length_6(v: uint64) {
     requires 100000u64 <= v;
     requires v < 1000000u64;
-    ensures format::decimal_length(v) == 6u64 by apply(format::decimal_length_6(v));
+    ensures stdio::decimal_length(v) == 6u64 by apply(stdio::decimal_length_6(v));
 }
 
 theorem use_format_decimal_length_7(v: uint64) {
     requires 1000000u64 <= v;
     requires v < 10000000u64;
-    ensures format::decimal_length(v) == 7u64 by apply(format::decimal_length_7(v));
+    ensures stdio::decimal_length(v) == 7u64 by apply(stdio::decimal_length_7(v));
 }
 
 theorem use_format_decimal_length_8(v: uint64) {
     requires 10000000u64 <= v;
     requires v < 100000000u64;
-    ensures format::decimal_length(v) == 8u64 by apply(format::decimal_length_8(v));
+    ensures stdio::decimal_length(v) == 8u64 by apply(stdio::decimal_length_8(v));
 }
 
 theorem use_format_decimal_length_9(v: uint64) {
     requires 100000000u64 <= v;
     requires v < 1000000000u64;
-    ensures format::decimal_length(v) == 9u64 by apply(format::decimal_length_9(v));
+    ensures stdio::decimal_length(v) == 9u64 by apply(stdio::decimal_length_9(v));
 }
 
 theorem use_format_decimal_length_10(v: uint64) {
     requires 1000000000u64 <= v;
     requires v < 10000000000u64;
-    ensures format::decimal_length(v) == 10u64 by apply(format::decimal_length_10(v));
+    ensures stdio::decimal_length(v) == 10u64 by apply(stdio::decimal_length_10(v));
 }
 
 theorem use_format_pow10_nonzero(e: uint64) {
     requires e < 20u64;
-    ensures format::pow10(e) != 0u64 by apply(format::pow10_nonzero(e));
+    ensures stdio::pow10(e) != 0u64 by apply(stdio::pow10_nonzero(e));
 }
 
 theorem use_format_decimal_digit_power_nonzero(v: uint64, k: uint64) {
-    requires k < format::decimal_length(v);
-    ensures format::pow10(format::decimal_length(v) - 1u64 - k) != 0u64 by apply(format::decimal_digit_power_nonzero(v, k));
+    requires k < stdio::decimal_length(v);
+    ensures stdio::pow10(stdio::decimal_length(v) - 1u64 - k) != 0u64 by apply(stdio::decimal_digit_power_nonzero(v, k));
 }
 
 theorem use_format_decimal_digit_of_length(v: uint64) {
-    requires format::decimal_length(v) == 2u64;
-    ensures format::decimal_digit(v, 1u64) == (48u64 + v / format::pow10(2u64 - 1u64 - 1u64) % 10u64) as uint8 by {
-        apply(format::decimal_digit_of_length(v, 2u64, 1u64));
+    requires stdio::decimal_length(v) == 2u64;
+    ensures stdio::decimal_digit(v, 1u64) == (48u64 + v / stdio::pow10(2u64 - 1u64 - 1u64) % 10u64) as uint8 by {
+        apply(stdio::decimal_digit_of_length(v, 2u64, 1u64));
     }
 }
 
 theorem use_format_decimal_digit_lower_bound(v: uint64) {
-    ensures 48u8 <= format::decimal_digit(v, 0u64) by apply(format::decimal_digit_lower_bound(v, 0u64));
+    ensures 48u8 <= stdio::decimal_digit(v, 0u64) by apply(stdio::decimal_digit_lower_bound(v, 0u64));
 }
 
 theorem use_format_padded_digit_lower_bound(v: uint64) {
-    ensures 48u8 <= format::padded_digit(v, 3u64, 48u8, 1u64) by apply(format::padded_digit_lower_bound(v, 3u64, 1u64));
+    ensures 48u8 <= stdio::padded_digit(v, 3u64, 48u8, 1u64) by apply(stdio::padded_digit_lower_bound(v, 3u64, 1u64));
 }
 
 theorem use_format_padded_digit(v: uint64) {
-    requires format::padded_length(v, 3u64) == 3u64;
-    requires format::decimal_length(v) == 1u64;
-    ensures format::padded_digit(v, 3u64, 48u8, 0u64) == 48u8 by {
-        unfold(format::padded_digit(v, 3u64, 48u8, 0u64));
+    requires stdio::padded_length(v, 3u64) == 3u64;
+    requires stdio::decimal_length(v) == 1u64;
+    ensures stdio::padded_digit(v, 3u64, 48u8, 0u64) == 48u8 by {
+        unfold(stdio::padded_digit(v, 3u64, 48u8, 0u64));
         solve();
     }
 }
 
 theorem use_format_signed_digit() {
-    ensures format::signed_digit(-5, 0u64) == 45u8 by {
-        unfold(format::signed_digit(-5, 0u64));
+    ensures stdio::signed_digit(-5, 0u64) == 45u8 by {
+        unfold(stdio::signed_digit(-5, 0u64));
         solve();
     }
 }
 
 theorem use_format_signed_length(v: int32) {
     requires 0 <= v;
-    ensures format::signed_length(v) == format::decimal_length(format::magnitude(v)) by {
+    ensures stdio::signed_length(v) == stdio::decimal_length(stdio::magnitude(v)) by {
         have not (v < 0) by { known(); }
-        have (if v < 0 { 1u64 + format::decimal_length(format::magnitude(v)) } else { format::decimal_length(format::magnitude(v)) }) == format::decimal_length(format::magnitude(v)) by {
+        have (if v < 0 { 1u64 + stdio::decimal_length(stdio::magnitude(v)) } else { stdio::decimal_length(stdio::magnitude(v)) }) == stdio::decimal_length(stdio::magnitude(v)) by {
             normalize() using { not (v < 0); };
         }
-        unfold(format::signed_length(v));
+        unfold(stdio::signed_length(v));
         solve();
     }
 }

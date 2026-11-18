@@ -43,8 +43,9 @@ version and version-string bytes under the default user-space target.
 
 Current projects:
 
-- `clamp/` is the README quick start: a branchy `int` function proved in range
-  with omitted proofs.
+- `hello-world/` is the first README example. It checks the exact greeting
+  passed to `stdout` by the original K&R program.
+- `clamp/` proves a branchy `int` function returns a value in range.
 - `basic-rust/` verifies scalar branches, reference reborrows, parent reuse, and
   disjoint struct fields through the pinned Rust compiler import.
 - `rust-move-drop/` verifies a moved Rust guard that restores borrowed storage

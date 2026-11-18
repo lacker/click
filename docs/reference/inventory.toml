@@ -4060,136 +4060,136 @@ id = "library.theorem.integer::uint64_less_than_implies_not_greater_equal"
 path = "reference/library/index.md#integeruint64_less_than_implies_not_greater_equal"
 
 [[item]]
-id = "library.function.format::pow10"
-path = "reference/library/index.md#formatpow10"
+id = "library.function.stdio::pow10"
+path = "reference/library/index.md#stdiopow10"
 
 [[item]]
-id = "library.function.format::decimal_length"
-path = "reference/library/index.md#formatdecimal_length"
+id = "library.function.stdio::decimal_length"
+path = "reference/library/index.md#stdiodecimal_length"
 
 [[item]]
-id = "library.function.format::decimal_digit"
-path = "reference/library/index.md#formatdecimal_digit"
+id = "library.function.stdio::decimal_digit"
+path = "reference/library/index.md#stdiodecimal_digit"
 
 [[item]]
-id = "library.function.format::padded_length"
-path = "reference/library/index.md#formatpadded_length"
+id = "library.function.stdio::padded_length"
+path = "reference/library/index.md#stdiopadded_length"
 
 [[item]]
-id = "library.function.format::padded_digit"
-path = "reference/library/index.md#formatpadded_digit"
+id = "library.function.stdio::padded_digit"
+path = "reference/library/index.md#stdiopadded_digit"
 
 [[item]]
-id = "library.function.format::magnitude"
-path = "reference/library/index.md#formatmagnitude"
+id = "library.function.stdio::magnitude"
+path = "reference/library/index.md#stdiomagnitude"
 
 [[item]]
-id = "library.function.format::signed_length"
-path = "reference/library/index.md#formatsigned_length"
+id = "library.function.stdio::signed_length"
+path = "reference/library/index.md#stdiosigned_length"
 
 [[item]]
-id = "library.function.format::signed_digit"
-path = "reference/library/index.md#formatsigned_digit"
+id = "library.function.stdio::signed_digit"
+path = "reference/library/index.md#stdiosigned_digit"
 
 [[item]]
-id = "library.theorem.format::pow10_0"
-path = "reference/library/index.md#formatpow10_0"
+id = "library.theorem.stdio::pow10_0"
+path = "reference/library/index.md#stdiopow10_0"
 
 [[item]]
-id = "library.theorem.format::pow10_1"
-path = "reference/library/index.md#formatpow10_1"
+id = "library.theorem.stdio::pow10_1"
+path = "reference/library/index.md#stdiopow10_1"
 
 [[item]]
-id = "library.theorem.format::pow10_2"
-path = "reference/library/index.md#formatpow10_2"
+id = "library.theorem.stdio::pow10_2"
+path = "reference/library/index.md#stdiopow10_2"
 
 [[item]]
-id = "library.theorem.format::pow10_3"
-path = "reference/library/index.md#formatpow10_3"
+id = "library.theorem.stdio::pow10_3"
+path = "reference/library/index.md#stdiopow10_3"
 
 [[item]]
-id = "library.theorem.format::pow10_4"
-path = "reference/library/index.md#formatpow10_4"
+id = "library.theorem.stdio::pow10_4"
+path = "reference/library/index.md#stdiopow10_4"
 
 [[item]]
-id = "library.theorem.format::pow10_5"
-path = "reference/library/index.md#formatpow10_5"
+id = "library.theorem.stdio::pow10_5"
+path = "reference/library/index.md#stdiopow10_5"
 
 [[item]]
-id = "library.theorem.format::pow10_6"
-path = "reference/library/index.md#formatpow10_6"
+id = "library.theorem.stdio::pow10_6"
+path = "reference/library/index.md#stdiopow10_6"
 
 [[item]]
-id = "library.theorem.format::pow10_7"
-path = "reference/library/index.md#formatpow10_7"
+id = "library.theorem.stdio::pow10_7"
+path = "reference/library/index.md#stdiopow10_7"
 
 [[item]]
-id = "library.theorem.format::pow10_8"
-path = "reference/library/index.md#formatpow10_8"
+id = "library.theorem.stdio::pow10_8"
+path = "reference/library/index.md#stdiopow10_8"
 
 [[item]]
-id = "library.theorem.format::pow10_9"
-path = "reference/library/index.md#formatpow10_9"
+id = "library.theorem.stdio::pow10_9"
+path = "reference/library/index.md#stdiopow10_9"
 
 [[item]]
-id = "library.theorem.format::pow10_nonzero"
-path = "reference/library/index.md#formatpow10_nonzero"
+id = "library.theorem.stdio::pow10_nonzero"
+path = "reference/library/index.md#stdiopow10_nonzero"
 
 [[item]]
-id = "library.theorem.format::decimal_length_1"
-path = "reference/library/index.md#formatdecimal_length_1"
+id = "library.theorem.stdio::decimal_length_1"
+path = "reference/library/index.md#stdiodecimal_length_1"
 
 [[item]]
-id = "library.theorem.format::decimal_length_2"
-path = "reference/library/index.md#formatdecimal_length_2"
+id = "library.theorem.stdio::decimal_length_2"
+path = "reference/library/index.md#stdiodecimal_length_2"
 
 [[item]]
-id = "library.theorem.format::decimal_length_3"
-path = "reference/library/index.md#formatdecimal_length_3"
+id = "library.theorem.stdio::decimal_length_3"
+path = "reference/library/index.md#stdiodecimal_length_3"
 
 [[item]]
-id = "library.theorem.format::decimal_length_4"
-path = "reference/library/index.md#formatdecimal_length_4"
+id = "library.theorem.stdio::decimal_length_4"
+path = "reference/library/index.md#stdiodecimal_length_4"
 
 [[item]]
-id = "library.theorem.format::decimal_length_5"
-path = "reference/library/index.md#formatdecimal_length_5"
+id = "library.theorem.stdio::decimal_length_5"
+path = "reference/library/index.md#stdiodecimal_length_5"
 
 [[item]]
-id = "library.theorem.format::decimal_length_6"
-path = "reference/library/index.md#formatdecimal_length_6"
+id = "library.theorem.stdio::decimal_length_6"
+path = "reference/library/index.md#stdiodecimal_length_6"
 
 [[item]]
-id = "library.theorem.format::decimal_length_7"
-path = "reference/library/index.md#formatdecimal_length_7"
+id = "library.theorem.stdio::decimal_length_7"
+path = "reference/library/index.md#stdiodecimal_length_7"
 
 [[item]]
-id = "library.theorem.format::decimal_length_8"
-path = "reference/library/index.md#formatdecimal_length_8"
+id = "library.theorem.stdio::decimal_length_8"
+path = "reference/library/index.md#stdiodecimal_length_8"
 
 [[item]]
-id = "library.theorem.format::decimal_length_9"
-path = "reference/library/index.md#formatdecimal_length_9"
+id = "library.theorem.stdio::decimal_length_9"
+path = "reference/library/index.md#stdiodecimal_length_9"
 
 [[item]]
-id = "library.theorem.format::decimal_length_10"
-path = "reference/library/index.md#formatdecimal_length_10"
+id = "library.theorem.stdio::decimal_length_10"
+path = "reference/library/index.md#stdiodecimal_length_10"
 
 [[item]]
-id = "library.theorem.format::decimal_digit_power_nonzero"
-path = "reference/library/index.md#formatdecimal_digit_power_nonzero"
+id = "library.theorem.stdio::decimal_digit_power_nonzero"
+path = "reference/library/index.md#stdiodecimal_digit_power_nonzero"
 
 [[item]]
-id = "library.theorem.format::decimal_digit_of_length"
-path = "reference/library/index.md#formatdecimal_digit_of_length"
+id = "library.theorem.stdio::decimal_digit_of_length"
+path = "reference/library/index.md#stdiodecimal_digit_of_length"
 
 [[item]]
-id = "library.theorem.format::decimal_digit_lower_bound"
-path = "reference/library/index.md#formatdecimal_digit_lower_bound"
+id = "library.theorem.stdio::decimal_digit_lower_bound"
+path = "reference/library/index.md#stdiodecimal_digit_lower_bound"
 
 [[item]]
-id = "library.theorem.format::padded_digit_lower_bound"
-path = "reference/library/index.md#formatpadded_digit_lower_bound"
+id = "library.theorem.stdio::padded_digit_lower_bound"
+path = "reference/library/index.md#stdiopadded_digit_lower_bound"
 
 [[item]]
 id = "c.expression.builtin-offsetof"
@@ -5363,3 +5363,7 @@ path = "reference/library/index.md#writeattempt-and-stream"
 [[item]]
 id = "library.resource.stream"
 path = "reference/library/index.md#writeattempt-and-stream"
+
+[[item]]
+id = "library.function.stdio::write_requests"
+path = "reference/library/index.md#stdiowrite_requests"

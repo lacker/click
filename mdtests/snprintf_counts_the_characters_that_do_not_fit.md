@@ -16,7 +16,7 @@ int clipped(char *buf)
 ```
 
 ```click
-import click::format;
+import click::c::stdio;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "clipped.c";
@@ -25,20 +25,20 @@ int32 clipped(char buf[]) {
     owns buf[0..2];
     ensures result == 3 by {
         step_until(function.exit);
-        have format::decimal_length(123u64) == 3u64 by {
-            apply(format::decimal_length_3(123u64));
+        have stdio::decimal_length(123u64) == 3u64 by {
+            apply(stdio::decimal_length_3(123u64));
         }
         have result == 3 by {
-            solve() using { result == format::decimal_length(123u64) as int32; format::decimal_length(123u64) == 3u64; };
+            solve() using { result == stdio::decimal_length(123u64) as int32; stdio::decimal_length(123u64) == 3u64; };
         }
     }
     ensures buf[1] == 0 by {
         step_until(function.exit);
-        have format::decimal_length(123u64) == 3u64 by {
-            apply(format::decimal_length_3(123u64));
+        have stdio::decimal_length(123u64) == 3u64 by {
+            apply(stdio::decimal_length_3(123u64));
         }
-        have format::decimal_length(123u64) >= 2u64 by {
-            solve() using { format::decimal_length(123u64) == 3u64; };
+        have stdio::decimal_length(123u64) >= 2u64 by {
+            solve() using { stdio::decimal_length(123u64) == 3u64; };
         }
         have 2u64 != 0u64 by { normalize(); }
         solve();

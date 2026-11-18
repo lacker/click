@@ -81,7 +81,7 @@ noted, and a new interface must not copy one.
 | Rust | `Range`, `slice::Iter`, `ChunksExact` and `Enumerate` are importer statements (`RangeNext`, `ChunkNext`, ...) over the iterators' fields | `src/languages/rust/charon/`, `src/languages/rust/lowering/` | Contracts of each iterator's `next` |
 | C++ | `std::span` and `std::array` contracts read their objects' layout | `library/cpp/span.click`, `library/cpp/array.click` | Contracts over each object's logical state ([C++ standard library](../reference/cli/import.md#c-standard-library)) |
 | C | The allocator family is built into the C front end and the kernel | `src/languages/c/` | Justified: allocation is part of C's memory model, not a library call |
-| C | Each `snprintf` contract is written by the C front end from its format | `src/languages/c/formatted_output.rs` | Justified while formats are checked at import |
+| C | Literal formats in `snprintf`, `printf` and `fprintf` select a fixed-arity contract | `src/languages/c/formatted_output.rs`, `library/c/stream_output.click.in` | Justified while formats are checked by the C front end. The stream transition is an ordinary Click contract. |
 | C | The thread runtime is a selected specification in Rust code | `src/languages/c/thread_runtime.rs` | Justified: it models the runtime, not one function |
 
 A gap is a missing feature in an interface that follows the principles:

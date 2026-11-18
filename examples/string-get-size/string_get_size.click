@@ -7,7 +7,7 @@
 // produces, is never negative, and the terminator follows the output when it
 // fits and ends the buffer when it does not.
 import click::cstr;
-import click::format;
+import click::c::stdio;
 import click::integer;
 import click::separation;
 verifying "string_get_size.c";
@@ -89,7 +89,7 @@ int32 string_get_size(uint64 size, uint64 blk_size, uint32 units, char buf[], in
 // unit for `i == 0`.
     if blk_size == 0u64 {
         step_until(region(77));
-        have format::decimal_length(size as uint32 as uint64) <= 20u64 by { unfold(format::decimal_length(size as uint32 as uint64)); solve(); }
+        have stdio::decimal_length(size as uint32 as uint64) <= 20u64 by { unfold(stdio::decimal_length(size as uint32 as uint64)); solve(); }
         have len as uint64 != 0u64;
         have forall (k: uint64) { 0u64 <= k and k < 0u64 implies tmp[k] != 0u8 } by {
             intro();
@@ -148,7 +148,7 @@ int32 string_get_size(uint64 size, uint64 blk_size, uint32 units, char buf[], in
     } else {
         if size == 0u64 {
             step_until(region(77));
-            have format::decimal_length(size as uint32 as uint64) <= 20u64 by { unfold(format::decimal_length(size as uint32 as uint64)); solve(); }
+            have stdio::decimal_length(size as uint32 as uint64) <= 20u64 by { unfold(stdio::decimal_length(size as uint32 as uint64)); solve(); }
             have len as uint64 != 0u64;
             have forall (k: uint64) { 0u64 <= k and k < 0u64 implies tmp[k] != 0u8 } by {
                 intro();
@@ -697,43 +697,43 @@ int32 string_get_size(uint64 size, uint64 blk_size, uint32 units, char buf[], in
                 fact tmp[tmp_len(j)] == 0u8;
             } {
                 true => {
-                    have 3u64 <= format::padded_length(remainder as uint64, 3u64) by {
-                        unfold(format::padded_length(remainder as uint64, 3u64));
-                        if format::decimal_length(remainder as uint64) < 3u64 {
-                            normalize() using { format::decimal_length(remainder as uint64) < 3u64; };
+                    have 3u64 <= stdio::padded_length(remainder as uint64, 3u64) by {
+                        unfold(stdio::padded_length(remainder as uint64, 3u64));
+                        if stdio::decimal_length(remainder as uint64) < 3u64 {
+                            normalize() using { stdio::decimal_length(remainder as uint64) < 3u64; };
                         } else {
-                            have 3u64 <= format::decimal_length(remainder as uint64);
-                            normalize() using { 3u64 <= format::decimal_length(remainder as uint64); };
+                            have 3u64 <= stdio::decimal_length(remainder as uint64);
+                            normalize() using { 3u64 <= stdio::decimal_length(remainder as uint64); };
                         }
                     }
                     step();
                     have tmp[0u64] == 46u8;
                     have tmp[0u64] != 0u8;
                     have defined(tmp[0u64]) by { solve(); }
-                    have 0u64 < format::padded_length(remainder as uint64, 3u64);
+                    have 0u64 < stdio::padded_length(remainder as uint64, 3u64);
                     have 1u64 + 0u64 + 1u64 < 12u64 by { normalize(); }
-                    have tmp[1] == format::padded_digit(remainder as uint64, 3u64, 48u8, 0u64) by {
-                        instantiate(forall (k: uint64) { k < format::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies tmp[1u64 + k] == format::padded_digit(remainder as uint64, 3u64, 48u8, k) }, 0u64);
+                    have tmp[1] == stdio::padded_digit(remainder as uint64, 3u64, 48u8, 0u64) by {
+                        instantiate(forall (k: uint64) { k < stdio::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies tmp[1u64 + k] == stdio::padded_digit(remainder as uint64, 3u64, 48u8, k) }, 0u64);
                         known();
                     }
-                    apply(format::padded_digit_lower_bound(remainder as uint64, 3u64, 0u64));
+                    apply(stdio::padded_digit_lower_bound(remainder as uint64, 3u64, 0u64));
                     have 48u8 <= tmp[1u64];
                     have tmp[1u64] != 0u8;
                     have defined(tmp[1]) by {
-                        instantiate(forall (k: uint64) { k < format::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies defined(tmp[1u64 + k]) }, 0u64);
+                        instantiate(forall (k: uint64) { k < stdio::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies defined(tmp[1u64 + k]) }, 0u64);
                         known();
                     }
-                    have 1u64 < format::padded_length(remainder as uint64, 3u64);
+                    have 1u64 < stdio::padded_length(remainder as uint64, 3u64);
                     have 1u64 + 1u64 + 1u64 < 12u64 by { normalize(); }
-                    have tmp[2] == format::padded_digit(remainder as uint64, 3u64, 48u8, 1u64) by {
-                        instantiate(forall (k: uint64) { k < format::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies tmp[1u64 + k] == format::padded_digit(remainder as uint64, 3u64, 48u8, k) }, 1u64);
+                    have tmp[2] == stdio::padded_digit(remainder as uint64, 3u64, 48u8, 1u64) by {
+                        instantiate(forall (k: uint64) { k < stdio::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies tmp[1u64 + k] == stdio::padded_digit(remainder as uint64, 3u64, 48u8, k) }, 1u64);
                         known();
                     }
-                    apply(format::padded_digit_lower_bound(remainder as uint64, 3u64, 1u64));
+                    apply(stdio::padded_digit_lower_bound(remainder as uint64, 3u64, 1u64));
                     have 48u8 <= tmp[2u64];
                     have tmp[2u64] != 0u8;
                     have defined(tmp[2]) by {
-                        instantiate(forall (k: uint64) { k < format::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies defined(tmp[1u64 + k]) }, 1u64);
+                        instantiate(forall (k: uint64) { k < stdio::padded_length(remainder as uint64, 3u64) and 1u64 + k + 1u64 < 12u64 implies defined(tmp[1u64 + k]) }, 1u64);
                         known();
                     }
                     if j == 1 ensuring {
@@ -889,9 +889,9 @@ int32 string_get_size(uint64 size, uint64 blk_size, uint32 units, char buf[], in
             }
 // The unit and the final call: one case per unit string, each split by the
 // two flags into the four literal combinations the call prints.
-            have format::decimal_length(size as uint32 as uint64) <= 20u64 by {
-                unfold(format::decimal_length(size as uint32 as uint64));
-                have format::decimal_length(size as uint32 as uint64) <= 20u64;
+            have stdio::decimal_length(size as uint32 as uint64) <= 20u64 by {
+                unfold(stdio::decimal_length(size as uint32 as uint64));
+                have stdio::decimal_length(size as uint32 as uint64) <= 20u64;
                 known();
             }
             have len as uint64 != 0u64;

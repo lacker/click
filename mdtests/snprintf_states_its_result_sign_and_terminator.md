@@ -19,14 +19,14 @@ int never_negative(char *buf, int len, unsigned int value, char *name)
 
 ```click
 import click::cstr;
-import click::format;
+import click::c::stdio;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "never_negative.c";
 
 int32 never_negative(char buf[], int32 len, uint32 value, char name[]) {
     requires 1 <= len;
-    requires to_integer(format::decimal_length(value as uint64)) + 8 <= 2147483646;
+    requires to_integer(stdio::decimal_length(value as uint64)) + 8 <= 2147483646;
     views cstr::cstr_at(name, 8u64);
     owns buf[0..len as uint64];
     ensures 0 <= result;

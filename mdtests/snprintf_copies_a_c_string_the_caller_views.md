@@ -14,7 +14,7 @@ int unit_of(char *buf, const char *name)
 ```
 
 ```click
-import click::format;
+import click::c::stdio;
 target "x86_64-unknown-linux-gnu";
 mode "kernel";
 verifying "unit_name.c";
