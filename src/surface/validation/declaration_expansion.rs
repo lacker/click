@@ -1536,11 +1536,6 @@ fn expand_declared_resource_proof_of(
     let mut result = Ok(());
     let outer_hypotheses = resource_definitions.local_hypotheses.borrow().clone();
     for tactic in tactics {
-        if let ProofTactic::LetSatisfy(obtain) = &tactic {
-            for (name, click_type) in &obtain.bindings {
-                bound.push(constructors.bind(name, Some(click_type.clone())));
-            }
-        }
         let introduced = match &tactic {
             ProofTactic::Intro => Some(None),
             ProofTactic::IntroAs(name) => Some(Some(SurfaceBinder::from(name))),
@@ -1548,7 +1543,14 @@ fn expand_declared_resource_proof_of(
             _ => None,
         };
         match expand_declared_resource_tactic(tactic, resource_definitions) {
-            Ok(tactic) => expanded.push(tactic),
+            Ok(tactic) => {
+                if let ProofTactic::LetSatisfy(obtain) = &tactic {
+                    for (name, click_type) in &obtain.bindings {
+                        bound.push(constructors.bind(name, Some(click_type.clone())));
+                    }
+                }
+                expanded.push(tactic);
+            }
             Err(error) => {
                 result = Err(error);
                 break;
@@ -1641,6 +1643,7 @@ fn expand_declared_resource_tactic(
         | ProofTactic::TransportUsing { .. }
         | ProofTactic::SolveUsing(_)
         | ProofTactic::NormalizeUsing(_)
+        | ProofTactic::LetSatisfy(_)
         | ProofTactic::OrderChain(_)) => {
             expand_declared_resource_tactic_with_propositions(tactic, resource_definitions)
         }
@@ -2025,6 +2028,11 @@ fn expand_declared_resource_tactic_with_propositions(
         ProofTactic::Preserve(proposition) => Ok(ProofTactic::Preserve(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),
+        ProofTactic::LetSatisfy(mut obtain) => {
+            obtain.proposition =
+                expand_declared_resource_proposition(obtain.proposition, resource_definitions)?;
+            Ok(ProofTactic::LetSatisfy(obtain))
+        }
         ProofTactic::Rewrite(proposition) => Ok(ProofTactic::Rewrite(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),
