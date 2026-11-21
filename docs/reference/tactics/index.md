@@ -642,16 +642,16 @@ and the other tactics that change the path's facts or resources act on the path
 and leave the goal list alone; the implicit closer at the end of the script
 closes the goals still open.
 
-Some tactics leave a claim on its own proof, which later closers continue
-instead of the claim. `choose`, `witness`, `let` and `intro` open the proof of
-the first open proposition claim, and `rewrite` rewrites each open claim on
-its own proof. Before a tactic continues such a proof, the proof takes up the
-path's current state and resources, so a later `fold` or the contract's
-resource transition reaches it. A `have` written after `intro` extends that
-proof. A closer that does not apply to a proof that `intro` opened is read
-against the goal list instead. A closer that does not apply to a proof only
-`choose`, `witness` or `let` opened is an error, since closing the claim
-another way would drop the witness.
+Goal refinements (`choose`, `witness`, `let`, `intro` and `rewrite`) work on
+the same first open claim. It must be a proposition, and the tactic applies to
+its current goal. Close an earlier resource claim with `known()` to reach the
+next claim. When a tactic leaves a claim on its own proof, later tactics
+continue that proof using the path's current state and resources, so a later
+`fold` or the contract's resource transition reaches it. A `have` written after
+`intro` extends that proof. If a closer cannot handle the goal introduced by
+`intro`, it can still close the original claim directly. A closer in a proof
+opened only by `choose`, `witness` or `let` must close the goal with the chosen
+witness.
 
 A written closer that closes no goal it acts on is refused, `solve` and
 `solve() using` included; only the implicit closer at the end of the script

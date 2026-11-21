@@ -1465,10 +1465,7 @@ fn apply_claim_step<'a>(
     }))
 }
 
-/// Selects the one ungrouped proposition claim refined by a local tactic
-/// and starts its result-aware judgment from the
-/// current outcome Proof. Every explicit operation advances this retained
-/// Proof and is serialized inside the claim body.
+/// Starts a result-aware proof for the same claim the ordinary closers focus.
 fn begin_outcome_claim_proof<'a>(
     outcome_root: &Proof<'a>,
     function: &ProgramFunction,
@@ -1476,62 +1473,33 @@ fn begin_outcome_claim_proof<'a>(
     arguments: &[ProgramExpression],
     outcome: &FunctionOutcome,
     claims: &[FunctionClaimRef<'_>],
-    closures: &[ClaimClosure],
     rewrite_claim_equalities: &[Vec<ClickProposition>],
+    tactic: &str,
 ) -> Result<(usize, ClickProposition, Proof<'a>), ClickError> {
-    let mut open = claims
-        .iter()
-        .enumerate()
-        .filter_map(|(claim_index, claim)| {
-            if closures[claim_index].is_closed() {
-                return None;
-            }
-            if !claim.applies_to(outcome) {
-                return None;
-            }
-            let ensure_clause = claim.clause();
-            let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
-                return None;
-            };
-            Some((claim_index, surface_goal.clone()))
-        });
-    let Some((claim_index, surface_goal)) = open.next() else {
-        return Err(ClickError::new(
-            "top-level existential operation has no current proposition claim",
-        ));
-    };
-    if open.next().is_some() {
-        return Err(ClickError::new(
-            "top-level existential operation is ambiguous across multiple proposition claims",
-        ));
-    }
-
-    let root = outcome_root.clone();
+    let (claim_index, surface_goal) = focused_proposition_claim(outcome_root, claims, tactic)?;
+    let claim_key = claims[claim_index].key();
     let kernel_goal = contract_closing_goal(
         function,
-        root.execution_context()
+        outcome_root
+            .execution_context()
             .and_then(|context| context.constants.entry_context.as_ref())
             .map(|entry| entry.cases.closing_entry()),
-        root.claim_goals()
-            .and_then(|goals| goals.target(&claims[claim_index].key())),
+        outcome_root
+            .claim_goals()
+            .and_then(|goals| goals.target(&claim_key)),
         pre_state,
         arguments,
         outcome,
-        root.facts().assumptions(),
+        outcome_root.facts().assumptions(),
         &mut None,
     )?;
-    let mut proof = focus_claim_goal(
-        &root,
-        kernel_goal,
-        &claims[claim_index].key(),
-        &surface_goal,
-    )?;
+    let mut proof = focus_claim_goal(outcome_root, kernel_goal, &claim_key, surface_goal)?;
     for equality in &rewrite_claim_equalities[claim_index] {
         proof = proof
             .driver()
             .apply_step(ProofStep::Rewrite(equality.clone()))?;
     }
-    Ok((claim_index, surface_goal, proof))
+    Ok((claim_index, surface_goal.clone(), proof))
 }
 
 /// Closes one proposition claim from the outcome Proof by the direct logical
@@ -3217,6 +3185,24 @@ fn main_goal_claim(
     }
 }
 
+fn focused_proposition_claim<'c>(
+    root: &Proof<'_>,
+    claims: &[FunctionClaimRef<'c>],
+    tactic: &str,
+) -> Result<(usize, &'c ClickProposition), ClickError> {
+    let Some(crate::kernel::proof::OutcomeGoal::Claim { position, .. }) =
+        root.first_open_outcome_goal()?
+    else {
+        return Err(root.step_error(format!("`{tactic}` requires an open claim")));
+    };
+    let Ensure::Proposition(goal) = claims[position].clause().ensure() else {
+        return Err(root.step_error(format!(
+            "`{tactic}` requires the focused claim to be a proposition"
+        )));
+    };
+    Ok((position, goal))
+}
+
 /// Records a claim's closure on the path. On a path with an outcome `Proof`
 /// it also closes that claim's goal there, so the outcome `Proof` decides
 /// which claims are still open; a closure the goal refuses is an error.
@@ -4246,6 +4232,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             tactic,
                                             ProofTactic::UnfoldProposition(_)
                                                 | ProofTactic::UnfoldFunction(_)
+                                                | ProofTactic::Rewrite(_)
                                         )
                                     || unfolds_outcome_goal(
                                         tactic,
@@ -4272,8 +4259,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                             arguments,
                                             &outcome,
                                             claims,
-                                            &closures,
                                             &rewrite_claim_equalities,
+                                            tactic_name(tactic),
                                         )?;
                                         OpenedClaimProof {
                                             claim_index,
@@ -5077,95 +5064,45 @@ pub(super) fn finish_ordered_proof<'a>(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` requires a return outcome"
                                     )));
                                 };
-                                // Claim-goal rewrites focus fresh obligation
-                                // roots; the evolving outcome proof supplies
-                                // them when this path derived a goal, and the
-                                // path lineage itself is not advanced.
-                                let mut return_claim_context = None;
-                                let mut rewrote_any = false;
-                                let mut first_error = None;
-                                let mut retained_certificate = None;
-                                for (claim_index, claim) in claims.iter().enumerate() {
-                                    if closures[claim_index].is_closed() {
-                                        continue;
-                                    }
-                                    let ensure_clause = claim.clause();
-                                    let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
-                                    else {
-                                        continue;
-                                    };
-                                    let kernel_goals = contract_closing_goal_forms(
-                                        function,
-                                        proof_context
-                                            .constants
-                                            .entry_context
-                                            .as_ref()
-                                            .map(|entry| entry.cases.closing_entry()),
-                                        outcome_proof
-                                            .as_ref()
-                                            .and_then(Proof::claim_goals)
-                                            .and_then(|goals| goals.target(&claim.key())),
-                                        contract_pre_state,
-                                        arguments,
-                                        &outcome,
-                                        &assumptions_from_propositions(&path_requirements),
-                                        &mut return_claim_context,
-                                    )?;
-                                    // Continue the retained claim judgment, or
-                                    // focus its exact lowering on the owning outcome.
-                                    let applied = apply_claim_step(
-                                        rewritten_claim_proofs[claim_index].as_ref(),
-                                        Some(required_outcome(&outcome_proof)?),
-                                        &claim.key(),
-                                        surface_goal,
-                                        || Ok(kernel_goals),
-                                        |proof, _| {
-                                            Ok(proof.driver().apply_step(rewrite_step.clone()))
-                                        },
-                                    )?;
-                                    let (rewritten_result, last_error) = match applied {
-                                        Ok(ClaimStepApplied { proof, certificate }) => (
-                                            Some((proof.goal().cloned(), certificate, proof)),
-                                            None,
-                                        ),
-                                        Err(ClaimStepMiss { error, .. }) => (None, error),
-                                    };
-                                    match rewritten_result {
-                                        Some((rewritten, certificate, chained)) => {
-                                            rewritten.ok_or_else(|| {
-                                                ClickError::new(format!(
-                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked `rewrite` lost its proposition goal"
-                                                ))
-                                            })?;
-                                            retained_certificate.get_or_insert(certificate);
-                                            let checkpoint = chained.checkpoint();
-                                            rewritten_claim_proofs[claim_index] =
-                                                Some((chained, checkpoint));
-                                            rewrite_claim_equalities[claim_index]
-                                                .push(surface_equality.clone());
-                                            rewrote_any = true;
-                                        }
-                                        None => {
-                                            if let Some(error) = last_error {
-                                                first_error.get_or_insert_with(|| {
-                                                    error.raw_summary().to_string()
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                                if !rewrote_any {
-                                    return Err(ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` failed: {}",
-                                        first_error.unwrap_or_else(|| {
-                                            "there is no current proposition goal".to_string()
-                                        })
-                                    )));
-                                }
-                                for tactic in retained_certificate
-                                    .expect("a successful rewrite retains its checked Proof")
-                                    .to_proof_tactics()
-                                {
+                                let root = required_outcome(&outcome_proof)?;
+                                let (claim_index, surface_goal) =
+                                    focused_proposition_claim(root, claims, "rewrite")?;
+                                let claim = &claims[claim_index];
+                                let applied = apply_claim_step(
+                                    rewritten_claim_proofs[claim_index].as_ref(),
+                                    Some(root),
+                                    &claim.key(),
+                                    surface_goal,
+                                    || {
+                                        contract_closing_goal_forms(
+                                            function,
+                                            proof_context
+                                                .constants
+                                                .entry_context
+                                                .as_ref()
+                                                .map(|entry| entry.cases.closing_entry()),
+                                            root.claim_goals()
+                                                .and_then(|goals| goals.target(&claim.key())),
+                                            contract_pre_state,
+                                            arguments,
+                                            &outcome,
+                                            &assumptions_from_propositions(&path_requirements),
+                                            &mut None,
+                                        )
+                                    },
+                                    |proof, _| Ok(proof.driver().apply_step(rewrite_step.clone())),
+                                )?;
+                                let ClaimStepApplied { proof: chained, certificate } =
+                                    applied.map_err(|miss| {
+                                        miss.error.unwrap_or_else(|| root.step_error(
+                                            "`rewrite` could not focus the current proposition claim",
+                                        ))
+                                    })?;
+                                let checkpoint = chained.checkpoint();
+                                rewritten_claim_proofs[claim_index] = Some((chained, checkpoint));
+                                rewrite_claim_equalities[claim_index]
+                                    .push(surface_equality.clone());
+                                for tactic in certificate.to_proof_tactics() {
                                     record_post_execution_surface_tactic(
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,

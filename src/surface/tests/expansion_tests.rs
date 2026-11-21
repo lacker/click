@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn focused_contract_claim_refinements_expand_in_order() {
+    let (source, program) = mdtest_sources("mdtests/focused_post_execution_claim_tactics.md");
+    let program = crate::cli::source_refs(&program);
+    for label in ["refine.contract", "choose_value.contract"] {
+        let expanded = expand_c_claim_source_by_label(&source, &program, label)
+            .unwrap_or_else(|error| panic!("{label}: {}", error.report()));
+        without_implicit_solve_for_claim(label, || {
+            verify_c_sources(&expanded, &program).map_err(|error| error.report())
+        })
+        .unwrap_or_else(|error| panic!("{label}: {error}\n{expanded}"));
+    }
+}
+
+#[test]
 fn algebraic_constructor_matches_expand_without_normalize() {
     for (fixture, claims) in [
         (
