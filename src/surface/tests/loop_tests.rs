@@ -110,7 +110,7 @@ fn scoped_loop_facts_keep_a_guard_disjunction_only_when_proved() {
         assert!(
             error
                 .message()
-                .contains("missing exact fact: n <= 0 or m <= 0"),
+                .contains("unproved part of the goal: n <= 0 or m <= 0"),
             "{}",
             error.message()
         );
@@ -2414,7 +2414,9 @@ fn changed_break_exit_does_not_label_head_invariants_as_exit_facts() {
         assert_ne!(source, false_have);
         let error = verify_c_sources(&false_have, &sources).unwrap_err();
         assert!(
-            error.message().contains("`known` requires"),
+            error
+                .message()
+                .contains("`known()` could not close the current goal"),
             "{}",
             error.message()
         );

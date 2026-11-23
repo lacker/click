@@ -128,6 +128,11 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
 
     fn kernel_goal(&self) -> Option<&Proposition>;
 
+    /// The source form of the focused proposition, when the proof retained it.
+    fn authored_goal(&self) -> Option<&super::ClickProposition> {
+        None
+    }
+
     /// The retained written goal when the source spelling carries pointer
     /// information that an address rendering could lose.
     fn written_pointer_goal(&self) -> Option<&super::ClickProposition> {
@@ -153,13 +158,14 @@ pub(crate) trait ProofDiagnosticState: Send + Sync {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProofDiagnosticStage {
     CheckedStep,
+    KnownGoalUnavailable,
     Other(&'static str),
 }
 
 impl ProofDiagnosticStage {
     fn label(self) -> &'static str {
         match self {
-            Self::CheckedStep => "proof step",
+            Self::CheckedStep | Self::KnownGoalUnavailable => "proof step",
             Self::Other(label) => label,
         }
     }
@@ -302,6 +308,25 @@ impl ProofFailureDiagnostic {
         Some(render::render_proposition_labeled(
             state.kernel_goal()?,
             labels,
+        ))
+    }
+
+    pub(in crate::surface) fn known_goal_refusal(
+        &self,
+        labels: &mut render::MemoryStateLabels,
+    ) -> Option<String> {
+        if self.origin.stage != ProofDiagnosticStage::KnownGoalUnavailable {
+            return None;
+        }
+        let state = self.state.as_ref()?;
+        state.register_names(labels);
+        let goal = if let Some(authored) = state.authored_goal() {
+            super::printing::source_click_proposition(authored)
+        } else {
+            self.render_goal(labels)?
+        };
+        Some(format!(
+            "You must prove `{goal}` in order to use the tactic `known()`."
         ))
     }
 
@@ -512,9 +537,13 @@ fn render_diagnostic_labeled(
     // Keep the established summary as the first line. The richer context is
     // deliberately bounded and rendered only at this terminal boundary.
     let mut rendered = summary.unwrap_or_default().to_owned();
+    let known_refusal = summary
+        .is_none()
+        .then(|| diagnostic.known_goal_refusal(labels))
+        .flatten();
     if summary.is_none() {
         rendered.push_str("proof refusal:\n  ");
-        rendered.push_str(&diagnostic.reason);
+        rendered.push_str(known_refusal.as_deref().unwrap_or(&diagnostic.reason));
         rendered.push_str("\n  stage: ");
         rendered.push_str(diagnostic.origin.stage.label());
         rendered.push_str("\n  location: ");
@@ -570,8 +599,8 @@ fn render_diagnostic_labeled(
         .state
         .as_ref()
         .is_some_and(|state| requirement_is_goal(state.as_ref()));
-    if requirement_is_goal {
-        // Printed with the requirement above.
+    if requirement_is_goal || known_refusal.is_some() {
+        // The requirement or the refusal already identified this goal.
     } else if let Some(goal) = diagnostic.render_goal(labels) {
         rendered.push_str("\n  goal: ");
         rendered.push_str(&goal);

@@ -14,5 +14,5 @@ theorem known_missing_side(x: int32) {
 ```
 
 ```expect
-fail: missing exact fact: x <= 10
+fail: unproved part of the goal: x <= 10
 ```

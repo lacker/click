@@ -14,5 +14,5 @@ theorem choices_are_distinct_from_an_arbitrary_machine_value() {
 ```
 
 ```expect
-fail: requires the current goal as an available semantic fact
+fail: could not close the current goal
 ```

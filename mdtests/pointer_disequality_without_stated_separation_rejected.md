@@ -7,5 +7,5 @@ theorem missing(a: int32*, b: int32*) {
 ```
 
 ```expect
-fail: requires the current goal as an available semantic fact
+fail: could not close the current goal
 ```

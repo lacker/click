@@ -47,5 +47,5 @@ void run(int32* o, int32 n, int32 m) {
 ```
 
 ```expect
-fail: `known` requires the current goal
+fail: `known()` could not close the current goal
 ```

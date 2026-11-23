@@ -493,10 +493,13 @@ uint64 spell(const uint8* b, uint64 n) {
         ])
         .unwrap_err();
         assert!(
-            trace.contains("`known` requires the current goal as an available semantic fact"),
+            trace.contains("You must prove `false` in order to use the tactic `known()`."),
             "{trace}"
         );
-        assert!(trace.contains("\nrequired evidence: false\n"), "{trace}");
+        assert!(
+            !trace.contains("semantic fact") && !trace.contains("proposition fact"),
+            "{trace}"
+        );
         assert!(trace.contains(" = b + uint64("), "{trace}");
         assert!(
             trace.contains(" = at(statement(2).statement(0).entry, v)"),
@@ -504,6 +507,43 @@ uint64 spell(const uint8* b, uint64 n) {
         );
         assert!(!trace.contains("external argument address base"), "{trace}");
         assert!(!trace.contains("<symbol "), "{trace}");
+    }
+
+    #[test]
+    fn known_refusal_names_the_written_goal_at_its_program_point() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("read.c"),
+            "int check(int* p) { return 0; }",
+        )
+        .unwrap();
+        let sidecar = directory.path().join("read.click");
+        fs::write(
+            &sidecar,
+            r#"verifying "read.c";
+int32 check(int32* p) {
+    ensures result == 0;
+} by {
+    have at(function.entry, defined(p[0])) by known();
+}
+"#,
+        )
+        .unwrap();
+        let path = sidecar.display().to_string();
+        for arguments in [
+            vec!["verify".to_owned(), path.clone()],
+            vec![
+                "verify".to_owned(),
+                "--trace-proof".to_owned(),
+                "check".to_owned(),
+                path,
+            ],
+        ] {
+            let report = entry(arguments).unwrap_err();
+            assert!(report.starts_with("tactic error:"), "{report}");
+            assert!(report.contains("You must prove `at(function.entry, defined(p[0]))` in order to use the tactic `known()`."), "{report}");
+            assert!(!report.contains("defined-read"), "{report}");
+        }
     }
 
     #[test]
@@ -543,7 +583,7 @@ uint64 spell(const uint8* b, uint64 n) {
             (
                 "termination_ordinary_proof_refuses_unproved_promise.md",
                 "tactic error:",
-                "`known` requires the current goal",
+                "in order to use the tactic `known()`",
             ),
             (
                 "diverges_rejects_unjustified_marker.md",
@@ -1862,15 +1902,11 @@ void parent(int32* p) {
                 })
                 .unwrap_or_else(|| panic!("{report}"))
         };
-        let saved = read_state(
+        read_state(
             trace,
             "adds: ∃z:ProgramInt32. int32 =(z, read<Bits32>(state#",
         );
-        let current = read_state(
-            failed_check,
-            "required evidence: ∃z:ProgramInt32. int32 =(z, read<Bits32>(state#",
-        );
-        assert_ne!(saved, current, "{report}");
+        assert!(failed_check.contains("You must prove `exists (z: int32) { z == *p }` in order to use the tactic `known()`."), "{report}");
     }
 
     #[test]
@@ -1896,10 +1932,6 @@ theorem bad(p: int32*, q: int32*) {
         )
         .unwrap();
         let ordinary = entry(["verify".to_string(), sidecar.display().to_string()]).unwrap_err();
-        let ordinary_goal = ordinary
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("required evidence: "))
-            .unwrap();
         let report = entry([
             "verify".to_string(),
             "--trace-proof".to_string(),
@@ -1907,22 +1939,15 @@ theorem bad(p: int32*, q: int32*) {
             sidecar.display().to_string(),
         ])
         .unwrap_err();
-        // The ordinary report spells the goal in source terms; the requested
-        // trace keeps the typed checked goal.
-        assert!(ordinary_goal.contains("tag("), "{ordinary}");
-        assert!(!ordinary_goal.contains("state#"), "{ordinary}");
-        assert_eq!(report.matches("required evidence:").count(), 1, "{report}");
-        let checked = report
-            .lines()
-            .find(|line| line.contains("required evidence:"))
-            .unwrap();
-        assert!(checked.contains("tag("), "{report}");
-        assert!(checked.contains("array-ref<int32>(state#1,"), "{report}");
-        assert!(checked.contains("ptr<int32*>("), "{report}");
-        assert!(
-            report.contains("state#1 = initial empty memory"),
-            "{report}"
-        );
+        let (_, refusal) = report.split_once("\nproof refusal:\n").unwrap();
+        for diagnostic in [&ordinary, refusal] {
+            assert!(
+                diagnostic
+                    .contains("You must prove `tag(q) == 1` in order to use the tactic `known()`."),
+                "{diagnostic}"
+            );
+            assert!(!diagnostic.contains("array-ref<int32>"), "{diagnostic}");
+        }
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -26,5 +26,5 @@ int32 f(int32 n) {
 ```
 
 ```expect
-fail: `known` found no available fact or held instance for the current goal `n == 0`
+fail: You must prove `n == 0` in order to use the tactic `known()`.
 ```

@@ -1917,6 +1917,20 @@ impl crate::surface::proof_diagnostics::ProofDiagnosticState for ProofDiagnostic
         }
     }
 
+    fn authored_goal(&self) -> Option<&ClickProposition> {
+        let branch = self
+            .0
+            .state()
+            .open_branches()
+            .get(self.0.focused_branch())?;
+        let Obligation::Proposition(goal) = &branch.obligation else {
+            return None;
+        };
+        (!goal.generated_surface)
+            .then_some(goal.surface.as_deref())
+            .flatten()
+    }
+
     fn written_pointer_goal(&self) -> Option<&ClickProposition> {
         let branch = self
             .0

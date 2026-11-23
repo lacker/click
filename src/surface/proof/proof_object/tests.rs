@@ -415,7 +415,7 @@ fn missing_known_side_uses_recorded_names_in_fixed_state_errors() {
             render()
         };
         assert!(
-            error.contains("missing exact fact: at(iteration, remaining) < remaining"),
+            error.contains("unproved part of the goal: at(iteration, remaining) < remaining"),
             "{error}"
         );
         assert!(

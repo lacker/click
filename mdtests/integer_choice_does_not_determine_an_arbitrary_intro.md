@@ -12,5 +12,5 @@ theorem choice_is_not_universal() {
 ```
 
 ```expect
-fail: requires the current goal as an available semantic fact
+fail: could not close the current goal
 ```

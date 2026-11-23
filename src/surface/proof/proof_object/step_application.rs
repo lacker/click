@@ -747,30 +747,22 @@ impl<'a> Proof<'a> {
         } else {
             self.state.clone()
         };
-        state
-            .apply_known(context)
-            .map_err(|error| match error {
-                PropositionCloseError::NotProposition => {
-                    self.step_error("`known` requires a proposition goal")
-                }
-                PropositionCloseError::Unavailable => {
-                    let detail = self
-                        .goal()
-                        .map(|goal| format!(": current goal is {}", describe_known_goal(goal)))
-                        .unwrap_or_default();
-                    self.step_error(format!(
-                        "`known` requires the current goal as an available semantic fact{detail}"
-                    ))
-                }
-                PropositionCloseError::UnavailableSide(side) => {
-                    self.step_error_with_requirement(
-                        "`known` closes a conjunction when every side is an available fact and a disjunction when one side is; a required side is not available",
-                        None,
-                        Some(("missing exact fact", Box::new(side), None)),
-                    )
-                }
-                _ => unreachable!("kernel returned an unrelated known error"),
-            })
+        state.apply_known(context).map_err(|error| match error {
+            PropositionCloseError::NotProposition => {
+                self.step_error("`known` requires a proposition goal")
+            }
+            PropositionCloseError::Unavailable => self
+                .step_error("`known()` could not close the current goal")
+                .with_known_goal_refusal(),
+            PropositionCloseError::UnavailableSide(side) => self
+                .step_error_with_requirement(
+                    "`known()` could not close the current goal",
+                    None,
+                    Some(("unproved part of the goal", Box::new(side), None)),
+                )
+                .with_known_goal_refusal(),
+            _ => unreachable!("kernel returned an unrelated known error"),
+        })
     }
 
     // Preserve the rule/dispatcher frame boundary described above.
@@ -1415,7 +1407,7 @@ impl<'a> Proof<'a> {
                 }
                 PropositionCloseError::ExpectedIntroduction(goal) => self.step_error(format!(
                     "`intro` requires an implication or universal goal, got {}",
-                    describe_known_goal(&goal)
+                    describe_goal_kind(&goal)
                 )),
                 PropositionCloseError::IntegerFresheningExhausted => {
                     self.step_error("`intro` requires a fresh Integer binder variable")
@@ -1876,7 +1868,7 @@ fn trace_resource_fact(
     text
 }
 
-fn describe_known_goal(goal: &Proposition) -> &'static str {
+fn describe_goal_kind(goal: &Proposition) -> &'static str {
     match goal {
         Proposition::And(..) => "a conjunction",
         Proposition::Or(..) => "a disjunction",

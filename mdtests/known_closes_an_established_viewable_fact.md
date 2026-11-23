@@ -3,16 +3,9 @@
 A narrowing established by the separation restriction axioms is an ordinary available fact,
 and `known()` closes the identical `viewable` goal from it through the
 same exact indexed lookup it uses for any other goal. The DFS proofs once
-reported
-
-```text
-`known` requires the current goal as an available semantic fact: current
-goal is a memory-viewability fact
-```
-
-which left no way to finish a `both` arm whose goal was a narrowed
-range. Here the narrowing is established once, then cited: from a `both` arm,
-and under a universal after `intro`.
+failed to close a `both` arm with this narrowed range even after proving it.
+This fixture cites the narrowing from a `both` arm and under a universal
+after `intro`.
 
 The rule is exact, not a narrowing: a different range or a different state
 does not close the goal

@@ -5429,7 +5429,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 );
                                             if is_known {
                                                 format!(
-                                                    "`known` found no available fact or held instance for the current goal `{goal}`"
+                                                    "You must prove `{goal}` in order to use the tactic `known()`."
                                                 )
                                             } else {
                                                 format!(

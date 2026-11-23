@@ -1424,9 +1424,7 @@ void change(struct node *g, struct node *source, struct node *t) {
     let error = verify_c_sources(&false_source, &[("join.c", c_source)])
         .expect_err("an available target must not bypass a false source");
     assert!(
-        error
-            .message()
-            .contains("requires the current goal as an available semantic fact"),
+        error.message().contains("could not close the current goal"),
         "{}",
         error.message()
     );

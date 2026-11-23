@@ -10,5 +10,5 @@ theorem wrong_bitwise_guard(z: uint64, y: uint64) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: `known()` could not close the current goal
 ```

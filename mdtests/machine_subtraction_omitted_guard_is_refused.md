@@ -23,5 +23,5 @@ uint32 at(uint32* xs, uint64 n, uint64 r) {
 ```
 
 ```expect
-fail: `known` requires
+fail: `known()` could not close the current goal
 ```

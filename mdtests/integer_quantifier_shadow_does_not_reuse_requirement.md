@@ -12,5 +12,5 @@ theorem integer_quantifier_shadow(z: Integer) {
 ```
 
 ```expect
-fail: `known` requires the current goal
+fail: `known()` could not close the current goal
 ```

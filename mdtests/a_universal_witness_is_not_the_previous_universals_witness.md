@@ -41,5 +41,5 @@ int32 walk(int32 n) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: `known()` could not close the current goal
 ```

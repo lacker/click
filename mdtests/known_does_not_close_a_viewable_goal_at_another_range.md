@@ -30,5 +30,5 @@ int32 probe(int32 a[], int32 n, int32 k) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact: current goal is a memory-viewability fact
+fail: `known()` could not close the current goal
 ```

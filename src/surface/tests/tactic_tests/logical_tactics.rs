@@ -405,7 +405,7 @@ fn known_computes_leaves_and_uses_exact_propagation() {
     assert!(
         error
             .message()
-            .contains("`known` requires the current goal as an available semantic fact"),
+            .contains("`known()` could not close the current goal"),
         "{}",
         error.message()
     );
@@ -1705,7 +1705,9 @@ fn instantiate_does_not_discharge_guards_from_ambient_facts() {
     let error = verify_c_sources(&without_guard, &[("pick.c", c_source)])
         .expect_err("instantiation must preserve the unproved symbolic guard");
     assert!(
-        error.message().contains("`known` requires"),
+        error
+            .message()
+            .contains("`known()` could not close the current goal"),
         "unexpected error: {}",
         error.message()
     );
@@ -2232,7 +2234,9 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
     // The instantiation at the wrong argument adds a different fact, so it
     // no longer closes the `have` goal.
     assert!(
-        error.message().contains("`known` requires"),
+        error
+            .message()
+            .contains("`known()` could not close the current goal"),
         "the checked Proof operation should reject the tamper directly: {error:?}"
     );
 }

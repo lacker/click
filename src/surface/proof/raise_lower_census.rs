@@ -434,7 +434,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -481,7 +481,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -529,7 +529,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -577,7 +577,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -657,7 +657,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -708,7 +708,7 @@ mod tests {
             assert!(
                 error
                     .to_string()
-                    .contains("`known` requires the current goal as an available semantic fact"),
+                    .contains("`known()` could not close the current goal"),
                 "{error}"
             );
         }
@@ -837,7 +837,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -900,7 +900,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("`known` requires the current goal as an available semantic fact"),
+                .contains("`known()` could not close the current goal"),
             "{error}"
         );
     }

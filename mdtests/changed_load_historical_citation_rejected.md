@@ -29,5 +29,5 @@ int32 change(int32 p[]) {
 ```
 
 ```expect
-fail: requires the current goal as an available semantic fact
+fail: could not close the current goal
 ```

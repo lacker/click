@@ -10950,6 +10950,17 @@ impl ClickError {
         }
     }
 
+    pub(in crate::surface) fn with_known_goal_refusal(mut self) -> Self {
+        std::sync::Arc::make_mut(
+            self.diagnostic
+                .as_mut()
+                .expect("known refusal has a proof state"),
+        )
+        .origin
+        .stage = proof_diagnostics::ProofDiagnosticStage::KnownGoalUnavailable;
+        self
+    }
+
     pub(crate) fn with_diagnostic_if_missing(
         mut self,
         diagnostic: proof_diagnostics::ProofFailureDiagnostic,
@@ -11074,7 +11085,16 @@ impl ClickError {
         missing_classification: bool,
     ) -> (String, Vec<String>) {
         let _accessors = self.report_model_accessor_scope();
-        let reason = if self.verification_stopped() {
+        let mut labels = proof_diagnostics::render::MemoryStateLabels::ambient();
+        let known_refusal = self.diagnostic.as_ref().and_then(|diagnostic| {
+            if self.verification_stopped() {
+                return None;
+            }
+            diagnostic.known_goal_refusal(&mut labels)
+        });
+        let reason = if let Some(reason) = &known_refusal {
+            reason.as_str()
+        } else if self.verification_stopped() {
             self.message.as_str()
         } else {
             self.diagnostic
@@ -11174,7 +11194,6 @@ impl ClickError {
         if let Some(diagnostic) = &self.diagnostic
             && let Some(state) = diagnostic.state.as_ref()
         {
-            let mut labels = proof_diagnostics::render::MemoryStateLabels::ambient();
             state.register_names(&mut labels);
             if !proof_trace::enabled_for(&diagnostic.claim_label) {
                 let requirement =
@@ -11182,7 +11201,8 @@ impl ClickError {
                 if !requirement.is_empty() {
                     context.push(requirement);
                 }
-                if !proof_diagnostics::requirement_is_goal(state.as_ref())
+                if known_refusal.is_none()
+                    && !proof_diagnostics::requirement_is_goal(state.as_ref())
                     && let Some(goal) = diagnostic.render_goal(&mut labels)
                 {
                     context.push(format!("goal: {goal}"));
@@ -11441,7 +11461,11 @@ impl ClickError {
         }
         self.proof_refusal.or_else(|| {
             let checked_step = self.diagnostic.as_ref().is_some_and(|diagnostic| {
-                diagnostic.origin.stage == proof_diagnostics::ProofDiagnosticStage::CheckedStep
+                matches!(
+                    diagnostic.origin.stage,
+                    proof_diagnostics::ProofDiagnosticStage::CheckedStep
+                        | proof_diagnostics::ProofDiagnosticStage::KnownGoalUnavailable
+                )
             });
             (self.failed_tactic.is_some()
                 || self.proof_source_tactic_path().is_some()

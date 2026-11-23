@@ -22,5 +22,5 @@ void caller(struct node* child, int32* slot) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: `known()` could not close the current goal
 ```

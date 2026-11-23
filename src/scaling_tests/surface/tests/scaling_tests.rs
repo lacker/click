@@ -232,7 +232,7 @@ fn writing_the_entry_cell_changes_its_ordinary_read_version() {
     assert!(
         error
             .message()
-            .contains("`known` requires the current goal as an available semantic fact"),
+            .contains("`known()` could not close the current goal"),
         "{}",
         error.message()
     );

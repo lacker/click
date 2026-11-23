@@ -2530,7 +2530,12 @@ fn induction_failure_trace_retains_the_constructor_equation() {
     "#;
     with_proof_trace("induction_trace", || {
         let error = verify_click_theorems(source).expect_err("the false claim must be refused");
-        assert!(error.message().contains("`known` requires"), "{error}");
+        assert!(
+            error
+                .message()
+                .contains("`known()` could not close the current goal"),
+            "{error}"
+        );
         let trace = error.trace_context_report().expect("failure trace");
         assert!(trace.contains("adds: xs == Chain::End"), "{trace}");
     });

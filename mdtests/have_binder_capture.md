@@ -81,5 +81,5 @@ int32 bad(int32 x) {
 ```
 
 ```expect
-fail: have body tactic 2: `known` requires the current goal as an available semantic fact
+fail: have body tactic 2: `known()` could not close the current goal
 ```

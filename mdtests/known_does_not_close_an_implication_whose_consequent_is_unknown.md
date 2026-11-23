@@ -8,5 +8,5 @@ theorem consequent_unknown(a: int32, b: int32) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: `known()` could not close the current goal
 ```

@@ -1316,7 +1316,7 @@ fn unrelated_equality_is_refused_without_transport() {
     assert!(
         error
             .message()
-            .contains("`known` requires the current goal as an available semantic fact"),
+            .contains("`known()` could not close the current goal"),
         "{report}"
     );
     assert!(report.contains("a == 1"), "{report}");
@@ -3441,7 +3441,7 @@ fn integer_constructor_arm_fields_expand_to_known() {
         assert_ne!(wrong, expanded);
         let error = verify_c_sources(&wrong, &[]).unwrap_err().report();
         assert!(
-            error.contains("`known` requires the current goal"),
+            error.contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -3527,7 +3527,7 @@ fn rewritten_constructor_payload_expands_to_known() {
         assert_ne!(wrong, expanded);
         let error = verify_c_sources(&wrong, &[]).unwrap_err().report();
         assert!(
-            error.contains("`known` requires the current goal"),
+            error.contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -3561,7 +3561,7 @@ fn assert_constructor_case_expansions(
         wrong.replace_range(start..end, &wrong_proof);
         let error = verify_c_sources(&wrong, &[]).unwrap_err().report();
         assert!(
-            error.contains("`known` requires the current goal"),
+            error.contains("`known()` could not close the current goal"),
             "{error}"
         );
     }
@@ -11470,7 +11470,10 @@ fn computed_sequence_negations_expand_to_known() {
         let error = without_implicit_solve(|| verify_click_theorems(&source))
             .unwrap_err()
             .report();
-        assert!(error.contains("`known` requires"), "{error}");
+        assert!(
+            error.contains("`known()` could not close the current goal"),
+            "{error}"
+        );
     }
 }
 
@@ -11537,7 +11540,10 @@ fn strict_literal_remainder_bound_expands_to_known() {
         let error = without_implicit_solve(|| verify_click_theorems(rejected))
             .unwrap_err()
             .report();
-        assert!(error.contains("`known` requires"), "{error}");
+        assert!(
+            error.contains("`known()` could not close the current goal"),
+            "{error}"
+        );
     }
 }
 
@@ -11603,7 +11609,10 @@ theorem exact_integer_sign(n: Integer, d: Integer) {
     let error = without_implicit_solve(|| verify_click_theorems(&wrong_sign))
         .unwrap_err()
         .report();
-    assert!(error.contains("`known` requires"), "{error}");
+    assert!(
+        error.contains("`known()` could not close the current goal"),
+        "{error}"
+    );
 }
 
 #[test]

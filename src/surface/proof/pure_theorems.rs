@@ -3947,7 +3947,9 @@ mod tests {
         let error = verify_instantiation_theorem(&missing)
             .expect_err("the guarded conclusion needs its missing bound");
         assert!(
-            error.message().contains("`known` requires"),
+            error
+                .message()
+                .contains("`known()` could not close the current goal"),
             "{}",
             error.message()
         );

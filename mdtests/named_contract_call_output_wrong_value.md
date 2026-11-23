@@ -43,5 +43,5 @@ void direct(int32* x) {
 ```
 
 ```expect
-fail: `known` requires the current goal as an available semantic fact
+fail: `known()` could not close the current goal
 ```
