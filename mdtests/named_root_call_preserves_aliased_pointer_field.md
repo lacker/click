@@ -71,7 +71,8 @@ void probe(struct node *p, struct root *root) {
   have rid->left == 0 by { known(); }
   have separate(memory(rid->left), memory(nid->left)) by { known(); }
   have separate(memory(nid->right), memory(rid->right)) by { known(); }
-  have cursor->left == rid by { rewrite(cursor, nid); known(); }
+  have cursor->left == near by { known(); }
+  have cursor->left == rid by { rewrite(cursor->left, near); known(); }
   have nid->right == 0 by { known(); }
   have separate(memory(cursor->left), memory(rid->left)) by {
    rewrite(cursor, nid); known();

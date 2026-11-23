@@ -1,3 +1,4 @@
+import click::integer;
 // Cache arithmetic when both children of the focused node survive a rotation.
 verifying "rbtree_size_compute.c";
 verifying "rbtree_size_copy.c";
@@ -69,7 +70,7 @@ theorem sized_double_subtrees_subtract_other_defined(pv: int32, far: SizedTree, 
         apply(sized_valid_value_nonnegative(other));
         have -2147483648 <= to_integer(pv);
         have to_integer(pv) <= 2147483647;
-        have to_integer(pv - 1) == to_integer(pv) - to_integer(1);
+        apply(integer::int32_subtract_to_integer(pv, 1));
         have to_integer(pv - 1) - to_integer(sized_value(other)) >= -2147483648 by {
             solve() using {
                 to_integer(pv) == 2 + to_integer(sized_value(far)) + to_integer(sized_value(middle)) + to_integer(sized_value(other));
@@ -86,7 +87,7 @@ theorem sized_double_subtrees_subtract_other_defined(pv: int32, far: SizedTree, 
             };
         }
         have defined((pv - 1) - sized_value(other));
-        have to_integer((pv - 1) - sized_value(other)) == to_integer((pv - 1)) - to_integer(sized_value(other));
+        apply(integer::int32_subtract_to_integer(pv - 1, sized_value(other)));
         known();
     }
 }
@@ -96,8 +97,8 @@ theorem sized_double_subtrees_repaired_count(pv: int32, far: SizedTree, middle: 
     requires defined(pv - 1);
     requires defined(pv - 1 - sized_value(other));
     ensures to_integer(pv - 1 - sized_value(other)) == 1 + to_integer(sized_value(far)) + to_integer(sized_value(middle)) by {
-        have to_integer(pv - 1) == to_integer(pv) - to_integer(1);
-        have to_integer((pv - 1) - sized_value(other)) == to_integer((pv - 1)) - to_integer(sized_value(other));
+        apply(integer::int32_subtract_to_integer(pv, 1));
+        apply(integer::int32_subtract_to_integer(pv - 1, sized_value(other)));
         solve() using {
             to_integer(pv) == 2 + to_integer(sized_value(far)) + to_integer(sized_value(middle)) + to_integer(sized_value(other));
             to_integer(pv - 1) == to_integer(pv) - to_integer(1);

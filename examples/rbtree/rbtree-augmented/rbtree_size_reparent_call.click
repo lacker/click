@@ -1,3 +1,4 @@
+import click::integer;
 // The insertion middle child keeps its caches and children when reparented.
 verifying "rb_insert_augmented.c" as insert;
 verifying "rbtree_size_compute.c";
@@ -27,7 +28,10 @@ void insert::rb_set_parent_color(struct rb_node* rb, struct rb_node* p, int32 co
                 solve() using { aligned(p, 8); };
             }
             have (rb->__rb_parent_color & ~3) == address(p) by {
-                solve() using { aligned(p, 8); };
+                apply(integer::uint64_mask_subset(address(p), 7u64, 3u64));
+                apply(integer::uint64_mask_add_clear(address(p), 1u64, 18446744073709551612u64));
+                rewrite(rb->__rb_parent_color, address(p) + 1u64);
+                known();
             }
             have ((rb->__rb_parent_color & ~3) as (struct rb_node *)) == p by {
                 known();
