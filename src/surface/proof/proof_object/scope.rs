@@ -638,6 +638,16 @@ impl<'a> ProofScope<'a> {
                 if let Some((surface, kernel)) = &local_spelling {
                     successor = successor.with_local_surface_fact(surface, kernel)?;
                 }
+                if crate::surface::proof::raise_lower_audit::enabled() {
+                    for fact in successor.state().checked_facts() {
+                        if !fact.is_kernel_authority() {
+                            successor.record_raise_lower_proposition("fact", fact, "have");
+                        }
+                    }
+                    if let Some(goal) = successor.goal() {
+                        successor.record_raise_lower_proposition("goal", goal, "have");
+                    }
+                }
                 if let Some(source) = trace_source {
                     let location = self
                         .root

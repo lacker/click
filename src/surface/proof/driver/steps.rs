@@ -60,6 +60,9 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
         .flatten();
         // A trace observes the read-history queries already made by this
         // operation, including publication of a retained application.
+        // A `have` is observed when its checked facts enter the enclosing scope.
+        let audits_step = crate::surface::proof::raise_lower_audit::enabled()
+            && !matches!(&step, ProofStep::Have { .. });
         let run = || apply(step);
         let (result, cell_walks) =
             if crate::surface::proof_trace::enabled_for(driver_proof.claim_label()) {
@@ -113,7 +116,7 @@ impl<'p, 'a> ProofDriver<'p, Proof<'a>> {
             driver_proof.record_raise_lower_census(next, tactic);
         }
         if let Ok(next) = &result
-            && crate::surface::proof::raise_lower_audit::enabled()
+            && audits_step
             && !Arc::ptr_eq(&driver_proof.node, &next.node)
         {
             driver_proof.record_raise_lower_audit(next, tactic);

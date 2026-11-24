@@ -404,8 +404,10 @@ and compares the complete proposition up to bound-variable renaming. It records
 `differs`, `unlowered`,
 `unraised`, or `no-state`. It measures the raiser alone, not premise raising,
 which searches recorded Surface forms first and keeps only one that lowers
-back. It observes the steps the [census](#measuring-the-gap) does; a
-fact a `have` publishes to its enclosing proof is not among them.
+back. Alongside the steps observed by the [census](#measuring-the-gap), the
+round-trip audit records the propositions a `have` publishes. It raises and
+lowers them in the enclosing proof after publication, where later tactics can
+cite them.
 
 Baseline (2026-11-16, ordinary mdtest corpus, both runs passing):
 

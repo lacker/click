@@ -2,8 +2,9 @@
 //!
 //! Every proof-visible kernel proposition must satisfy `lower(raise(x)) == x`
 //! (`docs/internals/raise-lower-principle.md#the-raise-lower-principle`). Setting
-//! `CLICK_RAISE_LOWER=<path>` raises each fact a checked step adds, and the
-//! goal it leaves focused, with the canonical raiser goal presentation uses
+//! `CLICK_RAISE_LOWER=<path>` raises facts added by checked steps, including
+//! `have` facts published to the enclosing proof, and focused goals. It uses
+//! the canonical raiser for goal presentation
 //! (`Proof::structural_proposition_candidate`: the step's fixed state, its
 //! entry state and the path's recorded points). It lowers
 //! that Surface form again in the same proof and appends one line saying how the
@@ -277,6 +278,9 @@ int32 probe(const struct Input* src, {index_type} n, {index_type} k, struct Opti
     ensures result >= 0;
 }} by {{
     step();
+    have at(function.entry, forall (i: {index_type}) {{
+        {zero} <= i and i < n implies defined(load<uint8>(src->data + i))
+    }}) by {{ close(); }}
     have at(function.entry, defined(load<uint8>(src->data + k))) by {{
         instantiate(at(function.entry, forall (i: {index_type}) {{
             {zero} <= i and i < n implies defined(load<uint8>(src->data + i))
@@ -290,6 +294,14 @@ int32 probe(const struct Input* src, {index_type} n, {index_type} k, struct Opti
             let lines = capture(|| {
                 crate::surface::verify_c_sources(&source, &[("indexed_view.c", &c)]).unwrap();
             });
+            let published = lines.iter().filter(|line| {
+                line.starts_with(
+                    "same\tfact\tforall/implies/MemoryReadDefined\tprobe.contract\thave\t",
+                ) && line.split('\t').nth(7).is_some_and(|raised| {
+                    raised.contains("forall (") && raised.contains("at(function.entry,")
+                })
+            });
+            assert_eq!(published.count(), 1, "{index_type}: {lines:#?}");
             for kind in ["implies/MemoryReadDefined", "MemoryReadDefined"] {
                 let prefix = format!("same\tfact\t{kind}\tprobe.contract\tinstantiate\t");
                 assert!(
