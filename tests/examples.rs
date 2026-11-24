@@ -440,6 +440,7 @@ fn rbtree_insert_uses_the_unchanged_c_and_the_shared_model() {
 #[ignore = "nightly: audit process regression stays outside the verification gate"]
 fn audit_whole_claim_failure_is_fatal() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let records = tempfile::tempdir().unwrap();
     for (keep_going, max_sites) in [
         (false, None),
         (true, None),
@@ -447,6 +448,8 @@ fn audit_whole_claim_failure_is_fatal() {
         (true, Some("100")),
     ] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_click"));
+        // The deliberately failing audit is evidence for this test only.
+        command.env_remove(click::nightly_report::REPORT_DIR);
         command.args([
             "audit",
             "--claim",
@@ -454,6 +457,7 @@ fn audit_whole_claim_failure_is_fatal() {
             "--verification-work-limit",
             "1",
         ]);
+        command.arg("--records").arg(records.path());
         if keep_going {
             command.arg("--keep-going");
         }
